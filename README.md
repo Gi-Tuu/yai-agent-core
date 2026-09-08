@@ -20,7 +20,7 @@ python scripts/smoke_test.py     # 离线冒烟：同一 Core 自适应三个不
 pytest                           # 单元 + 端到端测试（不需要 API Key）
 ```
 
-**第一次读代码**：按 [`docs/reading-guide.md`](docs/reading-guide.md) 的 7 站顺序学习。
+**第一次读代码**：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线；[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是每个源码文件的逐行讲解。
 
 宿主接入只有三步：
 
