@@ -90,7 +90,7 @@ class AgentLoop:
         )
         ctx.add(ChatMessage(role="user", content=prompt))
         resp = await self.model.achat(ctx.llm_messages(), tools=None, tier="strong")
-        steps = [s.strip() for s in re.split(r"\n\s*\d+[.、)]\s*", resp.content) if s.strip()]
+        steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
         plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))

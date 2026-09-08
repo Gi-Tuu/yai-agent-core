@@ -16,9 +16,11 @@
 ```bash
 uv venv
 uv pip install -e ".[dev,llm,server]"
-python scripts/smoke_test.py     # 离线冒烟：同一 Core 自适应两个不同宿主
+python scripts/smoke_test.py     # 离线冒烟：同一 Core 自适应三个不同宿主
 pytest                           # 单元 + 端到端测试（不需要 API Key）
 ```
+
+**第一次读代码**：按 [`docs/reading-guide.md`](docs/reading-guide.md) 的 7 站顺序学习。
 
 宿主接入只有三步：
 
@@ -55,9 +57,10 @@ src/yai_core/
     └── fastapi_server/  # 在线 API + /health + X-Agent 验证端点
 examples/
 ├── host_a_notes/        # 宿主 A：笔记应用（只有业务函数，零 Agent 代码）
-└── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
+├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
+└── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
 tests/                   # 离线 ScriptedModel 端到端测试
-docs/                    # 架构设计 + 三个比赛的提交清单
+docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
 ```
 
 ## 在线 API（X-Agent 部署要求）

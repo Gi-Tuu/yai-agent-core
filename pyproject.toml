@@ -5,7 +5,7 @@ description = "YAI Agent Core — an embeddable, self-adaptive agent kernel for 
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "YAI Agent Core contributors" }]
+authors = [{ name = "Gi-Tuu" }]
 keywords = ["agent", "llm", "tool-calling", "mcp", "runtime", "embedded", "kernel"]
 dependencies = []
 
