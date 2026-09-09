@@ -9,7 +9,9 @@ services:
         INDEX_URL: "${INDEX_URL:-https://pypi.org/simple}"
     image: yai-agent-core:latest
     ports:
-      - "8001:8000"
+      # 只绑回环：公网由 Caddy（docker-compose.deploy.yml）反代，不直接暴露容器端口
+      # 本地直连调试仍可用 http://127.0.0.1:8001
+      - "127.0.0.1:8001:8000"
     env_file:
       - .env
     environment:
