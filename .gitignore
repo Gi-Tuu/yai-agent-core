@@ -23,3 +23,6 @@ htmlcov/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 由 scripts/build_walkthrough_docx.py 生成的讲义产物（需要时本地构建）
+docs/exports/
