@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from yai_core.types import ChatMessage, ModelResponse, ToolCallRequest
+from yai_core.types import ModelResponse, ToolCallRequest
 
 
 class OpenAICompatProvider:
@@ -34,14 +34,15 @@ class OpenAICompatProvider:
 
     async def achat(
         self,
-        messages: list[ChatMessage],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         *,
         tier: str = "standard",
     ) -> ModelResponse:
+        # messages 由 Context.llm_messages() 产出，已经是 OpenAI 线格式 dict
         kwargs: dict[str, Any] = {
             "model": self.strong_model if tier == "strong" else self.model,
-            "messages": [m.to_llm_dict() for m in messages],
+            "messages": messages,
         }
         if tools:
             kwargs["tools"] = tools

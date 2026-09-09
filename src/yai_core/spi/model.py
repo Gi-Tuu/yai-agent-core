@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from yai_core.types import ChatMessage, ModelResponse
+from yai_core.types import ModelResponse
 
 
 @runtime_checkable
@@ -17,7 +17,7 @@ class ModelProvider(Protocol):
 
     async def achat(
         self,
-        messages: list[ChatMessage],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         *,
         tier: str = "standard",
@@ -25,7 +25,7 @@ class ModelProvider(Protocol):
         """单轮对话。
 
         Args:
-            messages: 对话消息列表。
+            messages: OpenAI 线格式消息字典列表（由 Context.llm_messages() 产出）。
             tools: OpenAI 形状的工具描述列表；None 表示本轮不提供工具。
             tier: "standard" / "strong"，供模型路由（便宜模型 vs 强模型）。
         """
