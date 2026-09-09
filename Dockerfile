@@ -21,6 +21,11 @@ ENV UV_PROJECT_ENVIRONMENT=/usr/local \
 ARG YAI_GIT_COMMIT=dev
 ENV YAI_GIT_COMMIT=${YAI_GIT_COMMIT}
 
+# PyPI 源可在构建时覆盖（网络受限环境传国内镜像，默认官方源保持中立）
+# 例：--build-arg INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG INDEX_URL=https://pypi.org/simple
+ENV UV_INDEX_URL=${INDEX_URL}
+
 # 先拷依赖清单以利用层缓存；README 是 pyproject 的 readme 字段所需
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
