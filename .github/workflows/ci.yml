@@ -10,6 +10,10 @@ jobs:
   test:
     name: lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      # 强制 uv run 使用上一步建好的矩阵版本 venv，
+      # 避免它按 .python-version(3.13) 重新下载解释器并重建 venv
+      UV_ACTIVE: "1"
     strategy:
       fail-fast: false
       matrix:
