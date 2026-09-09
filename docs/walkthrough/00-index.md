@@ -24,7 +24,7 @@
   │
   │ ④ Context 组装消息列表                       【kernel/context.py】
   │
-  │ ⑤（plan 时）先让强模型拆步骤
+  │ ⑤（plan 时）先让强模型拆步骤，再补一条"按计划执行"的 user 指令
   │
   │ ⑥ ReAct 循环                                 【kernel/loop.py】
   │    模型.achat(消息, 工具清单)                 【llm/openai_compat.py / 任何 SPI 模型】
@@ -76,7 +76,7 @@
 - 06 · `kernel/loop.py`：主循环逐行（最重要）
 - 07 · 默认实现：memory / policy / channels
 - 08 · `llm/openai_compat.py` + `core.py`：真实模型与门面
-- 09 · `batteries/fastapi_server`：变成在线 API
+- 09 · `batteries/fastapi_server` + `Dockerfile`：变成在线 API 并容器化部署
 
 ## 5. 自检（读完本篇应能回答）
 

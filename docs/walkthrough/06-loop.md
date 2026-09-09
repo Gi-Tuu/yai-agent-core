@@ -27,7 +27,7 @@ def __init__(self, model, registry, executor, channel, memory,
 - 五大依赖全部注入。`router or AdaptiveRouter()`：调用方没给就用默认款（`None or x` 结果是 x，这是常见的默认值惯用法）。
 - `max_iters=6`：工具循环最多 6 轮，**防止模型反复调工具停不下来**（失控保护）。
 
-## 块 3 · astream：总调度（L56-L84）
+## 块 3 · astream：总调度（L56-L92）
 
 ```python
 async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
@@ -67,6 +67,21 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 - plan 策略：先规划（额外一轮强模型调用），事件同样转发。
 
 ```python
+    # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
+    # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
+    ctx.add(
+        ChatMessage(
+            role="user",
+            content="请按上面的计划逐步调用工具执行，拿到全部结果后给出最终汇报。",
+        )
+    )
+```
+- **这是接真实模型后才暴露、离线测试没抓到的坑**（Day 1-3 修复）。
+- 拆完计划后，消息本最后两条是 `user：拆步骤指令 → assistant：计划文本`，对话停在"助手刚说完计划"。真实模型会认为轮次该结束了，于是把计划原文当最终答复，**一个工具都不调**。
+- 修复办法：补一条 user 消息明确下令"按计划执行"。这模拟了多轮对话里用户的追问，模型才会带着计划进入下面的 ReAct 循环。
+- 教训：**离线脚本模型（ScriptedModel）只会按剧本走，测不出"模型愿不愿意继续"这类问题**；关键路径必须用真实模型回归一次。
+
+```python
     final_text = ""
     async for ev in self._react_cycle(ctx, use_tools=strategy != Strategy.DIRECT):
         yield ev
@@ -83,7 +98,7 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 ```
 - 收尾：把这一轮问答写进记忆，发 DONE 事件（携带最终结果）。
 
-## 块 4 · _make_plan：先拆步骤（L86-L98）
+## 块 4 · _make_plan：先拆步骤（L94-L106）
 ```python
 prompt = ("把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
           "只输出步骤本身：\n" + task)
@@ -107,7 +122,7 @@ yield AgentEvent(EventType.PLAN_CREATED, {"steps": steps})
 - 把计划作为 assistant 消息放回消息本——这样后续工具循环"看得到自己刚定的计划"。
 - 发 PLAN_CREATED 事件，UI 可展示计划。
 
-## 块 5 · _react_cycle：ReAct 工具循环（L100-L156）
+## 块 5 · _react_cycle：ReAct 工具循环（L108-L164）
 
 ### 5.1 循环开头
 ```python
@@ -164,7 +179,7 @@ for call in resp.tool_calls:
 - executor 返回的事件逐个转发（TOOL_CALL/TOOL_RESULT/PERMISSION_ASKED）。
 - **关键闭环**：每个工具结果以 `role="tool"` 消息放回消息本，并用 `tool_call_id` 对应到是哪次调用。下一轮模型就能"看到"工具返回了什么，再决定继续调还是收尾。
 
-### 5.6 迭代上限兜底（L148-L156）
+### 5.6 迭代上限兜底（L156-L164）
 ```python
 # for 循环正常跑完（6 轮都在调工具、没收尾）才会走到这里
 ctx.add(ChatMessage(role="user",
@@ -190,3 +205,4 @@ yield AgentEvent(EventType.MODEL_MESSAGE, {"text": resp.content.strip()})
 3. 为什么 assistant 的 tool_calls 和 tool 结果都必须写回消息本？缺了 tool_call_id 会怎样？
 4. 循环有哪三个出口？（正常收尾 / 错误 / 上限兜底）
 5. direct 策略下 `tools_schema` 是什么？模型此时还能调工具吗？
+6. 为什么 plan 拆完步骤后必须再补一条 user 消息？离线脚本模型为什么没暴露这个问题？

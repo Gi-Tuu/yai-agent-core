@@ -61,6 +61,7 @@ import my_app_capabilities as cap
 core = AgentCore.auto(cap, OpenAICompatProvider())
 app = create_app(core)
 # 环境变量：YAI_GIT_COMMIT=<40位 commit>、YAI_PROJECT_SLUG=<slug>
+# 容器内监听 8000；宿主机端口由部署侧映射（本项目约定 8001:8000）
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 

@@ -97,16 +97,36 @@ def _jsonable(data: dict) -> dict:
 core = AgentCore.auto(capabilities, _model)   # 组装内核（有 Key 用真模型，否则离线模型）
 app = create_app(core)                        # 包成 HTTP 应用
 ```
-命令行：
+启动脚本还做了两件部署相关的小事：
+- `load_dotenv()`：自动读项目根 `.env`（Key、base_url、slug 都在里面），不用手动 set 环境变量；
+- `YAI_GIT_COMMIT` 留空时自动执行 `git rev-parse HEAD` 取 40 位 commit——本地直跑永远和当前代码同源。
+
+本地直跑（**宿主机统一用 8001**；8000 是容器内端口，且本机 8000 可能被别的程序占用）：
 ```powershell
-$env:YAI_GIT_COMMIT="你的40位commit"; $env:YAI_PROJECT_SLUG="gi-tuu-yai"
-.\.venv\Scripts\python.exe -m uvicorn scripts.serve_example:app --host 0.0.0.0 --port 8000
+uv run uvicorn scripts.serve_example:app --host 127.0.0.1 --port 8001
 ```
 然后：
 ```powershell
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/v1/agent/run -H "Content-Type: application/json" -d '{"task":"列出全部笔记"}'
+curl http://localhost:8001/health
+curl -X POST http://localhost:8001/v1/agent/run -H "Content-Type: application/json" -d '{"task":"列出全部笔记"}'
 ```
+
+## 块 7 · 容器化部署（对照 `Dockerfile` 与 `docker-compose.yml`）
+端口约定：**容器内永远监听 8000**（Dockerfile 的 EXPOSE、HEALTHCHECK 都打 8000），宿主机映射 `8001:8000`。这样镜像可以原样部署到任何机器，宿主机端口冲突只改映射、不改镜像。
+
+Dockerfile 的几个教学点：
+```dockerfile
+COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /uvx /bin/   # 从官方 uv 镜像里直接拷二进制
+ARG YAI_GIT_COMMIT=dev
+ENV YAI_GIT_COMMIT=${YAI_GIT_COMMIT}                      # 构建时把 pinned commit 烤进镜像
+ARG INDEX_URL=https://pypi.org/simple
+ENV UV_INDEX_URL=${INDEX_URL}                             # 网络受限时构建参数换国内镜像源
+HEALTHCHECK ... CMD python -c "urllib 请求 /health ..."   # 容器级健康检查，打同一个端点
+```
+- **commit 在构建时固化**：镜像里没有 `.git`（被 `.dockerignore` 排除），运行时取不到哈希，所以用 `--build-arg YAI_GIT_COMMIT=$(git rev-parse HEAD)` 在构建期注入。注意 `.env` 里不要留 `YAI_GIT_COMMIT=` 空行——空值会在运行时覆盖镜像里烤好的值。
+- `.dockerignore` 把 `.env`、`.venv`、`.git`、`docs/` 全部挡在镜像外：密钥不进镜像、镜像只装跑服务需要的东西。
+- 一键起：`docker compose up --build`（compose 经 `env_file: .env` 注入密钥）。
+- 踩坑记录：容器内访问官方 PyPI 会超时，构建时加 `--build-arg INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`；宿主机端口被占时换宿主端口（如 8002:8000），容器内 8000 不动。
 
 ## 一次 HTTP 请求的完整链路
 ```
@@ -125,3 +145,5 @@ curl -X POST http://localhost:8000/v1/agent/run -H "Content-Type: application/js
 3. 为什么响应里要带 events？这对比赛评审意味着什么？
 4. `_jsonable` 防的是什么问题？删掉它、在事件 data 里放一个枚举会怎样？
 5. 把 host_c_companion 也包成一个 app（改 serve_example 即可），用 curl 跑通。
+6. 为什么 commit 要在构建镜像时用 ARG/ENV 固化，而不是容器启动后再读 git？
+7. 容器内端口为什么固定 8000、宿主机却映射 8001？端口冲突时该改哪一边？

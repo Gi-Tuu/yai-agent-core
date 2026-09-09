@@ -4,7 +4,7 @@
 
 ## A. `llm/openai_compat.py`：真实模型适配
 
-### A1. 懒加载第三方库（L12-L33）
+### A1. 懒加载第三方库（L13-L33）
 ```python
 def __init__(self, *, api_key=None, base_url=None, model=None, strong_model=None):
     try:
@@ -29,18 +29,22 @@ self.strong_model = strong_model or os.getenv("LLM_STRONG_MODEL") or self.model
 - 参数优先，其次读环境变量（`.env` 里配置），再给默认值。`A or B or C` 链式兜底再次出现。
 - **为什么换个 base_url 就能接 DeepSeek/通义**：它们都提供 OpenAI 兼容接口，请求格式一样，只是地址和模型名不同。这就是"模型无关"。
 
-### A2. achat：内部消息 → 厂商请求（L35-L50）
+### A2. achat：内部消息 → 厂商请求（L35-L49）
 ```python
-kwargs: dict[str, Any] = {
-    "model": self.strong_model if tier == "strong" else self.model,
-    "messages": [m.to_llm_dict() for m in messages],
-}
-if tools:
-    kwargs["tools"] = tools
-    kwargs["tool_choice"] = "auto"
+async def achat(self, messages: list[dict[str, Any]],
+                tools: list[dict[str, Any]] | None = None, *, tier="standard"):
+    # messages 由 Context.llm_messages() 产出，已经是 OpenAI 线格式 dict
+    kwargs: dict[str, Any] = {
+        "model": self.strong_model if tier == "strong" else self.model,
+        "messages": messages,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
 ```
 - 根据 tier 选模型：规划用强模型，平时用普通模型（省钱/快）。
-- 消息列表逐个 `to_llm_dict()` 转成厂商格式。
+- **消息在这里只透传、不转换**：`Context.llm_messages()` 已经把内部 `ChatMessage` 逐个 `to_llm_dict()` 转成了 OpenAI 线格式 dict（见第 05 篇），Provider 直接转发即可。这里最初多写了一层 `to_llm_dict()`，对 dict 再调一次方法，真接 DeepSeek 必崩（Day 1-3 修复，离线假模块没暴露）——**格式转换只做一次，且在边界上做**。
+- 形参类型因此是 `list[dict[str, Any]]`：Provider 插槽面向"厂商线格式"，不认识内核的 ChatMessage 类。
 - 只有确实有工具时才传 tools，并设 `tool_choice="auto"`（让模型自行决定是否调用）。
 
 ```python
@@ -49,7 +53,7 @@ msg = completion.choices[0].message
 ```
 - 真正的网络调用，await。返回结构里第 0 个 choice 的 message 就是模型回复。
 
-### A3. 解析工具调用，抹平厂商形状（L53-L61）
+### A3. 解析工具调用，抹平厂商形状（L54-L62）
 ```python
 tool_calls: list[ToolCallRequest] = []
 for tc in getattr(msg, "tool_calls", None) or []:
@@ -150,5 +154,6 @@ result = await core.run(task)       # result.final_text / .events
 
 1. openai 为什么在 `__init__` 里才 import？顶层 import 会破坏什么？
 2. DeepSeek、通义千问为什么能用同一个 Provider？要改哪几个配置？
-3. `AgentCore.auto` 内部按什么顺序组装零件？
-4. `run` 和 `astream` 分别适合什么场景？为什么说事件流只有一条路径？
+3. ChatMessage → 厂商 dict 的转换发生在哪一层？为什么 Provider 里不能再转一次？
+4. `AgentCore.auto` 内部按什么顺序组装零件？
+5. `run` 和 `astream` 分别适合什么场景？为什么说事件流只有一条路径？
