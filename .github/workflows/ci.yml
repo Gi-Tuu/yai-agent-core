@@ -38,7 +38,7 @@ jobs:
         run: uv pip install -e ".[dev,llm,server]"
 
       - name: Ruff lint
-        run: uv run ruff check src tests examples
+        run: uv run ruff check src tests examples scripts
 
       - name: Pytest
         run: uv run pytest

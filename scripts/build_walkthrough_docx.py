@@ -297,16 +297,22 @@ def build() -> None:
     tt_run.font.size = Pt(16)
     rpr = tt_run._r.get_or_add_rPr()
     rf = OxmlElement("w:rFonts")
-    rf.set(qn("w:ascii"), "Arial"); rf.set(qn("w:hAnsi"), "Arial")
+    rf.set(qn("w:ascii"), "Arial")
+    rf.set(qn("w:hAnsi"), "Arial")
     rf.set(qn("w:eastAsia"), "黑体")
     rpr.append(rf)
     toc_par = doc.add_paragraph()
-    fld_begin = OxmlElement("w:fldChar"); fld_begin.set(qn("w:fldCharType"), "begin")
-    instr = OxmlElement("w:instrText"); instr.set(qn("xml:space"), "preserve")
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
     instr.text = ' TOC \\o "1-2" \\h \\z \\u '
-    fld_sep = OxmlElement("w:fldChar"); fld_sep.set(qn("w:fldCharType"), "separate")
-    hint = OxmlElement("w:t"); hint.text = "（在 Word 中右键此处选择“更新域”即可生成带页码目录）"
-    fld_end = OxmlElement("w:fldChar"); fld_end.set(qn("w:fldCharType"), "end")
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    hint = OxmlElement("w:t")
+    hint.text = "（在 Word 中右键此处选择“更新域”即可生成带页码目录）"
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
     run_el = toc_par.add_run()._r
     for el in (fld_begin, instr, fld_sep, hint, fld_end):
         run_el.append(el)
@@ -316,13 +322,18 @@ def build() -> None:
     body_section.footer.is_linked_to_previous = False
     footer_par = body_section.footer.paragraphs[0]
     footer_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fb = OxmlElement("w:fldChar"); fb.set(qn("w:fldCharType"), "begin")
-    it = OxmlElement("w:instrText"); it.set(qn("xml:space"), "preserve"); it.text = " PAGE "
-    fe = OxmlElement("w:fldChar"); fe.set(qn("w:fldCharType"), "end")
+    fb = OxmlElement("w:fldChar")
+    fb.set(qn("w:fldCharType"), "begin")
+    it = OxmlElement("w:instrText")
+    it.set(qn("xml:space"), "preserve")
+    it.text = " PAGE "
+    fe = OxmlElement("w:fldChar")
+    fe.set(qn("w:fldCharType"), "end")
     fr = footer_par.add_run()._r
     for el in (fb, it, fe):
         fr.append(el)
-    pgnum = OxmlElement("w:pgNumType"); pgnum.set(qn("w:start"), "1")
+    pgnum = OxmlElement("w:pgNumType")
+    pgnum.set(qn("w:start"), "1")
     body_section._sectPr.append(pgnum)
 
     def render_blocks(blocks: list[tuple[str, object]]) -> None:
@@ -345,9 +356,12 @@ def build() -> None:
                     par = doc.add_paragraph(style="List Number")
                     ppr = par._p.get_or_add_pPr()
                     numpr = OxmlElement("w:numPr")
-                    ilvl = OxmlElement("w:ilvl"); ilvl.set(qn("w:val"), "0")
-                    nid = OxmlElement("w:numId"); nid.set(qn("w:val"), str(num_id))
-                    numpr.append(ilvl); numpr.append(nid)
+                    ilvl = OxmlElement("w:ilvl")
+                    ilvl.set(qn("w:val"), "0")
+                    nid = OxmlElement("w:numId")
+                    nid.set(qn("w:val"), str(num_id))
+                    numpr.append(ilvl)
+                    numpr.append(nid)
                     ppr.append(numpr)
                     add_inline(par, item)
             elif kind == "code":
@@ -369,7 +383,8 @@ def build() -> None:
                     run.font.size = Pt(10.5)
                     tcpr = hdr[j]._tc.get_or_add_tcPr()
                     shd = OxmlElement("w:shd")
-                    shd.set(qn("w:val"), "clear"); shd.set(qn("w:fill"), "D9D9D9")
+                    shd.set(qn("w:val"), "clear")
+                    shd.set(qn("w:fill"), "D9D9D9")
                     tcpr.append(shd)
                 for row in body:
                     cells = table.add_row().cells

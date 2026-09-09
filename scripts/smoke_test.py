@@ -13,11 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
-from yai_core import AgentCore, EventType  # noqa: E402
 from demo_model import OfflineScriptedModel  # noqa: E402
 from host_a_notes import capabilities as notes_app  # noqa: E402
 from host_b_data import capabilities as data_app  # noqa: E402
 from host_c_companion import capabilities as companion_app  # noqa: E402
+from yai_core import AgentCore, EventType  # noqa: E402
 
 _VISIBLE = (
     EventType.STRATEGY_SELECTED,

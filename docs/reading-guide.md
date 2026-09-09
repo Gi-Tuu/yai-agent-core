@@ -78,7 +78,7 @@ cd "D:\YAI Agent Core"
   ```powershell
   .\.venv\Scripts\python.exe -m pytest            # 全部测试
   .\.venv\Scripts\python.exe -m pytest -k router  # 只跑路由测试
-  .\.venv\Scripts\python.exe -m ruff check src tests examples
+  .\.venv\Scripts\python.exe -m ruff check src tests examples scripts
   ```
 
 ## 4. "学懂了"自检清单

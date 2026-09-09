@@ -43,7 +43,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 - 提交前必须本地通过：
 
   ```bash
-  ruff check src tests examples
+  ruff check src tests examples scripts
   pytest
   ```
 
