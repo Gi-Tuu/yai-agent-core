@@ -51,6 +51,37 @@ def test_react_loop_calls_tool_and_finishes() -> None:
     assert model.calls == 2
 
 
+def test_plan_strategy_still_executes_tools() -> None:
+    """回归：plan 拆完步骤后必须真正进入工具循环，不能把计划当最终答复。"""
+
+    def search_notes(keyword: str) -> list:
+        """搜索宿主笔记库。"""
+        return ["X-Agent 0919 截止"] if keyword == "比赛" else []
+
+    model = ScriptedModel(
+        [
+            ModelResponse(content="1. 搜索比赛笔记\n2. 统计总数并汇报"),  # 规划轮（无 tools）
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="p1", name="search_notes",
+                                            arguments={"keyword": "比赛"})],
+            ),
+            ModelResponse(content="找到 1 条比赛相关笔记。"),
+        ]
+    )
+    core = AgentCore(model)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("先搜索比赛笔记，然后汇报"))
+
+    assert result.strategy.value == "plan"
+    event_types = [e.type.value for e in result.events]
+    assert "plan_created" in event_types
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    assert "比赛" in result.final_text
+
+
 def test_direct_answer_without_tools() -> None:
     model = ScriptedModel([ModelResponse(content="你好，我是内嵌助手。")])
     core = AgentCore(model)

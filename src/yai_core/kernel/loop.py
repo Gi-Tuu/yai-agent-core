@@ -72,6 +72,14 @@ class AgentLoop:
         if strategy == Strategy.PLAN:
             async for ev in self._make_plan(ctx, task):
                 yield ev
+            # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
+            # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
+            ctx.add(
+                ChatMessage(
+                    role="user",
+                    content="请按上面的计划逐步调用工具执行，拿到全部结果后给出最终汇报。",
+                )
+            )
 
         final_text = ""
         async for ev in self._react_cycle(ctx, use_tools=strategy != Strategy.DIRECT):
