@@ -11,9 +11,8 @@ jobs:
     name: lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     env:
-      # 强制 uv run 使用上一步建好的矩阵版本 venv，
-      # 避免它按 .python-version(3.13) 重新下载解释器并重建 venv
-      UV_ACTIVE: "1"
+      # 用矩阵解释器覆盖仓库里的 .python-version(3.13)，保证 uv sync/run 不擅自换版本
+      UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,11 +34,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Create venv
-        run: uv venv --python ${{ matrix.python-version }}
-
       - name: Install project (dev + llm + server extras)
-        run: uv pip install -e ".[dev,llm,server]"
+        run: uv sync --extra dev --extra llm --extra server
 
       - name: Ruff lint
         run: uv run ruff check src tests examples scripts
