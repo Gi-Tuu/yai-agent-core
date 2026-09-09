@@ -1,32 +1,32 @@
-"""宿主 B 演示：同一份 Core、零修改，自动适配销售数据应用。"""
+"""宿主 B 演示：同一份 Core、零修改，自动适配销售数据应用。
+
+运行：.venv/Scripts/python.exe examples/host_b_data/run.py [可选任务文本]
+"""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # examples/
 
-from demo_model import OfflineScriptedModel  # noqa: E402
+from runner_common import bootstrap, build_model, load_dotenv, stream  # noqa: E402
+
+bootstrap()
+
 from host_b_data import capabilities  # noqa: E402
 from yai_core import AgentCore  # noqa: E402
 
+DEFAULT_TASK = "先筛选硬件品类，然后统计销售额并整理成报告"
+
 
 async def main() -> None:
-    if os.getenv("OPENAI_API_KEY"):
-        from yai_core import OpenAICompatProvider
-
-        model = OpenAICompatProvider()
-    else:
-        model = OfflineScriptedModel()
+    load_dotenv()
+    model, backend = build_model()
     core = AgentCore.auto(capabilities, model)
-    print("自动发现的工具：", [t["name"] for t in core.list_tools()])
-    result = await core.run("先筛选硬件品类，然后统计销售额并整理成报告")
-    print("策略：", result.strategy.value)
-    print("最终结果：", result.final_text)
+    task = " ".join(sys.argv[1:]).strip() or DEFAULT_TASK
+    await stream(core, task, backend)
 
 
 if __name__ == "__main__":
