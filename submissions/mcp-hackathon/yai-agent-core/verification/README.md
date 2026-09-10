@@ -51,6 +51,8 @@ curl -sS -X POST https://yai-agent-core.onrender.com/v1/agent/run \
 期望返回 JSON，包含：
 
 - `strategy`：自适应路由结果（该任务通常为 `plan` 或 `react`）；
+- `events[0]`（`strategy_selected`）带 `source`（`llm` 模型分类 / `rules` 规则兜底）、
+  `reason`（中文决策理由）与 `tier`（standard/strong）——决策本身可审计；
 - `final_text`：模型基于真实工具结果给出的中文总结；
 - `events`：完整过程事件序列（`strategy_selected` → `tool_call` → `tool_result`（ok=true）→ … → `done`），证明工具被真实调用而非提示词演示。
 

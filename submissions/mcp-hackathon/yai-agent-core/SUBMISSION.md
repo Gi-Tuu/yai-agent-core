@@ -18,9 +18,12 @@ YAI Agent Core 类比"Agent 世界的 SQLite"：以库的形式运行在宿主�
 
 1. 宿主只提供普通 Python 函数（type hints + docstring），Core 内省生成工具规格；
 2. 外部 MCP Server 的工具经 MCP Client 同构接入（v0.2 已落地）；
-3. Adaptive Router 把任务路由到 `direct / react / plan / clarify` 四种策略；
-4. Agent Loop 完成 ReAct 工具循环 / 计划拆解执行；
-5. 每一次策略选择、工具调用、权限确认都作为事件流出，**过程可审计，不是黑盒**。
+3. Adaptive Router 把任务路由到 `direct / react / plan / clarify` 四种策略：
+   v0.2 起先由模型做一次轻量分类（输出 `{strategy, reason, tier}` JSON），
+   超时/异常/非法输出自动回退确定性规则，**两条路径都返回带来源的决策记录**；
+4. Agent Loop 完成 ReAct 工具循环 / 计划拆解执行（规划轮使用路由建议的模型档位）；
+5. 每一次策略选择（含 `source=llm|rules` 与理由）、工具调用、权限确认都作为事件流出，
+   **过程可审计，不是黑盒**。
 
 它不是又一个需要开发者拼装的 Agent 框架，而是可以"装进软件里"的内核；项目最终将回流嵌入开源 AI Companion 项目 AMBRACE。
 
