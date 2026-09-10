@@ -20,6 +20,7 @@ from yai_core.integrations.mcp import (  # noqa: E402
     McpServerConfig,
     McpToolBridge,
     attach_mcp_tools,
+    config_from_env,
     sanitize_schema,
 )
 from yai_core.policy import AllowlistPolicy  # noqa: E402
@@ -169,6 +170,18 @@ def test_sanitize_schema() -> None:
     assert clean["type"] == "object"
     assert sanitize_schema({}) == {"type": "object", "properties": {}}
     assert sanitize_schema(["a", 1]) == ["a", 1]
+
+
+def test_config_from_env() -> None:
+    """部署期通过环境变量决定接哪个 MCP Server；未配置时返回 None（不报错）。"""
+    assert config_from_env(env={}) is None
+
+    url_cfg = config_from_env(alias="deepwiki", env={"MCP_SERVER_URL": "https://x/mcp"})
+    assert url_cfg is not None and url_cfg.url == "https://x/mcp" and url_cfg.alias == "deepwiki"
+
+    cmd_cfg = config_from_env(env={"MCP_SERVER_COMMAND": "python server.py --stdio"})
+    assert cmd_cfg is not None and cmd_cfg.command == "python"
+    assert cmd_cfg.args == ["server.py", "--stdio"]
 
 
 def test_no_toplevel_mcp_import_keeps_kernel_dependency_free() -> None:

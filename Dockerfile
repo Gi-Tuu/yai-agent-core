@@ -1,5 +1,5 @@
 # YAI Agent Core —— 在线 API 示例镜像（X-Agent 部署形态）
-# 内核零硬依赖；镜像只装 server + llm 两组可选依赖。
+# 内核零硬依赖；镜像装 server + llm + mcp 三组可选依赖（mcp 让线上 API 也能调外部 MCP Server）。
 # 构建：docker build -t yai-agent-core .
 # 运行：docker run --rm -p 8000:8000 --env-file .env yai-agent-core
 
@@ -33,7 +33,7 @@ COPY src ./src
 COPY examples ./examples
 COPY scripts ./scripts
 
-RUN uv pip install --system -e ".[server,llm]"
+RUN uv pip install --system -e ".[server,llm,mcp]"
 
 # 默认 8000；托管平台（如 Render）通过 PORT 环境变量指定端口，CMD/HEALTHCHECK 均兼容
 EXPOSE 8000

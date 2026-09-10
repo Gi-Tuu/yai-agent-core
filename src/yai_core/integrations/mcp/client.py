@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,6 +92,31 @@ class McpServerConfig:
     env: dict[str, str] | None = None
     prefix: str = ""
     server: Any | None = None
+
+
+def config_from_env(
+    *,
+    alias: str = "remote",
+    url_env: str = "MCP_SERVER_URL",
+    command_env: str = "MCP_SERVER_COMMAND",
+    env: dict[str, str] | None = None,
+) -> McpServerConfig | None:
+    """从环境变量构造 MCP Server 配置；两个变量都没设置时返回 None。
+
+    - <url_env>：Streamable HTTP URL，部署形态最常用（如线上挂公共 MCP Server）；
+    - <command_env>：stdio 启动命令（空格分词，Windows 按系统规则切分）。
+    让"是否接外部 MCP、接哪个"成为部署期配置，代码不用改。
+    """
+    environ = os.environ if env is None else env
+    url = environ.get(url_env)
+    if url:
+        return McpServerConfig(alias=alias, url=url)
+    command_line = environ.get(command_env)
+    if command_line:
+        parts = shlex.split(command_line, posix=(os.name != "nt"))
+        if parts:
+            return McpServerConfig(alias=alias, command=parts[0], args=parts[1:])
+    return None
 
 
 def _flatten_call_result(result: Any) -> Any:

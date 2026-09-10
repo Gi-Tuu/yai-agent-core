@@ -19,6 +19,8 @@ _PLAN_HINTS = (
 _ACTION_HINTS = (
     "查", "找", "搜", "列出", "统计", "计算", "导出", "获取", "读取",
     "记录", "新增", "整理", "分析", "筛选", "生成",
+    # 显式的工具/MCP 调用意图（v0.2 接外部 MCP Server 后补齐）
+    "问一下", "查询", "调用", "工具", "mcp",
 )
 # 过于模糊、需要反问
 _CLARIFY_HINTS = ("随便", "你看着办", "什么都行", "帮我弄一下")
@@ -37,7 +39,11 @@ class AdaptiveRouter:
         if len(registry) == 0:
             # 宿主没有任何能力 -> 只能直接回答
             return Strategy.DIRECT
-        wants_action = any(h in text for h in _ACTION_HINTS)
+        # 拉丁字母提示词（如 mcp）大小写不敏感；中文提示词按原文匹配。
+        lowered = text.lower()
+        wants_action = any(
+            (h in lowered) if h.isascii() else (h in text) for h in _ACTION_HINTS
+        )
         multi_step = sum(1 for h in _PLAN_HINTS if h in text) >= 1
         if multi_step and wants_action:
             return Strategy.PLAN

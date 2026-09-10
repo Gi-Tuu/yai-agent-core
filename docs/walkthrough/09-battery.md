@@ -25,16 +25,19 @@ class RunRequest(BaseModel):
 - Pydantic 模型：声明 HTTP 请求体长什么样。客户端 POST `{"task": "..."}`，FastAPI 自动校验：缺字段/类型错会直接返回 422，并把 JSON 转成 `req.task`。
 - **踩过的坑（真实记录）**：这个类最初写在 `create_app` 函数内部，FastAPI 无法把闭包里的模型识别成请求体，报 422 query 参数缺失。提到模块级后正常——所以框架的"魔法"也有边界，遇到怪错先怀疑作用域。
 
-## 块 3 · create_app：工厂函数（L28-L31）
+## 块 3 · create_app：工厂函数
 ```python
-def create_app(core: Any) -> FastAPI:
-    app = FastAPI(title="YAI Agent Core API", version="0.1.0")
+def create_app(core: Any, lifespan: Any = None) -> FastAPI:
+    app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
 ```
 - **应用工厂**：传入一个已组装好的 core，返回一个 HTTP app。这样同一份代码可以挂不同宿主的 core。
 - `core: Any`：Battery 不反向依赖内核具体类型，避免循环依赖，也方便测试时传假 core。
 - commit/slug 从环境变量读，部署 X-Agent 时注入真实 pinned commit；本地缺省 "dev"。
+- 可选 `lifespan` 形参（v0.2 加）：把 FastAPI 的生命周期钩子（启动挂载外部 MCP、
+  关闭断开连接）留给宿主脚本注入，电池本身不认识 MCP——依赖方向仍然是"宿主 → 电池 → 内核"。
+  具体用法见第 10 章块 10。
 
 ## 块 4 · 四个路由（L33-L54）
 

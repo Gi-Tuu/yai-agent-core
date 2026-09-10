@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -69,4 +70,33 @@ print(f"serve_example 后端：{_backend}")
 print(f"验证端点 commit：{os.environ['YAI_GIT_COMMIT']}")
 
 core = AgentCore.auto(capabilities, _model)
-app = create_app(core)
+
+
+@contextlib.asynccontextmanager
+async def mcp_lifespan(_app):
+    """启动时按环境变量挂载外部 MCP Server（如 DeepWiki 公共端点）；关闭时断开。
+
+    挂载失败（没装 mcp extra / 外部 Server 不可达）只告警、不阻断启动：
+    本地 native 工具与验证端点必须始终可用。
+    """
+    bridges = []
+    try:
+        from yai_core.integrations.mcp import attach_mcp_tools, config_from_env
+
+        cfg = config_from_env(alias="remote")
+        if cfg is not None:
+            try:
+                bridge = await attach_mcp_tools(core.registry, cfg)
+                bridges.append(bridge)
+                names = [s.name for s in bridge.specs]
+                print(f"MCP 已挂载（{cfg.alias}）：{names}")
+            except Exception as exc:  # noqa: BLE001 - 外部依赖不可用是运行时常态
+                print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{type(exc).__name__}: {exc}")
+        yield
+    finally:
+        for bridge in bridges:
+            with contextlib.suppress(Exception):
+                await bridge.aclose()
+
+
+app = create_app(core, lifespan=mcp_lifespan)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+
+import pytest
 from fastapi.testclient import TestClient
 
 from yai_core import AgentCore, ModelResponse, build_spec
@@ -60,3 +63,39 @@ def test_agent_run_endpoint_returns_events_and_text(monkeypatch) -> None:
     event_types = [e["type"] for e in body["events"]]
     assert "strategy_selected" in event_types
     assert event_types[-1] == "done"
+
+
+def test_lifespan_attaches_mcp_tools(monkeypatch) -> None:
+    """lifespan 挂载的外部 MCP 工具要出现在 /v1/tools（线上部署形态的离线回放）。"""
+    pytest.importorskip("mcp")
+    from mcp.server import MCPServer
+
+    from yai_core.integrations.mcp import McpServerConfig, attach_mcp_tools
+
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    monkeypatch.setenv("YAI_PROJECT_SLUG", "yai-test")
+
+    server = MCPServer("TestWiki")
+
+    @server.tool()
+    def ask_question(repoName: str, question: str) -> str:
+        """Ask a question about a repository."""
+        return f"wiki answer for {repoName}: {question}"
+
+    core = AgentCore(ScriptedModel("ok"))
+    core.register_tools([build_spec(list_notes)])
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        bridge = await attach_mcp_tools(
+            core.registry, McpServerConfig(alias="wiki", server=server)
+        )
+        try:
+            yield
+        finally:
+            await bridge.aclose()
+
+    with TestClient(create_app(core, lifespan=lifespan)) as client:
+        tools = {t["name"]: t for t in client.get("/v1/tools").json()}
+        assert "list_notes" in tools  # native 工具仍在
+        assert tools["ask_question"]["source"] == "mcp"  # MCP 工具同构挂载

@@ -30,8 +30,8 @@ YAI Agent Core 类比"Agent 世界的 SQLite"：以库的形式运行在宿主�
 |---|---|---|
 | `/health` | GET | 健康检查，返回 `status` 与本次部署的 40 位 commit |
 | `/.well-known/xagent-verification.json` | GET | 部署证明：`schemaVersion=1` + `slug` + `commit` |
-| `/v1/tools` | GET | 当前宿主注册的全部工具（含 `source: native/mcp` 来源标注） |
-| `/v1/agent/run` | POST | 入参 `{"task": "..."}`，返回策略、最终结果与**全过程事件流** |
+| `/v1/tools` | GET | 当前宿主注册的全部工具（含 `source: native/mcp` 来源标注；线上实例同时挂载本地笔记工具与公共 DeepWiki MCP Server 的 3 个远程工具） |
+| `/v1/agent/run` | POST | 入参 `{"task": "..."}`，返回策略、最终结果与**全过程事件流**；任务涉及外部仓库问答时会真实发起 MCP 工具调用 |
 
 可复现的 curl 命令与期望输出见 `verification/README.md`。
 
@@ -69,6 +69,7 @@ src/yai_core/
 
 - 工具边界清晰：每个工具有 name / description / JSON Schema 入参，MCP 工具 schema 经白名单清洗后与本地工具同构；
 - 已实现 MCP Client（官方 Python SDK v2），支持 Streamable HTTP、stdio 子进程、内存直连三种传输；
+- **线上 API 自身即 MCP 消费方**：部署期通过 `MCP_SERVER_URL` 环境变量挂载公共免鉴权 MCP Server（DeepWiki），评审可直接 POST 任务让线上服务真实调用远程 MCP 工具，挂载失败不影响本地工具与验证端点（优雅降级）；
 - 错误语义明确：MCP `is_error` 统一翻译为失败结果并产生 `tool_result(ok=false)` 事件；
 - 权限、超时（规划中）、限流（评审期）、副作用边界均在 Tool Bus 一层统一收口；
 - 入选后可直接配合 X-Agent 做工具边界与 I/O schema 标准化，本项目自身不绑定任何特定 MCP Server。

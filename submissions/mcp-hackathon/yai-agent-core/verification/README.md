@@ -35,7 +35,9 @@ curl -sS https://yai-agent-core.onrender.com/.well-known/xagent-verification.jso
 curl -sS https://yai-agent-core.onrender.com/v1/tools
 ```
 
-期望返回宿主演示应用自动发现的 3 个 native 工具（count_notes / list_notes / search_notes），每项含 `name`、`description`、`source`。
+期望返回宿主演示应用自动发现的 3 个 native 工具（count_notes / list_notes / search_notes）
+以及线上通过 MCP Client 挂载的 3 个 `source: "mcp"` 远程工具（ask_question /
+read_wiki_contents / read_wiki_structure，来自公共免鉴权的 DeepWiki MCP Server）。
 
 ## 4. 真实 Agent 任务（POST，会真实调用 DeepSeek 模型）
 
@@ -59,6 +61,19 @@ $body = @{ task = "搜索笔记里关于比赛的内容并总结" } | ConvertTo-
 curl.exe -sS -X POST https://yai-agent-core.onrender.com/v1/agent/run `
   -H "Content-Type: application/json" --data $body --max-time 180
 ```
+
+## 4b. 真实外部 MCP 工具调用（MCP 产品化硬证据）
+
+```bash
+curl -sS -X POST https://yai-agent-core.onrender.com/v1/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"task": "用 MCP 工具问一下 GitHub 仓库 modelcontextprotocol/python-sdk：MCP 的 Client 怎么初始化？用中文给结论。"}' \
+  --max-time 180
+```
+
+期望：`strategy` 为 `react`；`events` 中出现对 `ask_question`（source=mcp）的
+`tool_call` / `tool_result(ok=true)`；`final_text` 是基于远程 MCP 返回内容的中文回答。
+该调用链为：本服务 → DeepSeek 规划工具调用 → Streamable HTTP 调远程 MCP Server → 结果回灌 → 模型总结。
 
 ## 5. 本地/隔离环境复现
 

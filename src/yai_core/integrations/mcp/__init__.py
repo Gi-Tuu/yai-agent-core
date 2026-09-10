@@ -4,6 +4,7 @@ from yai_core.integrations.mcp.client import (
     McpServerConfig,
     McpToolBridge,
     attach_mcp_tools,
+    config_from_env,
     sanitize_schema,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "McpServerConfig",
     "McpToolBridge",
     "attach_mcp_tools",
+    "config_from_env",
     "sanitize_schema",
 ]

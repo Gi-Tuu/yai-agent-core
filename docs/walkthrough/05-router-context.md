@@ -4,16 +4,19 @@
 
 ## A. `kernel/router.py`：自适应路由
 
-### A1. 信号词表（L13-L24）
+### A1. 信号词表（router.py 顶部）
 ```python
 _PLAN_HINTS = ("然后", "接着", "之后", "再把", "分步", "步骤", "先", "并且",
                "同时", "对比", "整理成", "汇总成", "最终", "一共", "分别")
 _ACTION_HINTS = ("查", "找", "搜", "列出", "统计", "计算", "导出", "获取",
-                 "读取", "记录", "新增", "整理", "分析", "筛选", "生成")
+                 "读取", "记录", "新增", "整理", "分析", "筛选", "生成",
+                 # 显式的工具/MCP 调用意图（v0.2 接外部 MCP Server 后补齐）
+                 "问一下", "查询", "调用", "工具", "mcp")
 _CLARIFY_HINTS = ("随便", "你看着办", "什么都行", "帮我弄一下")
 ```
 - 三个元组就是三张"关键词表"。这是 v0.1 的确定性规则实现：**零成本、离线可跑、每条规则都能写单元测试**（见 `tests/test_router.py`）。
 - 元组而不是列表：这些表不该被运行时修改，元组语义更准确。
+- 最后五个词是一次真实回归补的：任务写"用 MCP 工具**问一下**……"时，旧词表没有任何动作信号，被路由成 direct，结果模型想调工具却拿不到工具清单，只能把工具调用写成文本。规则路由是 LLM 路由的兜底，**兜底也必须覆盖最直白的工具意图表达**。
 
 ### A2. 类与构造（L27-L29）
 ```python
@@ -46,7 +49,11 @@ def classify(self, task: str, registry: ToolRegistry) -> Strategy:
 - 宿主一个工具都没有，再复杂也没法调工具，只能让模型直接回答。注意它在行动判断**之前**——能力边界优先于用户意图。
 
 ```python
-    wants_action = any(h in text for h in _ACTION_HINTS)
+    # 拉丁字母提示词（如 mcp）大小写不敏感；中文提示词按原文匹配。
+    lowered = text.lower()
+    wants_action = any(
+        (h in lowered) if h.isascii() else (h in text) for h in _ACTION_HINTS
+    )
     multi_step = sum(1 for h in _PLAN_HINTS if h in text) >= 1
     if multi_step and wants_action:
         return Strategy.PLAN
@@ -55,6 +62,8 @@ def classify(self, task: str, registry: ToolRegistry) -> Strategy:
     return Strategy.DIRECT
 ```
 - `wants_action`：像需要动手的任务。
+- `h.isascii()` 判断提示词是不是纯拉丁字母（如 `"mcp"`）：是就对**小写化后的任务**匹配，让 "MCP"、"mcp"、"Mcp" 都能命中；中文词不受影响（中文没有大小写，`lower()` 也不会改它，但保持语义清晰）。
+- 生成器表达式里的三元表达式 `(h in lowered) if h.isascii() else (h in text)`：逐个提示词选择匹配文本，`any(...)` 有一个命中即 True。
 - `multi_step`：`sum(1 for h in ... if 命中)` 是"数命中了几个多步信号"的生成器写法；命中 ≥1 就算多步。
 - 决策优先级：**多步且要动手 → PLAN（先规划再执行）；只动手 → REACT；其余 → DIRECT。**
 - 最后一行注释解释了一个反直觉点：DIRECT 时模型并非被禁止用工具，只是首轮不塞工具清单（在 06 篇看 `use_tools`）。

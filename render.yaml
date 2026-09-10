@@ -26,3 +26,6 @@ services:
         value: deepseek-chat
       - key: YAI_PROJECT_SLUG
         value: yai-agent-core # X-Agent 提交 slug：必须与提交目录名、验证 JSON 一致
+      - key: MCP_SERVER_URL
+        # 公共免鉴权 MCP Server（DeepWiki）：让线上 API 也能真实调用外部 MCP 工具
+        value: https://mcp.deepwiki.com/mcp

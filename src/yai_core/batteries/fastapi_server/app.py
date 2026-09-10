@@ -25,8 +25,8 @@ class RunRequest(BaseModel):
     task: str
 
 
-def create_app(core: Any) -> FastAPI:
-    app = FastAPI(title="YAI Agent Core API", version="0.1.0")
+def create_app(core: Any, lifespan: Any = None) -> FastAPI:
+    app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
 

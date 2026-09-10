@@ -71,7 +71,15 @@ docs/                    # 架构设计、代码学习导览、三个比赛的�
 ```bash
 uv pip install -e ".[mcp]"          # 或 uv sync --extra mcp
 python examples/host_d_mcp/run.py   # 自带本地 stdio 演示 Server，离线可跑
+
+# 改接任意公共 MCP Server（HTTP 形态），无需改代码：
+$env:MCP_SERVER_URL="https://mcp.deepwiki.com/mcp"   # PowerShell
+python examples/host_d_mcp/run.py "用 MCP 工具问一下 modelcontextprotocol/python-sdk：Client 怎么初始化？"
 ```
+
+在线 API 同样靠环境变量挂载外部 MCP（`scripts/serve_example.py` 的 lifespan
+启动挂载、关闭断开、失败降级为仅本地工具）；线上实例默认挂公共免鉴权的 DeepWiki，
+评审可直接 POST 任务让服务真实调用远程 MCP 工具。
 
 ```python
 from yai_core.integrations.mcp import McpServerConfig, attach_mcp_tools

@@ -235,15 +235,83 @@ finally:
   `native` 和 `mcp` 两种来源——统一注册表的直接证据。
 - 运行：`.venv/Scripts/python.exe examples/host_d_mcp/run.py`（需 `--extra mcp`）。
 
-## 测试策略（`tests/test_mcp_bridge.py`）
+## 块 10 · 部署期接线：config_from_env 与 FastAPI lifespan（线上也能调 MCP）
+
+host_d 里"读环境变量 → 构造 config"的逻辑被收敛成可复用函数 `config_from_env`：
+
+```python
+def config_from_env(*, alias="remote",
+                    url_env="MCP_SERVER_URL",
+                    command_env="MCP_SERVER_COMMAND", env=None):
+    environ = os.environ if env is None else env
+    if url := environ.get(url_env):
+        return McpServerConfig(alias=alias, url=url)          # HTTP 形态
+    if command_line := environ.get(command_env):
+        parts = shlex.split(command_line, posix=(os.name != "nt"))
+        if parts:
+            return McpServerConfig(alias=alias, command=parts[0], args=parts[1:])
+    return None                                                # 没配置 → None
+```
+- `env=None` 时默认读 `os.environ`，测试时可传入假字典——纯函数、离线可测。
+- 返回 `None` 而不是抛异常：**"不接外部 MCP"是合法部署形态**，调用方据此决定跳过。
+
+在线服务 `scripts/serve_example.py` 用 FastAPI 的 lifespan 在进程启停时挂载/断开：
+
+```python
+@contextlib.asynccontextmanager
+async def mcp_lifespan(_app):
+    bridges = []
+    try:
+        from yai_core.integrations.mcp import attach_mcp_tools, config_from_env
+        if (cfg := config_from_env(alias="remote")) is not None:
+            try:
+                bridges.append(await attach_mcp_tools(core.registry, cfg))
+            except Exception as exc:                # 外部 Server 挂了是运行时常态
+                print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{exc}")
+        yield                                    # ← 服务在这期间对外提供请求
+    finally:
+        for bridge in bridges:
+            with contextlib.suppress(Exception):  # 关闭阶段任何异常都不能拖住停机
+                await bridge.aclose()
+
+app = create_app(core, lifespan=mcp_lifespan)
+```
+逐行要点：
+- **优雅降级**：MCP 挂载失败只打印警告，native 工具、`/health`、验证端点照常服务。
+  外部依赖永远不能成为内核启动的单点——这是嵌入式内核的自我要求。
+- `contextlib.suppress(Exception)`：停机清理阶段"尽力而为"，连接早断了也不该抛栈。
+- `create_app(core, lifespan=...)`：battery 的 `create_app` 增加了可选 lifespan 形参，
+  电池本身不认识 MCP，接线仍由宿主脚本决定（依赖方向不反转）。
+- 镜像侧：Dockerfile 的依赖安装改为 `.[server,llm,mcp]`；Render 侧 `render.yaml`
+  增加普通环境变量 `MCP_SERVER_URL=https://mcp.deepwiki.com/mcp`（公共免鉴权 DeepWiki）。
+  **接哪个 MCP Server 是部署期配置，代码一行不用改。**
+
+### 一次真实端到端（DeepSeek × DeepWiki MCP）
+
+设置 `MCP_SERVER_URL=https://mcp.deepwiki.com/mcp` 后跑 host_d，任务
+"用 MCP 工具问一下 GitHub 仓库 modelcontextprotocol/python-sdk：Client 初始化最小代码？"：
+1. 第一次跑路由误判成 `direct`（不传工具清单），模型把工具调用写成了文本标签——
+   规则词表缺"问一下/工具/mcp"这类**显式工具意图**；
+2. 给 `_ACTION_HINTS` 补词、拉丁词改大小写不敏感匹配，并在 `tests/test_router.py`
+   加 3 条回归测试（见 05 篇 A1）；
+3. 重跑：路由 `react` → DeepSeek 发出标准 function call → HTTP 调远程
+   `ask_question` → 真实 wiki 内容回灌 → 模型产出中文结论与代码。
+这条链路（本服务 → LLM 规划 → Streamable HTTP MCP → 结果回灌 → 模型总结）
+就是 X-Agent "MCP 产品化"评分项最硬的证据，且可被评审用 curl 复现。
+
+## 测试策略（`tests/test_mcp_bridge.py` + `tests/test_battery_api.py`）
 - 文件首行 `pytest.importorskip("mcp")`：最小安装（无 mcp extra）的环境整文件跳过，
-  内核 15 个老测试照常全绿；CI 矩阵统一加装 `--extra mcp` 后这 8 个用例才真正执行。
+  内核老测试照常全绿；CI 矩阵统一加装 `--extra mcp` 后这些用例才真正执行。
 - 用块 3 的第 ③ 种形态（内存 MCPServer 实例）测：文本工具、Pydantic 结构化工具、
   ToolError 错误工具各一个，不起子进程、不触网、毫秒级。
 - 端到端用例把 MCP 工具塞进真的 `ToolExecutor`（配 allow_all 策略 + CollectChannel），
   验证成功路径的事件序列和失败路径的 `ok=False` 回灌——证明对 Loop 完全透明。
-- stdio 子进程路径在开发期用临时探针实测过（add(17,25)→42），探针按纪律已删除；
-  这类涉及真实子进程的验证不进自动化测试，避免给 CI 引入平台差异。
+- `test_config_from_env`：空环境返回 None、URL/命令两种形态的解析，纯函数离线覆盖。
+- `tests/test_battery_api.py::test_lifespan_attaches_mcp_tools`：用 TestClient 跑
+  lifespan，内存 MCP Server 的工具必须出现在 `/v1/tools` 且 `source=="mcp"`，
+  这是线上部署形态（块 10）的离线回放。
+- stdio 子进程路径、公共 HTTP MCP（DeepWiki）端到端在开发期用临时探针/示例实测，
+  不进自动化测试，避免给 CI 引入网络与平台差异；实测步骤沉淀在本章块 10。
 
 ## 自检
 
@@ -258,3 +326,6 @@ finally:
 6. 为什么 host_d 要用 try/finally 调 aclose？不关掉 stdio 形态会留下什么？
 7. 让 host_d 改接一个 HTTP 形态的 MCP Server，需要改代码吗？要改什么？
 8. 本章新增的代码，哪些属于"内核零依赖"范围，哪些属于可选集成？边界由什么机制保证？
+9. 线上服务启动时外部 MCP Server 不可达，为什么不能让服务启动失败？代码怎么实现降级？
+10. "用 MCP 工具问一下……"第一次被路由成 direct 导致什么现象？为什么规则兜底也必须
+    覆盖显式工具意图？
