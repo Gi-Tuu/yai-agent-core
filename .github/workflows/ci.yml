@@ -34,8 +34,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install project (dev + llm + server extras)
-        run: uv sync --extra dev --extra llm --extra server
+      - name: Install project (dev + llm + server + mcp extras)
+        run: uv sync --extra dev --extra llm --extra server --extra mcp
 
       - name: Ruff lint
         run: uv run ruff check src tests examples scripts

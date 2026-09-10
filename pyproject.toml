@@ -18,6 +18,8 @@ server = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
 ]
+# MCP Client 集成：接入外部 MCP Server 的工具（v2 稳定线，内核本体不依赖）
+mcp = ["mcp>=2.0,<3"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
