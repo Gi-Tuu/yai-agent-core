@@ -44,6 +44,8 @@
    - **commit**：Render 自动注入 `RENDER_GIT_COMMIT`（本次部署的完整 SHA），
      `serve_example.py` 的解析链 `YAI_GIT_COMMIT → RENDER_GIT_COMMIT → git HEAD → dev`
      会自动采用它，/health 与验证端点返回的 commit 天然等于部署的 commit。
+     注意解析时只接受完整 40 位小写哈希——镜像里烤的默认值 `dev` 不是合法哈希会被跳过
+     （首部署实测：若不跳过，非空的 `dev` 会遮蔽平台注入的真实 SHA）。
 6. 部署完成后得到 `https://yai-agent-core.onrender.com`（名字以实际为准），按第 4 节验证四个端点。
 7. 风险：15 分钟无流量会休眠，评审机第一次访问可能撞上约 1 分钟冷启动页（不是我们的 JSON）。
    **正式评审前必须换到常驻 VPS。**
