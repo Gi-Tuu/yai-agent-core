@@ -127,7 +127,7 @@ HEALTHCHECK ... CMD python -c "urllib 请求 /health ..."   # 容器级健康检
 - `.dockerignore` 把 `.env`、`.venv`、`.git`、`docs/` 全部挡在镜像外：密钥不进镜像、镜像只装跑服务需要的东西。
 - 一键起：`docker compose up --build`（compose 经 `env_file: .env` 注入密钥）。
 - 踩坑记录：容器内访问官方 PyPI 会超时，构建时加 `--build-arg INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`；宿主机端口被占时换宿主端口（如 8002:8000），容器内 8000 不动。
-- **PaaS 平台的端口约定**：Render 这类平台不让你自己决定监听端口，它会注入 `PORT` 环境变量（Render 默认 10000），只把流量转发到容器的这个端口。所以 CMD 写成 shell 形式 `--port ${PORT:-8000}`：自管环境没有 `PORT` 就听 8000，上了平台自动听平台指定的端口。同理，平台还会注入"本次部署的 commit"（Render 是 `RENDER_GIT_COMMIT`），启动脚本按 `YAI_GIT_COMMIT → RENDER_GIT_COMMIT → git HEAD → dev` 的顺序解析，验证端点在任何环境都能报出真实版本。这就是"一次构建、处处可部署"的写法：**环境差异全部走环境变量，代码不写死。**
+- **PaaS 平台的端口约定**：Render 这类平台不让你自己决定监听端口，它会注入 `PORT` 环境变量（Render 默认 10000），只把流量转发到容器的这个端口。所以 CMD 写成 shell 形式 `--port ${PORT:-8000}`：自管环境没有 `PORT` 就听 8000，上了平台自动听平台指定的端口。同理，平台还会注入"本次部署的 commit"（Render 是 `RENDER_GIT_COMMIT`），启动脚本按 `YAI_GIT_COMMIT → RENDER_GIT_COMMIT → git HEAD → dev` 的顺序解析，且只认完整 40 位哈希（镜像里烤的默认值 `dev` 不是合法哈希，会被自动跳过，平台注入的真实 SHA 才会生效——这是 Render 首部署时实测出来的坑），验证端点在任何环境都能报出真实版本。这就是"一次构建、处处可部署"的写法：**环境差异全部走环境变量，代码不写死。**
 
 ## 一次 HTTP 请求的完整链路
 ```

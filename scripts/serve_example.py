@@ -8,14 +8,18 @@
     OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL   真实模型（缺省走离线演示模型）
     YAI_GIT_COMMIT=<40位 commit>  YAI_PROJECT_SLUG=<slug>   X-Agent 验证端点
     commit 解析顺序：YAI_GIT_COMMIT → 平台注入（如 RENDER_GIT_COMMIT）→ 当前 git HEAD → dev
+    （只接受完整 40 位哈希，镜像默认值 dev 等占位会被跳过）
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+_SHA40 = re.compile(r"[0-9a-f]{40}")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -43,13 +47,22 @@ def _git_commit() -> str:
         return "dev"
 
 
+def _valid_sha(value: str | None) -> str | None:
+    """只接受完整 40 位小写哈希；dev、空串、短 SHA 等占位值一律视为无效。"""
+    if value and _SHA40.fullmatch(value.strip()):
+        return value.strip()
+    return None
+
+
 load_dotenv()
-# commit 解析链：显式 YAI_GIT_COMMIT > 托管平台注入的 commit（Render 为 RENDER_GIT_COMMIT）
-# > 当前 git HEAD（本地联调）> dev。保证验证端点始终能反映实际运行的代码版本。
-if not os.environ.get("YAI_GIT_COMMIT"):
-    os.environ["YAI_GIT_COMMIT"] = (
-        os.environ.get("RENDER_GIT_COMMIT") or _git_commit()
-    )
+# commit 解析链：YAI_GIT_COMMIT（构建期固化）→ 平台注入（Render 为 RENDER_GIT_COMMIT）
+# → 当前 git HEAD（本地联调）→ dev。
+# 注意镜像 ENV 里烤着默认值 dev（非合法哈希），必须跳过它，平台注入的真实 SHA 才能生效。
+os.environ["YAI_GIT_COMMIT"] = (
+    _valid_sha(os.environ.get("YAI_GIT_COMMIT"))
+    or _valid_sha(os.environ.get("RENDER_GIT_COMMIT"))
+    or _git_commit()
+)
 
 _model, _backend = build_model()
 print(f"serve_example 后端：{_backend}")
