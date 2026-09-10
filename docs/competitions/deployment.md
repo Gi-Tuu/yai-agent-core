@@ -29,19 +29,27 @@
 
 ## 2. 路线 A：Render 免费层快速演练（零成本、约 30 分钟）
 
+仓库根目录已放好 `render.yaml`（Render Blueprint），平台名、端口、健康检查、非敏感变量都已声明，
+只需在网页上连接仓库并粘贴一次 Key：
+
 1. 打开 https://render.com → 用 GitHub 账号登录并授权访问 `Gi-Tuu/yai-agent-core`。
-2. New → **Web Service** → 选 `yai-agent-core` 仓库。
-3. Runtime 选 **Docker**，Dockerfile Path 保持 `./Dockerfile`，实例类型选 **Free**。
-4. Environment 加环境变量（Secrets）：
-   - `OPENAI_API_KEY` = DeepSeek Key
-   - `OPENAI_BASE_URL` = `https://api.deepseek.com`
-   - `LLM_MODEL` = `deepseek-chat`
-   - `LLM_STRONG_MODEL` = `deepseek-chat`
-   - `YAI_PROJECT_SLUG` = 你的 slug（如 `gi-tuu-yai`）
-5. **关键**：在 Advanced / Docker Build Args 里加 `YAI_GIT_COMMIT=<本次部署的 40 位 commit>`（`git rev-parse HEAD`）。
-   不传的话镜像里回退为 `dev`，过不了硬门槛。海外构建用官方 PyPI，不需要 `INDEX_URL`。
-6. Deploy 完成后得到 `https://<name>.onrender.com`，按第 4 节验证四个端点。
-7. 风险：15 分钟无流量会休眠，评审机第一次访问可能撞上约 1 分钟冷启动页（不是我们的 JSON）。**正式评审前必须换到常驻 VPS。**
+2. 控制台 **New → Blueprint**，选择 `yai-agent-core` 仓库，Render 会读取 `render.yaml`
+   自动生成一个 Free 的 Docker Web Service（区域 Singapore，健康检查路径 `/health`）。
+3. Blueprint 向导会提示填写标记为 `sync: false` 的 Secret：`OPENAI_API_KEY` = DeepSeek Key，粘贴即可。
+   其余变量（`OPENAI_BASE_URL`、`LLM_MODEL`、`YAI_PROJECT_SLUG` 等）已在 yaml 里写好。
+4. 点 **Apply / Deploy**，云端开始构建（海外环境用官方 PyPI，不需要 `INDEX_URL`）。
+5. 两个自动化约定（已在代码里处理，无需手动操作）：
+   - **端口**：Render 注入 `PORT`（默认 10000），Dockerfile 的 CMD 是
+     `--port ${PORT:-8000}`，本地/compose 仍是 8000，上了 Render 自动跟随；
+   - **commit**：Render 自动注入 `RENDER_GIT_COMMIT`（本次部署的完整 SHA），
+     `serve_example.py` 的解析链 `YAI_GIT_COMMIT → RENDER_GIT_COMMIT → git HEAD → dev`
+     会自动采用它，/health 与验证端点返回的 commit 天然等于部署的 commit。
+6. 部署完成后得到 `https://yai-agent-core.onrender.com`（名字以实际为准），按第 4 节验证四个端点。
+7. 风险：15 分钟无流量会休眠，评审机第一次访问可能撞上约 1 分钟冷启动页（不是我们的 JSON）。
+   **正式评审前必须换到常驻 VPS。**
+
+> 若不用 Blueprint、手动 New → Web Service：Language 选 Docker、Dockerfile Path 留空（根目录）、
+> Plan 选 Free，然后在 Environment 里补齐上面同样的变量即可，效果相同。
 
 ## 3. 路线 B：Oracle Always Free + Docker + Caddy（正式部署）
 
@@ -124,6 +132,9 @@ docker compose ps                                   # caddy 与 app 均 healthy
 
 - Oracle Cloud Free Tier：https://www.oracle.com/cloud/free/
 - Render Free 限制（休眠/750 小时）：https://render.com/docs/free
+- Render Docker 部署（PORT/构建参数）：https://render.com/docs/docker
+- Render 注入的环境变量（RENDER_GIT_COMMIT）：https://render.com/docs/environment-variables
+- Render Blueprint（render.yaml）：https://render.com/docs/blueprint-spec
 - Fly.io 定价（无免费层）：https://fly.io/docs/about/pricing/
 - Koyeb 定价（免费实例已取消）：https://www.koyeb.com/pricing
 - Hugging Face Spaces（Docker Space 需付费）：https://huggingface.co/docs/hub/spaces-overview

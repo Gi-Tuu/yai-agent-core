@@ -35,10 +35,12 @@ COPY scripts ./scripts
 
 RUN uv pip install --system -e ".[server,llm]"
 
+# 默认 8000；托管平台（如 Render）通过 PORT 环境变量指定端口，CMD/HEALTHCHECK 均兼容
 EXPOSE 8000
 
-# 容器级健康检查，直接打 X-Agent 要求的 /health 端点
+# 容器级健康检查，直接打 X-Agent 要求的 /health 端点（shell 形式，运行时展开 $PORT）
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+    CMD python -c "import os,urllib.request,sys; p=os.environ.get('PORT','8000'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=4).status == 200 else 1)"
 
-CMD ["uvicorn", "scripts.serve_example:app", "--host", "0.0.0.0", "--port", "8000"]
+# shell 形式让 ${PORT:-8000} 在启动时展开：自管环境 8000，Render 等平台用注入的 PORT
+CMD uvicorn scripts.serve_example:app --host 0.0.0.0 --port ${PORT:-8000}

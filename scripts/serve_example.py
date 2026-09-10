@@ -7,7 +7,7 @@
 环境变量（写在项目根 .env 即可，脚本启动时自动加载）：
     OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL   真实模型（缺省走离线演示模型）
     YAI_GIT_COMMIT=<40位 commit>  YAI_PROJECT_SLUG=<slug>   X-Agent 验证端点
-    （YAI_GIT_COMMIT 留空时自动读取当前 git HEAD，方便本地联调）
+    commit 解析顺序：YAI_GIT_COMMIT → 平台注入（如 RENDER_GIT_COMMIT）→ 当前 git HEAD → dev
 """
 
 from __future__ import annotations
@@ -44,9 +44,12 @@ def _git_commit() -> str:
 
 
 load_dotenv()
-# .env 里留空（YAI_GIT_COMMIT=）时回退到当前 git HEAD，保证验证端点始终有 commit
+# commit 解析链：显式 YAI_GIT_COMMIT > 托管平台注入的 commit（Render 为 RENDER_GIT_COMMIT）
+# > 当前 git HEAD（本地联调）> dev。保证验证端点始终能反映实际运行的代码版本。
 if not os.environ.get("YAI_GIT_COMMIT"):
-    os.environ["YAI_GIT_COMMIT"] = _git_commit()
+    os.environ["YAI_GIT_COMMIT"] = (
+        os.environ.get("RENDER_GIT_COMMIT") or _git_commit()
+    )
 
 _model, _backend = build_model()
 print(f"serve_example 后端：{_backend}")
