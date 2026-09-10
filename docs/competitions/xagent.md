@@ -31,3 +31,15 @@ submissions/mcp-hackathon/<team>-<project>/
 - 杀手证据：同一 Core 挂载两个宿主能力集，API 完成两类不同任务
 - 不需要自建 MCP Server（官方验证后协助标准化）
 - 禁止：链上安全/审计类项目
+
+## 提交物骨架（已落地，2026-09-10 按官方 validate-submission.mjs 核对）
+
+- 元数据目录：`submissions/mcp-hackathon/yai-agent-core/`（SUBMISSION.md / RIGHTS.md /
+  verification/README.md / submission.template.json；`source/` 不入库，构建时生成）
+- 构建 + 离线预检：`python scripts/build_xagent_submission.py`
+  （git archive HEAD 导出 source/、注入 reviewCommit、镜像官方结构/密钥/体积校验）
+- 线上一致性预检：`python scripts/build_xagent_submission.py --online`
+  （校验 GitHub commit 可公开访问、/health 与验证端点的 slug/commit 三处一致）
+- slug 统一定名 `yai-agent-core`（render.yaml、.env.example、验证端点、提交目录四处一致）
+- 冻结提交时：Render 关 autoDeploy → 手动部署 pinned commit → 跑 --online 预检 →
+  fork xagt-plugin → 复制 dist 快照目录 → 提 PR（只动一个提交目录）
