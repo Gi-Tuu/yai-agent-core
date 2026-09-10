@@ -12,6 +12,9 @@ venv/
 .env
 *.local
 
+# 本地 AI 协作者约定，只留本机、不推远端
+AGENTS.md
+
 # Test / tool caches
 .pytest_cache/
 .ruff_cache/

@@ -25,4 +25,4 @@ services:
       - key: LLM_STRONG_MODEL
         value: deepseek-chat
       - key: YAI_PROJECT_SLUG
-        value: gi-tuu-yai
+        value: yai-agent-core # X-Agent 提交 slug：必须与提交目录名、验证 JSON 一致
