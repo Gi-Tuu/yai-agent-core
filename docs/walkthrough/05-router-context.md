@@ -68,7 +68,8 @@ def classify(self, task: str, registry: ToolRegistry) -> Strategy:
 - 决策优先级：**多步且要动手 → PLAN（先规划再执行）；只动手 → REACT；其余 → DIRECT。**
 - 最后一行注释解释了一个反直觉点：DIRECT 时模型并非被禁止用工具，只是首轮不塞工具清单（在 06 篇看 `use_tools`）。
 
-> v0.2 会加 LLM 分类器，但**规则实现保留作兜底**：模型分类失败/超时时回退到这里。这种"智能方案 + 确定性兜底"是生产级 Agent 的常见结构。
+> v0.2 已加 LLM 分类器（见 C 节），**规则实现保留作兜底**：模型分类失败/超时时回退到这里。
+> 这种"智能方案 + 确定性兜底"是生产级 Agent 的常见结构。
 
 ## B. `kernel/context.py`：消息本与 token 预算
 
@@ -117,10 +118,99 @@ def llm_messages(self) -> list[dict]:
 ```
 - 把内部 ChatMessage 列表统一转成模型接口要的字典列表。再次体现"内部对象、边界翻译"。
 
+## C. LLM 路由器（v0.2）：模型分类 + 规则兜底
+
+规则路由零成本、可测试，但覆盖不了千变万化的自然表达（"用 MCP 工具问一下"就是补了
+又补的例子）。v0.2 增加一次**轻量模型分类**：让模型直接输出结构化路由 JSON，
+解析失败/超时/非法输出时**自动回退 A 节的规则**。规则实现一行没删，它是兜底。
+
+### C1. 决策记录 RouteDecision（dataclass）
+```python
+@dataclass
+class RouteDecision:
+    strategy: Strategy   # 四种策略之一
+    source: str          # "llm"（模型分类）或 "rules"（规则，含兜底）
+    reason: str          # 人话理由，随事件流给用户/评委看
+    tier: str = "standard"   # 建议模型档位：standard 便宜快 / strong 给规划等重活
+```
+- 规则路径以前只返回一个 `Strategy` 枚举，现在统一返回 `RouteDecision`——
+  **每个决策都带来源、理由、档位**，对应红线"每个自适应决策必须发事件、禁止静默决策"。
+- `classify()`（同步，返回枚举）保留给外部兜底调用；内部新增 `_rules()` 返回完整记录。
+
+### C2. 规则路径改造 `_rules()`
+原来 `classify` 里的每个 `return Strategy.X` 都换成
+`return RouteDecision(Strategy.X, "rules", "理由", 档位)`，判定顺序与条件完全不变；
+`classify()` 变成一行：`return self._rules(task, registry).strategy`。
+注意 plan 分支带 `"strong"`：多步规划是重活，建议用强模型（见 06 篇 `_make_plan`）。
+
+### C3. 异步入口 `aclassify()`——短路、尝试、兜底
+```python
+async def aclassify(self, task, registry) -> RouteDecision:
+    text = task.strip()
+    if not text or self.model is None or len(registry) == 0:
+        return self._rules(task, registry)          # 三种情况不浪费模型调用
+    try:
+        raw = await asyncio.wait_for(
+            self._llm_classify(text, registry), timeout=self.classify_timeout)
+        return self._parse(raw, registry)
+    except Exception as exc:                        # 网络/超时/JSON 非法/策略越界
+        fallback = self._rules(task, registry)
+        fallback.reason = f"LLM 分类失败（{type(exc).__name__}），回退规则：{fallback.reason}"
+        return fallback
+```
+- **三个短路条件**：空任务（必澄清）、没配模型（纯规则部署）、宿主无工具（必 direct）——
+  能力边界判断永远在本地，不花一次模型调用，也不会被模型带偏。
+- `asyncio.wait_for` 给分类加硬超时（默认 15s）：路由是主流程的第一道关，不能卡死。
+- `except Exception` 兜底一切：**分类是增强而不是依赖**。失败理由里写清异常类型，
+  事件流里能直接看到"这次为什么走了规则"。
+
+### C4. 分类调用 `_llm_classify()`
+```python
+prompt = ("你是嵌入式 Agent 的任务路由器。……只输出一个 JSON 对象……\n"
+          '{"strategy": "direct|react|plan|clarify", "tier": "standard|strong",'
+          ' "reason": "不超过30字的中文理由"}\n'
+          "策略判定标准：……\n宿主可用工具：\n{逐行 name: description}\n任务：{task}")
+resp = await self.model.achat(messages, tools=None, tier="standard")
+```
+- `tools=None`：分类轮**不给工具清单的 function-calling 形式**，而是把工具的
+  name/description 以文本列进提示词——分类只需要"看得懂有什么能力"，不调工具。
+- 固定 `tier="standard"`：路由本身用最便宜快的模型/档位，成本一次调用、几十 token。
+- 走的还是 SPI 的 `ModelProvider.achat`：DeepSeek、离线假模型、未来的本地模型一视同仁。
+
+### C5. 解析与校验 `_parse()`
+```python
+fenced = re.search(r"\{.*\}", text, flags=re.DOTALL)   # 容忍 ```json 围栏与前后啰嗦
+data = json.loads(fenced.group(0))
+if data["strategy"] not in {s.value for s in Strategy}:
+    raise ValueError(...)                              # 非法策略 -> 触发兜底
+if len(registry) == 0 and strategy in (REACT, PLAN):
+    raise ValueError(...)                              # 模型让调不存在的工具 -> 兜底
+tier = data.get("tier", "standard")
+if tier not in ("standard", "strong"):
+    tier = "standard"                                  # 档位非法：降级而不是报错
+```
+- 用"截取第一个 `{` 到最后一个 `}`"容忍模型套代码块或说客套话（实测常见）。
+- **校验而不是信任模型输出**：策略值必须是四枚举之一；无工具却选工具策略直接判非法；
+  只有档位字段采取"非法即归一化"的宽容策略（它不影响安全，只影响成本）。
+
+### C6. 接线：AgentCore 开关 + Loop 事件
+- `AgentCore(..., llm_router=False)`：默认关闭（零额外调用、离线测试完全确定）；
+  开启时构造 `AdaptiveRouter(model=model)`，把同一个模型后端注入路由器。
+- `AgentLoop.astream` 改为 `decision = await self.router.aclassify(...)`，
+  `STRATEGY_SELECTED` 事件数据从 `{"strategy"}` 扩成
+  `{"strategy","source","reason","tier"}`（strategy 键保留，老断言不破）。
+- `_make_plan(..., tier=decision.tier)`：规划轮的模型档位由路由决策建议，
+  规则路由的 plan 默认 strong，LLM 路由可按需给 standard。
+
+### C7. 实测（DeepSeek）
+- "你好，简单介绍一下你自己" → `direct / llm / "闲聊自我介绍，无需调用工具"`；
+- "搜索笔记里关于比赛的内容并总结" → `react / llm / "搜索笔记即可，单步工具调用"`；
+- 分类输出乱码/超时时自动回退规则，事件 reason 以"LLM 分类失败（…），回退规则："开头。
+
 ## 两个文件如何协作
 
 Loop 开始时：
-1. `router.classify(任务, 注册表)` → 得到策略；
+1. `await router.aclassify(任务, 注册表)` → 得到 RouteDecision（LLM 或规则兜底）；
 2. `Context(系统提示词)` → 建消息本；
 3. 之后每轮模型回复、工具结果都 `ctx.add(...)`，超预算自动压缩；
 4. 每次调模型前 `ctx.llm_messages()` 取最新快照。
@@ -131,3 +221,7 @@ Loop 开始时：
 2. "随便帮我写个周报框架，要包含本周进展和下周计划"会被路由成什么？为什么？
 3. `_compact` 为什么从下标 1 开始、且保留最后一条？
 4. 给 `_ACTION_HINTS` 加一个你常用的动词，并在 `tests/test_router.py` 加对应测试。
+5. LLM 分类失败有哪几种情况？代码分别在哪里兜底？为什么兜底理由要写进事件？
+6. 分类轮为什么 `tools=None`、tier 固定 standard？
+7. 模型返回 `{"strategy":"react"}` 但宿主一个工具都没有，怎么走？为什么？
+8. `llm_router` 为什么默认关闭？哪些部署形态会希望它关着？

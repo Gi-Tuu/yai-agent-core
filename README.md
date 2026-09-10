@@ -36,7 +36,7 @@ print(result.final_text)                   # ③ 可交付结果 + 全程事件�
 ## 自适应机制（v0.1）
 
 1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格；外部 MCP Server 的工具经 MCP Client 同构接入注册表（v0.2 已落地，`[mcp]` 可选依赖）；OpenAPI 发现规划中
-2. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`，规则实现零成本可测，v0.2 加 LLM 分类器并回退规则
+2. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，v0.2 已加 LLM 分类器（输出 `{strategy, reason, tier}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计）
 3. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）
 4. **宿主自适应（SPI）**：Model / Channel / Memory / Policy 四个契约宿主可替换，Core 提供零配置默认实现
 5. **过程可观测**：每次策略选择、工具调用、权限确认都通过 Observer 事件流对外发出
@@ -104,7 +104,7 @@ POST /v1/agent/run                          # {"task": "..."} -> 事件流 + 最
 ## 版本路线
 
 - **v0.1（已完成）**：函数内省、规则路由、Agent Loop、SPI 默认实现、FastAPI Battery、三宿主 demo、容器化与 PaaS 部署
-- **v0.2（进行中）**：MCP Client（已落地）、LLM 路由器（规则兜底）、OpenAPI 发现、SQLite 记忆
+- **v0.2（进行中）**：MCP Client（已落地）、LLM 路由器（已落地，规则兜底）、OpenAPI 发现、SQLite 记忆
 - v0.3：上下文/记忆自适应、检查点与失败恢复、Flutter Channel
 - v1.0：作为 AMBRACE 的 Agent 内核回流嵌入
 

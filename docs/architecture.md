@@ -68,7 +68,8 @@ ToolRegistry（与 Native 工具同构，Router/Loop/Executor 零感知）
    └─ 含行动词              → react（工具循环）
 ```
 
-v0.2：LLM 一次性分类输出 `{strategy, reason, tier}`，异常/不确定时回退规则路由。
+v0.2（已落地）：LLM 一次性分类输出 `{strategy, reason, tier}`，异常/超时/非法输出回退规则路由；
+两条路径统一返回 RouteDecision，`strategy_selected` 事件带 `source=llm|rules` 可审计。
 
 ## 5. 启动在线 API（batteries）
 

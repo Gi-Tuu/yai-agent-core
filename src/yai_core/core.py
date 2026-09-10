@@ -29,13 +29,19 @@ class AgentCore:
         policy: PermissionPolicy | None = None,
         router: AdaptiveRouter | None = None,
         auto_approve_tools: bool = True,
+        llm_router: bool = False,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
         self.channel = channel or CollectChannel()
         self.memory = memory or InMemoryStore()
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
-        self.router = router or AdaptiveRouter()
+        # llm_router=True 时把模型注入路由器：先 LLM 分类、失败回退规则；
+        # 默认关闭，保持零额外模型调用、离线测试完全确定。
+        if router is not None:
+            self.router = router
+        else:
+            self.router = AdaptiveRouter(model=model if llm_router else None)
         self.executor = ToolExecutor(self.registry, self.policy, self.channel)
         self._loop = AgentLoop(
             model=self.model,

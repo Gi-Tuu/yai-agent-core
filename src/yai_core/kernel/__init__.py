@@ -2,6 +2,6 @@
 
 from yai_core.kernel.context import Context
 from yai_core.kernel.loop import AgentLoop
-from yai_core.kernel.router import AdaptiveRouter
+from yai_core.kernel.router import AdaptiveRouter, RouteDecision
 
-__all__ = ["AdaptiveRouter", "AgentLoop", "Context"]
+__all__ = ["AdaptiveRouter", "AgentLoop", "Context", "RouteDecision"]

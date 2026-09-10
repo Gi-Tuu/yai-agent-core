@@ -88,3 +88,51 @@ def test_direct_answer_without_tools() -> None:
     result = asyncio.run(core.run("你好"))
     assert result.strategy.value == "direct"
     assert result.final_text.startswith("你好")
+
+
+def test_llm_router_decision_flows_through_loop() -> None:
+    """开启 llm_router 后：分类来源/理由/档位进事件，plan 用分类建议的 strong 档。"""
+
+    class ClassifierThenPlan(ScriptedModel):
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            self.tiers.append(tier)
+            self.calls += 1
+            # 第 1 次调用是路由分类（系统提示含"路由器"）
+            if self.calls == 1:
+                return ModelResponse(
+                    content='{"strategy": "plan", "tier": "strong",'
+                    ' "reason": "先拆解再执行"}'
+                )
+            # 第 2 次是规划轮
+            if self.calls == 2:
+                return ModelResponse(content="1. 搜索比赛笔记\n2. 汇报结果")
+            # 之后走父类的脚本队列（工具调用 + 最终答复）
+            return self._responses[min(self.calls - 1, len(self._responses) - 1)]
+
+        def __init__(self, responses) -> None:
+            super().__init__(responses)
+            self.tiers = []
+
+    model = ClassifierThenPlan(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="p1", name="search_notes",
+                                            arguments={"keyword": "比赛"})],
+            ),
+            ModelResponse(content="找到 1 条比赛笔记。"),
+        ]
+    )
+    core = AgentCore(model, llm_router=True)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("先搜索比赛笔记，然后汇报"))
+
+    selected = next(e for e in result.events if e.type.value == "strategy_selected")
+    assert selected.data["source"] == "llm"
+    assert selected.data["strategy"] == "plan"
+    assert selected.data["tier"] == "strong"
+    # 分类用 standard（轻量快），规划轮按建议用 strong，工具循环回 standard
+    assert model.tiers[0] == "standard"
+    assert model.tiers[1] == "strong"
+    assert result.final_text.startswith("找到")

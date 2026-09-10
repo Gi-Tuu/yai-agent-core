@@ -35,10 +35,15 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 - 关键语法：`async def` + 函数体内有 `yield` = **异步生成器**。调用它得到一个"异步事件流"，外部用 `async for event in core.astream(...)` 逐个取事件。好处：任务还在跑，UI 就能实时显示"正在调工具…"，而不是干等 30 秒拿一个最终结果。
 
 ```python
-    strategy = self.router.classify(task, self.registry)
-    yield AgentEvent(EventType.STRATEGY_SELECTED, {"strategy": strategy.value})
+    decision = await self.router.aclassify(task, self.registry)
+    strategy = decision.strategy
+    yield AgentEvent(EventType.STRATEGY_SELECTED, {
+        "strategy": strategy.value, "source": decision.source,
+        "reason": decision.reason, "tier": decision.tier})
 ```
-- 第一步决策策略，立刻"喊出来"（发事件）。`strategy.value` 取 StrEnum 的字符串。
+- 第一步决策策略，立刻"喊出来"（发事件）。`aclassify` 是 v0.2 的异步入口：
+  配置了 LLM 路由就先模型分类、失败回退规则，返回带 `source/reason/tier` 的 RouteDecision
+  （见 05 篇 C 节）；事件里保留 `strategy` 键，老的消费方不受影响。
 
 ```python
     if strategy == Strategy.CLARIFY:

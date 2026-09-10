@@ -73,14 +73,17 @@ return ModelResponse(content=msg.content or "", tool_calls=tool_calls, raw=compl
 ### B1. 构造 = 把所有零件组装起来（L22-L47）
 ```python
 def __init__(self, model, *, channel=None, memory=None, policy=None,
-             router=None, auto_approve_tools=True):
+             router=None, auto_approve_tools=True, llm_router=False):
     self.model = model
     self.registry = ToolRegistry()
     self.channel = channel or CollectChannel()
     self.memory = memory or InMemoryStore()
     self.policy = policy or AllowlistPolicy(
         mode="allow_all" if auto_approve_tools else "auto")
-    self.router = router or AdaptiveRouter()
+    if router is not None:
+        self.router = router                       # 显式传入优先
+    else:
+        self.router = AdaptiveRouter(model=model if llm_router else None)
     self.executor = ToolExecutor(self.registry, self.policy, self.channel)
     self._loop = AgentLoop(model=self.model, registry=self.registry,
                            executor=self.executor, channel=self.channel,
@@ -88,6 +91,8 @@ def __init__(self, model, *, channel=None, memory=None, policy=None,
 ```
 - 组装顺序：先建无依赖的注册表/默认组件 → 再建执行器（依赖注册表、策略、通道）→ 最后建 Loop（依赖全部）。**依赖顺序就是创建顺序。**
 - 每个 SPI 都是"传了用你的，没传用默认款"。宿主可以只给一个 model，其他全自动。
+- `llm_router`（v0.2）：开启才把 model 注入路由器做模型分类（失败回退规则，见 05 篇 C 节）；
+  默认关闭，离线测试与极简部署零额外模型调用。
 - `_loop` 下划线：外部不该直接操作发动机，走门面方法。
 
 ### B2. auto：一行接入（L51-L56）

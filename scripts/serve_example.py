@@ -69,7 +69,9 @@ _model, _backend = build_model()
 print(f"serve_example 后端：{_backend}")
 print(f"验证端点 commit：{os.environ['YAI_GIT_COMMIT']}")
 
-core = AgentCore.auto(capabilities, _model)
+# llm_router=True：先让模型做一次轻量分类（strategy/tier/reason），
+# 分类失败/超时自动回退确定性规则，事件流里带 source=llm|rules 可审计。
+core = AgentCore.auto(capabilities, _model, llm_router=True)
 
 
 @contextlib.asynccontextmanager

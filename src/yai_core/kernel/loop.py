@@ -54,8 +54,18 @@ class AgentLoop:
         self.max_iters = max_iters
 
     async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
-        strategy = self.router.classify(task, self.registry)
-        yield AgentEvent(EventType.STRATEGY_SELECTED, {"strategy": strategy.value})
+        decision = await self.router.aclassify(task, self.registry)
+        strategy = decision.strategy
+        # 决策来源（llm/rules）、理由与模型档位随事件流出：每次自适应决策都可审计。
+        yield AgentEvent(
+            EventType.STRATEGY_SELECTED,
+            {
+                "strategy": strategy.value,
+                "source": decision.source,
+                "reason": decision.reason,
+                "tier": decision.tier,
+            },
+        )
 
         if strategy == Strategy.CLARIFY:
             yield AgentEvent(EventType.CLARIFY_REQUESTED, {"question": task})
@@ -70,7 +80,7 @@ class AgentLoop:
         ctx.add(ChatMessage(role="user", content=task))
 
         if strategy == Strategy.PLAN:
-            async for ev in self._make_plan(ctx, task):
+            async for ev in self._make_plan(ctx, task, tier=decision.tier):
                 yield ev
             # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
             # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
@@ -91,13 +101,16 @@ class AgentLoop:
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
         yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
 
-    async def _make_plan(self, ctx: Context, task: str) -> AsyncIterator[AgentEvent]:
+    async def _make_plan(
+        self, ctx: Context, task: str, *, tier: str = "strong"
+    ) -> AsyncIterator[AgentEvent]:
         prompt = (
             "把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
             "只输出步骤本身：\n" + task
         )
         ctx.add(ChatMessage(role="user", content=prompt))
-        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier="strong")
+        # 档位由路由器建议（LLM 路由可给 standard/strong），规则路由的 plan 默认 strong。
+        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
