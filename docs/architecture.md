@@ -14,7 +14,7 @@
 ```
 宿主应用（AMBRACE / host_a / host_b）      只声明能力，零 Agent 代码
         │ 内省 / 注册
-能力自发现 Auto-Discovery（函数 / OpenAPI[v0.2] / MCP[v0.2]）
+能力自发现 Auto-Discovery（函数 / OpenAPI[v0.3] / MCP Client[v0.2 已落地]）
         ▼
 YAI Kernel
   ├─ Adaptive Router   任务分类 → direct/react/plan/clarify + 模型 tier
@@ -26,8 +26,28 @@ SPI 契约环（可替换 + 默认实现）
   ModelProvider(OpenAI 兼容) / Channel(CLI·FastAPI·Flutter)
   MemoryStore(内存→SQLite→向量) / PermissionPolicy(auto/ask/deny)
         ▲
-Batteries（可选）：FastAPI Server、MCP Client、SQLite Memory
+Integrations（可选，懒加载）：MCP Client（integrations/mcp/，[mcp] extra）
+Batteries（可选）：FastAPI Server、SQLite Memory
 ```
+
+### 2.1 MCP Client 集成（v0.2 已落地）
+
+```
+MCP Server（HTTP / stdio 子进程 / 内存实例）
+   │  list_tools / call_tool（MCP Python SDK v2，可选依赖、懒加载）
+   ▼
+McpToolBridge（integrations/mcp/client.py）
+   ├─ sanitize_schema      清洗 SDK 生成 schema 里的私有键
+   ├─ _to_spec             每个远端工具 → ToolSpec(source="mcp")，handler 为异步闭包
+   └─ _flatten_call_result content 文本 / structured_content / is_error → 返回值或异常
+   ▼
+ToolRegistry（与 Native 工具同构，Router/Loop/Executor 零感知）
+```
+- 内核本体不 import mcp（AST 测试守红线）；`uv sync --extra mcp` 才启用。
+- 连接三态：`McpServerConfig.url`（Streamable HTTP）/ `command+args`（stdio 子进程）/
+  `server`（内存实例，离线测试用）；`prefix` 解决多 Server 工具重名。
+- 生命周期：`async with McpToolBridge(...)` 或 `connect()/aclose()` 手动管理；
+  stdio 形态必须 aclose，否则子进程成为孤儿。
 
 ## 3. SPI 契约
 

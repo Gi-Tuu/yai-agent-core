@@ -15,6 +15,8 @@
   │ ① AgentCore.auto(宿主模块, 模型)            【core.py】
   │    └─ discover(宿主)                         【discovery/introspect.py】
   │         读函数签名/docstring → ToolSpec 列表 → 注册进 ToolRegistry【tools/registry.py】
+  │    └─ （可选）attach_mcp_tools 接入外部 MCP 工具，同样注册进 ToolRegistry
+  │                                            【integrations/mcp/client.py】
   │
   │ ② await core.run(任务)                       【core.py】
   │    └─ AgentLoop.astream(任务)                【kernel/loop.py】
@@ -56,6 +58,7 @@
 | `channels/*.py` | 默认输入输出 | 显示屏/话筒 |
 | `llm/openai_compat.py` | 真实模型适配 | 翻译给 DeepSeek 听 |
 | `core.py` | 对外唯一门面 | 前台 |
+| `integrations/mcp/client.py` | 接入外部 MCP Server 的工具 | 外接设备转接头 |
 | `batteries/fastapi_server/app.py` | 包成 HTTP 服务 | 对外营业窗口 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
@@ -77,6 +80,7 @@
 - 07 · 默认实现：memory / policy / channels
 - 08 · `llm/openai_compat.py` + `core.py`：真实模型与门面
 - 09 · `batteries/fastapi_server` + `Dockerfile`：变成在线 API 并容器化部署
+- 10 · `integrations/mcp/client.py`：MCP Client，把外部工具接进注册表
 
 ## 5. 自检（读完本篇应能回答）
 

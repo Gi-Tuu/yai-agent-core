@@ -13,8 +13,9 @@
 uv venv
 .venv\Scripts\activate            # Windows PowerShell；Linux/macOS 用 source .venv/bin/activate
 
-# 2. 安装：可编辑模式 + 开发/真实模型/在线API 三组可选依赖
+# 2. 安装：可编辑模式 + 开发/真实模型/在线API 可选依赖（接入 MCP 工具再加 ,mcp）
 uv pip install -e ".[dev,llm,server]"
+uv pip install -e ".[mcp]"          # 仅在开发/运行 MCP Client 集成时需要
 
 # 3. 验证：离线测试与冒烟，全程不需要 API Key
 pytest
@@ -31,7 +32,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 
 ## 2. 架构红线（改动前必读）
 
-1. **内核本体零第三方硬依赖**。`pyproject.toml` 的 `dependencies` 必须保持为空；openai、fastapi 等只能出现在可选依赖（`llm` / `server`）里，并在对应模块内**懒加载**。
+1. **内核本体零第三方硬依赖**。`pyproject.toml` 的 `dependencies` 必须保持为空；openai、fastapi、mcp 等只能出现在可选依赖（`llm` / `server` / `mcp`）里，并在对应模块内**懒加载**（`integrations/mcp/` 顶层禁止 import mcp，有 AST 测试守这条线）。
 2. **一切外部能力走 SPI 契约**（`src/yai_core/spi/`）：模型、通道、记忆、权限四个插槽必须可替换，Core 只依赖 `Protocol`，不依赖具体实现。
 3. **事件流只有一条出口**：工具执行等过程事件由执行方收集、统一由 `AgentLoop` yield、`AgentCore.astream` 是唯一对外 emit 点，不允许出现第二条事件路径。
 4. **每个自适应决策必须可观测**：新增任何"Core 自己做决定"的分支，都要通过 `AgentEvent` 发出对应事件，不允许静默决策。
@@ -53,7 +54,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 
 ## 4. 测试约定
 
-- 测试**不允许依赖网络、API Key 或外部服务**。真实协议用假模块/假端点验证，参考 `tests/test_openai_compat.py`（注入假 `openai` 模块）与 `tests/test_loop.py`（ScriptedModel）。
+- 测试**不允许依赖网络、API Key 或外部服务**。真实协议用假模块/假端点验证，参考 `tests/test_openai_compat.py`（注入假 `openai` 模块）、`tests/test_loop.py`（ScriptedModel）与 `tests/test_mcp_bridge.py`（内存 MCPServer 实例直连，不起子进程、不触网；文件首行 `pytest.importorskip` 保证最小环境可跳过）。
 - 新功能必须带测试：新策略、新工具来源、新 SPI 实现至少各一条端到端用例。
 - 修 Bug 先写一个能复现该 Bug 的失败测试，再修代码让它通过。
 
@@ -63,7 +64,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 |---|---|---|
 | 让一个新软件被 Core 适配 | 新建 `examples/host_x/`，只写普通函数 + run 脚本 | `examples/host_a_notes/` |
 | 支持一家新模型厂商 | 实现 `ModelProvider` 契约（OpenAI 兼容优先复用现有 provider） | `src/yai_core/llm/`、`spi/model.py` |
-| 增加一种工具来源（OpenAPI/MCP） | 产出统一 `ToolSpec` 注册进 `ToolRegistry`，执行侧不改 | `discovery/introspect.py` |
+| 增加一种工具来源（MCP/OpenAPI） | 产出统一 `ToolSpec` 注册进 `ToolRegistry`，执行侧不改；MCP 范式见 `integrations/mcp/` | `integrations/mcp/client.py`、`discovery/introspect.py` |
 | 增加一种执行策略 | 先在 `AdaptiveRouter` 加确定性规则并补测试，LLM 分类是 v0.2 的事 | `kernel/router.py` |
 | 换记忆/权限/输入输出 | 实现对应 SPI，通过 `AgentCore(..., memory=/policy=/channel=)` 注入 | `src/yai_core/spi/` |
 

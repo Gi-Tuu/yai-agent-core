@@ -35,7 +35,7 @@ print(result.final_text)                   # ③ 可交付结果 + 全程事件�
 
 ## 自适应机制（v0.1）
 
-1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格（v0.2：OpenAPI / MCP tools/list）
+1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格；外部 MCP Server 的工具经 MCP Client 同构接入注册表（v0.2 已落地，`[mcp]` 可选依赖）；OpenAPI 发现规划中
 2. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`，规则实现零成本可测，v0.2 加 LLM 分类器并回退规则
 3. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）
 4. **宿主自适应（SPI）**：Model / Channel / Memory / Policy 四个契约宿主可替换，Core 提供零配置默认实现
@@ -53,14 +53,34 @@ src/yai_core/
 ├── kernel/              # AdaptiveRouter + AgentLoop + Context
 ├── llm/                 # OpenAI 兼容模型后端（可选依赖）
 ├── memory/ policy/ channels/   # 默认实现（内存记忆 / 白名单权限 / CLI·收集通道）
+├── integrations/
+│   └── mcp/             # MCP Client 桥接（可选 [mcp] 依赖，懒加载，v0.2）
 └── batteries/
     └── fastapi_server/  # 在线 API + /health + X-Agent 验证端点
 examples/
 ├── host_a_notes/        # 宿主 A：笔记应用（只有业务函数，零 Agent 代码）
 ├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
-└── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
+├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
+└── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
 tests/                   # 离线 ScriptedModel 端到端测试
 docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
+```
+
+## 接入外部 MCP 工具（v0.2）
+
+```bash
+uv pip install -e ".[mcp]"          # 或 uv sync --extra mcp
+python examples/host_d_mcp/run.py   # 自带本地 stdio 演示 Server，离线可跑
+```
+
+```python
+from yai_core.integrations.mcp import McpServerConfig, attach_mcp_tools
+
+# Streamable HTTP：McpServerConfig(alias="x", url="https://host/mcp")
+# stdio 子进程：  McpServerConfig(alias="x", command="uv", args=["run","server.py"])
+bridge = await attach_mcp_tools(core.registry, McpServerConfig(alias="demo", url=url))
+# 远端工具已作为 ToolSpec(source="mcp") 注册，Router/Loop/Executor 零感知
+await bridge.aclose()
 ```
 
 ## 在线 API（X-Agent 部署要求）
@@ -75,8 +95,8 @@ POST /v1/agent/run                          # {"task": "..."} -> 事件流 + 最
 
 ## 版本路线
 
-- **v0.1（当前）**：函数内省、规则路由、Agent Loop、SPI 默认实现、FastAPI Battery、双宿主 demo
-- v0.2：LLM 路由器（规则兜底）、OpenAPI 发现、MCP Client、SQLite 记忆
+- **v0.1（已完成）**：函数内省、规则路由、Agent Loop、SPI 默认实现、FastAPI Battery、三宿主 demo、容器化与 PaaS 部署
+- **v0.2（进行中）**：MCP Client（已落地）、LLM 路由器（规则兜底）、OpenAPI 发现、SQLite 记忆
 - v0.3：上下文/记忆自适应、检查点与失败恢复、Flutter Channel
 - v1.0：作为 AMBRACE 的 Agent 内核回流嵌入
 

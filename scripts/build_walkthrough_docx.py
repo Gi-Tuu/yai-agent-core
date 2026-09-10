@@ -1,4 +1,4 @@
-"""把 docs/walkthrough/00..09 合并排版成一份 Word 讲义（可再由 LibreOffice 转 PDF）。
+"""把 docs/walkthrough/ 下按 NN- 编号的分册合并排版成一份 Word 讲义（可再转 PDF）。
 
 运行：.venv/Scripts/python.exe scripts/build_walkthrough_docx.py
 设计：内容全部来自已有 markdown，脚本只负责解析与排版，不新增正文事实。
@@ -23,11 +23,8 @@ SRC_DIR = ROOT / "docs" / "walkthrough"
 OUT_DIR = ROOT / "docs" / "exports"
 OUT_DOCX = OUT_DIR / "YAI-Agent-Core-源码逐行讲解.docx"
 
-CHAPTERS = [
-    "00-index.md", "01-types.md", "02-spi.md", "03-discovery.md", "04-tools.md",
-    "05-router-context.md", "06-loop.md", "07-defaults.md", "08-model-and-core.md",
-    "09-battery.md",
-]
+# 自动收录所有 NN- 开头的分册并按编号排序，新增章节无需改本脚本
+CHAPTERS = sorted(p.name for p in SRC_DIR.glob("[0-9][0-9]-*.md"))
 
 
 # ---------- 样式工具 ----------
@@ -281,11 +278,11 @@ def build() -> None:
     t.add_run("YAI Agent Core\n源码逐行讲解")
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = sub.add_run("00–09 分册合订 · 边学边造配套讲义")
+    r = sub.add_run("00–10 分册合订 · 边学边造配套讲义")
     r.font.size = Pt(13)
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = meta.add_run("对应代码版本 v0.1.0　|　Gi-Tuu　|　2026-09")
+    r = meta.add_run("对应代码主线 v0.2 开发中（含 MCP Client 增量）　|　Gi-Tuu　|　2026-09")
     r.font.size = Pt(10.5)
     r.font.color.rgb = RGBColor.from_string("666666")
 
