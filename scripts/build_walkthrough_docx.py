@@ -278,11 +278,15 @@ def build() -> None:
     t.add_run("YAI Agent Core\n源码逐行讲解")
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = sub.add_run("00–10 分册合订 · 边学边造配套讲义")
+    r = sub.add_run("00–12 分册合订 · 边学边造配套讲义")
     r.font.size = Pt(13)
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = meta.add_run("对应代码主线 v0.2 开发中（含 MCP Client 增量）　|　Gi-Tuu　|　2026-09")
+    meta_text = (
+        "对应代码主线（MCP Client · OpenAPI 发现 · SQLite 持久化记忆）"
+        "　|　Gi-Tuu　|　2026-09"
+    )
+    r = meta.add_run(meta_text)
     r.font.size = Pt(10.5)
     r.font.color.rgb = RGBColor.from_string("666666")
 
