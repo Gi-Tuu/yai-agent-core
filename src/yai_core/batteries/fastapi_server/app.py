@@ -14,21 +14,62 @@ from typing import Any
 
 try:
     from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover - 仅在缺少可选依赖时触发
     raise ImportError(
         "FastAPI Battery 需要可选依赖：uv pip install -e '.[server]'"
     ) from exc
 
+from yai_core.batteries.fastapi_server.ratelimit import (
+    RateLimitConfig,
+    SlidingWindowLimiter,
+    client_ip,
+)
+
+# 限流只拦这一条 POST：三个 GET 端点（health / verification / tools）是
+# X-Agent 评审硬门槛路径，任何超限状态下都必须无条件 200。
+_LIMITED_METHOD = "POST"
+_LIMITED_PATHS = frozenset({"/v1/agent/run"})
+
 
 class RunRequest(BaseModel):
     task: str
 
 
-def create_app(core: Any, lifespan: Any = None) -> FastAPI:
+def create_app(
+    core: Any, lifespan: Any = None, *, rate_limit: RateLimitConfig | None = None
+) -> FastAPI:
     app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
+
+    # 评审期限流（opt-out via env）：None -> 从环境变量读默认策略；
+    # enabled=False 时不注册中间件，零开销、零行为变化。
+    config = rate_limit if rate_limit is not None else RateLimitConfig.from_env()
+    if config.enabled:
+        limiter = SlidingWindowLimiter(config)
+
+        @app.middleware("http")
+        async def _rate_limit_middleware(request, call_next):
+            if request.method == _LIMITED_METHOD and request.url.path in _LIMITED_PATHS:
+                key = client_ip(
+                    request.headers.get("x-forwarded-for"),
+                    request.client.host if request.client else None,
+                )
+                allowed, retry_after = limiter.check(key)
+                if not allowed:
+                    # 被限请求在中间件层直接返回：不进 core.run，一分模型钱都不花。
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "rate_limited",
+                            "detail": "请求过于频繁，请稍后重试",
+                            "retry_after": retry_after,
+                        },
+                        headers={"Retry-After": str(retry_after)},
+                    )
+            return await call_next(request)
 
     @app.get("/health")
     async def health() -> dict:

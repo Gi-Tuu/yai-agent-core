@@ -29,12 +29,12 @@ sys.path.insert(0, str(ROOT / "examples"))
 from host_a_notes import capabilities  # noqa: E402
 from runner_common import build_model, load_dotenv  # noqa: E402
 from yai_core import AgentCore  # noqa: E402
-from yai_core.batteries.fastapi_server import create_app  # noqa: E402
+from yai_core.batteries.fastapi_server import RateLimitConfig, create_app  # noqa: E402
 from yai_core.integrations.openapi import attach_openapi_tools  # noqa: E402
 from yai_core.integrations.openapi import (  # noqa: E402
     config_from_env as openapi_config_from_env,
 )
-from yai_core.memory import InMemoryStore, SqliteStore  # noqa: E402
+from yai_core.memory import InMemoryStore, SqliteStore, retention_from_env  # noqa: E402
 
 
 def _git_commit() -> str:
@@ -76,8 +76,20 @@ print(f"验证端点 commit：{os.environ['YAI_GIT_COMMIT']}")
 
 # llm_router=True：先让模型做一次轻量分类（strategy/tier/reason），
 # 分类失败/超时自动回退确定性规则，事件流里带 source=llm|rules 可审计。
-# 持久化记忆 opt-in：设置 YAI_DB_PATH 才落 SQLite；不设置时用进程内内存，行为与现状完全一致。
-_store = SqliteStore.from_env() or InMemoryStore()
+# 持久化记忆 opt-in：设置 YAI_DB_PATH 才落 SQLite；不设置时用进程内内存。
+# 历史保留策略 opt-in：YAI_HISTORY_MAX_MESSAGES / YAI_HISTORY_TTL_SECONDS；
+# env 只在这一层解析一次（非法值只 warning 一次），两种 Store 对等生效。
+_retention = retention_from_env()
+_sqlite_store = SqliteStore.from_env(retention=_retention)
+if _sqlite_store is not None:
+    _store = _sqlite_store
+else:
+    _store = InMemoryStore(max_messages=_retention[0], ttl_seconds=_retention[1])
+if _retention != (None, None):
+    print(
+        f"历史保留策略：max_messages={_retention[0]}，ttl_seconds={_retention[1]}"
+        "（opt-in，按轮对齐裁剪；SQLite 构造时已自动 prune 一次）"
+    )
 core = AgentCore.auto(capabilities, _model, llm_router=True, memory=_store)
 
 
@@ -135,4 +147,11 @@ async def app_lifespan(_app):
             close_store()
 
 
-app = create_app(core, lifespan=app_lifespan)
+# 评审期限流（默认开启）：显式 from_env 并打印一行策略，便于部署核对。
+_rate_limit = RateLimitConfig.from_env()
+print(
+    f"限流策略：enabled={_rate_limit.enabled}，"
+    f"per_minute={_rate_limit.per_minute}，window_seconds={_rate_limit.window_seconds}"
+    "（仅 POST /v1/agent/run；GET 验证端点不受限）"
+)
+app = create_app(core, lifespan=app_lifespan, rate_limit=_rate_limit)
