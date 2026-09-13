@@ -20,6 +20,8 @@ server = [
 ]
 # MCP Client 集成：接入外部 MCP Server 的工具（v2 稳定线，内核本体不依赖）
 mcp = ["mcp>=2.0,<3"]
+# OpenAPI 发现：把任意 OpenAPI 3 REST API 自动注册为工具（httpx 调用、pyyaml 解析 YAML 描述）
+openapi = ["httpx>=0.27", "pyyaml>=6.0"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

@@ -30,6 +30,11 @@ from host_a_notes import capabilities  # noqa: E402
 from runner_common import build_model, load_dotenv  # noqa: E402
 from yai_core import AgentCore  # noqa: E402
 from yai_core.batteries.fastapi_server import create_app  # noqa: E402
+from yai_core.integrations.openapi import attach_openapi_tools  # noqa: E402
+from yai_core.integrations.openapi import (  # noqa: E402
+    config_from_env as openapi_config_from_env,
+)
+from yai_core.memory import InMemoryStore, SqliteStore  # noqa: E402
 
 
 def _git_commit() -> str:
@@ -71,34 +76,63 @@ print(f"验证端点 commit：{os.environ['YAI_GIT_COMMIT']}")
 
 # llm_router=True：先让模型做一次轻量分类（strategy/tier/reason），
 # 分类失败/超时自动回退确定性规则，事件流里带 source=llm|rules 可审计。
-core = AgentCore.auto(capabilities, _model, llm_router=True)
+# 持久化记忆 opt-in：设置 YAI_DB_PATH 才落 SQLite；不设置时用进程内内存，行为与现状完全一致。
+_store = SqliteStore.from_env() or InMemoryStore()
+core = AgentCore.auto(capabilities, _model, llm_router=True, memory=_store)
 
 
 @contextlib.asynccontextmanager
-async def mcp_lifespan(_app):
-    """启动时按环境变量挂载外部 MCP Server（如 DeepWiki 公共端点）；关闭时断开。
+async def app_lifespan(_app):
+    """启停生命周期：挂载外部 MCP；停机时断开连接并关闭记忆存储。
 
-    挂载失败（没装 mcp extra / 外部 Server 不可达）只告警、不阻断启动：
-    本地 native 工具与验证端点必须始终可用。
+    MCP 与 OpenAPI 两个集成相互独立：缺 extra / 外部服务不可达 / 描述拉取失败
+    都只告警、不阻断启动。本地 native 工具与验证端点必须始终可用。
     """
     bridges = []
     try:
-        from yai_core.integrations.mcp import attach_mcp_tools, config_from_env
+        # MCP 与 OpenAPI 各自独立：任一集成缺依赖 / 挂载失败都只告警，不影响另一个与本地工具。
+        try:
+            from yai_core.integrations.mcp import attach_mcp_tools, config_from_env
+        except ImportError as exc:  # 没装 [mcp] extra 是合法部署形态
+            print(f"[serve_example] 未安装 [mcp] extra，跳过 MCP 挂载：{exc}")
+        else:
+            cfg = config_from_env(alias="remote")
+            if cfg is not None:
+                try:
+                    bridge = await attach_mcp_tools(core.registry, cfg)
+                    bridges.append(bridge)
+                    names = [s.name for s in bridge.specs]
+                    print(f"MCP 已挂载（{cfg.alias}）：{names}")
+                except Exception as exc:  # noqa: BLE001 - 外部依赖不可用是运行时常态
+                    print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{type(exc).__name__}: {exc}")
 
-        cfg = config_from_env(alias="remote")
-        if cfg is not None:
+        # OpenAPI 发现（opt-in）：配置 OPENAPI_SPEC_URL/PATH 才挂载。
+        # 在线演示服务强制只读：只注册 GET/HEAD，写操作绝不暴露到公网演示端点。
+        openapi_config = openapi_config_from_env(alias="rest")
+        if openapi_config is not None:
+            openapi_config.read_only = True
             try:
-                bridge = await attach_mcp_tools(core.registry, cfg)
-                bridges.append(bridge)
-                names = [s.name for s in bridge.specs]
-                print(f"MCP 已挂载（{cfg.alias}）：{names}")
-            except Exception as exc:  # noqa: BLE001 - 外部依赖不可用是运行时常态
-                print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{type(exc).__name__}: {exc}")
+                openapi_bridge = await attach_openapi_tools(core.registry, openapi_config)
+                bridges.append(openapi_bridge)
+                print(
+                    f"[serve_example] OpenAPI 已挂载：{openapi_config.url or openapi_config.path}，"
+                    f"工具 {len(openapi_bridge.specs)} 个（read_only=True）"
+                )
+                for note in openapi_bridge.notes:
+                    print(f"  note: {note}")
+            except ImportError as exc:
+                print(f"[serve_example] 未安装 [openapi] extra，跳过 OpenAPI 挂载：{exc}")
+            except Exception as exc:  # OpenAPI 故障不拖垮本地服务
+                print(f"[serve_example] OpenAPI 挂载失败，降级跳过：{exc}")
         yield
     finally:
         for bridge in bridges:
             with contextlib.suppress(Exception):
                 await bridge.aclose()
+        # close() 不是 MemoryStore 契约方法：探测式调用，InMemoryStore 没有就跳过。
+        close_store = getattr(_store, "close", None)
+        if close_store is not None:
+            close_store()
 
 
-app = create_app(core, lifespan=mcp_lifespan)
+app = create_app(core, lifespan=app_lifespan)
