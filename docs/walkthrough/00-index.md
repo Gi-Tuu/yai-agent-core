@@ -55,6 +55,7 @@
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
 | `memory/inmemory.py` | 默认记忆 | 短期便签本 |
 | `memory/sqlite_store.py` | 持久化记忆（opt-in） | 带锁的笔记本 |
+| `memory/retention.py` | 历史裁剪纯函数（条数/TTL，轮边界对齐） | 会碎纸的碎纸机 |
 | `policy/allowlist.py` | 默认权限 | 门禁 |
 | `channels/*.py` | 默认输入输出 | 显示屏/话筒 |
 | `llm/openai_compat.py` | 真实模型适配 | 翻译给 DeepSeek 听 |
@@ -62,6 +63,7 @@
 | `integrations/mcp/client.py` | 接入外部 MCP Server 的工具 | 外接设备转接头 |
 | `integrations/openapi/` | OpenAPI 发现（opt-in） | REST API 的自动翻译官 |
 | `batteries/fastapi_server/app.py` | 包成 HTTP 服务 | 对外营业窗口 |
+| `batteries/fastapi_server/ratelimit.py` | 评审期限流（每 IP 滑动窗口） | 门口的取号机 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
 
@@ -85,6 +87,8 @@
 - 10 · `integrations/mcp/client.py`：MCP Client，把外部工具接进注册表
 - 11 · `memory/sqlite_store.py`：SQLite 持久化记忆（scope、迁移钩子、WAL）
 - 12 · `integrations/openapi/`：OpenAPI 发现（REST API 零适配变工具，$ref/鉴权/只读闸）
+- 13 · `memory/retention.py` + 两个 Store：历史保留策略（条数裁剪/TTL，轮边界对齐，opt-in）
+- 14 · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
 
 ## 5. 自检（读完本篇应能回答）
 

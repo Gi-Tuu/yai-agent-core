@@ -278,7 +278,7 @@ def build() -> None:
     t.add_run("YAI Agent Core\n源码逐行讲解")
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = sub.add_run("00–12 分册合订 · 边学边造配套讲义")
+    r = sub.add_run("00–14 分册合订 · 边学边造配套讲义")
     r.font.size = Pt(13)
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER

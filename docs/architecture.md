@@ -56,6 +56,12 @@ ToolRegistry（与 Native 工具同构，Router/Loop/Executor 零感知）
 WAL + 单锁覆盖单进程并发；`history()` 保持契约的同步签名。装配走 `YAI_DB_PATH`
 （`SqliteStore.from_env()`），未设置时回退 InMemoryStore，线上默认不开启（免费 PaaS 临时盘）。
 Loop/Core/宿主示例零改动。边界（历史裁剪、多进程写、临时盘持久性）见 walkthrough 第 11 章 H 节。
+历史保留策略（v0.3，opt-in）：`memory/retention.py` 提供纯函数 count_cut/ttl_cut，
+两种 Store 以构造参数 max_messages / ttl_seconds / clock 对等支持；裁剪边界按"轮"
+对齐（一条 user 到下一条 user 之前为一轮），保证 assistant(tool_calls)/tool 配对
+不被拆散；SQLite 构造时自动 prune 一次覆盖重启场景。MemoryStore 契约与 schema
+版本（仍为 v1）不变；KV 的 TTL 需 schema v2 迁移，留待 v0.4。`Context._compact`
+同步改为轮边界丢弃（kernel 内同源私有实现）。
 
 ### 2.3 OpenAPI 发现（v0.2 已落地）
 
@@ -103,6 +109,12 @@ app = create_app(core)
 # 容器内监听 8000；宿主机端口由部署侧映射（本项目约定 8001:8000）
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
+
+v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗口（`enabled=True`、
+`per_minute=30`、`window_seconds=60`，可用 `YAI_RATE_LIMIT_*` 调整或关闭）。中间件只拦
+`POST /v1/agent/run`，超限返回 429 + `Retry-After`（与响应体同源），被限请求不触达
+模型；三个 GET 验证端点永不限流（评审硬门槛）。客户端身份取 XFF 最左非空、回退对端
+地址；状态只在内存，重启清零；全局限流兜底不做（单实例）。
 
 ## 6. 与生态的差异化（诚实对比，用于比赛材料）
 

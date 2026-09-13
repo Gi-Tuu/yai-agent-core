@@ -41,6 +41,9 @@ read_wiki_contents / read_wiki_structure，来自公共免鉴权的 DeepWiki MCP
 
 ## 4. 真实 Agent 任务（POST，会真实调用 DeepSeek 模型）
 
+> 限流说明：`POST /v1/agent/run` 每 IP 每分钟 30 次；超限返回 429 与 `Retry-After`，
+> 稍后重试即可。健康与验证端点（本手册第 1–3 节）不受限。
+
 ```bash
 curl -sS -X POST https://yai-agent-core.onrender.com/v1/agent/run \
   -H "Content-Type: application/json" \

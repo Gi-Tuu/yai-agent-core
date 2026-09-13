@@ -66,9 +66,10 @@ src/yai_core/
 
 ## 4. 测试与可观测
 
-- 离线测试 23 个全部通过（`pytest`，不需要网络与 API Key）：用 ScriptedModel 假模型、内存态 MCP Server 假外部服务，覆盖路由、ReAct/Plan 循环、权限、MCP 桥接、API 端点。
+- 离线测试 **125 项**全部通过（截至 v0.3，以 `pytest -q` 实跑为准；不需要网络与 API Key）：用 ScriptedModel 假模型、内存态 MCP Server 假外部服务、`httpx.MockTransport` 假 REST 端点，覆盖路由、ReAct/Plan 循环、权限、MCP/OpenAPI 桥接、记忆保留策略、限流与 API 端点。
 - GitHub Actions CI 矩阵：Ubuntu × Python 3.11/3.12/3.13 + Windows × 3.13。
 - 每次运行返回完整事件序列（strategy_selected / plan_created / tool_call / tool_result / done…），可直接作为评审的"能力证据"。
+- 长期运行的记忆治理：历史支持条数上限与 TTL（opt-in，按对话轮对齐裁剪，不拆散工具调用对），SQLite 存储在写入与启动时自动清理过期历史，裁剪规则为纯函数并有对等测试。
 
 ## 5. MCP 产品化准备（对应 15 分评分项）
 
@@ -76,15 +77,15 @@ src/yai_core/
 - 已实现 MCP Client（官方 Python SDK v2），支持 Streamable HTTP、stdio 子进程、内存直连三种传输；
 - **线上 API 自身即 MCP 消费方**：部署期通过 `MCP_SERVER_URL` 环境变量挂载公共免鉴权 MCP Server（DeepWiki），评审可直接 POST 任务让线上服务真实调用远程 MCP 工具，挂载失败不影响本地工具与验证端点（优雅降级）；
 - 错误语义明确：MCP `is_error` 统一翻译为失败结果并产生 `tool_result(ok=false)` 事件；
-- 权限、超时（规划中）、限流（评审期）、副作用边界均在 Tool Bus 一层统一收口；
+- 权限、副作用边界在 Tool Bus 一层统一收口；超时（规划中）同样收口于此；已实现评审期限流（每 IP 每分钟 30 次、429 + Retry-After，GET 验证端点不受限）；
 - 入选后可直接配合 X-Agent 做工具边界与 I/O schema 标准化，本项目自身不绑定任何特定 MCP Server。
 
 ## 6. 安全与数据处理（评审须知）
 
-- 线上服务**不使用数据库、不落盘用户数据**；内存态，仅含 3 条虚构演示笔记，实例休眠/重启即清空。
+- 线上服务不提供账号体系、不采集个人信息：仅使用演示宿主自带的 3 条虚构笔记；会话历史按部署配置可落盘（`YAI_DB_PATH`，Render 免费层为临时盘、实例重建即清空），不用于任何训练或分析用途。
 - 出站请求仅发往配置的 LLM 端点（线上为 DeepSeek 官方 API）；代码内无任何遥测/统计 SDK。
 - API Key 仅存在于部署平台 Secret 与本地 `.env`（gitignore），不入库、不入镜像层（`.dockerignore` 排除）。
-- 评审期端点开放调用（满足"可在线调用"要求），计划加按 IP 的零依赖限流；不提供登录墙。
+- 评审期端点开放调用（满足"可在线调用"要求），已加按 IP 的零依赖限流（每 IP 每分钟 30 次，超限返回 429 与 Retry-After；health/verification/tools 三个验证端点不受限）；不提供登录墙。
 - 依赖与授权清单见 `RIGHTS.md`。
 
 ## 7. 本地复现（隔离环境，5–10 分钟）
