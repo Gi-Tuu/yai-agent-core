@@ -122,7 +122,8 @@ docker compose ps                                   # caddy 与 app 均 healthy
 ```
 四项全过 = X-Agent 部署类硬门槛达标。
 
-- [ ] 若启用 YAI_DB_PATH：确认持久化目录在挂载卷上；Render 免费层等临时盘 redeploy 后会丢库，演示口径需如实说明
+- [x] `YAI_DB_PATH`：Render Blueprint 已默认开启（`data/yai.db` → 容器内 `/app/data`，启动时自动建目录）；本地/容器不设置该变量时仍是进程内内存。
+  **Render 免费层是临时盘，redeploy 后会丢库**：重建后历史清空属预期行为，对外演示口径需如实说明；VPS 形态请把该路径放在挂载卷上。
 
 ## 5. 安全与运维清单
 

@@ -29,3 +29,7 @@ services:
       - key: MCP_SERVER_URL
         # 公共免鉴权 MCP Server（DeepWiki）：让线上 API 也能真实调用外部 MCP 工具
         value: https://mcp.deepwiki.com/mcp
+      - key: YAI_DB_PATH
+        # 持久化记忆（v0.2）：容器内相对路径 -> /app/data/yai.db，进程启动时自动建目录。
+        # 注意：Render 免费层磁盘是临时盘，redeploy 后会丢库，演示口径见 docs/competitions/deployment.md
+        value: data/yai.db
