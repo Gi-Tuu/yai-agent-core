@@ -17,62 +17,11 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.tools.schema import EMPTY_OBJECT_SCHEMA, sanitize_schema
 from yai_core.types import ToolSpec
 
-# JSON Schema 标准关键字白名单。MCP SDK 自动生成的 input_schema 带 title 等
-# 实现私有键，个别 OpenAI 兼容接口会对多余键敏感，喂给模型前递归清洗一遍。
-_SCHEMA_KEYS = frozenset(
-    {
-        "type",
-        "properties",
-        "required",
-        "items",
-        "enum",
-        "description",
-        "default",
-        "const",
-        "anyOf",
-        "oneOf",
-        "allOf",
-        "not",
-        "minimum",
-        "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "minLength",
-        "maxLength",
-        "pattern",
-        "minItems",
-        "maxItems",
-        "uniqueItems",
-        "multipleOf",
-        "format",
-        "additionalProperties",
-        "$defs",
-        "$ref",
-    }
-)
-
-_EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
-
-
-def sanitize_schema(schema: Any) -> Any:
-    """递归只保留 JSON Schema 标准关键字；dict/list 之外的原值原样返回。
-
-    注意 properties / $defs 的键是"属性名/定义名"而不是 schema 关键字，
-    必须原样保留，只清洗它们的值。
-    """
-    if isinstance(schema, dict):
-        cleaned: dict[str, Any] = {}
-        for key, value in schema.items():
-            if key in ("properties", "$defs") and isinstance(value, dict):
-                cleaned[key] = {name: sanitize_schema(sub) for name, sub in value.items()}
-            elif key in _SCHEMA_KEYS:
-                cleaned[key] = sanitize_schema(value)
-        return cleaned or dict(_EMPTY_SCHEMA)
-    if isinstance(schema, list):
-        return [sanitize_schema(item) for item in schema]
-    return schema
+# 兼容别名：本模块下方代码沿用旧名 _EMPTY_SCHEMA，保持零改动。
+_EMPTY_SCHEMA = EMPTY_OBJECT_SCHEMA
 
 
 @dataclass
