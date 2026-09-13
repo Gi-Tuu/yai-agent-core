@@ -43,3 +43,7 @@ submissions/mcp-hackathon/<team>-<project>/
 - slug 统一定名 `yai-agent-core`（render.yaml、.env.example、验证端点、提交目录四处一致）
 - 冻结提交时：Render 关 autoDeploy → 手动部署 pinned commit → 跑 --online 预检 →
   fork xagt-plugin → 复制 dist 快照目录 → 提 PR（只动一个提交目录）
+- 评审期保活（2026-09-20 ~ 10-04）：`.github/workflows/keepwarm.yml` 每 10 分钟 GET /health，
+  规避 Render 免费层冷启动（30–90s）撞校验器 10s GET 超时；评审结束后手动停用。
+- 校验器口径（2026-09-13 复核官方 scripts/validate-submission.mjs）：10s 超时与 64KiB 上限
+  只卡 health / 部署证明两个 GET；POST 不进自动门槛；包体 5MiB/文件、20MiB/包、2000 文件上限。

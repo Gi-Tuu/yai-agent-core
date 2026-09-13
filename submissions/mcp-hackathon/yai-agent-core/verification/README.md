@@ -87,7 +87,7 @@ git clone https://github.com/Gi-Tuu/yai-agent-core
 cd yai-agent-core
 git checkout <reviewCommit>
 uv sync --extra dev --extra llm --extra server --extra mcp
-uv run pytest                      # 23 个离线测试全绿，不需要 API Key
+uv run pytest                      # 125 项离线测试全绿（截至 v0.3，以 pytest -q 实跑为准），不需要 API Key
 uv run ruff check src tests examples scripts
 python scripts/smoke_test.py       # 三宿主自适应冒烟（离线）
 docker compose up --build          # 容器化：容器内 8000，宿主 127.0.0.1:8001
