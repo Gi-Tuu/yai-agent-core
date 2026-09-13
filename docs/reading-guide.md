@@ -54,6 +54,14 @@ cd "D:\YAI Agent Core"
 - 对照读：`llm/openai_compat.py`（真实插槽）、`channels/collect.py`（测试插槽）、`tests/test_loop.py` 里的 `ScriptedModel`（假插槽）。
 - 小练习：写一个 `EchoModel` 实现 `achat`（直接返回固定话），接进 Core 跑一次。
 
+**加一站（v0.2）**：`src/yai_core/memory/sqlite_store.py` —— 同一个记忆插槽的第二个实现。
+对照 InMemoryStore 读：表结构、scope 隔离、user_version 迁移钩子、为什么同步 SQL 直接跑在
+async 方法里（见 walkthrough 第 11 章）。读完应能回答：为什么 Loop 一行没改就获得了持久记忆。
+
+**再加一站（v0.2）**：`src/yai_core/integrations/openapi/` —— 对照第 10 章 MCP 桥读：
+spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.py 的鉴权与响应归一。
+读完应能回答：为什么一份 OpenAPI 描述就能让 Core 不写一行适配代码获得一批工具（见 walkthrough 第 12 章）。
+
 ### 站 7：`src/yai_core/core.py` 与 `batteries/fastapi_server/app.py`
 - `core.py` 是门面：宿主只需要认识 `AgentCore.auto()` 和 `run()`，内部全被藏起来（门面模式）。
 - Battery 展示"内核"与"外围"的边界：注意 fastapi/pydantic 是**懒加载**的，内核本体不依赖它们。

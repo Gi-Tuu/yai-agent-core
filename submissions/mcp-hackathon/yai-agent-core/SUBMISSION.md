@@ -18,6 +18,8 @@ YAI Agent Core 类比"Agent 世界的 SQLite"：以库的形式运行在宿主�
 
 1. 宿主只提供普通 Python 函数（type hints + docstring），Core 内省生成工具规格；
 2. 外部 MCP Server 的工具经 MCP Client 同构接入（v0.2 已落地）；
+   Core 同时内置 OpenAPI 发现（可选）：任意 OpenAPI 3 REST API 提供描述即可被自动注册为工具，
+   与 MCP 工具在同一 Tool Bus 上同构调度（read_only 只读模式可用于公网演示）；
 3. Adaptive Router 把任务路由到 `direct / react / plan / clarify` 四种策略：
    v0.2 起先由模型做一次轻量分类（输出 `{strategy, reason, tier}` JSON），
    超时/异常/非法输出自动回退确定性规则，**两条路径都返回带来源的决策记录**；

@@ -259,7 +259,7 @@ def config_from_env(*, alias="remote",
 
 ```python
 @contextlib.asynccontextmanager
-async def mcp_lifespan(_app):
+async def app_lifespan(_app):
     bridges = []
     try:
         from yai_core.integrations.mcp import attach_mcp_tools, config_from_env
@@ -274,8 +274,10 @@ async def mcp_lifespan(_app):
             with contextlib.suppress(Exception):  # 关闭阶段任何异常都不能拖住停机
                 await bridge.aclose()
 
-app = create_app(core, lifespan=mcp_lifespan)
+app = create_app(core, lifespan=app_lifespan)
 ```
+> v0.2 持久化记忆落地后，app_lifespan 的 finally 段同时负责关闭 SqliteStore（探测式调用 close()），见第 11 章 G 节。
+
 逐行要点：
 - **优雅降级**：MCP 挂载失败只打印警告，native 工具、`/health`、验证端点照常服务。
   外部依赖永远不能成为内核启动的单点——这是嵌入式内核的自我要求。

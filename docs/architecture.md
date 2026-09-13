@@ -49,6 +49,24 @@ ToolRegistry（与 Native 工具同构，Router/Loop/Executor 零感知）
 - 生命周期：`async with McpToolBridge(...)` 或 `connect()/aclose()` 手动管理；
   stdio 形态必须 aclose，否则子进程成为孤儿。
 
+### 2.2 持久化记忆（SQLite，v0.2 已落地）
+
+`memory/sqlite_store.py` 提供 `SqliteStore`：MemoryStore 契约的 SQLite 实现（标准库、
+零新依赖）。history/kv 两张表，`scope` 列做会话隔离，`PRAGMA user_version` 做迁移钩子，
+WAL + 单锁覆盖单进程并发；`history()` 保持契约的同步签名。装配走 `YAI_DB_PATH`
+（`SqliteStore.from_env()`），未设置时回退 InMemoryStore，线上默认不开启（免费 PaaS 临时盘）。
+Loop/Core/宿主示例零改动。边界（历史裁剪、多进程写、临时盘持久性）见 walkthrough 第 11 章 H 节。
+
+### 2.3 OpenAPI 发现（v0.2 已落地）
+
+`integrations/openapi/` 把任意 OpenAPI 3 描述自动翻译成 ToolSpec(source="openapi")（alias 仅用于日志与 notes）：
+spec.py 负责载入/版本闸/内部 $ref 内联（循环与外部引用保留并记 notes），discovery.py
+纯函数地把 operations 规划成工具（operationId/合成命名、path/query/body 入参合并、
+include/exclude、read_only 只留 GET/HEAD、max_operations=40 截断），client.py 用懒加载的
+httpx 执行（bearer/apiKey 鉴权令牌走环境变量、调用期校验、204/非2xx/JSON/文本截断归一）。
+httpx/pyyaml 在 [openapi] extra，内核本体零硬依赖；测试全部走 httpx.MockTransport 离线。
+与 MCP 桥同构，在 serve_example 的 app_lifespan 中顺序挂载、共用关闭列表。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |

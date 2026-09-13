@@ -37,7 +37,7 @@
   │             └─ 结果包成 tool 消息塞回 Context，继续循环
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
-  │ ⑧ 历史写进 Memory                             【memory/inmemory.py】
+  │ ⑧ 历史写进 Memory（InMemoryStore / SqliteStore）【memory/】
   └ 返回 RunResult（策略 + 事件列表 + 最终文本）
 ```
 
@@ -54,11 +54,13 @@
 | `kernel/context.py` | 管理发给模型的消息 | 剪贴板 |
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
 | `memory/inmemory.py` | 默认记忆 | 短期便签本 |
+| `memory/sqlite_store.py` | 持久化记忆（opt-in） | 带锁的笔记本 |
 | `policy/allowlist.py` | 默认权限 | 门禁 |
 | `channels/*.py` | 默认输入输出 | 显示屏/话筒 |
 | `llm/openai_compat.py` | 真实模型适配 | 翻译给 DeepSeek 听 |
 | `core.py` | 对外唯一门面 | 前台 |
 | `integrations/mcp/client.py` | 接入外部 MCP Server 的工具 | 外接设备转接头 |
+| `integrations/openapi/` | OpenAPI 发现（opt-in） | REST API 的自动翻译官 |
 | `batteries/fastapi_server/app.py` | 包成 HTTP 服务 | 对外营业窗口 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
@@ -81,6 +83,8 @@
 - 08 · `llm/openai_compat.py` + `core.py`：真实模型与门面
 - 09 · `batteries/fastapi_server` + `Dockerfile`：变成在线 API 并容器化部署
 - 10 · `integrations/mcp/client.py`：MCP Client，把外部工具接进注册表
+- 11 · `memory/sqlite_store.py`：SQLite 持久化记忆（scope、迁移钩子、WAL）
+- 12 · `integrations/openapi/`：OpenAPI 发现（REST API 零适配变工具，$ref/鉴权/只读闸）
 
 ## 5. 自检（读完本篇应能回答）
 

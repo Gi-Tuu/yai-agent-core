@@ -122,6 +122,8 @@ docker compose ps                                   # caddy 与 app 均 healthy
 ```
 四项全过 = X-Agent 部署类硬门槛达标。
 
+- [ ] 若启用 YAI_DB_PATH：确认持久化目录在挂载卷上；Render 免费层等临时盘 redeploy 后会丢库，演示口径需如实说明
+
 ## 5. 安全与运维清单
 
 - `.env` 只存在于服务器，不进 git、不进镜像（`.dockerignore` 已排除）；
