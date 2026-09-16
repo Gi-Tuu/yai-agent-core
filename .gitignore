@@ -38,3 +38,6 @@ docs/exports/
 
 # 杭州参赛材料截图（含个人信息，永不入库；目录由用户录材料时本地创建）
 docs/competitions/hangzhou/evidence/
+
+# host_e 销售 CRM 演示数据（运行时生成，不入库）
+examples/host_e_sales_crm/crm_data.json

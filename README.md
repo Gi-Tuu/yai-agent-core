@@ -65,7 +65,8 @@ examples/
 ├── host_a_notes/        # 宿主 A：笔记应用（只有业务函数，零 Agent 代码）
 ├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
 ├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
-└── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
+├── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
+└── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入
 tests/                   # 离线 ScriptedModel 端到端测试
 docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
 ```
@@ -93,6 +94,21 @@ from yai_core.integrations.mcp import McpServerConfig, attach_mcp_tools
 bridge = await attach_mcp_tools(core.registry, McpServerConfig(alias="demo", url=url))
 # 远端工具已作为 ToolSpec(source="mcp") 注册，Router/Loop/Executor 零感知
 await bridge.aclose()
+```
+
+## 普通软件零改造嵌入（宿主 E：销售 CRM）
+
+`examples/host_e_sales_crm/` 首先是一个**不依赖 YAI 也能完整运行**的销售 CRM 小软件
+（`crm_app.py` 全文不导入 yai_core，菜单 CLI、JSON 持久化、12 个业务方法）；
+同一个 `SalesCrm` 实例交给 `AgentCore.auto` 即得到数字员工——读工具自动放行，
+写工具（写跟进/建待办等）执行前在终端 `[y/N]` 确认，多步任务自动规划并产出销售日报。
+
+```bash
+# 没有 AI：独立菜单软件
+uv run python examples/host_e_sales_crm/standalone_cli.py
+# 嵌入 Core：自然语言数字员工（默认任务演示 plan + 两次写授权 + 日报）
+uv run python examples/host_e_sales_crm/run_agent.py
+uv run python examples/host_e_sales_crm/run_agent.py "华东区硬件类的销售额是多少？"
 ```
 
 ## 在线 API（X-Agent 部署要求）
