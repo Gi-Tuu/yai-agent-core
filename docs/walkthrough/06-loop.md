@@ -16,16 +16,19 @@ _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 - 这是发给模型的"人设与规矩"。`{tools}` 占位符运行时被 `registry.describe()` 替换。
 - 行尾反斜杠 `\` 表示字符串里不换行（三句人设连成一段），空行才真正分段。
 
-## 块 2 · 构造（L36-L54）
+## 块 2 · 构造（L48-L72）
 ```python
 def __init__(self, model, registry, executor, channel, memory,
-             router: AdaptiveRouter | None = None, *, max_iters: int = 6) -> None:
+             router: AdaptiveRouter | None = None, *,
+             max_iters: int = 6, max_clarify_rounds: int = 2) -> None:
     ...
     self.router = router or AdaptiveRouter()
     self.max_iters = max_iters
+    self.max_clarify_rounds = max_clarify_rounds
 ```
 - 五大依赖全部注入。`router or AdaptiveRouter()`：调用方没给就用默认款（`None or x` 结果是 x，这是常见的默认值惯用法）。
-- `max_iters=6`：工具循环最多 6 轮，**防止模型反复调工具停不下来**（失控保护）。
+- 两个失控保护：`max_iters=6` 限制工具循环轮数；`max_clarify_rounds=2` 限制澄清反问轮数（见块 3.5）。
+- 这两个参数目前都没有从 `AgentCore` 透传（处境一致），用默认值；配置化留待后续版本。
 
 ## 块 3 · astream：总调度（L56-L92）
 
@@ -45,15 +48,27 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
   配置了 LLM 路由就先模型分类、失败回退规则，返回带 `source/reason/tier` 的 RouteDecision
   （见 05 篇 C 节）；事件里保留 `strategy` 键，老的消费方不受影响。
 
+- 签名里还有个下划线开头的内部参数 `_clarify_depth`（块 3.5 讲）：澄清递归的"层数计数器"，外部调用方不传，只在递归自调时 +1。
+
 ```python
-    if strategy == Strategy.CLARIFY:
-        yield AgentEvent(EventType.CLARIFY_REQUESTED, {"question": task})
-        answer = await self.channel.ask(task)
-        async for ev in self.astream(answer):
+    if strategy == CLARIFY and _clarify_depth >= self.max_clarify_rounds:
+        strategy = DIRECT
+        yield STRATEGY_SELECTED(..., source="rules", tier=decision.tier)  # 降级也发事件
+
+    if strategy == CLARIFY:
+        preview = 截断到 80 字的 task
+        question = _CLARIFY_QUESTION.format(task=preview)
+        yield CLARIFY_REQUESTED {"question": question, "round": depth + 1}
+        answer = (await self.channel.ask(question) or "").strip()
+        if not answer:
+            yield MODEL_MESSAGE(收尾文案) → memory 双写 → yield DONE(strategy=clarify)
+            return
+        merged = f"{task}\n补充信息：{answer}"
+        async for ev in self.astream(merged, _clarify_depth=depth + 1):
             yield ev
         return
 ```
-- 澄清分支：发事件 → 通过 channel 问用户拿到回答 → **用回答重新调用自己**（递归重入，重新走一遍路由）→ 把内部流的事件继续往外 yield（`async for ... yield` 叫"代理转发"）→ `return` 结束本次。
+- 澄清分支曾经只有三行（问用户 → 拿回答 → 递归），实测会无限反问，现在加了**三道保险**，见块 3.5。
 
 ```python
     ctx = Context(_SYSTEM_TEMPLATE.format(tools=self.registry.describe()))
@@ -102,6 +117,26 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
     yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
 ```
 - 收尾：把这一轮问答写进记忆，发 DONE 事件（携带最终结果）。
+
+## 块 3.5 · 澄清分支的三道保险（为什么不能无限反问）
+
+早期版本是"发事件 → `channel.ask` → 拿回答重新 `astream(回答)`"，实测在 host_e 出现死循环：
+用户说"发 xx 公司"→ 内核问意图 → 用户答意图 → 内核**丢掉原任务**只拿回答路由 → 又问公司 →
+无限乒乓，且没有退出路径。修复靠三道保险：
+
+1. **轮数上限（防无限递归）**：`_clarify_depth >= max_clarify_rounds`（默认 2）时降级 DIRECT。
+   递归深度被硬限制在 2，生成器链最多 3 层，栈安全；降级时连工具一起关掉（DIRECT），
+   因为信息不全时硬调工具比不调更糟，由模型直接说明缺什么。降级本身也是一次策略变化，
+   必须补发 STRATEGY_SELECTED 事件。
+2. **上下文累积（防乒乓）**：递归传的是 `merged = f"{task}\n补充信息：{answer}"`，
+   原任务和每一轮补充都串在一起重新路由，模型看得到完整对话。
+3. **空回答体面收尾（防永久挂起）**：`(answer or "").strip()` 为空（用户放弃 / 通道超时 /
+   网页点终止）时，不再递归、不调模型，发固定收尾文案、双写 memory、发 DONE 后 return。
+
+配套细节：反问用固定话术 `_CLARIFY_QUESTION`（不调模型、离线可测，领域名词只作举例以保持内核通用）；
+任务预览截断 80 字防 UI 撑爆；CLARIFY_REQUESTED 事件带 `round` 字段（1 起递增）。
+测试见 `tests/test_loop.py` 的 5 个 clarify 用例：收敛、跨轮累积、两轮上限降级、长任务截断、空回答收尾，
+并断言整条事件链**恰好一个 DONE**。
 
 ## 块 4 · _make_plan：先拆步骤（L94-L106）
 ```python
@@ -206,7 +241,7 @@ yield AgentEvent(EventType.MODEL_MESSAGE, {"text": resp.content.strip()})
 ## 自检（这篇必须全懂再往下）
 
 1. 异步生成器和普通 async 函数的区别？为什么 Agent 过程适合"边跑边 yield"？
-2. clarify 分支是怎么重新进入路由的？
+2. clarify 分支靠哪三道保险保证一定能结束？为什么递归时要把原任务和补充信息拼起来？
 3. 为什么 assistant 的 tool_calls 和 tool 结果都必须写回消息本？缺了 tool_call_id 会怎样？
 4. 循环有哪三个出口？（正常收尾 / 错误 / 上限兜底）
 5. direct 策略下 `tools_schema` 是什么？模型此时还能调工具吗？
