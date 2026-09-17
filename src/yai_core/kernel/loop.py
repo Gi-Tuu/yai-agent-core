@@ -32,6 +32,21 @@ _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 {tools}
 """
 
+# 澄清反问的固定话术：不调用模型，离线可测；明确告诉用户需要补什么。
+# 第 2 条把领域名词降级为举例——内核是通用的，不能写死某个宿主的业务对象。
+_CLARIFY_QUESTION = (
+    "我没完全理解“{task}”该怎么执行。请补充：\n"
+    "1）你想做什么（查询 / 统计 / 记录 / 新建 / 完成）；\n"
+    "2）涉及哪个对象或哪件事（例如某位客户、某类订单、某个待办）。"
+)
+# 澄清卡片里内嵌的任务最大长度，超长截断，避免长任务把宿主 UI 撑爆。
+_CLARIFY_TASK_PREVIEW_CHARS = 80
+# 澄清被放弃（空回答/超时/用户终止）时的收尾文案。
+_CLARIFY_ABORT_TEXT = (
+    "任务信息不足，已停止。请换个说法重新描述你想做什么，"
+    "例如“统计华东区硬件订单的销售额”。"
+)
+
 
 class AgentLoop:
     def __init__(
@@ -44,6 +59,9 @@ class AgentLoop:
         router: AdaptiveRouter | None = None,
         *,
         max_iters: int = 6,
+        max_clarify_rounds: int = 2,
+        # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
+        # 路由判 clarify 时立即降级直接回答。当前未从 AgentCore 透传，与 max_iters 现状一致。
     ) -> None:
         self.model = model
         self.registry = registry
@@ -52,8 +70,9 @@ class AgentLoop:
         self.memory = memory
         self.router = router or AdaptiveRouter()
         self.max_iters = max_iters
+        self.max_clarify_rounds = max_clarify_rounds
 
-    async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
+    async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
         decision = await self.router.aclassify(task, self.registry)
         strategy = decision.strategy
         # 决策来源（llm/rules）、理由与模型档位随事件流出：每次自适应决策都可审计。
@@ -67,10 +86,46 @@ class AgentLoop:
             },
         )
 
+        if strategy == Strategy.CLARIFY and _clarify_depth >= self.max_clarify_rounds:
+            # 澄清轮数达上限仍不明确：降级为直接回答（DIRECT，不调工具），由模型说明
+            # 信息不足——信息不全时不应硬调工具，这是有意为之；绝不无限反问。
+            # 每次策略变化都发事件，tier 沿用路由决策，保证决策可审计。
+            strategy = Strategy.DIRECT
+            yield AgentEvent(
+                EventType.STRATEGY_SELECTED,
+                {
+                    "strategy": Strategy.DIRECT.value,
+                    "source": "rules",
+                    "reason": f"已澄清 {_clarify_depth} 轮仍不明确，降级直接回答",
+                    "tier": decision.tier,
+                },
+            )
+
         if strategy == Strategy.CLARIFY:
-            yield AgentEvent(EventType.CLARIFY_REQUESTED, {"question": task})
-            answer = await self.channel.ask(task)
-            async for ev in self.astream(answer):
+            preview = task.strip()
+            if len(preview) > _CLARIFY_TASK_PREVIEW_CHARS:
+                preview = preview[:_CLARIFY_TASK_PREVIEW_CHARS] + "…"
+            question = _CLARIFY_QUESTION.format(task=preview)
+            yield AgentEvent(
+                EventType.CLARIFY_REQUESTED,
+                {"question": question, "round": _clarify_depth + 1},
+            )
+            answer = (await self.channel.ask(question) or "").strip()
+            if not answer:
+                # 空回答 / 超时 / 用户终止：体面收尾，不再递归。
+                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": _CLARIFY_ABORT_TEXT})
+                await self.memory.append_history(ChatMessage(role="user", content=task))
+                await self.memory.append_history(
+                    ChatMessage(role="assistant", content=_CLARIFY_ABORT_TEXT)
+                )
+                yield AgentEvent(
+                    EventType.DONE,
+                    {"strategy": Strategy.CLARIFY.value, "final_text": _CLARIFY_ABORT_TEXT},
+                )
+                return
+            # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的丢上下文乒乓。
+            merged = f"{task}\n补充信息：{answer}"
+            async for ev in self.astream(merged, _clarify_depth=_clarify_depth + 1):
                 yield ev
             return
 

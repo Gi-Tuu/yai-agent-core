@@ -2,7 +2,15 @@
 
 import asyncio
 
-from yai_core import AgentCore, ModelResponse, ToolCallRequest, build_spec
+from yai_core import (
+    AgentCore,
+    ModelResponse,
+    RouteDecision,
+    Strategy,
+    ToolCallRequest,
+    build_spec,
+)
+from yai_core.channels.collect import CollectChannel
 
 
 class ScriptedModel:
@@ -136,3 +144,112 @@ def test_llm_router_decision_flows_through_loop() -> None:
     assert model.tiers[0] == "standard"
     assert model.tiers[1] == "strong"
     assert result.final_text.startswith("找到")
+
+
+# ---------- 澄清（clarify）循环：不允许无限反问 ----------
+
+class ScriptedChannel(CollectChannel):
+    """按队列返回澄清回答的通道，并记录被问到的问题。"""
+
+    def __init__(self, answers: list[str]) -> None:
+        super().__init__()
+        self._answers = list(answers)
+        self.questions: list[str] = []
+
+    async def ask(self, question: str) -> str:
+        self.questions.append(question)
+        return self._answers.pop(0) if self._answers else ""
+
+
+class AlwaysClarifyRouter:
+    """测试桩：无论任务文本都判 clarify，用于强制打满澄清轮数。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def aclassify(self, task, registry):
+        self.calls += 1
+        return RouteDecision(Strategy.CLARIFY, "llm", "测试桩：始终判澄清")
+
+    def classify(self, task, registry):
+        return Strategy.CLARIFY
+
+
+def test_clarify_question_mentions_original_task_and_converges() -> None:
+    model = ScriptedModel([ModelResponse(content="好的，这是结果。")])
+    channel = ScriptedChannel(["请直接回答我就行"])
+    core = AgentCore(model, channel=channel)
+
+    result = asyncio.run(core.run("随便"))
+
+    assert len(channel.questions) == 1
+    assert "随便" in channel.questions[0]
+    assert result.events[-1].type.value == "done"
+    assert result.final_text.startswith("好的")
+    assert model.calls == 1
+    assert [e.type.value for e in result.events].count("done") == 1
+
+
+def test_clarify_accumulates_context_across_rounds() -> None:
+    """原任务必须与补充信息累积后重新路由，不能丢上下文乒乓反问。"""
+    model = ScriptedModel([ModelResponse(content="已按补充信息处理。")])
+    # 第一轮仍模糊（短句 <12 字命中规则），第二轮给足信息
+    channel = ScriptedChannel(["随便", "请直接回答我就行"])
+    core = AgentCore(model, channel=channel)
+
+    result = asyncio.run(core.run("随便"))
+
+    assert len(channel.questions) == 2
+    # 第二轮反问带着原任务和第一轮补充，而不是只拿回答重新路由
+    assert channel.questions[1].count("随便") >= 2
+    assert "补充信息" in channel.questions[1]
+    assert result.events[-1].type.value == "done"
+
+
+def test_clarify_rounds_capped_then_falls_back_to_direct() -> None:
+    model = ScriptedModel([ModelResponse(content="信息仍不足，请补充关键对象。")])
+    channel = ScriptedChannel(["继续模糊", "还是模糊"])
+    core = AgentCore(model, channel=channel, router=AlwaysClarifyRouter())
+
+    result = asyncio.run(core.run("随便"))
+
+    selected = [e for e in result.events if e.type.value == "strategy_selected"]
+    assert selected[0].data["strategy"] == "clarify"
+    assert selected[-1].data["strategy"] == "direct"  # 达上限降级，不再追问
+    assert len(channel.questions) == 2  # 只问 2 轮
+    rounds = [e.data["round"] for e in result.events
+              if e.type.value == "clarify_requested"]
+    assert rounds == [1, 2]  # 轮次从 1 递增
+    assert selected[-1].data["tier"] == selected[0].data["tier"]  # tier 不被无声丢弃
+    assert result.events[-1].type.value == "done"
+    assert [e.type.value for e in result.events].count("done") == 1
+    assert result.strategy.value == "direct"
+
+
+def test_clarify_question_truncates_long_task_and_uses_generic_wording() -> None:
+    long_task = "随便" + "甲乙丙丁" * 60  # 242 字
+    model = ScriptedModel([])
+    channel = ScriptedChannel([""])
+    core = AgentCore(model, channel=channel, router=AlwaysClarifyRouter())
+
+    result = asyncio.run(core.run(long_task))
+
+    question = next(
+        e.data["question"] for e in result.events if e.type.value == "clarify_requested"
+    )
+    assert "…" in question
+    assert "哪个对象或哪件事" in question  # 通用话术，领域名词只作举例
+    assert len(question) < len(long_task)
+
+
+def test_clarify_empty_answer_aborts_gracefully() -> None:
+    model = ScriptedModel([])
+    channel = ScriptedChannel([""])  # 用户放弃 / 超时 / 终止
+    core = AgentCore(model, channel=channel)
+
+    result = asyncio.run(core.run("随便"))
+
+    assert result.events[-1].type.value == "done"
+    assert [e.type.value for e in result.events].count("done") == 1
+    assert "已停止" in result.final_text
+    assert model.calls == 0  # 空回答直接收尾，不调用模型
