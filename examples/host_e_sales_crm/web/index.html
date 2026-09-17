@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>销售 CRM · 内嵌 YAI 数字员工</title>
+<style>
+  :root {
+    --text: #1A1B1C; --text-2: #6B7280; --bg: #F4F3EE; --card: #FFFFFF;
+    --border: #E4E3DD; --accent: #0F766E; --accent-d: #0C5F58;
+    --accent-tint: rgba(15,118,110,0.08); --ok: #15803D; --warn: #B45309; --err: #B91C1C;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  /* ---------- 原生应用框架 ---------- */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .topbar {
+    border-bottom: 1px solid var(--border); background: var(--card);
+    padding: 10px 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  .app-title { font-size: 16px; font-weight: 700; }
+  .app-sub { font-size: 12px; color: var(--text-2); }
+  .topbar .spacer { margin-left: auto; }
+  button { font-family: inherit; font-size: 13.5px; cursor: pointer; border: 1px solid var(--border);
+    background: #fff; color: var(--text); border-radius: 10px; padding: 8px 14px; min-height: 38px; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent-d); color: #fff; }
+  button.danger { color: var(--err); border-color: #FCA5A5; }
+  button.small { min-height: 30px; padding: 3px 10px; font-size: 12.5px; border-radius: 8px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .kpis { display: flex; gap: 12px; padding: 16px 22px 0; flex-wrap: wrap; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; min-width: 150px; flex: 1 1 150px; max-width: 240px; }
+  .kpi .label { font-size: 12px; color: var(--text-2); }
+  .kpi .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  .kpi .value.warn { color: var(--warn); }
+  .tabs { display: flex; gap: 4px; padding: 14px 22px 0; flex-wrap: wrap; }
+  .tab { border-bottom: 2px solid transparent; border-radius: 0; background: none;
+    padding: 8px 14px; min-height: 38px; color: var(--text-2); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .content { flex: 1; overflow-y: auto; padding: 16px 22px 28px; }
+  .view { display: none; max-width: 1080px; }
+  .view.active { display: block; }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 14px; }
+  .panel h3 { margin: 0 0 10px; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-2); font-weight: 600; font-size: 12px; background: #FAF9F5; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; font-size: 11px; border-radius: 5px; padding: 0 7px; }
+  .tag.key { background: rgba(180,83,9,.12); color: var(--warn); }
+  .tag.normal { background: #F1F0EA; color: var(--text-2); }
+  .tag.overdue { background: rgba(185,28,28,.1); color: var(--err); }
+  .tag.ok { background: rgba(21,128,61,.1); color: var(--ok); }
+  .tag.done { background: #F1F0EA; color: var(--text-2); text-decoration: line-through; }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select, textarea { font-family: inherit; font-size: 13.5px; border: 1px solid var(--border);
+    border-radius: 9px; padding: 8px 10px; color: var(--text); background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid rgba(15,118,110,.35); border-color: var(--accent); }
+  .muted { color: var(--text-2); font-size: 12.5px; }
+  .brief { white-space: pre-wrap; font-size: 13.5px; line-height: 1.9; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: #1A1B1C; color: #fff; font-size: 13px; padding: 9px 16px; border-radius: 10px;
+    opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 60; max-width: 80vw; }
+  .toast.show { opacity: .92; }
+  /* ---------- AI 抽屉 ---------- */
+  .ai-fab { display: none; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: 460px; max-width: 94vw;
+    background: var(--bg); border-left: 1px solid var(--border); box-shadow: -8px 0 30px rgba(0,0,0,.08);
+    display: flex; flex-direction: column; transform: translateX(100%); transition: transform .22s ease;
+    z-index: 50;
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer-head { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 14px;
+    display: flex; gap: 8px; align-items: center; }
+  .drawer-head .t { font-weight: 700; font-size: 14px; }
+  .drawer-head .s { font-size: 11.5px; color: var(--text-2); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #C7C7C0; margin-right: 5px; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--err); }
+  .chat { flex: 1; overflow-y: auto; padding: 14px; }
+  .turn { margin-bottom: 14px; }
+  .user-turn { display: flex; justify-content: flex-end; }
+  .user-bubble { background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px;
+    padding: 8px 13px; max-width: 82%; white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+  .assistant-turn { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .turn-head { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; font-size: 12px; margin-bottom: 6px; }
+  .badge { font-size: 11px; border-radius: 6px; padding: 1px 7px; background: #F1F0EA; color: var(--text-2);
+    border: 1px solid var(--border); white-space: nowrap; }
+  .badge.llm { background: rgba(124,111,224,.1); color: #5B4FCF; border-color: rgba(124,111,224,.3); }
+  .badge.ok { background: rgba(21,128,61,.1); color: var(--ok); } .badge.bad { background: rgba(185,28,28,.1); color: var(--err); }
+  .ev { border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 6px 10px;
+    margin: 5px 0; background: #fff; }
+  .ev-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+  .ev-type { font-weight: 600; }
+  .ev-body { font-size: 12.5px; margin-top: 3px; }
+  .ev.strategy_selected, .ev.plan_created { border-left-color: #7C6FE0; }
+  .ev.tool_call { border-left-color: var(--accent); } .ev.tool_result { border-left-color: #9CA3AF; }
+  .ev.model_message { border-left-color: #94D8C3; }
+  .ev.error { border-left-color: var(--err); background: rgba(185,28,28,.04); }
+  .ev.done { border-left-color: var(--ok); background: rgba(21,128,61,.05); }
+  pre.code { background: #F7F6F1; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
+    font-size: 11.5px; overflow-x: auto; margin: 4px 0 0; font-family: Consolas,'Cascadia Mono',monospace;
+    white-space: pre-wrap; word-break: break-word; }
+  ol.steps-list { margin: 3px 0; padding-left: 19px; font-size: 12.5px; }
+  .answer { border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 8px; font-size: 13px; }
+  .answer :first-child { margin-top: 0; } .answer :last-child { margin-bottom: 0; }
+  .answer h1,.answer h2,.answer h3 { margin: 10px 0 5px; }
+  .answer h1 { font-size: 15px; } .answer h2 { font-size: 14px; }
+  .answer code { background: #F1F0EA; border-radius: 4px; padding: 1px 4px; font-family: Consolas,monospace; font-size: 12px; }
+  .answer pre.code code { background: none; padding: 0; }
+  .answer table { border-collapse: collapse; margin: 7px 0; font-size: 12px; display: block; overflow-x: auto; }
+  .answer th, .answer td { border: 1px solid var(--border); padding: 4px 9px; }
+  .answer th { background: #F7F6F1; }
+  .answer ul, .answer ol { margin: 5px 0; padding-left: 20px; }
+  .pending { color: var(--text-2); font-size: 12.5px; display: flex; gap: 7px; align-items: center; }
+  .spin { width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: rot .9s linear infinite; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .perm { border: 1px solid #FCD34D; background: #FFFBEB; border-left-width: 3px; border-radius: 10px;
+    padding: 9px 11px; margin: 7px 0; }
+  .perm .perm-title { font-size: 12.5px; font-weight: 700; color: #78350F; margin-bottom: 3px; }
+  .perm .perm-actions { margin-top: 7px; display: flex; gap: 7px; }
+  .perm button.allow { background: var(--accent); border-color: var(--accent); color: #fff; min-height: 32px; padding: 4px 14px; }
+  .perm button { min-height: 32px; padding: 4px 14px; font-size: 12.5px; }
+  .perm .verdict { font-size: 12px; font-weight: 600; margin-top: 5px; }
+  .clarify input { flex: 1; min-width: 0; }
+  .clarify .clarify-row { display: flex; gap: 7px; margin-top: 7px; }
+  .clarify button { min-height: 32px; padding: 4px 12px; font-size: 12.5px; }
+  .dock { border-top: 1px solid var(--border); background: var(--card); padding: 10px 12px 12px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
+  .chip { font-size: 11.5px; border: 1px solid var(--border); background: #fff; border-radius: 999px;
+    padding: 4px 10px; cursor: pointer; color: var(--text); min-height: auto; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .input-row { display: flex; gap: 8px; }
+  textarea#taskInput { flex: 1; resize: none; min-height: 42px; max-height: 130px; font-size: 13px; }
+  .dock-hint { font-size: 11px; color: var(--text-2); margin-top: 6px; }
+  details.tools details { margin-top: 6px; }
+  details.tools summary { cursor: pointer; font-size: 11.5px; color: var(--text-2); }
+  .mini-tool { font-size: 11px; font-family: Consolas,monospace; padding: 1px 0; }
+  .welcome-drawer { font-size: 12.5px; color: var(--text-2); background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div>
+      <div class="app-title">销售 CRM <span style="font-weight:400;font-size:12px;color:var(--text-2)">（演示版 · 数据虚构）</span></div>
+      <div class="app-sub">客户 · 订单 · 跟进 · 待办 · 日报 —— 这是软件本来的样子</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="small" id="btnReset">重置演示数据</button>
+    <button class="primary" id="btnToggleAi">🤖 AI 数字员工</button>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <nav class="tabs">
+    <button class="tab active" data-view="customers">客户</button>
+    <button class="tab" data-view="orders">订单</button>
+    <button class="tab" data-view="followups">跟进记录</button>
+    <button class="tab" data-view="todos">待办</button>
+    <button class="tab" data-view="brief">今日日报</button>
+  </nav>
+
+  <main class="content">
+    <section class="view active" id="view-customers">
+      <div class="panel">
+        <h3>客户档案</h3>
+        <table><thead><tr><th>姓名</th><th>公司</th><th>等级</th><th>负责人</th><th>最近跟进</th><th>状态</th></tr></thead>
+        <tbody id="tbCustomers"></tbody></table>
+      </div>
+    </section>
+
+    <section class="view" id="view-orders">
+      <div class="panel">
+        <h3>订单与销售额</h3>
+        <div id="orderSummary" class="muted" style="margin-bottom:8px"></div>
+        <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>金额</th><th>区域</th></tr></thead>
+        <tbody id="tbOrders"></tbody></table>
+      </div>
+    </section>
+
+    <section class="view" id="view-followups">
+      <div class="panel">
+        <h3>新增跟进（软件原生功能）</h3>
+        <div class="form-row">
+          <select id="fuCustomer"></select>
+          <input id="fuContent" placeholder="跟进内容，如：电话沟通，客户有意向下周看方案" style="flex:1;min-width:240px">
+          <button class="primary small" id="btnAddFollowup" style="min-height:36px">记录跟进</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>跟进记录</h3>
+        <table><thead><tr><th>日期</th><th>客户</th><th>内容</th><th></th></tr></thead>
+        <tbody id="tbFollowups"></tbody></table>
+      </div>
+    </section>
+
+    <section class="view" id="view-todos">
+      <div class="panel">
+        <h3>新建待办（软件原生功能）</h3>
+        <div class="form-row">
+          <input id="tdTitle" placeholder="待办标题，如：下周二前发送报价单" style="flex:1;min-width:240px">
+          <input id="tdDue" type="date">
+          <button class="primary small" id="btnAddTodo" style="min-height:36px">新建待办</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>未完成</h3>
+        <table><thead><tr><th>事项</th><th>截止</th><th></th></tr></thead><tbody id="tbTodosOpen"></tbody></table>
+        <h3 style="margin-top:14px">已完成</h3>
+        <table><tbody id="tbTodosDone"></tbody></table>
+      </div>
+    </section>
+
+    <section class="view" id="view-brief">
+      <div class="panel">
+        <h3>今日销售日报（软件自带模板）</h3>
+        <div class="brief" id="briefBox"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- AI 数字员工：嵌入 Core 后获得的侧边助手 -->
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div>
+      <div class="t">🤖 AI 数字员工</div>
+      <div class="s"><span class="dot" id="stateDot"></span><span id="stateText">连接中…</span><span id="modelLabel"></span></div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      <button class="small danger" id="btnCancel" style="display:none">终止</button>
+      <button class="small" id="btnCloseAi">收起</button>
+    </div>
+  </div>
+  <div class="chat" id="chat">
+    <div class="welcome-drawer">
+      我是<b>嵌入这个 CRM 的数字员工</b>：内核内省了软件自身的业务方法作为工具。
+      读操作自动执行；写跟进、建待办等会先请你授权，执行结果直接反映在左侧软件里。
+      <details class="tools" style="margin-top:8px" id="toolsDetails"><summary>内核发现的工具</summary><div id="toolsBox"></div></details>
+    </div>
+  </div>
+  <div class="dock">
+    <div class="chips">
+      <button class="chip" data-task="看看哪些客户超过 3 天没跟进，给最久没跟进的客户记录一条跟进“电话沟通，客户有意向下周看方案”，然后新建一个待办“下周二前发送报价单”，最后生成今天的销售日报。">查超期→写跟进→建待办→日报</button>
+      <button class="chip" data-task="华东区硬件类的销售额是多少？">华东硬件销售额</button>
+      <button class="chip" data-task="列出超过 3 天没跟进的客户，按逾期天数排序。">超期客户</button>
+    </div>
+    <div class="input-row">
+      <textarea id="taskInput" rows="1" placeholder="用自然语言交代任务，Enter 发送 / Shift+Enter 换行"></textarea>
+      <button class="primary" id="btnSend">发送</button>
+    </div>
+    <div class="dock-hint" id="runHint">写操作会弹出黄色授权卡片；任务中可点“终止”退出。</div>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  var STRATEGY_LABEL = { direct: '直接回答', react: 'ReAct 工具循环', plan: '先计划后执行', clarify: '澄清反问' };
+  var SOURCE_LABEL = { llm: '模型路由', rules: '规则兜底' };
+  var busy = false, currentRunId = null, snap = null;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+  function badge(text, cls) { return el('span', 'badge ' + (cls || ''), text); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function money(n) { return '¥' + Number(n || 0).toLocaleString('zh-CN'); }
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function () { t.classList.remove('show'); }, 2600);
+  }
+  function post(path, payload) {
+    return fetch(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {})
+    }).then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); });
+  }
+
+  /* ---------- Markdown（与录屏工作台同款轻量渲染） ---------- */
+  function renderMarkdown(src) {
+    var codes = [];
+    var text = esc(src);
+    text = text.replace(/```[^\n]*\n?([\s\S]*?)```/g, function (_, code) {
+      codes.push('<pre class="code">' + code.replace(/\n+$/, '') + '</pre>');
+      return '\u0000B' + (codes.length - 1) + '\u0000';
+    });
+    text = text.replace(/`([^`\n]+)`/g, function (_, c) {
+      codes.push('<code>' + c + '</code>');
+      return '\u0000I' + (codes.length - 1) + '\u0000';
+    });
+    var lines = text.split('\n'), html = [], i = 0;
+    function inline(s) { return s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); }
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length &&
+          /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf('-') >= 0) {
+        var head = line.split('|').slice(1, -1).map(function (c) { return inline(c.trim()); });
+        i += 2; var rows = [];
+        while (i < lines.length && /^\s*\|.*\|/.test(lines[i])) {
+          rows.push(lines[i].split('|').slice(1, -1).map(function (c) { return inline(c.trim()); }));
+          i++;
+        }
+        var t = '<table><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+                '</tr></thead><tbody>';
+        t += rows.map(function (r) {
+          return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
+        }).join('');
+        html.push(t + '</tbody></table>'); continue;
+      }
+      var hm = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (hm) { html.push('<h' + hm[1].length + '>' + inline(hm[2]) + '</h' + hm[1].length + '>'); i++; continue; }
+      if (/^\s*[-*]\s+/.test(line)) {
+        var items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          items.push('<li>' + inline(lines[i].replace(/^\s*[-*]\s+/, '')) + '</li>'); i++;
+        }
+        html.push('<ul>' + items.join('') + '</ul>'); continue;
+      }
+      if (/^\s*\d+[.、)]\s+/.test(line)) {
+        var ol = [];
+        while (i < lines.length && /^\s*\d+[.、)]\s+/.test(lines[i])) {
+          ol.push('<li>' + inline(lines[i].replace(/^\s*\d+[.、)]\s+/, '')) + '</li>'); i++;
+        }
+        html.push('<ol>' + ol.join('') + '</ol>'); continue;
+      }
+      if (line.trim() === '') { i++; continue; }
+      var para = [inline(line.trim())]; i++;
+      while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,4})\s/.test(lines[i]) &&
+             !/^\s*[-*]\s/.test(lines[i]) && !/^\s*\d+[.、)]\s/.test(lines[i]) &&
+             !/^\s*\|/.test(lines[i])) {
+        para.push(inline(lines[i].trim())); i++;
+      }
+      html.push('<p>' + para.join('<br>') + '</p>');
+    }
+    return html.join('\n').replace(/\u0000([BI])(\d+)\u0000/g, function (_, k, n) { return codes[Number(n)]; });
+  }
+
+  /* ---------- 原生 CRM 渲染 ---------- */
+  function renderSnapshot(s) {
+    snap = s;
+    var dueMap = {};
+    s.due_followup.forEach(function (d) { dueMap[d.name] = d.days_overdue; });
+    var openTodos = s.todos.filter(function (t) { return !t.done; });
+    var kpis = [
+      ['客户总数', s.customers.length + ' 位', ''],
+      ['订单总额', money(s.total_amount), ''],
+      ['超 3 天未跟进', s.due_followup.length + ' 位', s.due_followup.length ? 'warn' : ''],
+      ['未完成待办', openTodos.length + ' 项', '']
+    ];
+    document.getElementById('kpis').innerHTML = kpis.map(function (k) {
+      return '<div class="kpi"><div class="label">' + k[0] + '</div><div class="value ' + k[2] + '">' +
+             k[1] + '</div></div>';
+    }).join('');
+
+    document.getElementById('tbCustomers').innerHTML = s.customers.map(function (c) {
+      var overdue = dueMap[c.name];
+      var status = overdue != null
+        ? '<span class="tag overdue">超期 ' + overdue + ' 天</span>'
+        : '<span class="tag ok">正常</span>';
+      return '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.company) + '</td><td>' +
+        '<span class="tag ' + (c.level === '重点' ? 'key' : 'normal') + '">' + esc(c.level) + '</span>' +
+        '</td><td>' + esc(c.owner) + '</td><td>' + esc(c.last_followup) + '</td><td>' + status + '</td></tr>';
+    }).join('');
+
+    var cats = ['硬件', '软件', '服务'];
+    document.getElementById('orderSummary').innerHTML = '合计 ' + money(s.total_amount) + ' · ' +
+      cats.map(function (c) {
+        var v = s.orders.filter(function (o) { return o.category === c; })
+                       .reduce(function (a, o) { return a + o.amount; }, 0);
+        return c + ' ' + money(v);
+      }).join(' ｜ ');
+    document.getElementById('tbOrders').innerHTML = s.orders.map(function (o) {
+      return '<tr><td>' + esc(o.order) + '</td><td>' + esc(o.customer) + '</td><td>' + esc(o.category) +
+        '</td><td>' + money(o.amount) + '</td><td>' + esc(o.region) + '</td></tr>';
+    }).join('');
+
+    var fuSel = document.getElementById('fuCustomer');
+    fuSel.innerHTML = s.customers.map(function (c) {
+      return '<option value="' + esc(c.name) + '">' + esc(c.name) + '（' + esc(c.company) + '）</option>';
+    }).join('');
+    var fus = s.followups.slice().reverse();
+    document.getElementById('tbFollowups').innerHTML = fus.length ? fus.map(function (f) {
+      return '<tr><td style="white-space:nowrap">' + esc(f.created_at) + '</td><td>' + esc(f.customer) +
+        '</td><td>' + esc(f.content) + '</td><td></td></tr>';
+    }).join('') : '<tr><td colspan="4" class="muted">暂无跟进记录</td></tr>';
+
+    document.getElementById('tbTodosOpen').innerHTML = openTodos.length ? openTodos.map(function (t) {
+      return '<tr><td>' + esc(t.title) + '</td><td>' + (t.due ? esc(t.due) : '<span class="muted">无</span>') +
+        '</td><td><button class="small" data-complete="' + esc(t.title) + '">标记完成</button></td></tr>';
+    }).join('') : '<tr><td colspan="3" class="muted">没有未完成待办</td></tr>';
+    var doneTodos = s.todos.filter(function (t) { return t.done; });
+    document.getElementById('tbTodosDone').innerHTML = doneTodos.length ? doneTodos.map(function (t) {
+      return '<tr><td><span class="tag done">' + esc(t.title) + '</span></td><td></td></tr>';
+    }).join('') : '<tr><td class="muted">暂无</td></tr>';
+
+    document.getElementById('briefBox').textContent = s.brief;
+  }
+
+  function refreshSnapshot() {
+    return fetch('/api/snapshot').then(function (r) { return r.json(); }).then(renderSnapshot);
+  }
+
+  /* ---------- 标签页 ---------- */
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
+      document.querySelectorAll('.view').forEach(function (x) { x.classList.remove('active'); });
+      t.classList.add('active');
+      document.getElementById('view-' + t.getAttribute('data-view')).classList.add('active');
+    });
+  });
+
+  /* ---------- 原生写操作（不经 Agent） ---------- */
+  document.getElementById('btnAddFollowup').addEventListener('click', function () {
+    var customer = document.getElementById('fuCustomer').value;
+    var content = document.getElementById('fuContent').value.trim();
+    if (!content) { toast('请填写跟进内容'); return; }
+    post('/api/crm/followup', { customer: customer, content: content }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已记录跟进：' + customer);
+        document.getElementById('fuContent').value = '';
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+  document.getElementById('btnAddTodo').addEventListener('click', function () {
+    var title = document.getElementById('tdTitle').value.trim();
+    if (!title) { toast('请填写待办标题'); return; }
+    var due = document.getElementById('tdDue').value;
+    post('/api/crm/todo', { title: title, due: due }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已新建待办');
+        document.getElementById('tdTitle').value = '';
+        document.getElementById('tdDue').value = '';
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+  document.addEventListener('click', function (e) {
+    var title = e.target.getAttribute && e.target.getAttribute('data-complete');
+    if (!title) return;
+    post('/api/crm/complete', { title: title }).then(function (r) {
+      if (r.s === 200 && r.j.ok) { toast('已完成：' + title); return refreshSnapshot(); }
+      toast((r.j && r.j.error) || '操作失败');
+    });
+  });
+
+  /* ---------- 重置 / 抽屉 ---------- */
+  document.getElementById('btnReset').addEventListener('click', function () {
+    if (!window.confirm('重置演示数据？若数字员工正在执行会先被终止，手动录入的内容也会清空。')) return;
+    post('/api/reset', {}).then(function (r) {
+      if (r.s === 200) { toast('演示数据已重置'); return refreshSnapshot(); }
+      toast('重置失败：' + JSON.stringify(r.j));
+    });
+  });
+  var drawer = document.getElementById('drawer');
+  document.getElementById('btnToggleAi').addEventListener('click', function () {
+    drawer.classList.toggle('open');
+    if (drawer.classList.contains('open')) document.getElementById('taskInput').focus();
+  });
+  document.getElementById('btnCloseAi').addEventListener('click', function () {
+    drawer.classList.remove('open');
+  });
+
+  /* ---------- 后端状态 / 工具目录 ---------- */
+  function refreshState() {
+    return fetch('/api/state').then(function (r) { return r.json(); }).then(function (st) {
+      document.getElementById('stateDot').className = 'dot ok';
+      document.getElementById('stateText').textContent = '已连接';
+      document.getElementById('modelLabel').textContent = ' · ' + (st.model_label || '离线脚本模型');
+      var box = document.getElementById('toolsBox');
+      box.textContent = '';
+      [['read', '读 · 自动放行'], ['write', '写 · 需要授权']].forEach(function (g) {
+        var list = (st.tools || []).filter(function (t) { return t.access === g[0]; });
+        if (!list.length) return;
+        var d = el('div', 'muted', g[1] + '（' + list.length + '）');
+        d.style.marginTop = '6px'; box.appendChild(d);
+        list.forEach(function (t) { box.appendChild(el('div', 'mini-tool', '• ' + t.name)); });
+      });
+    }).catch(function () {
+      document.getElementById('stateDot').className = 'dot bad';
+      document.getElementById('stateText').textContent = '服务未连接';
+    });
+  }
+  refreshState();
+  refreshSnapshot();
+
+  /* ---------- 对话 ---------- */
+  var chat = document.getElementById('chat'), input = document.getElementById('taskInput');
+  document.querySelectorAll('.chip').forEach(function (c) {
+    c.addEventListener('click', function () { input.value = c.getAttribute('data-task'); input.focus(); });
+  });
+  function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 130) + 'px'; }
+  input.addEventListener('input', autosize);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('btnSend').click(); }
+  });
+  document.getElementById('btnSend').addEventListener('click', function () {
+    if (busy) return;
+    var task = input.value.trim();
+    if (!task) { input.focus(); return; }
+    input.value = ''; autosize();
+    runTask(task);
+  });
+  function setBusy(on) {
+    busy = on;
+    document.getElementById('btnSend').disabled = on;
+    document.getElementById('btnCancel').style.display = on ? '' : 'none';
+    if (!on) currentRunId = null;
+  }
+  document.getElementById('btnCancel').addEventListener('click', function () {
+    if (!currentRunId) return;
+    if (!window.confirm('终止当前任务？未完成的写操作不会执行。')) return;
+    this.disabled = true;
+    post('/api/cancel', { run_id: currentRunId }).finally(function () {
+      document.getElementById('btnCancel').disabled = false;
+    });
+  });
+
+  function runTask(task) {
+    setBusy(true);
+    var uTurn = el('div', 'turn user-turn');
+    uTurn.appendChild(el('div', 'user-bubble', task));
+    chat.appendChild(uTurn);
+    var card = el('div', 'assistant-turn turn');
+    var head = el('div', 'turn-head');
+    head.appendChild(el('span', '', '数字员工'));
+    var spin = el('span', 'pending'); spin.appendChild(el('span', 'spin'));
+    spin.appendChild(el('span', '', '执行中…'));
+    head.appendChild(spin);
+    card.appendChild(head);
+    var steps = el('div'); card.appendChild(steps);
+    var answer = el('div', 'answer'); answer.style.display = 'none'; card.appendChild(answer);
+    chat.appendChild(card);
+    chat.scrollTop = chat.scrollHeight;
+
+    post('/api/run', { task: task }).then(function (r) {
+      if (r.s !== 200) { finishCard(card, spin, steps, '启动失败：' + JSON.stringify(r.j), true); return; }
+      currentRunId = r.j.run_id;
+      openStream(r.j.run_id, card, head, spin, steps, answer);
+    }).catch(function (e) { finishCard(card, spin, steps, '无法连接本地服务：' + e, true); });
+  }
+
+  function openStream(runId, card, head, spin, steps, answer) {
+    var finished = false;
+    var es = new EventSource('/api/stream?run_id=' + encodeURIComponent(runId));
+    es.onmessage = function (msg) {
+      var evt; try { evt = JSON.parse(msg.data); } catch (e) { return; }
+      if (evt.type === 'permission_request') {
+        steps.appendChild(permissionCard(runId, evt.data));
+      } else if (evt.type === 'clarify_request') {
+        steps.appendChild(clarifyCard(runId, evt.data));
+      } else if (evt.type === 'permission_asked' || evt.type === 'clarify_requested') {
+        /* 交互卡片已表达，日志不重复 */
+      } else if (evt.type === 'cancelled') {
+        finished = true; es.close(); spin.remove();
+        var row = el('div', 'ev done');
+        row.appendChild(el('div', 'ev-type', '任务已终止'));
+        row.appendChild(el('div', 'ev-body', (evt.data && evt.data.reason) || ''));
+        steps.appendChild(row); setBusy(false);
+      } else if (evt.type === 'error') {
+        finished = true; es.close(); spin.remove();
+        steps.appendChild(renderEvent(evt)); setBusy(false);
+      } else if (evt.type === 'done') {
+        finished = true; es.close(); spin.remove();
+        var d = evt.data || {};
+        steps.appendChild(renderEvent({ type: 'done', data: d }));
+        if (d.final_text) {
+          answer.innerHTML = renderMarkdown(d.final_text);
+          answer.style.display = '';
+        }
+        setBusy(false);
+        document.getElementById('runHint').textContent = '完成：左侧软件数据已随授权的写操作更新。';
+        refreshSnapshot();
+      } else {
+        var node = renderEvent(evt);
+        if (node) {
+          steps.appendChild(node);
+          if (evt.type === 'strategy_selected') {
+            var d0 = evt.data || {};
+            head.appendChild(badge(STRATEGY_LABEL[d0.strategy] || d0.strategy));
+            if (d0.source) head.appendChild(badge(SOURCE_LABEL[d0.source] || d0.source, d0.source));
+          }
+        }
+      }
+      chat.scrollTop = chat.scrollHeight;
+    };
+    es.onerror = function () {
+      if (finished) return;
+      es.close();
+      finishCard(card, spin, steps, '事件流中断（本地服务可能已停止）。', true);
+    };
+  }
+
+  function finishCard(card, spin, steps, text, isError) {
+    spin.remove();
+    var ev = el('div', 'ev ' + (isError ? 'error' : 'done'));
+    ev.appendChild(el('div', 'ev-body', text));
+    steps.appendChild(ev);
+    setBusy(false);
+  }
+
+  function permissionCard(runId, data) {
+    var box = el('div', 'perm');
+    box.appendChild(el('div', 'perm-title', '写操作授权请求'));
+    box.appendChild(el('div', '', '工具：' + data.tool));
+    box.appendChild(el('pre', 'code', JSON.stringify(data.arguments || {}, null, 2)));
+    var verdict = el('div', 'verdict');
+    var actions = el('div', 'perm-actions');
+    var btnAllow = el('button', 'allow', '允许执行');
+    var btnDeny = el('button', '', '拒绝');
+    function decide(approved) {
+      btnAllow.disabled = true; btnDeny.disabled = true;
+      post('/api/decision', { run_id: runId, approved: approved });
+      verdict.textContent = approved ? '已允许，执行中…' : '已拒绝，该写操作不会执行';
+      verdict.style.color = approved ? 'var(--ok)' : 'var(--err)';
+    }
+    btnAllow.addEventListener('click', function () { decide(true); });
+    btnDeny.addEventListener('click', function () { decide(false); });
+    actions.appendChild(btnAllow); actions.appendChild(btnDeny);
+    box.appendChild(actions); box.appendChild(verdict);
+    return box;
+  }
+
+  function clarifyCard(runId, data) {
+    var box = el('div', 'perm clarify');
+    box.appendChild(el('div', 'perm-title', '内核请求澄清'));
+    box.appendChild(el('div', 'ev-body', data.question || ''));
+    var row = el('div', 'clarify-row');
+    var text = el('input'); text.placeholder = '补充信息后回车';
+    var btn = el('button', 'primary', '提交');
+    function send() {
+      var v = text.value.trim();
+      if (!v) return;
+      text.disabled = true; btn.disabled = true;
+      post('/api/answer', { run_id: runId, answer: v });
+      box.appendChild(el('div', 'verdict', '已提交：' + v));
+    }
+    btn.addEventListener('click', send);
+    text.addEventListener('keydown', function (e) { if (e.key === 'Enter') send(); });
+    row.appendChild(text); row.appendChild(btn); box.appendChild(row);
+    box.appendChild(el('div', 'dock-hint', '内核会带着原任务和你的补充重新理解；不想继续可点“终止”。'));
+    return box;
+  }
+
+  function renderEvent(ev) {
+    var d = el('div', 'ev ' + ev.type);
+    var head = el('div', 'ev-head'), body = el('div', 'ev-body');
+    var data = ev.data || {};
+    var TITLES = {
+      strategy_selected: '策略选择', plan_created: '生成计划', tool_call: '调用工具',
+      tool_result: '工具结果', model_message: '模型消息', clarify_requested: '请求澄清',
+      error: '错误', done: '任务完成'
+    };
+    if (!TITLES[ev.type]) return null;
+    head.appendChild(el('span', 'ev-type', TITLES[ev.type] || ev.type));
+    if (ev.type === 'strategy_selected') {
+      head.appendChild(badge(STRATEGY_LABEL[data.strategy] || data.strategy));
+      head.appendChild(badge(SOURCE_LABEL[data.source] || data.source, data.source));
+      body.textContent = data.reason || '';
+    } else if (ev.type === 'plan_created') {
+      var ol = el('ol', 'steps-list');
+      (data.steps || []).forEach(function (s) { ol.appendChild(el('li', '', s)); });
+      body.appendChild(ol);
+    } else if (ev.type === 'tool_call') {
+      head.appendChild(badge(data.tool));
+      body.appendChild(el('div', '', '参数：'));
+      body.appendChild(el('pre', 'code', JSON.stringify(data.arguments || {}, null, 2)));
+    } else if (ev.type === 'tool_result') {
+      head.appendChild(badge(data.tool));
+      head.appendChild(badge(data.ok ? '成功' : '失败', data.ok ? 'ok' : 'bad'));
+      body.appendChild(el('pre', 'code', data.ok ? (data.preview || '') : (data.error || '')));
+    } else if (ev.type === 'model_message') {
+      body.textContent = data.text || '';
+    } else if (ev.type === 'error') {
+      body.textContent = data.error || JSON.stringify(data);
+    } else if (ev.type === 'done') {
+      head.appendChild(badge(STRATEGY_LABEL[data.strategy] || data.strategy || '完成', 'ok'));
+    }
+    d.appendChild(head);
+    if (body.childNodes.length || body.textContent) d.appendChild(body);
+    return d;
+  }
+})();
+</script>
+</body>
+</html>

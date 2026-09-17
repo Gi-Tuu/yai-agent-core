@@ -66,7 +66,7 @@ examples/
 ├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
 ├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
 ├── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
-└── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入
+└── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入；含终端与网页工作台两种形态
 tests/                   # 离线 ScriptedModel 端到端测试
 docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
 ```
@@ -101,15 +101,24 @@ await bridge.aclose()
 `examples/host_e_sales_crm/` 首先是一个**不依赖 YAI 也能完整运行**的销售 CRM 小软件
 （`crm_app.py` 全文不导入 yai_core，菜单 CLI、JSON 持久化、12 个业务方法）；
 同一个 `SalesCrm` 实例交给 `AgentCore.auto` 即得到数字员工——读工具自动放行，
-写工具（写跟进/建待办等）执行前在终端 `[y/N]` 确认，多步任务自动规划并产出销售日报。
+写工具（写跟进/建待办等）执行前请求授权，多步任务自动规划并产出销售日报。
 
 ```bash
 # 没有 AI：独立菜单软件
 uv run python examples/host_e_sales_crm/standalone_cli.py
-# 嵌入 Core：自然语言数字员工（默认任务演示 plan + 两次写授权 + 日报）
+# 嵌入 Core：自然语言数字员工（终端形态，默认任务演示 plan + 两次写授权 + 日报）
 uv run python examples/host_e_sales_crm/run_agent.py
 uv run python examples/host_e_sales_crm/run_agent.py "华东区硬件类的销售额是多少？"
+# 嵌入 Core：网页工作台（原生 CRM 界面 + 右侧可收起的 AI 数字员工抽屉）
+uv run python examples/host_e_sales_crm/web_app.py        # http://127.0.0.1:8200
 ```
+
+网页工作台纯标准库实现（`http.server` + SSE，零第三方依赖）。打开后首先是**软件本来的样子**：
+客户 / 订单 / 跟进 / 待办 / 日报五个原生视图与原生录入表单，不依赖 Core 完整可用；
+点右上角"AI 数字员工"才展开右侧抽屉，用自然语言交代任务——读工具自动放行，写工具经 SSE
+推送授权卡片，浏览器点"允许/拒绝"后任务继续，执行结果实时反映在左侧原生界面（KPI、表格联动）。
+Agent 执行中原生写操作互斥（409），避免两边同时改数据；任务可随时终止，重置会先终止卡住的任务。
+只监听 127.0.0.1。
 
 ## 在线 API（X-Agent 部署要求）
 
