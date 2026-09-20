@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
@@ -29,19 +30,32 @@ class AgentCore:
         policy: PermissionPolicy | None = None,
         router: AdaptiveRouter | None = None,
         auto_approve_tools: bool = True,
-        llm_router: bool = False,
+        llm_router: bool | Literal["auto"] = False,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
         self.channel = channel or CollectChannel()
         self.memory = memory or InMemoryStore()
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
-        # llm_router=True 时把模型注入路由器：先 LLM 分类、失败回退规则；
-        # 默认关闭，保持零额外模型调用、离线测试完全确定。
+        # 路由模型注入：
+        # - False（默认）：永不 LLM 分类，零额外模型调用、离线完全确定；
+        # - True：总是 LLM 分类，失败回退规则；
+        # - "auto"：仅当模型后端自报 yai_live_router 标记时才分类，
+        #   离线脚本模型自动走规则，examples 与线上可统一传 "auto"。
         if router is not None:
             self.router = router
         else:
-            self.router = AdaptiveRouter(model=model if llm_router else None)
+            if llm_router is True:
+                route_model: ModelProvider | None = model
+            elif llm_router == "auto":
+                route_model = (
+                    model if getattr(model, "yai_live_router", False) else None
+                )
+            elif llm_router is False:
+                route_model = None
+            else:
+                raise ValueError('llm_router 只接受 True、False 或 "auto"')
+            self.router = AdaptiveRouter(model=route_model)
         self.executor = ToolExecutor(self.registry, self.policy, self.channel)
         self._loop = AgentLoop(
             model=self.model,

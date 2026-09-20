@@ -213,7 +213,7 @@ class Workbench:
             self._model_factory(),
             channel=channel,
             policy=AllowlistPolicy(READ_TOOLS, mode="auto"),
-            llm_router=True,
+            llm_router="auto",
         )
         asyncio.run_coroutine_threadsafe(self._run_guarded(core, task, run), self._loop)
         return run_id

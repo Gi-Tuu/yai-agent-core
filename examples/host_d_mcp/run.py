@@ -54,7 +54,8 @@ def build_config():
 async def main() -> None:
     load_dotenv()
     model, backend = build_model()
-    core = AgentCore(model)
+    # llm_router="auto"：有 Key 走 LLM 分类，无 Key 走规则（离线可跑）。
+    core = AgentCore(model, llm_router="auto")
     core.register_tools([build_spec(host_label)])
 
     try:

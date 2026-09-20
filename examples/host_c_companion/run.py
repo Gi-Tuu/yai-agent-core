@@ -24,7 +24,8 @@ DEFAULT_TASK = "先查看小拥的状态，然后检索和约定有关的记忆�
 async def main() -> None:
     load_dotenv()
     model, backend = build_model()
-    core = AgentCore.auto(capabilities, model)
+    # llm_router="auto"：有 Key（真实模型）走 LLM 分类，无 Key（离线脚本模型）走规则。
+    core = AgentCore.auto(capabilities, model, llm_router="auto")
     task = " ".join(sys.argv[1:]).strip() or DEFAULT_TASK
     await stream(core, task, backend)
 

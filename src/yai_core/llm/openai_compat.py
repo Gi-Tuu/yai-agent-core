@@ -10,6 +10,9 @@ from yai_core.types import ModelResponse, ToolCallRequest
 
 
 class OpenAICompatProvider:
+    # 真实联网模型后端：供 llm_router="auto" 识别（离线脚本模型不声明此标记）。
+    yai_live_router = True
+
     def __init__(
         self,
         *,

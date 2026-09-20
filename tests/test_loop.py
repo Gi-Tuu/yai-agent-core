@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from yai_core import (
     AgentCore,
     ModelResponse,
@@ -144,6 +146,76 @@ def test_llm_router_decision_flows_through_loop() -> None:
     assert model.tiers[0] == "standard"
     assert model.tiers[1] == "strong"
     assert result.final_text.startswith("找到")
+
+
+# ---------- llm_router="auto"：按 provider 能力标记决定是否 LLM 分类 ----------
+
+class _LiveLikeModel(ScriptedModel):
+    """模拟真实联网后端：自报 yai_live_router 标记。"""
+
+    yai_live_router = True
+
+
+def test_auto_uses_rules_for_offline_model() -> None:
+    # auto + 离线脚本模型：不做分类调用，走规则路由（离线确定性）。
+    model = ScriptedModel([ModelResponse(content="离线结果")])
+    core = AgentCore(model, llm_router="auto")
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.events[0].data["source"] == "rules"
+    assert model.calls == 1  # 只有执行阶段的一次调用，无分类调用
+
+
+def test_auto_uses_llm_for_live_model() -> None:
+    # auto + 自报联网的后端：第一次调用用于分类。
+    model = _LiveLikeModel(
+        [
+            ModelResponse(content='{"strategy":"react","tier":"standard","reason":"用搜索"}'),
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c1", name="search_notes", arguments={"keyword": "周报"}
+                )],
+            ),
+            ModelResponse(content="完成"),
+        ]
+    )
+    core = AgentCore(model, llm_router="auto")
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("帮我看看笔记里有啥"))
+
+    assert result.events[0].data["source"] == "llm"
+    assert model.calls >= 2
+
+
+def test_llm_router_bool_true_still_uses_llm_without_marker() -> None:
+    # 显式 True 不依赖标记：即使模型没有 yai_live_router 也走 LLM 分类（向后兼容）。
+    model = ScriptedModel(
+        [
+            ModelResponse(content='{"strategy":"react","tier":"standard","reason":"用搜索"}'),
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c1", name="search_notes", arguments={"keyword": "周报"}
+                )],
+            ),
+            ModelResponse(content="完成"),
+        ]
+    )
+    core = AgentCore(model, llm_router=True)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("帮我看看笔记里有啥"))
+
+    assert result.events[0].data["source"] == "llm"
+
+
+def test_llm_router_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="llm_router"):
+        AgentCore(ScriptedModel([]), llm_router="yes")  # type: ignore[arg-type]
 
 
 # ---------- 澄清（clarify）循环：不允许无限反问 ----------

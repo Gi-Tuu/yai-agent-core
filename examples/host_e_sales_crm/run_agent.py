@@ -90,7 +90,7 @@ async def main() -> None:
         model,
         channel=DemoCliChannel(),
         policy=AllowlistPolicy(READ_TOOLS, mode="auto"),
-        llm_router=True,
+        llm_router="auto",
     )
     task = " ".join(sys.argv[1:]).strip() or DEFAULT_TASK
     print("=" * 60)

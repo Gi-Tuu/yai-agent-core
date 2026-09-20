@@ -13,6 +13,13 @@ class ModelProvider(Protocol):
 
     - OpenAI 兼容实现见 ``yai_core.llm.openai_compat``
     - 测试/离线演示可使用脚本化假模型
+
+    可选能力标记（类属性，不进协议的强制结构）：
+
+    - ``yai_live_router = True``：真实联网模型后端声明该标记后，
+      ``AgentCore(llm_router="auto")`` 才会启用 LLM 路由；
+    - 离线/脚本模型不声明（``getattr`` 默认 False），auto 下走规则路由，
+      保证离线测试零网络调用、完全确定。禁止用类名字符串嗅探模型类型。
     """
 
     async def achat(
