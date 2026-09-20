@@ -218,6 +218,104 @@ def test_llm_router_rejects_unknown_value() -> None:
         AgentCore(ScriptedModel([]), llm_router="yes")  # type: ignore[arg-type]
 
 
+# ---------- 能力缺口感知：capability_missing 事件 ----------
+
+def test_loop_emits_capability_missing_event() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"缺天气",'
+                '"missing_capability":"天气查询能力"}'
+            ),
+            ModelResponse(content="我当前没有天气查询能力，无法回答。"),
+        ]
+    )
+    core = AgentCore(model, llm_router=True)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("查一下湛江天气"))
+
+    events = [e for e in result.events if e.type.value == "capability_missing"]
+    assert len(events) == 1
+    data = events[0].data
+    assert data["missing"] == "天气查询能力"
+    assert data["strategy"] == "react"
+    assert "search_notes" in data["available_tools"]
+    assert "建议" not in data  # 事件只描述缺口，不给宿主规定动作
+
+
+def test_loop_no_capability_missing_when_tools_sufficient() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"用搜索",'
+                '"missing_capability":null}'
+            ),
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c1", name="search_notes", arguments={"keyword": "周报"}
+                )],
+            ),
+            ModelResponse(content="完成"),
+        ]
+    )
+    core = AgentCore(model, llm_router=True)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报并总结"))
+
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+
+
+def test_loop_no_capability_missing_on_rules_path() -> None:
+    # 规则路径不具备能力缺口判断，不发事件。
+    model = ScriptedModel([ModelResponse(content="离线结果")])
+    core = AgentCore(model)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+
+
+def test_loop_no_capability_missing_on_clarify() -> None:
+    # 即使模型在 clarify 决策里误填 missing_capability，也不发事件（Q4 边界）。
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"clarify","tier":"standard","reason":"信息不足",'
+                '"missing_capability":"某能力"}'
+            ),
+            ModelResponse(content="好的"),
+        ]
+    )
+    channel = ScriptedChannel([""])  # 空回答 -> 体面收尾
+    core = AgentCore(model, llm_router=True, channel=channel)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("随便弄一下"))
+
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+
+
+def test_loop_no_capability_missing_without_tools() -> None:
+    # 无工具部署形态：分类短路走规则 direct，不发缺口事件。
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"direct","reason":"闲聊","missing_capability":"天气"}'
+            ),
+            ModelResponse(content="你好"),
+        ]
+    )
+    core = AgentCore(model, llm_router=True)
+
+    result = asyncio.run(core.run("你好"))
+
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+
+
 # ---------- 澄清（clarify）循环：不允许无限反问 ----------
 
 class ScriptedChannel(CollectChannel):

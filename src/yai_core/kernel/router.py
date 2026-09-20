@@ -21,9 +21,10 @@ from yai_core.tools.registry import ToolRegistry
 from yai_core.types import Strategy
 
 # 多步骤信号：出现时倾向先规划再执行
+# （"一共"是数量信号而非多步信号，已移入行动信号，避免"一共多少条"误判）
 _PLAN_HINTS = (
     "然后", "接着", "之后", "再把", "分步", "步骤", "先", "并且", "同时",
-    "对比", "整理成", "汇总成", "最终", "一共", "分别",
+    "对比", "整理成", "汇总成", "最终", "分别",
 )
 # 行动信号：需要调用工具
 _ACTION_HINTS = (
@@ -31,6 +32,8 @@ _ACTION_HINTS = (
     "记录", "新增", "整理", "分析", "筛选", "生成",
     # 显式的工具/MCP 调用意图（v0.2 接外部 MCP Server 后补齐）
     "问一下", "查询", "调用", "工具", "mcp",
+    # 数量/存在性问法本质是查询，需要工具（Q2 回归）
+    "多少", "几个", "几条", "几号", "有没有",
 )
 # 过于模糊、需要反问
 _CLARIFY_HINTS = ("随便", "你看着办", "什么都行", "帮我弄一下")
@@ -44,6 +47,9 @@ class RouteDecision:
     source: str  # "llm"：模型分类；"rules"：规则（含 LLM 失败后的兜底）
     reason: str
     tier: str = "standard"  # "standard"（便宜快）/ "strong"（规划等重活）
+    # 仅 LLM 路径可填：模型判断现有工具不足以完成任务时，对缺失能力的一句话描述。
+    # 规则路径恒为 None；AgentLoop 据此向宿主发 capability_missing 事件。
+    missing_capability: str | None = None
 
 
 class AdaptiveRouter:
@@ -115,12 +121,16 @@ class AdaptiveRouter:
             "你是嵌入式 Agent 的任务路由器。根据任务与宿主可用工具，只输出一个 JSON 对象，"
             "不要输出 JSON 以外的任何内容：\n"
             '{"strategy": "direct|react|plan|clarify", '
-            '"tier": "standard|strong", "reason": "不超过30字的中文理由"}\n'
+            '"tier": "standard|strong", "reason": "不超过30字的中文理由", '
+            '"missing_capability": "字符串或null"}\n'
             "策略判定标准：\n"
             "- direct：闲聊、知识问答、写作、解释，不需要调用工具；\n"
             "- react：需要调用工具（查询/搜索/计算/读取/调用 MCP 等），单步即可完成；\n"
             "- plan：明显多步骤、需要先拆解计划再逐步执行；\n"
             "- clarify：任务过于模糊、缺少必要对象，无法执行。\n"
+            "保守原则：拿不准该用什么工具时优先 react（让工具循环兜底），不要轻易判 direct；\n"
+            "missing_capability 字段：如果现有工具都不足以完成任务，用一句话描述缺失的能力"
+            "（例如“天气查询能力”）；现有工具足够则填 null。\n"
             f"宿主可用工具：\n{tools_text}\n"
             f"任务：{task}"
         )
@@ -150,4 +160,11 @@ class AdaptiveRouter:
         if tier not in ("standard", "strong"):
             tier = "standard"
         reason = str(data.get("reason") or "").strip() or "LLM 分类（模型未给理由）"
-        return RouteDecision(strategy, "llm", reason, tier)
+        # 能力缺口：只接受非空字符串，"null"/空串/缺字段一律视为 None（默认有能力）。
+        missing = data.get("missing_capability")
+        missing_capability: str | None = None
+        if missing is not None and str(missing).strip().lower() not in ("null", "none", ""):
+            missing_capability = str(missing).strip()[:120]
+        return RouteDecision(
+            strategy, "llm", reason, tier, missing_capability=missing_capability
+        )

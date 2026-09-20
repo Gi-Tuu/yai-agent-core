@@ -70,6 +70,9 @@ async def stream(core, task: str, backend: str) -> None:
             print(f"[权限] 请求确认：{event.data['tool']}({event.data['arguments']})")
         elif event.type == EventType.CLARIFY_REQUESTED:
             print(f"[反问] {event.data['question']}")
+        elif event.type == EventType.CAPABILITY_MISSING:
+            print(f"[能力缺口] 缺少：{event.data['missing']}")
+            print(f"           现有工具：{event.data['available_tools']}")
         elif event.type == EventType.MODEL_MESSAGE:
             print(f"[模型] {event.data['text']}")
         elif event.type == EventType.ERROR:

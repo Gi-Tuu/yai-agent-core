@@ -25,8 +25,9 @@ from yai_core.types import (
 )
 
 _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
-你只能通过"工具"操作宿主的能力，不要编造工具不存在的数据。\
-当任务完成时，直接给出可交付的最终结果。
+你可以使用宿主提供的工具（见下方工具目录）。\
+如果现有工具不足以完成任务，请明确指出缺失的能力，系统会尝试为你发现或补充新工具。\
+不要编造工具不存在的数据。当任务完成时，直接给出可交付的最终结果。
 
 宿主当前提供的能力：
 {tools}
@@ -85,6 +86,23 @@ class AgentLoop:
                 "tier": decision.tier,
             },
         )
+
+        # 能力缺口感知：LLM 路由明确判定现有工具不足时，向宿主发事件，
+        # 宿主可据此引导安装插件/接入 MCP；规则路径、澄清、无工具部署形态不发。
+        if (
+            decision.missing_capability
+            and strategy != Strategy.CLARIFY
+            and len(self.registry) > 0
+        ):
+            yield AgentEvent(
+                EventType.CAPABILITY_MISSING,
+                {
+                    "task": task,
+                    "missing": decision.missing_capability,
+                    "available_tools": [s.name for s in self.registry.all()],
+                    "strategy": strategy.value,
+                },
+            )
 
         if strategy == Strategy.CLARIFY and _clarify_depth >= self.max_clarify_rounds:
             # 澄清轮数达上限仍不明确：降级为直接回答（DIRECT，不调工具），由模型说明

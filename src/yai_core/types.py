@@ -32,6 +32,7 @@ class EventType(StrEnum):
     TOOL_RESULT = "tool_result"
     PERMISSION_ASKED = "permission_asked"
     CLARIFY_REQUESTED = "clarify_requested"
+    CAPABILITY_MISSING = "capability_missing"
     ERROR = "error"
     DONE = "done"
 

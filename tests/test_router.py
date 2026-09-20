@@ -166,3 +166,89 @@ def test_aclassify_bad_tier_normalizes(bad_tier) -> None:
     router = AdaptiveRouter(model=model)
     decision = asyncio.run(router.aclassify("查笔记", _registry_with_tools()))
     assert decision.tier == "standard"
+
+
+# ---------- Q2：数量/存在性问法必须进工具循环（"一共"不再是多步信号） ----------
+
+@pytest.mark.parametrize(
+    "task",
+    ["我一共有多少条笔记？", "有没有关于周报的笔记", "我有几个待办", "今天几号"],
+)
+def test_quantifier_hints_go_react(task: str) -> None:
+    # 有工具宿主：数量/存在性问法必须进工具循环，不能被误判 direct。
+    router = AdaptiveRouter()
+    assert router.classify(task, _registry_with_tools()) == Strategy.REACT
+
+
+def test_yigong_alone_no_longer_triggers_plan() -> None:
+    # "一共"是数量信号：无其他多步信号时不应判 plan（配合"多少"走 react）。
+    router = AdaptiveRouter()
+    decision = router._rules("我一共有多少条笔记", _registry_with_tools())
+    assert decision.strategy == Strategy.REACT
+
+
+# ---------- 能力缺口：missing_capability 字段 ----------
+
+def test_llm_missing_capability_parsed() -> None:
+    model = ScriptedClassifier(
+        '{"strategy": "react", "tier": "standard", "reason": "需要天气", '
+        '"missing_capability": "天气查询能力"}'
+    )
+    router = AdaptiveRouter(model=model)
+    decision = asyncio.run(router.aclassify("查一下湛江天气", _registry_with_tools()))
+    assert decision.missing_capability == "天气查询能力"
+
+
+@pytest.mark.parametrize("raw", ["null", '""', '"  "', '"none"', '"NULL"'])
+def test_llm_missing_capability_nullish_becomes_none(raw: str) -> None:
+    model = ScriptedClassifier(
+        f'{{"strategy": "react", "reason": "够用", "missing_capability": {raw}}}'
+    )
+    router = AdaptiveRouter(model=model)
+    decision = asyncio.run(router.aclassify("搜索笔记", _registry_with_tools()))
+    assert decision.missing_capability is None
+
+
+def test_llm_missing_capability_absent_defaults_none() -> None:
+    model = ScriptedClassifier('{"strategy": "react", "reason": "够用"}')
+    router = AdaptiveRouter(model=model)
+    decision = asyncio.run(router.aclassify("搜索笔记", _registry_with_tools()))
+    assert decision.missing_capability is None
+
+
+def test_llm_missing_capability_truncated() -> None:
+    long_missing = "天气" * 100
+    model = ScriptedClassifier(
+        f'{{"strategy": "react", "reason": "缺能力", "missing_capability": "{long_missing}"}}'
+    )
+    router = AdaptiveRouter(model=model)
+    decision = asyncio.run(router.aclassify("查天气", _registry_with_tools()))
+    assert decision.missing_capability is not None
+    assert len(decision.missing_capability) <= 120
+
+
+def test_rules_never_produce_missing_capability() -> None:
+    # 规则路径不具备能力缺口判断，恒为 None。
+    router = AdaptiveRouter()
+    for task in ["你好", "搜索笔记", "先查再汇总", "随便"]:
+        decision = router._rules(task, _registry_with_tools())
+        assert decision.missing_capability is None
+
+
+def test_missing_capability_does_not_change_strategy() -> None:
+    # 缺口感知只负责发事件，不改变本次执行策略。
+    model = ScriptedClassifier(
+        '{"strategy": "direct", "reason": "无工具可用", "missing_capability": "天气查询"}'
+    )
+    router = AdaptiveRouter(model=model)
+    decision = asyncio.run(router.aclassify("查天气", _registry_with_tools()))
+    assert decision.strategy == Strategy.DIRECT
+    assert decision.missing_capability == "天气查询"
+
+
+def test_classify_prompt_asks_missing_capability() -> None:
+    # 分类契约必须显式包含 missing_capability 字段说明。
+    import inspect
+
+    source = inspect.getsource(AdaptiveRouter._llm_classify)
+    assert "missing_capability" in source

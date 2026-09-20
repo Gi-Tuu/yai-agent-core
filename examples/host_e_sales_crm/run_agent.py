@@ -57,6 +57,8 @@ class DemoCliChannel:
             pass
         elif event.type == EventType.CLARIFY_REQUESTED:
             print(f"[澄清] {d['question']}")
+        elif event.type == EventType.CAPABILITY_MISSING:
+            print(f"[能力缺口] 缺少：{d['missing']}（现有工具：{d['available_tools']}）")
         elif event.type == EventType.MODEL_MESSAGE:
             print(f"[模型] {d.get('text', '')}")
         elif event.type == EventType.ERROR:
