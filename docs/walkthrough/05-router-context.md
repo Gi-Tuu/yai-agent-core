@@ -7,16 +7,19 @@
 ### A1. 信号词表（router.py 顶部）
 ```python
 _PLAN_HINTS = ("然后", "接着", "之后", "再把", "分步", "步骤", "先", "并且",
-               "同时", "对比", "整理成", "汇总成", "最终", "一共", "分别")
+               "同时", "对比", "整理成", "汇总成", "最终", "分别")
 _ACTION_HINTS = ("查", "找", "搜", "列出", "统计", "计算", "导出", "获取",
                  "读取", "记录", "新增", "整理", "分析", "筛选", "生成",
                  # 显式的工具/MCP 调用意图（v0.2 接外部 MCP Server 后补齐）
-                 "问一下", "查询", "调用", "工具", "mcp")
+                 "问一下", "查询", "调用", "工具", "mcp",
+                 # 数量/存在性问法本质是查询，需要工具（Q2 回归）
+                 "多少", "几个", "几条", "几号", "有没有")
 _CLARIFY_HINTS = ("随便", "你看着办", "什么都行", "帮我弄一下")
 ```
 - 三个元组就是三张"关键词表"。这是 v0.1 的确定性规则实现：**零成本、离线可跑、每条规则都能写单元测试**（见 `tests/test_router.py`）。
 - 元组而不是列表：这些表不该被运行时修改，元组语义更准确。
-- 最后五个词是一次真实回归补的：任务写"用 MCP 工具**问一下**……"时，旧词表没有任何动作信号，被路由成 direct，结果模型想调工具却拿不到工具清单，只能把工具调用写成文本。规则路由是 LLM 路由的兜底，**兜底也必须覆盖最直白的工具意图表达**。
+- 中间五个词是一次真实回归补的：任务写"用 MCP 工具**问一下**……"时，旧词表没有任何动作信号，被路由成 direct，结果模型想调工具却拿不到工具清单，只能把工具调用写成文本。规则路由是 LLM 路由的兜底，**兜底也必须覆盖最直白的工具意图表达**。
+- 最后五个数量词是又一次回归（Q2）："我一共有多少条笔记？"被旧词表里的"**一共**"误判为多步、又没有命中行动信号，最终 direct。实际上"一共"是数量信号而不是多步信号——它已从 `_PLAN_HINTS` 移除；"多少/几个/几条/几号/有没有"这类数量/存在性问法的本质是**查询**，必须进工具循环。
 
 ### A2. 类与构造（L27-L29）
 ```python
@@ -132,10 +135,16 @@ class RouteDecision:
     source: str          # "llm"（模型分类）或 "rules"（规则，含兜底）
     reason: str          # 人话理由，随事件流给用户/评委看
     tier: str = "standard"   # 建议模型档位：standard 便宜快 / strong 给规划等重活
+    # 仅 LLM 路径可填：模型判断现有工具不足以完成任务时，对缺失能力的一句话描述。
+    # 规则路径恒为 None；AgentLoop 据此向宿主发 capability_missing 事件。
+    missing_capability: str | None = None
 ```
 - 规则路径以前只返回一个 `Strategy` 枚举，现在统一返回 `RouteDecision`——
   **每个决策都带来源、理由、档位**，对应红线"每个自适应决策必须发事件、禁止静默决策"。
 - `classify()`（同步，返回枚举）保留给外部兜底调用；内部新增 `_rules()` 返回完整记录。
+- `missing_capability` 是"能力缺口感知"的载体：模型发现"宿主没有天气工具"时，
+  不只硬着头皮作答，而是把缺口描述出来交给宿主（见 06 篇的 `capability_missing` 事件）。
+  这是通往"发现工具/创造工具"的第一步。规则路径不具备这种判断力，恒为 `None`。
 
 ### C2. 规则路径改造 `_rules()`
 原来 `classify` 里的每个 `return Strategy.X` 都换成
@@ -168,13 +177,21 @@ async def aclassify(self, task, registry) -> RouteDecision:
 ```python
 prompt = ("你是嵌入式 Agent 的任务路由器。……只输出一个 JSON 对象……\n"
           '{"strategy": "direct|react|plan|clarify", "tier": "standard|strong",'
-          ' "reason": "不超过30字的中文理由"}\n'
-          "策略判定标准：……\n宿主可用工具：\n{逐行 name: description}\n任务：{task}")
+          ' "reason": "不超过30字的中文理由",'
+          ' "missing_capability": "字符串或null"}\n'
+          "策略判定标准：……\n"
+          "保守原则：拿不准该用什么工具时优先 react（让工具循环兜底），不要轻易判 direct；\n"
+          "missing_capability：现有工具都不足以完成任务时，一句话描述缺失能力，足够则填 null。\n"
+          "宿主可用工具：\n{逐行 name: description}\n任务：{task}")
 resp = await self.model.achat(messages, tools=None, tier="standard")
 ```
 - `tools=None`：分类轮**不给工具清单的 function-calling 形式**，而是把工具的
   name/description 以文本列进提示词——分类只需要"看得懂有什么能力"，不调工具。
 - 固定 `tier="standard"`：路由本身用最便宜快的模型/档位，成本一次调用、几十 token。
+- 输出契约的第四字段 `missing_capability` 是能力缺口判断：模型同时回答"怎么打"和
+  "手里的家伙够不够"。**保守原则**是一次真实回归的教训——direct 路径首轮不塞工具清单，
+  模型拿不准时误判 direct 会让工具调用写成文本，而 react 有完整的工具循环兜底，
+  误判成本低得多。
 - 走的还是 SPI 的 `ModelProvider.achat`：DeepSeek、离线假模型、未来的本地模型一视同仁。
 
 ### C5. 解析与校验 `_parse()`
@@ -188,17 +205,32 @@ if len(registry) == 0 and strategy in (REACT, PLAN):
 tier = data.get("tier", "standard")
 if tier not in ("standard", "strong"):
     tier = "standard"                                  # 档位非法：降级而不是报错
+missing = data.get("missing_capability")
+if missing is not None and str(missing).strip().lower() not in ("null", "none", ""):
+    missing_capability = str(missing).strip()[:120]    # 非空才接受，截断 120 字
 ```
 - 用"截取第一个 `{` 到最后一个 `}`"容忍模型套代码块或说客套话（实测常见）。
 - **校验而不是信任模型输出**：策略值必须是四枚举之一；无工具却选工具策略直接判非法；
   只有档位字段采取"非法即归一化"的宽容策略（它不影响安全，只影响成本）。
+- `missing_capability` 同样宽容归一：缺字段、`null`、字符串 `"null"/"none"`、空串、
+  纯空白都视为"没有缺口"（默认相信能力够用）；非空描述截断到 120 字，防止模型写小作文
+  把事件撑爆。注意只有走到 `_parse()` 的 LLM 路径可能产生缺口，规则路径不填这个字段。
 
 ### C6. 接线：AgentCore 开关 + Loop 事件
-- `AgentCore(..., llm_router=False)`：默认关闭（零额外调用、离线测试完全确定）；
-  开启时构造 `AdaptiveRouter(model=model)`，把同一个模型后端注入路由器。
+- `AgentCore(..., llm_router=False)`：三态开关。
+  - `False`（默认）：纯规则路由，零额外调用、离线测试完全确定；
+  - `True`：强制 LLM 路由；
+  - `"auto"`：看模型后端有没有显式声明 `yai_live_router = True` 类属性——
+    真实后端（`OpenAICompatProvider`）声明了，离线脚本模型不声明。
+    这样示例宿主统一写 `"auto"`：有 Key 时自动升级为 LLM 路由，无 Key 时
+    自动留在规则路径，**禁止按类名字符串嗅探**，能力由模型自己声明。
+    非法值（如 `"yes"`）构造时直接 `ValueError`。
 - `AgentLoop.astream` 改为 `decision = await self.router.aclassify(...)`，
   `STRATEGY_SELECTED` 事件数据从 `{"strategy"}` 扩成
   `{"strategy","source","reason","tier"}`（strategy 键保留，老断言不破）。
+- 若 `decision.missing_capability` 非空且策略不是 clarify、宿主有工具，
+  在首个 `STRATEGY_SELECTED` 之后补发一个 `CAPABILITY_MISSING` 事件
+  （详见 06 篇）。规则路径、LLM 异常兜底、澄清、无工具部署四种情况都不发。
 - `_make_plan(..., tier=decision.tier)`：规划轮的模型档位由路由决策建议，
   规则路由的 plan 默认 strong，LLM 路由可按需给 standard。
 

@@ -18,7 +18,7 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py  # 离线冒烟：同一 Core 自适应三个不同宿主
 uv run pytest                        # 单元 + 端到端测试（不需要 API Key）
-# 全量 125 项测试：建议一次装齐 extras（与 CI 一致）
+# 全量 184 项测试：建议一次装齐 extras（与 CI 一致）
 #   uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 ```
 
@@ -39,10 +39,10 @@ print(result.final_text)                   # ③ 可交付结果 + 全程事件�
 
 1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格；外部 MCP Server 的工具经 MCP Client 同构接入注册表（v0.2 已落地，`[mcp]` 可选依赖）
 2. **接入任意 REST API（OpenAPI 发现，可选）**：给一个 OpenAPI 3 描述（URL/文件/dict），自动把 operations 注册为工具（$ref 内联、path/query/body 入参合并、bearer/apiKey 鉴权、只读模式），`[openapi]` extra 懒加载
-3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，v0.2 已加 LLM 分类器（输出 `{strategy, reason, tier}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计）
-4. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）
+3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，LLM 分类器输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计；LLM 路由同时做能力边界感知，工具不足时发出 `capability_missing` 事件交给宿主（规则路径、澄清、无工具部署不发）
+4. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
 5. **宿主自适应（SPI）**：Model / Channel / Memory / Policy 四个契约宿主可替换，Core 提供零配置默认实现
-6. **过程可观测**：每次策略选择、工具调用、权限确认都通过 Observer 事件流对外发出
+6. **过程可观测**：每次策略选择、工具调用、权限确认、能力缺口都通过 Observer 事件流对外发出
 
 ## 目录结构
 

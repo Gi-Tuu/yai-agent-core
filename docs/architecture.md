@@ -92,8 +92,12 @@ httpx/pyyaml 在 [openapi] extra，内核本体零硬依赖；测试全部走 ht
    └─ 含行动词              → react（工具循环）
 ```
 
-v0.2（已落地）：LLM 一次性分类输出 `{strategy, reason, tier}`，异常/超时/非法输出回退规则路由；
+v0.2（已落地）：LLM 一次性分类输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出回退规则路由；
 两条路径统一返回 RouteDecision，`strategy_selected` 事件带 `source=llm|rules` 可审计。
+LLM 路由还会做能力边界感知：现有工具不足以完成任务时，在 `strategy_selected` 之后发出
+`capability_missing` 事件（含缺口描述与可用工具清单），由宿主决定后续引导；规则路径、
+澄清与无工具部署不产生该事件。`llm_router="auto"` 时按模型后端的 `yai_live_router`
+能力标记决定是否启用 LLM 分类（真实后端声明、离线脚本模型不声明）。
 
 ## 5. 启动在线 API（batteries）
 
