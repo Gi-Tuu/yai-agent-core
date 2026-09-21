@@ -32,12 +32,36 @@ def load_dotenv() -> None:
 
 
 def build_model():
-    """有 Key 走 OpenAI 兼容真实模型（DeepSeek 等），否则回退离线脚本模型。"""
-    if os.getenv("OPENAI_API_KEY"):
-        from yai_core import OpenAICompatProvider
+    """有 Key 走 OpenAI 兼容真实模型，否则回退离线脚本模型。
 
-        model = OpenAICompatProvider()
-        label = f"真实模型 {os.getenv('OPENAI_BASE_URL', '(SDK默认)')} :: {model.model}"
+    配置了 ``LLM_FALLBACK_MODELS``（逗号分隔的模型 ID）时，构建"主模型 + 兜底模型"链：
+    免费主模型高峰过载（429/1305/超时）时自动降级到兜底模型，保证演示不中断。
+    例如：LLM_MODEL=glm-4.7-flash，LLM_FALLBACK_MODELS=glm-4-flash。
+    """
+    if os.getenv("OPENAI_API_KEY"):
+        from yai_core import FallbackModelProvider, OpenAICompatProvider
+
+        base_url = os.getenv("OPENAI_BASE_URL")
+        primary = OpenAICompatProvider(max_retries=0, timeout=30.0)
+        fallback_ids = [
+            m.strip()
+            for m in os.getenv("LLM_FALLBACK_MODELS", "").split(",")
+            if m.strip()
+        ]
+        if fallback_ids:
+            providers = [primary]
+            for mid in fallback_ids:
+                providers.append(
+                    OpenAICompatProvider(
+                        model=mid, strong_model=mid, max_retries=0, timeout=30.0
+                    )
+                )
+            model = FallbackModelProvider(providers)
+            chain = " -> ".join([primary.model, *fallback_ids])
+            label = f"真实模型（兜底链 {chain}）@{base_url or '(SDK默认)'}"
+        else:
+            model = primary
+            label = f"真实模型 {base_url or '(SDK默认)'} :: {primary.model}"
         return model, label
     from demo_model import OfflineScriptedModel
 

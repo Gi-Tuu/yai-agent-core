@@ -20,6 +20,8 @@ class OpenAICompatProvider:
         base_url: str | None = None,
         model: str | None = None,
         strong_model: str | None = None,
+        max_retries: int | None = None,
+        timeout: float | None = None,
     ) -> None:
         try:
             from openai import AsyncOpenAI  # noqa: PLC0415
@@ -28,10 +30,17 @@ class OpenAICompatProvider:
                 "使用 OpenAICompatProvider 需要安装可选依赖：uv pip install -e '.[llm]'"
             ) from exc
 
-        self.client = AsyncOpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY", "missing"),
-            base_url=base_url or os.getenv("OPENAI_BASE_URL"),
-        )
+        # 交给 FallbackModelProvider 编排时可传 max_retries=0 让其快速失败、尽快降级，
+        # 避免 SDK 内部重试和外层兜底重复等待；默认 None 保留 SDK 行为。
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key or os.getenv("OPENAI_API_KEY", "missing"),
+            "base_url": base_url or os.getenv("OPENAI_BASE_URL"),
+        }
+        if max_retries is not None:
+            client_kwargs["max_retries"] = max_retries
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        self.client = AsyncOpenAI(**client_kwargs)
         self.model = model or os.getenv("LLM_MODEL", "deepseek-chat")
         self.strong_model = strong_model or os.getenv("LLM_STRONG_MODEL") or self.model
 
