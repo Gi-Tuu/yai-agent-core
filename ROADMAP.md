@@ -59,6 +59,7 @@
 - **每轮反思（已落地）**：工具失败后把失败原因回灌模型，引导其改用现有工具、请求发现新能力或如实说明能力缺口，不再反复撞同一失败调用。
 - **组合工具（已落地）**：模型可通过 `compose_tool` 把宿主已注册的工具编排成新工具（`AgentCore(composition=True)` 开启）。组合工具只能引用已注册工具、执行时每步仍走权限，因此**能力上限 = 被组合工具的并集，物理不越界**，且不执行任何模型生成的代码。
 - **代码工具注册表 + 生命周期（已落地，执行走宿主沙箱）**：宿主提供 `ToolSandbox` 后，模型可经 meta-tool `create_code_tool` 生成代码工具；内核负责注册、48h TTL、被调用刷新、后台永久保留（`retain_code_tool` / `sweep_code_tools` / `code_tools_status`），创建与首次执行都过权限闸；**内核仍不内置任何代码执行器**，真正执行在宿主沙箱。见下文"代码生成工具"。
+- **宿主沙箱示例 host_g（已落地）**：`examples/host_g_sandbox/` 给出最小可运行的 `ToolSandbox`（标准库子进程 + 内置白名单 + 超时），离线演示"AI 现场 create_code_tool 造加权评分工具并在沙箱执行"，把代码工具的 SPI 契约真正跑通；定位为教学级隔离，生产级用容器/微 VM 替换同一 SPI。
 - 网页工作台渲染 `capability_missing` / `tool_discovered` / `tool_composed` / `code_tool_created` 事件。
 - 运维向：KV TTL（SQLite schema v2 迁移）、响应体大小守卫、API 鉴权。
 
@@ -80,10 +81,10 @@
 
 ### v1.x 之后（方向，不排序）
 
-- **代码生成工具（Code Tool）**：在组合工具之上，允许模型在沙箱里生成并执行新代码，产生宿主原本没有的能力。**内核侧已落地**：`ToolSandbox` SPI、`CodeToolManager`（注册/48h TTL/调用刷新/永久保留）、`create_code_tool` meta-tool、创建与首次执行双重授权、过期回收事件。**仍待宿主侧补齐**：内核不内置沙箱，由宿主按部署形态提供真实隔离执行器（子进程 + RestrictedPython / 一次性容器 / 不实现则优雅降级为"无沙箱不可用"）。
+- **代码生成工具（Code Tool）**：在组合工具之上，允许模型在沙箱里生成并执行新代码，产生宿主原本没有的能力。**内核侧已落地**：`ToolSandbox` SPI、`CodeToolManager`（注册/48h TTL/调用刷新/永久保留）、`create_code_tool` meta-tool、创建与首次执行双重授权、过期回收事件。**宿主侧已有教学级示例**：`examples/host_g_sandbox/` 用标准库子进程实现 `ToolSandbox`（`-I -S` 干净解释器 + 内置白名单 + 一次性进程 + 超时，无 import/open/反射），`tests/test_sandbox_example.py` 用真实子进程覆盖安全边界与端到端闭环。**生产级仍待宿主替换**：跑不可信代码应改用一次性容器 / gVisor / 微 VM（Firecracker）实现同一 SPI，内核无需改动；不提供沙箱则优雅降级为"无沙箱不可用"。
   - 授权（已落地）：除"无需审批"档外，创建与首次执行代码工具都必须经 `PermissionPolicy` 取得用户授权；
   - 生命周期（已落地）：代码工具默认临时保留 48h，期间被多次调用则刷新 TTL；宿主可在后台把某个工具置为永久保留（`retain_code_tool`），定时 `sweep_code_tools()` 回收过期工具；
-  - 隔离（待宿主实现）：默认无网络、无敏感文件访问，强制超时（`code_timeout`，默认 10s）与资源上限；
+  - 隔离（教学级示例已落地，生产级待宿主）：host_g 子进程沙箱默认无 import（无网络）、无文件、强制超时（`code_timeout`，默认 10s）；容器/资源上限等强隔离由生产宿主实现；
   - 与组合工具的关系：能用现有工具编排解决的优先走组合工具（零沙箱风险），确需新原始能力时才进入代码生成。
 - 组合工具的可视化编排与版本管理（宿主侧）。
 

@@ -5,6 +5,8 @@
 > `src/yai_core/kernel/loop.py`（新增 `_handle_create_code_tool`）、`src/yai_core/core.py`（条件装配与后台方法）。
 > 前置：第 16 篇（组合工具与两级能力模型）、第 17 篇（ToolSandbox 契约）。
 > 测试：`tests/test_code_tools.py`（12 个离线测试，假时钟 + FakeSandbox + ScriptedModel）。
+> 宿主沙箱示例：`examples/host_g_sandbox/`（真实子进程实现 ToolSandbox），
+> 测试 `tests/test_sandbox_example.py`（8 个，真实子进程，见第 9 节）。
 
 ## 0. 这一篇把第 17 篇的"契约"接上了
 
@@ -259,7 +261,57 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 4. **生命周期收敛**：默认 48h 自动回收，只有后台显式保留才长期存在；
 5. **能力可观测**：创建发事件、注册表明细可查、调用计数可审计。
 
-## 9. 自检
+## 9. 宿主沙箱示例 host_g：把契约真正跑起来
+
+前面 8 节讲的都是**内核侧**：登记、TTL、授权、把执行"转交"出去。但内核从不执行代码——
+这一节用 `examples/host_g_sandbox/` 给出一个**最小、可运行、零第三方依赖**的宿主沙箱，
+让"AI 现场造工具并执行"整条链路真正跑通。
+
+宿主是一个极简候选人应用：`capabilities.py` 只有只读的 `list_candidates`，**刻意没有**
+加权评分能力。离线模型（`run.py`，无需 API Key）依次：创建 `weighted_score` 代码工具 →
+取候选人 → 调用 `weighted_score`（在沙箱里算综合分）→ 给排序结论。
+
+四个文件各司其职：
+
+| 文件 | 角色 | 关键点 |
+| --- | --- | --- |
+| `capabilities.py` | 宿主原生能力 | 只读、无评分，制造"能力缺口" |
+| `_worker.py` | 子进程受限执行器 | 内置白名单、捕获 `print`、stdin/stdout 走 JSON |
+| `sandbox.py` | `ToolSandbox` 实现 | `-I -S -X utf8` 启动 worker、超时、独立进程 |
+| `run.py` | 离线确定性模型 | 演示 create → 取数 → 沙箱执行 → 收尾 |
+
+隔离是怎么做到的（对照第 17 篇契约的安全要求）：
+
+1. **一次性独立进程**：`SubprocessSandbox` 每次调用都 `subprocess.run` 一个全新 worker，
+   用 `asyncio.run_in_executor` 包成异步，死循环/崩溃不影响内核；
+2. **干净解释器**：以 `python -I -S -X utf8` 启动——`-I` 忽略 `PYTHONPATH`、环境变量、
+   user site，`-S` 不加载 site-packages，`-X utf8` 防 Windows 中文乱码；
+3. **内置白名单**：worker 把模型代码的 `__builtins__` 换成白名单，没有 `__import__`、
+   `open`、`eval`、`exec`、`compile`、`getattr`、`__build_class__`，于是模型代码
+   `import os` 报 `ImportError: __import__ not found`、`open(...)` 报 `NameError`，
+   无法连网、无法读写文件、无法定义类或反射逃逸；
+4. **超时**：`subprocess.run(..., timeout=)` 到时杀进程，返回 `ok=False`；
+5. **协议干净**：模型代码的 `print` 被 `redirect_stdout` 捕获进结果的 `meta.stdout`，
+   最终只往真实 stdout 打一行 JSON envelope。
+
+> **诚实的边界**：仅靠 Python 内置白名单无法 100% 防住**蓄意**逃逸（历史上有通过异常链、
+> 子类化绕过的手法）。这个示例是"教学级"：能挡住模型常规越界、跨平台、零依赖，用来讲清
+> SPI 契约。生产环境跑不可信代码，应把**同一个 `ToolSandbox` 协议**换成容器 / gVisor /
+> 微 VM（Firecracker）——内核与 Agent 主循环一行都不用改。这正是"机制在内核、策略在宿主"
+> 的价值。
+
+运行：
+
+```powershell
+.\.venv\Scripts\python.exe examples\host_g_sandbox\run.py
+```
+
+预期看到 `[代码工具] 已创建：weighted_score`、随后沙箱返回排序
+（林晓 81.6 > 周岚 81.0 > 陈默 80.0），结尾打印代码工具注册表（存活、调用次数、TTL）。
+真实子进程的安全边界与端到端链路由 `tests/test_sandbox_example.py` 覆盖（8 个用例，
+含 import/open/反射被拒、超时被杀、缺 `run` 报错）。
+
+## 10. 自检
 
 1. 代码工具的 `ToolSpec.handler` 为什么是 `None`？真正的"函数体"放在哪个字段、由谁执行？
 2. TTL 为什么以 `last_used_at` 而不是 `created_at` 为基准？`touch` 一次做了哪三件事？
@@ -267,3 +319,5 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 4. 为什么宿主不提供沙箱时，内核干脆不注册 `create_code_tool`，而不是注册了等它失败？
 5. 为什么内核不去判断"这段代码是否越权"？它改用哪几层确定性机制来保证安全？
 6. 模型创建完一个代码工具后，下一轮为什么能立刻在 function-calling 里看到它？是哪段接线保证的？
+7. host_g 的 worker 为什么用 `-I -S` 启动、又为什么要把 `__builtins__` 换成白名单？这个
+   教学级沙箱的边界在哪里，生产环境应该替换成什么、为什么不用改内核？
