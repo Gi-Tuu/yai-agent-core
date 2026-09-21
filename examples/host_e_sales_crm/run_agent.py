@@ -16,16 +16,14 @@ from runner_common import bootstrap, build_model, load_dotenv  # noqa: E402
 
 bootstrap()
 
+from host_e_sales_crm.agent_bridge import READ_TOOLS  # noqa: E402
 from host_e_sales_crm.catalog_capabilities import build_catalog  # noqa: E402
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from yai_core import AgentCore, EventType  # noqa: E402
 from yai_core.policy import AllowlistPolicy  # noqa: E402
 
-# 读工具自动放行；写工具（add_*/create_*/complete_*）一律先问人
-READ_TOOLS = [
-    "list_customers", "get_customer", "list_orders", "sum_amount",
-    "list_followups", "customers_due_followup", "list_todos", "daily_brief",
-]
+# READ_TOOLS（读工具白名单）是 host_e 的统一权限策略，定义在唯一嵌入点
+# agent_bridge.py，CLI 与网页共用，避免两处漂移。
 
 DEFAULT_TASK = (
     "看看哪些客户超过 3 天没跟进，给最久没跟进的客户记录一条跟进"

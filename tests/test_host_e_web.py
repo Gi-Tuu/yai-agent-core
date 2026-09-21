@@ -3,6 +3,7 @@
 import asyncio
 import json
 import queue
+import re
 import sys
 import threading
 import time
@@ -530,7 +531,9 @@ def test_discovery_loop_over_sse_gap_discover_authorize_execute():
 
         gap = next(e for e in events if e["type"] == "capability_missing")
         assert "天气" in gap["data"]["missing"]
-        assert len(gap["data"]["available_tools"]) == 12  # 缺口时刻只有 CRM 工具
+        # 12 个 CRM 业务工具 + 1 个 compose_tool meta-tool（composition=True）
+        assert len(gap["data"]["available_tools"]) == 13
+        assert "compose_tool" in gap["data"]["available_tools"]
 
         found = next(e for e in events if e["type"] == "tool_discovered")
         assert found["data"]["registered"] == ["get_visit_weather"]
@@ -546,6 +549,173 @@ def test_discovery_loop_over_sse_gap_discover_authorize_execute():
 
         assert kinds[-1] == "done"
         assert "带伞" in events[-1]["data"]["final_text"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# ---------- 架构边界：唯一嵌入点（业务系统零 yai_core 依赖） ----------
+
+def test_crm_and_http_shell_have_no_direct_yai_core_import():
+    """crm_app.py 是纯业务系统、web_app.py 是纯 HTTP 壳，都不直接 import yai_core；
+    只有 agent_bridge.py（唯一嵌入点）直接装配 Core。"""
+    host_dir = ROOT / "examples" / "host_e_sales_crm"
+    crm_src = (host_dir / "crm_app.py").read_text(encoding="utf-8")
+    web_src = (host_dir / "web_app.py").read_text(encoding="utf-8")
+    bridge_src = (host_dir / "agent_bridge.py").read_text(encoding="utf-8")
+    yai_import = re.compile(r"^\s*(from\s+yai_core|import\s+yai_core)\b", re.M)
+    # 纯业务系统：连 yai_core 字样都不应出现
+    assert "yai_core" not in crm_src
+    # HTTP 壳：docstring 可以提及，但不能有 import 语句
+    assert not yai_import.search(web_src)
+    # 唯一嵌入点：直接装配 Core
+    assert yai_import.search(bridge_src)
+
+
+# ---------- Core 开关：一键对比"有无 Core" ----------
+
+def test_core_toggle_blocks_run_but_native_crm_keeps_working():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        _, state = _get_json(base, "/api/state")
+        assert state["core_enabled"] is True
+
+        # 关闭 Core：纯 CRM 形态，AI 任务被拒
+        status, body = _post(base, "/api/core", {"enabled": False})
+        assert status == 200 and body["core_enabled"] is False
+        _, state_off = _get_json(base, "/api/state")
+        assert state_off["core_enabled"] is False
+        status2, body2 = _post(base, "/api/run", {"task": "统计销售额"})
+        assert status2 == 503 and body2["error"] == "core_disabled"
+
+        # 原生 CRM 功能完全不受 Core 关闭影响
+        s3, b3 = _post(base, "/api/crm/followup",
+                       {"customer": "周涛", "content": "无 Core 时原生录入"})
+        assert s3 == 200 and b3["ok"] is True
+        _, snap = _get_json(base, "/api/snapshot")
+        assert any(f["content"] == "无 Core 时原生录入" for f in snap["followups"])
+
+        # 重新开启 Core：数字员工恢复
+        s4, b4 = _post(base, "/api/core", {"enabled": True})
+        assert s4 == 200 and b4["core_enabled"] is True
+        events = _run_and_collect(base, "统计华东硬件销售额")
+        assert events[-1]["type"] == "done"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_disabling_core_cancels_active_run():
+    """在任务执行中关闭 Core，会先终止任务，避免"纯 CRM"形态下后台继续改写数据。"""
+    crm = _crm()
+    model = _BlockModel()
+    workbench, httpd, base = _start_server(model, crm)
+    try:
+        _, body = _post(base, "/api/run", {"task": "占住的任务"})
+        run_id = body["run_id"]
+        collected: list = []
+        thread = threading.Thread(
+            target=lambda: collected.extend(_collect_stream(base, run_id)), daemon=True
+        )
+        thread.start()
+        for _ in range(50):
+            _, state = _get_json(base, "/api/state")
+            if state["active"]:
+                break
+            time.sleep(0.1)
+        assert state["active"]
+
+        status, resp = _post(base, "/api/core", {"enabled": False})
+        assert status == 200 and resp["core_enabled"] is False
+        thread.join(10)
+        assert not thread.is_alive()
+        assert collected[-1]["type"] == "cancelled"
+        _, state2 = _get_json(base, "/api/state")
+        assert not state2["active"] and state2["core_enabled"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_start_in_core_off_mode_rejects_run():
+    """命令行 --core-off 启动（纯 CRM）时，AI 任务直接 503，直到显式开启。"""
+    crm = _crm()
+    workbench = Workbench(
+        model_factory=lambda: _OneToolModel("sum_amount", {}),
+        model_label="离线测试模型", crm=crm, core_enabled=False,
+    )
+    httpd = create_server(workbench, "127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+    try:
+        status, body = _post(base, "/api/run", {"task": "统计"})
+        assert status == 503 and body["error"] == "core_disabled"
+        # 原生功能照常
+        s, b = _post(base, "/api/crm/todo", {"title": "纯 CRM 待办", "due": ""})
+        assert s == 200 and b["ok"] is True
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# ---------- 权限三挡：全部审批 / 部分审批 / 无需审批 ----------
+
+def test_manual_mode_asks_even_for_read_tool():
+    """全部审批：连读工具（默认白名单内）都要先问人。"""
+    workbench, httpd, base = _start_server(_OneToolModel("list_customers", {}))
+    try:
+        status, body = _post(base, "/api/permission", {"mode": "manual"})
+        assert status == 200 and body["permission_mode"] == "manual"
+        events = _run_and_collect(
+            base, "列出全部客户", on_permission=lambda data: True
+        )
+        assert any(e["type"] == "permission_request" for e in events)
+        assert events[-1]["type"] == "done"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_auto_mode_runs_write_tool_without_prompt():
+    """无需审批：写工具也直接执行，不弹授权卡（仅本地演示）。"""
+    crm = _crm()
+    workbench, httpd, base = _start_server(
+        _OneToolModel("create_todo", {"title": "自动放行待办"}), crm
+    )
+    try:
+        status, _ = _post(base, "/api/permission", {"mode": "auto"})
+        assert status == 200
+        events = _run_and_collect(base, "新建一个待办")  # 不传 on_permission
+        assert not any(e["type"] == "permission_request" for e in events)
+        assert any(t["title"] == "自动放行待办" for t in crm.list_todos("all"))
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_partial_mode_is_default_and_asks_for_write_only():
+    """默认 partial：读工具放行、写工具询问。"""
+    workbench, httpd, base = _start_server(
+        _OneToolModel("sum_amount", {"category": "硬件", "region": "华东"})
+    )
+    try:
+        _, state = _get_json(base, "/api/state")
+        assert state["permission_mode"] == "partial"
+        events = _run_and_collect(base, "统计华东硬件销售额")
+        assert not any(e["type"] == "permission_request" for e in events)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_bad_permission_mode_returns_400():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        status, body = _post(base, "/api/permission", {"mode": "weird"})
+        assert status == 400 and body["error"] == "bad_mode"
+        _, state = _get_json(base, "/api/state")
+        assert state["permission_mode"] == "partial"  # 未被篡改
     finally:
         httpd.shutdown()
         httpd.server_close()

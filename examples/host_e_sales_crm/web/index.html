@@ -110,6 +110,8 @@
   .ev.capability_missing .ev-type { color: #78350F; }
   .ev.tool_discovered { border-left-color: var(--ok); background: rgba(21,128,61,.07); }
   .ev.tool_discovered .ev-type { color: var(--ok); }
+  .ev.tool_composed { border-left-color: #7C3AED; background: rgba(124,58,237,.07); }
+  .ev.tool_composed .ev-type { color: #6D28D9; }
   .mini-tool.ondemand { color: var(--accent); }
   .mini-tool.ondemand::after { content: ' · 按需'; color: var(--text-2); font-size: 10px; }
   pre.code { background: #F7F6F1; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
@@ -153,6 +155,35 @@
   .mini-tool { font-size: 11px; font-family: Consolas,monospace; padding: 1px 0; }
   .welcome-drawer { font-size: 12.5px; color: var(--text-2); background: var(--card);
     border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  /* ---------- Core 开关（顶栏，一键对比有无内核） ---------- */
+  .core-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 3px 13px 3px 11px;
+    min-height: 32px; }
+  .core-switch:hover { border-color: var(--accent); }
+  .core-switch-label { font-size: 12.5px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+  .core-switch.is-on .core-switch-label { color: var(--accent); }
+  .switch-track { width: 36px; height: 20px; border-radius: 999px; background: #D1D0C9;
+    position: relative; transition: background .2s; flex: none; }
+  .core-switch.is-on .switch-track { background: var(--accent); }
+  .switch-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,.22); }
+  .core-switch.is-on .switch-thumb { transform: translateX(16px); }
+  /* ---------- 权限挡位条 ---------- */
+  .perm-mode-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    background: var(--card); border-bottom: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
+  .perm-mode-bar label { color: var(--text-2); white-space: nowrap; font-weight: 600; }
+  .perm-mode-bar select { flex: 1; min-width: 170px; min-height: 30px; font-size: 12px; padding: 2px 8px; }
+  .perm-mode-bar .perm-hint { flex-basis: 100%; color: var(--text-2); font-size: 11px; margin-top: 1px; }
+  /* ---------- Core 关闭时的抽屉锁定遮罩 ---------- */
+  .drawer-locked { display: none; }
+  .drawer.is-locked .drawer-locked { display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; gap: 12px; position: absolute; inset: 0;
+    background: rgba(244,243,238,.98); z-index: 6; padding: 30px; }
+  .drawer-locked .lock-icon { font-size: 36px; }
+  .drawer-locked .lock-title { font-weight: 700; font-size: 15px; }
+  .drawer-locked p { color: var(--text-2); font-size: 12.5px; margin: 0; max-width: 300px; }
+  .drawer.is-locked .drawer-head, .drawer.is-locked .perm-mode-bar,
+  .drawer.is-locked .chat, .drawer.is-locked .dock { opacity: .3; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -164,7 +195,12 @@
     </div>
     <div class="spacer"></div>
     <button class="small" id="btnReset">重置演示数据</button>
-    <button class="primary" id="btnToggleAi">🤖 AI 数字员工</button>
+    <div class="core-switch is-on" id="coreSwitch" role="switch" aria-checked="true" tabindex="0"
+         title="一键开关 YAI Agent Core：关闭回到软件原生形态，打开长出数字员工">
+      <span class="core-switch-label">Core 内核</span>
+      <span class="switch-track"><span class="switch-thumb"></span></span>
+    </div>
+    <button class="primary" id="btnToggleAi">🤖 数字员工</button>
   </header>
 
   <div class="kpis" id="kpis"></div>
@@ -239,6 +275,12 @@
 
 <!-- AI 数字员工：嵌入 Core 后获得的侧边助手 -->
 <aside class="drawer" id="drawer">
+  <div class="drawer-locked" id="drawerLocked">
+    <div class="lock-icon">🔌</div>
+    <div class="lock-title">Core 内核未启用</div>
+    <p>当前是软件原生形态：客户、订单、跟进、待办、日报全部可用，但没有数字员工。打开右上角开关，同一个软件立即长出 AI 能力。</p>
+    <button class="primary" id="btnEnableCoreInDrawer">启用 Core</button>
+  </div>
   <div class="drawer-head">
     <div>
       <div class="t">🤖 AI 数字员工</div>
@@ -248,6 +290,15 @@
       <button class="small danger" id="btnCancel" style="display:none">终止</button>
       <button class="small" id="btnCloseAi">收起</button>
     </div>
+  </div>
+  <div class="perm-mode-bar">
+    <label for="permMode">权限</label>
+    <select id="permMode">
+      <option value="manual">全部审批（每次调用都问）</option>
+      <option value="partial" selected>部分审批（读放行 · 写/新能力问）</option>
+      <option value="auto">无需审批（仅本地演示）</option>
+    </select>
+    <div class="perm-hint" id="permHint"></div>
   </div>
   <div class="chat" id="chat">
     <div class="welcome-drawer">
@@ -282,6 +333,12 @@
   var STRATEGY_LABEL = { direct: '直接回答', react: 'ReAct 工具循环', plan: '先计划后执行', clarify: '澄清反问' };
   var SOURCE_LABEL = { llm: '模型路由', rules: '规则兜底' };
   var busy = false, currentRunId = null, snap = null;
+  var coreEnabled = true, permissionMode = 'partial';
+  var PERM_HINT = {
+    manual: '全部审批：任何工具（含读操作）调用前都要你确认，最稳妥。',
+    partial: '部分审批：读操作自动执行；写操作、新发现的能力先授权（默认）。',
+    auto: '无需审批：所有工具自动执行，仅建议本地演示，切勿用于真实数据。'
+  };
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -488,6 +545,7 @@
   });
   var drawer = document.getElementById('drawer');
   document.getElementById('btnToggleAi').addEventListener('click', function () {
+    if (!coreEnabled) { toast('Core 未启用，请先打开右上角 Core 开关'); return; }
     drawer.classList.toggle('open');
     if (drawer.classList.contains('open')) document.getElementById('taskInput').focus();
   });
@@ -495,15 +553,67 @@
     drawer.classList.remove('open');
   });
 
+  /* ---------- Core 开关 + 权限挡位（一键对比有无内核 / 三档授权） ---------- */
+  function applyCoreState(on, mode) {
+    coreEnabled = !!on;
+    var sw = document.getElementById('coreSwitch');
+    sw.classList.toggle('is-on', coreEnabled);
+    sw.setAttribute('aria-checked', coreEnabled ? 'true' : 'false');
+    var btn = document.getElementById('btnToggleAi');
+    btn.disabled = !coreEnabled;
+    btn.textContent = coreEnabled ? '🤖 数字员工' : '🔌 纯软件（Core 关闭）';
+    drawer.classList.toggle('is-locked', !coreEnabled);
+    if (mode) {
+      permissionMode = mode;
+      var sel = document.getElementById('permMode');
+      if (sel.value !== mode) sel.value = mode;
+      document.getElementById('permHint').textContent = PERM_HINT[mode] || '';
+    }
+  }
+  function setCore(on) {
+    if (!on && busy && !window.confirm('数字员工正在执行，关闭 Core 会终止当前任务，确定关闭？')) return;
+    post('/api/core', { enabled: on }).then(function (r) {
+      if (r.s === 200) {
+        toast(on ? 'Core 已启用：数字员工上线' : 'Core 已关闭：回到软件原生形态');
+        refreshState();
+        if (!on) refreshSnapshot();
+      } else { toast('Core 切换失败（' + r.s + '）'); }
+    });
+  }
+  var coreSwitch = document.getElementById('coreSwitch');
+  coreSwitch.addEventListener('click', function () { setCore(!coreEnabled); });
+  coreSwitch.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCore(!coreEnabled); }
+  });
+  document.getElementById('btnEnableCoreInDrawer').addEventListener('click', function () { setCore(true); });
+  document.getElementById('permMode').addEventListener('change', function () {
+    var sel = this, mode = sel.value;
+    post('/api/permission', { mode: mode }).then(function (r) {
+      if (r.s === 200) {
+        permissionMode = mode;
+        document.getElementById('permHint').textContent = PERM_HINT[mode] || '';
+        toast('权限挡位已切换');
+        refreshState();
+      } else { toast('切换失败（' + r.s + '）'); sel.value = permissionMode; }
+    });
+  });
+
   /* ---------- 后端状态 / 工具目录 ---------- */
   function refreshState() {
     return fetch('/api/state').then(function (r) { return r.json(); }).then(function (st) {
+      applyCoreState(st.core_enabled, st.permission_mode);
       document.getElementById('stateDot').className = 'dot ok';
-      document.getElementById('stateText').textContent = '已连接';
-      document.getElementById('modelLabel').textContent = ' · ' + (st.model_label || '离线脚本模型');
+      document.getElementById('stateText').textContent = st.core_enabled ? '已连接' : 'Core 未启用';
+      document.getElementById('modelLabel').textContent =
+        st.core_enabled ? ' · ' + (st.model_label || '离线脚本模型') : '';
       var box = document.getElementById('toolsBox');
       box.textContent = '';
-      [['read', '读 · 自动放行'], ['write', '写 · 需要授权']].forEach(function (g) {
+      var groups = st.permission_mode === 'manual'
+        ? [['read', '读 · 需要授权'], ['write', '写 · 需要授权']]
+        : st.permission_mode === 'auto'
+        ? [['read', '读 · 自动放行'], ['write', '写 · 自动放行']]
+        : [['read', '读 · 自动放行'], ['write', '写 · 需要授权']];
+      groups.forEach(function (g) {
         var list = (st.tools || []).filter(function (t) { return t.access === g[0]; });
         if (!list.length) return;
         var d = el('div', 'muted', g[1] + '（' + list.length + '）');
@@ -540,6 +650,7 @@
   });
   document.getElementById('btnSend').addEventListener('click', function () {
     if (busy) return;
+    if (!coreEnabled) { toast('Core 未启用，请先在右上角开启 Core 内核'); return; }
     var task = input.value.trim();
     if (!task) { input.focus(); return; }
     input.value = ''; autosize();
@@ -578,6 +689,10 @@
     chat.scrollTop = chat.scrollHeight;
 
     post('/api/run', { task: task }).then(function (r) {
+      if (r.s === 503 && r.j && r.j.error === 'core_disabled') {
+        finishCard(card, spin, steps, 'Core 未启用：请先在右上角打开 Core 开关，再下达任务。', true);
+        refreshState(); return;
+      }
       if (r.s !== 200) { finishCard(card, spin, steps, '启动失败：' + JSON.stringify(r.j), true); return; }
       currentRunId = r.j.run_id;
       openStream(r.j.run_id, card, head, spin, steps, answer);
@@ -702,6 +817,7 @@
       strategy_selected: '策略选择', plan_created: '生成计划', tool_call: '调用工具',
       tool_result: '工具结果', model_message: '模型消息', clarify_requested: '请求澄清',
       capability_missing: '感知到能力缺口', tool_discovered: '发现新能力',
+      tool_composed: '组合工具',
       error: '错误', done: '任务完成'
     };
     if (!TITLES[ev.type]) return null;
@@ -735,6 +851,15 @@
       });
       body.appendChild(el('div', 'muted', '来源：' + (data.source || '') +
         ' —— 本轮已可用，首次调用仍需授权'));
+    } else if (ev.type === 'tool_composed') {
+      head.appendChild(badge(data.tool));
+      head.appendChild(badge((data.steps || []).length + ' 步', 'ok'));
+      var steps = el('ol', 'steps-list');
+      (data.steps || []).forEach(function (n) {
+        steps.appendChild(el('li', '', n));
+      });
+      body.appendChild(steps);
+      body.appendChild(el('div', 'muted', '组合工具只编排宿主已授权工具，每步仍按权限确认'));
     } else if (ev.type === 'model_message') {
       body.textContent = data.text || '';
     } else if (ev.type === 'error') {
