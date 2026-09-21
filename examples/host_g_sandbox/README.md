@@ -9,7 +9,7 @@ TTL 生命周期，真正"跑代码"的是宿主实现的 `ToolSandbox` SPI。
 ## 演示了什么
 
 宿主 `capabilities.py` 只给了一个只读工具 `list_candidates`，**刻意没有**
-加权评分能力。离线确定性模型（`run.py`，无需 API Key）依次：
+加权评分能力。离线确定性模型（`demo_agent.py`，无需 API Key）依次：
 
 1. 调用 meta-tool `create_code_tool`，生成 `weighted_score`（技能×0.6 +
    经验×0.4 算综合分并降序排序）；
@@ -17,11 +17,25 @@ TTL 生命周期，真正"跑代码"的是宿主实现的 `ToolSandbox` SPI。
 3. 调用刚创建的 `weighted_score` —— 它在**一次性隔离子进程**里执行；
 4. 基于沙箱返回的分数给出排序：林晓 81.6 > 周岚 81.0 > 陈默 80.0。
 
-运行：
+### 命令行版
 
 ```powershell
 .\.venv\Scripts\python.exe examples\host_g_sandbox\run.py
 ```
+
+### 网页版（零第三方依赖，双击即跑）
+
+```powershell
+# 任选其一：
+.\.venv\Scripts\python.exe examples\host_g_sandbox\web_app.py
+# 或在资源管理器里双击：examples\host_g_sandbox\启动沙箱演示.cmd
+```
+
+浏览器会自动打开 http://127.0.0.1:8201 。页面用 **Python 标准库
+`http.server`** 起服务（不依赖 FastAPI / Starlette），左栏是"原生应用"
+（只有候选人数据、没有评分能力），右栏是"嵌入 Core 后"：点一下按钮即可
+看到 Core 发现能力缺口、现场造工具、沙箱执行、事件流逐条播放与最终排序。
+仅监听 127.0.0.1，离线脚本模型，结果完全确定。
 
 ## 文件
 
@@ -30,7 +44,11 @@ TTL 生命周期，真正"跑代码"的是宿主实现的 `ToolSandbox` SPI。
 | `capabilities.py` | 宿主原生能力（只读列候选人），刻意不含加权评分 |
 | `_worker.py` | 子进程受限执行器：内置白名单 + 捕获 print + JSON 协议 |
 | `sandbox.py` | `SubprocessSandbox`，实现内核的 `ToolSandbox` 协议 |
-| `run.py` | 离线确定性模型，演示 create → 取数 → 沙箱执行 → 收尾 |
+| `demo_agent.py` | **Core 装配点**：离线确定性模型、生成的代码、`build_core()`，CLI 与网页共用 |
+| `run.py` | 命令行版：装配 Core 后跑一遍并打印事件流与工具注册表 |
+| `web_app.py` | 网页版后端：标准库 `http.server`，端口 8201，零第三方依赖 |
+| `web/index.html` | 自包含前端（原生应用 vs 嵌入 Core 双栏 + 事件时间线） |
+| `启动沙箱演示.cmd` | Windows 一键启动脚本（自动开浏览器） |
 
 ## 隔离手段（教学级，不是容器）
 

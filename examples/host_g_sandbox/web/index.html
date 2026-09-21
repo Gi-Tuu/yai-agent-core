@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>host_g · 沙箱代码工具演示 — YAI Agent Core</title>
+<style>
+  :root {
+    --bg: #f4f6f5;
+    --panel: #ffffff;
+    --ink: #1f2a26;
+    --ink-soft: #5b6b64;
+    --line: #e2e8e4;
+    --green: #2f4a3b;
+    --green-soft: #e8f0ea;
+    --amber: #b45309;
+    --amber-soft: #fdf3e3;
+    --gray: #6b7770;
+    --gray-soft: #eef1ef;
+    --red: #a33a2f;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(31,42,38,.06), 0 6px 20px rgba(31,42,38,.05);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    line-height: 1.55;
+  }
+  header {
+    background: var(--green); color: #fff; padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  header .sub { font-size: 12.5px; opacity: .82; margin-top: 2px; }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22);
+  }
+  main {
+    max-width: 1180px; margin: 22px auto; padding: 0 20px;
+    display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 18px;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px; display: flex; flex-direction: column;
+  }
+  .panel h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .panel .hint { font-size: 12.5px; color: var(--ink-soft); margin: 0 0 14px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+  .tag.native { background: var(--gray-soft); color: var(--gray); }
+  .tag.core { background: var(--green-soft); color: var(--green); }
+
+  /* 候选人卡片 */
+  .cand { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .cand .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .cand .name { font-weight: 650; font-size: 14.5px; }
+  .cand .score { font-size: 12.5px; color: var(--ink-soft); }
+  .bar { height: 7px; background: var(--gray-soft); border-radius: 99px; margin-top: 7px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: #8aa392; border-radius: 99px; }
+  .bar + .bar { margin-top: 5px; }
+  .barlabel { font-size: 11px; color: var(--gray); display: flex; justify-content: space-between; margin-top: 3px; }
+
+  .ghost-btn {
+    margin-top: 6px; width: 100%; padding: 10px; border-radius: 9px; border: 1px dashed #b9c4bd;
+    background: var(--gray-soft); color: var(--gray); font-size: 13.5px; cursor: not-allowed;
+  }
+  .native-note { margin-top: 10px; font-size: 12px; color: var(--gray); text-align: center; }
+
+  /* Core 面板 */
+  .run-btn {
+    width: 100%; padding: 12px; border: none; border-radius: 10px; cursor: pointer;
+    background: var(--green); color: #fff; font-size: 14.5px; font-weight: 650;
+    transition: opacity .15s;
+  }
+  .run-btn:hover { opacity: .92; }
+  .run-btn:disabled { opacity: .55; cursor: wait; }
+  .task-box {
+    background: var(--green-soft); border-radius: 9px; padding: 10px 12px; font-size: 13px;
+    margin: 12px 0 12px; color: var(--green);
+  }
+  .timeline { position: relative; margin-top: 4px; flex: 1; }
+  .timeline:empty::before {
+    content: "点击上方按钮，观察 Core 如何发现能力缺口、现场造工具并在沙箱执行";
+    color: var(--gray); font-size: 13px; display: block; padding: 24px 6px; text-align: center;
+  }
+  .ev {
+    position: relative; padding: 0 0 14px 22px; border-left: 2px solid var(--line); margin-left: 6px;
+    opacity: 0; transform: translateY(6px); animation: pop .3s forwards;
+  }
+  .ev:last-child { border-left-color: transparent; }
+  .ev::before {
+    content: ""; position: absolute; left: -7px; top: 3px; width: 12px; height: 12px;
+    border-radius: 50%; background: #b9c4bd; border: 2px solid #fff;
+  }
+  .ev.route::before { background: #7d94a8; }
+  .ev.tool::before { background: #8aa392; }
+  .ev.create::before { background: var(--amber); }
+  .ev.result::before { background: #5d7f6a; }
+  .ev.model::before { background: var(--green); }
+  .ev .ev-title { font-size: 13px; font-weight: 600; }
+  .ev .ev-body { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; word-break: break-word; }
+  .ev .pill {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .pill.sandbox { background: var(--amber-soft); color: var(--amber); border: 1px solid #eed9b8; }
+  .pill.meta { background: #fde8e4; color: var(--red); }
+  .ev.create { background: var(--amber-soft); border-radius: 8px; padding: 8px 10px 8px 24px; margin-left: 0; border-left: 2px solid var(--amber); }
+  .ev.create::before { left: -7px; }
+  details { margin-top: 4px; }
+  summary { cursor: pointer; font-size: 11.5px; color: var(--gray); }
+  pre {
+    background: #f7f9f7; border: 1px solid var(--line); border-radius: 7px; padding: 8px;
+    font-size: 11.5px; overflow-x: auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .final {
+    margin-top: 14px; border: 1px solid #cddccd; background: var(--green-soft);
+    border-radius: 10px; padding: 12px 14px; display: none;
+  }
+  .final.show { display: block; animation: pop .35s; }
+  .final h3 { margin: 0 0 8px; font-size: 13.5px; color: var(--green); }
+  .rank { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed #cddccd; }
+  .rank:last-child { border-bottom: none; }
+  .rank .no { width: 22px; height: 22px; border-radius: 50%; background: var(--green); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none; }
+  .rank .nm { font-weight: 600; font-size: 14px; }
+  .rank .sc { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--green); }
+  .final .conclude { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
+  .reg {
+    margin-top: 12px; display: none; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  }
+  .reg.show { display: grid; }
+  .reg .cell { background: #f7f9f7; border: 1px solid var(--line); border-radius: 8px; padding: 8px; text-align: center; }
+  .reg .num { font-size: 18px; font-weight: 700; color: var(--green); }
+  .reg .lab { font-size: 11px; color: var(--gray); margin-top: 2px; }
+  footer {
+    max-width: 1180px; margin: 0 auto 26px; padding: 0 20px; font-size: 12px; color: var(--gray);
+  }
+  footer .box { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+  @keyframes pop { to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>候选人筛选 · 数字员工演示</h1>
+    <div class="sub">host_g — 宿主应用嵌入 YAI Agent Core，AI 现场生成并在沙箱中执行代码工具</div>
+  </div>
+  <div class="badges">
+    <span class="badge">离线脚本模型 · 无需 API Key</span>
+    <span class="badge">子进程沙箱 · 无网络/无文件</span>
+  </div>
+</header>
+
+<main>
+  <!-- 左：原生应用（无 Core） -->
+  <section class="panel">
+    <h2>候选人管理 <span class="tag native">原生应用</span></h2>
+    <p class="hint">宿主只提供数据读取能力（list_candidates），没有任何综合评分/排序逻辑。</p>
+    <div id="cand-list"></div>
+    <button class="ghost-btn" disabled>综合评分排序（原生应用无此能力）</button>
+    <div class="native-note">↑ 没有 Core 时，宿主只能展示原始数据，无法满足"按权重综合排序"。</div>
+  </section>
+
+  <!-- 右：嵌入 Core -->
+  <section class="panel">
+    <h2>数字员工 <span class="tag core">已嵌入 YAI Agent Core</span></h2>
+    <p class="hint">Core 发现宿主缺少加权评分能力，会现场 <b>create_code_tool</b> 造一个工具，在隔离子进程沙箱里执行。</p>
+    <div class="task-box" id="task">任务：列出候选人，按技能 0.6、经验 0.4 算综合分，从高到低排序。</div>
+    <button class="run-btn" id="runBtn">▶ 让 AI 综合评分排序</button>
+    <div class="timeline" id="timeline"></div>
+    <div class="final" id="final">
+      <h3>沙箱计算结果（综合分排序）</h3>
+      <div id="rankList"></div>
+      <div class="conclude" id="conclude"></div>
+    </div>
+    <div class="reg" id="reg">
+      <div class="cell"><div class="num" id="r-live">–</div><div class="lab">存活代码工具</div></div>
+      <div class="cell"><div class="num" id="r-calls">–</div><div class="lab">被调用次数</div></div>
+      <div class="cell"><div class="num" id="r-ttl">–</div><div class="lab">默认 TTL</div></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="box">
+    <b>安全边界（教学级沙箱）：</b>
+    代码工具以 <code>python -I -S</code> 干净解释器 + 内置白名单在一次性子进程中执行，
+    模型代码 <b>无法 import（无网络）、无法 open（无文件）、无法反射逃逸</b>，并有超时杀死；
+    进程崩溃/死循环不影响内核。生产环境跑不可信代码时，应把同一 ToolSandbox 协议换成
+    容器 / gVisor / 微 VM，内核与 Agent 主循环无需改动。
+  </div>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function bar(label, value) {
+  return `<div class="bar"><i style="width:${value}%"></i></div>
+          <div class="barlabel"><span>${label}</span><span>${value}</span></div>`;
+}
+
+async function loadCandidates() {
+  try {
+    const r = await fetch("/api/candidates");
+    const d = await r.json();
+    $("cand-list").innerHTML = d.candidates.map(c => `
+      <div class="cand">
+        <div class="row"><span class="name">${c.name}</span></div>
+        ${bar("技能 skill", c.skill)}
+        ${bar("经验 experience", c.experience)}
+      </div>`).join("");
+  } catch (e) {
+    $("cand-list").innerHTML = `<div class="native-note">候选人数据加载失败：${e}</div>`;
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+}
+
+function addEvent(ev) {
+  const tl = $("timeline");
+  const div = document.createElement("div");
+  const data = ev.data || {};
+  let cls = "result", title = "", body = "", extra = "";
+
+  switch (ev.type) {
+    case "strategy_selected":
+      cls = "route";
+      title = `路由选定策略：${data.strategy}`;
+      body = `来源：${data.source} · ${esc(data.reason || "")}`;
+      break;
+    case "tool_call": {
+      const name = data.tool;
+      if (name === "create_code_tool") {
+        cls = "create";
+        title = `现场生成代码工具：${esc(data.arguments?.name || "")}`;
+        body = `宿主没有加权评分能力，Core 决定新建一个工具`;
+        const code = data.arguments?.code || "";
+        extra = `<details><summary>查看模型生成的代码</summary><pre>${esc(code)}</pre></details>`;
+      } else if (name === "weighted_score") {
+        cls = "tool";
+        title = `调用工具：${esc(name)}`;
+        body = `把候选人数据与权重交给新工具计算`;
+        extra = `<span class="pill sandbox">沙箱子进程执行</span>`;
+      } else {
+        cls = "tool";
+        title = `调用工具：${esc(name)}`;
+        body = `参数：${esc(JSON.stringify(data.arguments || {}))}`;
+      }
+      break;
+    }
+    case "code_tool_created":
+      cls = "create";
+      title = `代码工具已注册：${esc(data.name)}`;
+      body = `默认 ${Math.round((data.ttl_seconds || 0) / 3600)} 小时有效，被调用即刷新；首次执行仍受权限策略约束`;
+      break;
+    case "tool_result":
+      cls = "result";
+      if (data.ok === false) {
+        title = `工具失败：${esc(data.tool || "")}`;
+        body = esc(data.error || "");
+      } else {
+        title = `工具返回：${esc(data.tool || "")}`;
+        body = esc((data.preview || "").slice(0, 140));
+      }
+      break;
+    case "model_message":
+      cls = "model";
+      title = "模型";
+      body = esc(data.text || "");
+      break;
+    case "done":
+      cls = "model";
+      title = "本轮完成";
+      body = `策略：${data.strategy || ""}`;
+      break;
+    default:
+      title = ev.type;
+      body = esc(JSON.stringify(data).slice(0, 160));
+  }
+
+  div.className = "ev " + cls;
+  div.innerHTML = `<div class="ev-title">${title}${extra}</div>
+                  <div class="ev-body">${body}</div>`;
+  tl.appendChild(div);
+  div.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function renderFinal(events, finalText, codeTools) {
+  // 优先从 weighted_score 的返回里解析排序，失败则退回最终文案。
+  let ranked = null;
+  for (const e of events) {
+    if (e.type === "tool_result" && e.data?.tool === "weighted_score" && e.data?.ok) {
+      try { ranked = JSON.parse(e.data.preview); } catch (_) { ranked = null; }
+    }
+  }
+  const list = $("rankList");
+  if (Array.isArray(ranked) && ranked.length) {
+    list.innerHTML = ranked.map((c, i) => `
+      <div class="rank">
+        <span class="no">${i + 1}</span>
+        <span class="nm">${esc(c.name)}</span>
+        <span style="font-size:12px;color:var(--gray)">技能 ${c.skill} · 经验 ${c.experience}</span>
+        <span class="sc">${c.score}</span>
+      </div>`).join("");
+  } else {
+    list.innerHTML = `<div class="conclude">${esc(finalText)}</div>`;
+  }
+  $("conclude").textContent = finalText || "";
+  $("final").classList.add("show");
+
+  if (codeTools) {
+    const t = codeTools.tools && codeTools.tools[0];
+    $("r-live").textContent = codeTools.live ?? 0;
+    $("r-calls").textContent = t ? t.call_count : 0;
+    $("r-ttl").textContent = t ? Math.round(t.ttl_seconds / 3600) + "h" : "—";
+    $("reg").classList.add("show");
+  }
+}
+
+async function run() {
+  const btn = $("runBtn");
+  btn.disabled = true; btn.textContent = "运行中…（沙箱子进程）";
+  $("timeline").innerHTML = "";
+  $("final").classList.remove("show");
+  $("reg").classList.remove("show");
+
+  let payload;
+  try {
+    const r = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: $("task").textContent.replace("任务：", "") }),
+    });
+    payload = await r.json();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "▶ 让 AI 综合评分排序";
+    addEvent({ type: "tool_result", data: { ok: false, error: "请求失败：" + e } });
+    return;
+  }
+
+  if (payload.ok === false) {
+    addEvent({ type: "tool_result", data: { ok: false, error: payload.error } });
+    btn.disabled = false; btn.textContent = "▶ 让 AI 综合评分排序";
+    return;
+  }
+
+  // 逐条播放，模拟实时事件流。
+  const events = payload.events || [];
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    const wait = ev.type === "tool_call" ? 650 : 420;
+    await new Promise(res => setTimeout(res, wait));
+    addEvent(ev);
+  }
+  renderFinal(events, payload.final_text, payload.code_tools);
+
+  btn.disabled = false; btn.textContent = "↻ 再运行一次";
+}
+
+$("runBtn").addEventListener("click", run);
+loadCandidates();
+</script>
+</body>
+</html>
