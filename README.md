@@ -1,5 +1,11 @@
 # YAI Agent Core
 
+[![CI](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-pytest-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
+[![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
+
 > 进程内嵌入式、自适应的 Agent 内核（Embeddable Self-Adaptive Agent Kernel）。
 > 宿主软件只声明"我有什么能力"，Core 自动发现能力、自适应选择策略并完成任务——**宿主不写一行 Agent Loop / Planner / 工具选择代码**。
 
@@ -11,28 +17,84 @@
 | 框架/SDK | ORM | LangGraph、CrewAI、OpenAI/Claude Agents SDK | 自己定义 Agent、工具、编排 |
 | **嵌入式内核（本项目）** | **SQLite** | YAI Agent Core | **把现有软件接进来，能力自动长出来** |
 
+```mermaid
+flowchart TB
+  app["宿主应用：普通业务函数（零 Agent 代码）"]
+  auto["AgentCore.auto() 内省 type hints / docstring"]
+  router["Adaptive Router<br/>direct · react · plan · clarify"]
+  loop["Agent Loop"]
+  exec["Tool Executor"]
+  app --> auto --> router --> loop --> exec
+  exec -->|"调用"| app
+  spi["五个 SPI 契约（宿主可替换）<br/>Model · Channel · Memory · Policy · Discovery"]
+  ext["外部能力（可选）<br/>MCP · OpenAPI REST · 按需发现"]
+  loop -.-> spi
+  exec -.-> ext
+```
+
 ## 30 秒快速开始
+
+### 路线 A：只装库，零 Key 验证嵌入（不必克隆、不必申请模型）
+
+内核本体**零第三方硬依赖**，Python 3.11+ 直接装：
+
+```bash
+pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"
+# 接真实模型时再加可选依赖：pip install "yai-agent-core[llm] @ git+https://github.com/Gi-Tuu/yai-agent-core.git"
+```
+
+复制这段直接运行——用随包的确定性 `ScriptedModel`，**不联网、不要 API Key**，
+就能看到内核自动发现并执行你的业务函数（这段也是 `tests/test_quickstart.py` 的真身）：
+
+```python
+import asyncio
+from yai_core import AgentCore, ScriptedModel, ModelResponse, ToolCallRequest, build_spec
+
+def search_notes(keyword: str) -> list[str]:
+    """搜索宿主笔记库。"""                 # 你自己的普通业务函数，没有任何 Agent 代码
+    return {"周报": ["Core 骨架", "工具调用"]}.get(keyword, [])
+
+# 离线确定性模型：第一轮决定调工具，第二轮给结论（真实上线整体换成 OpenAICompatProvider）
+model = ScriptedModel([
+    ModelResponse(content="", tool_calls=[ToolCallRequest(id="c1", name="search_notes",
+                 arguments={"keyword": "周报"})]),
+    ModelResponse(content="本周周报 2 条。"),
+])
+
+core = AgentCore(model)
+core.register_tools([build_spec(search_notes)])            # 内省 type hints/docstring 生成工具
+result = asyncio.run(core.run("搜索周报并总结"))
+print(result.final_text)                                  # 本周周报 2 条。
+```
+
+接真实模型时，把 `ScriptedModel` 换成一行（`[llm]` extra，OpenAI 兼容 DeepSeek/通义/OpenAI）：
+
+```python
+from yai_core import OpenAICompatProvider
+model = OpenAICompatProvider()   # 读 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
+```
+
+### 路线 B：克隆仓库，跑全部宿主演示与测试（离线，无需 Key）
 
 ```bash
 uv venv
 uv pip install -e ".[dev,llm,server]"
-uv run python scripts/smoke_test.py  # 离线冒烟：同一 Core 自适应三个不同宿主
-uv run pytest                        # 单元 + 端到端测试（不需要 API Key）
-# 全量 204 项测试：建议一次装齐 extras（与 CI 一致）
-#   uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+uv run python scripts/smoke_test.py   # 离线冒烟：同一 Core 自适应三个不同宿主
+uv run pytest                         # 全量单元 + 端到端测试，不需要 API Key
+# 全量 extras（与 CI 一致）：uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 ```
 
 **第一次读代码**：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线；[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是每个源码文件的逐行讲解。
 
-宿主接入只有三步：
+宿主接入只有三步（真实模型）：
 
 ```python
-from yai_core import AgentCore
-import my_app_capabilities as cap          # 宿主自己的普通业务函数
+from yai_core import AgentCore, OpenAICompatProvider
+import my_app_capabilities as cap                # 宿主自己的普通业务函数
 
-core = AgentCore.auto(cap, model)          # ① 内省宿主能力，自动注册工具
-result = await core.run("搜索本周记录并整理成报告")  # ② 自适应：direct/react/plan/clarify
-print(result.final_text)                   # ③ 可交付结果 + 全程事件可观测
+core = AgentCore.auto(cap, OpenAICompatProvider())   # ① 内省宿主能力，自动注册工具
+result = await core.run("搜索本周记录并整理成报告")      # ② 自适应：direct/react/plan/clarify
+print(result.final_text)                           # ③ 可交付结果 + 全程事件可观测
 ```
 
 ## 自适应机制（当前能力）
