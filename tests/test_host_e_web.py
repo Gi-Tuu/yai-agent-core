@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
+from host_e_sales_crm.catalog_capabilities import (  # noqa: E402
+    build_catalog,
+    calc_quote_with_tax,
+    catalog_summary,
+    get_visit_weather,
+)
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from host_e_sales_crm.web_app import (  # noqa: E402
     WebChannel,
@@ -406,6 +412,140 @@ def test_run_not_found_returns_404():
             raise AssertionError("应当 404")
         except urllib.error.HTTPError as exc:
             assert exc.code == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# ---------- 按需能力目录：纯函数 + 关键词匹配 ----------
+
+def test_visit_weather_fixed_city_and_rain_advice():
+    gz = get_visit_weather("广州")
+    assert gz["city"] == "广州" and gz["weather"] == "阵雨" and gz["rain"] is True
+    assert "带伞" in gz["advice"]
+    zj = get_visit_weather("湛江")
+    assert zj["weather"] == "晴" and zj["rain"] is False
+
+
+def test_visit_weather_unknown_city_is_deterministic():
+    a = get_visit_weather("某不存在的城市")
+    b = get_visit_weather("某不存在的城市")
+    assert a == b  # 同名城市散列兜底，结果稳定
+
+
+def test_calc_quote_with_tax_basic_and_negative():
+    r = calc_quote_with_tax(10000, 13.0)
+    assert r["tax"] == 1300.0 and r["amount_incl_tax"] == 11300.0
+    assert r["amount_excl_tax"] == 10000 and r["tax_rate_pct"] == 13.0
+    bad = calc_quote_with_tax(-5, 13.0)
+    assert bad["ok"] is False and "负" in bad["error"]
+
+
+def test_catalog_summary_lists_two_on_demand_capabilities():
+    summary = catalog_summary()
+    names = {c["name"] for c in summary}
+    assert names == {"get_visit_weather", "calc_quote_with_tax"}
+    assert all(c["description"] for c in summary)
+
+
+def test_catalog_matches_keywords_but_not_unrelated_need():
+    async def scenario():
+        catalog = build_catalog()
+        weather = await catalog.discover(
+            "天气查询能力", task="明天去广州拜访要带伞吗", available=[]
+        )
+        assert [s.name for s in weather] == ["get_visit_weather"]
+        tax = await catalog.discover(
+            "含税报价计算能力", task="S001 价税合计多少", available=[]
+        )
+        assert [s.name for s in tax] == ["calc_quote_with_tax"]
+        none = await catalog.discover(
+            "图像生成能力", task="帮我画一张海报", available=[]
+        )
+        assert none == []  # 目录里没有的能力永远不会被发现
+
+    asyncio.run(scenario())
+
+
+def test_state_exposes_on_demand_catalog_separately_from_tools():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        _, state = _get_json(base, "/api/state")
+        # 默认工具仍是 12 个（候选函数不挂 SalesCrm，不被内省注册）
+        assert len(state["tools"]) == 12
+        catalog = state["catalog"]
+        assert {c["name"] for c in catalog} == {
+            "get_visit_weather", "calc_quote_with_tax"
+        }
+        tool_names = {t["name"] for t in state["tools"]}
+        assert "get_visit_weather" not in tool_names  # 未发现前不在默认工具里
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# ---------- 端到端：能力缺口 -> 发现 -> 授权 -> 本轮可用（SSE） ----------
+
+class _GapWeatherModel:
+    """自报 live-router 的离线模型：分类时报缺口，随后调用被发现的天气工具，最后收尾。"""
+
+    yai_live_router = True
+
+    def __init__(self):
+        self.calls = 0
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        if tools is None:
+            # 第 1 次：LLM 路由分类，判定现有 CRM 工具不足以查天气
+            return ModelResponse(
+                content=(
+                    '{"strategy":"react","tier":"standard",'
+                    '"reason":"需要查询拜访城市天气，现有工具无法完成",'
+                    '"missing_capability":"天气查询能力"}'
+                )
+            )
+        if not any(m.get("role") == "tool" for m in messages):
+            # 第 2 次：天气工具已在本轮被发现注册，直接调用
+            return ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="w1", name="get_visit_weather", arguments={"city": "广州"}
+                )],
+            )
+        # 第 3 次：拿到工具结果后收尾
+        return ModelResponse(content="广州明天有阵雨，建议带伞并和客户确认行程。")
+
+
+def test_discovery_loop_over_sse_gap_discover_authorize_execute():
+    crm = _crm()
+    workbench, httpd, base = _start_server(_GapWeatherModel(), crm)
+    try:
+        events = _run_and_collect(
+            base,
+            "明天去广州拜访客户，天气怎么样，要带伞吗？",
+            on_permission=lambda data: True,  # 新发现的只读工具首次调用仍需授权
+        )
+        kinds = [e["type"] for e in events]
+
+        gap = next(e for e in events if e["type"] == "capability_missing")
+        assert "天气" in gap["data"]["missing"]
+        assert len(gap["data"]["available_tools"]) == 12  # 缺口时刻只有 CRM 工具
+
+        found = next(e for e in events if e["type"] == "tool_discovered")
+        assert found["data"]["registered"] == ["get_visit_weather"]
+        assert found["data"]["source"] == "StaticCatalog"
+
+        # 发现不等于授权：新工具不在读白名单，仍弹了授权卡
+        assert "permission_request" in kinds
+        call = next(e for e in events if e["type"] == "tool_call")
+        assert call["data"]["tool"] == "get_visit_weather"
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["data"]["ok"] is True
+        assert "阵雨" in result["data"]["preview"] and "带伞" in result["data"]["preview"]
+
+        assert kinds[-1] == "done"
+        assert "带伞" in events[-1]["data"]["final_text"]
     finally:
         httpd.shutdown()
         httpd.server_close()

@@ -106,6 +106,12 @@
   .ev.model_message { border-left-color: #94D8C3; }
   .ev.error { border-left-color: var(--err); background: rgba(185,28,28,.04); }
   .ev.done { border-left-color: var(--ok); background: rgba(21,128,61,.05); }
+  .ev.capability_missing { border-left-color: var(--warn); background: #FFFBEB; }
+  .ev.capability_missing .ev-type { color: #78350F; }
+  .ev.tool_discovered { border-left-color: var(--ok); background: rgba(21,128,61,.07); }
+  .ev.tool_discovered .ev-type { color: var(--ok); }
+  .mini-tool.ondemand { color: var(--accent); }
+  .mini-tool.ondemand::after { content: ' · 按需'; color: var(--text-2); font-size: 10px; }
   pre.code { background: #F7F6F1; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
     font-size: 11.5px; overflow-x: auto; margin: 4px 0 0; font-family: Consolas,'Cascadia Mono',monospace;
     white-space: pre-wrap; word-break: break-word; }
@@ -247,7 +253,9 @@
     <div class="welcome-drawer">
       我是<b>嵌入这个 CRM 的数字员工</b>：内核内省了软件自身的业务方法作为工具。
       读操作自动执行；写跟进、建待办等会先请你授权，执行结果直接反映在左侧软件里。
-      <details class="tools" style="margin-top:8px" id="toolsDetails"><summary>内核发现的工具</summary><div id="toolsBox"></div></details>
+      当现有工具不够时，我会<b>感知到能力缺口</b>，从宿主的按需目录里<b>发现并启用新能力</b>
+      （发现≠授权，首次调用仍会请你确认）。
+      <details class="tools" style="margin-top:8px" id="toolsDetails" open><summary>内核能力（默认工具 + 按需能力）</summary><div id="toolsBox"></div></details>
     </div>
   </div>
   <div class="dock">
@@ -255,6 +263,8 @@
       <button class="chip" data-task="看看哪些客户超过 3 天没跟进，给最久没跟进的客户记录一条跟进“电话沟通，客户有意向下周看方案”，然后新建一个待办“下周二前发送报价单”，最后生成今天的销售日报。">查超期→写跟进→建待办→日报</button>
       <button class="chip" data-task="华东区硬件类的销售额是多少？">华东硬件销售额</button>
       <button class="chip" data-task="列出超过 3 天没跟进的客户，按逾期天数排序。">超期客户</button>
+      <button class="chip" data-task="明天要去广州拜访客户，帮我查一下那边的天气，要带伞吗？">查拜访天气（按需发现）</button>
+      <button class="chip" data-task="S001 这笔订单按 13% 税率算，含税总价是多少？">算含税报价（按需发现）</button>
     </div>
     <div class="input-row">
       <textarea id="taskInput" rows="1" placeholder="用自然语言交代任务，Enter 发送 / Shift+Enter 换行"></textarea>
@@ -500,6 +510,16 @@
         d.style.marginTop = '6px'; box.appendChild(d);
         list.forEach(function (t) { box.appendChild(el('div', 'mini-tool', '• ' + t.name)); });
       });
+      var catalog = st.catalog || [];
+      if (catalog.length) {
+        var dc = el('div', 'muted', '按需能力 · 命中缺口才启用（' + catalog.length + '）');
+        dc.style.marginTop = '6px'; box.appendChild(dc);
+        catalog.forEach(function (t) {
+          var line = el('div', 'mini-tool ondemand', '• ' + t.name);
+          line.title = t.description || '';
+          box.appendChild(line);
+        });
+      }
     }).catch(function () {
       document.getElementById('stateDot').className = 'dot bad';
       document.getElementById('stateText').textContent = '服务未连接';
@@ -566,11 +586,15 @@
 
   function openStream(runId, card, head, spin, steps, answer) {
     var finished = false;
+    var discovered = {};  // 本轮按需发现的工具名，用于区分授权卡片文案
     var es = new EventSource('/api/stream?run_id=' + encodeURIComponent(runId));
     es.onmessage = function (msg) {
       var evt; try { evt = JSON.parse(msg.data); } catch (e) { return; }
+      if (evt.type === 'tool_discovered' && evt.data && evt.data.registered) {
+        evt.data.registered.forEach(function (n) { discovered[n] = true; });
+      }
       if (evt.type === 'permission_request') {
-        steps.appendChild(permissionCard(runId, evt.data));
+        steps.appendChild(permissionCard(runId, evt.data, discovered));
       } else if (evt.type === 'clarify_request') {
         steps.appendChild(clarifyCard(runId, evt.data));
       } else if (evt.type === 'permission_asked' || evt.type === 'clarify_requested') {
@@ -623,10 +647,14 @@
     setBusy(false);
   }
 
-  function permissionCard(runId, data) {
+  function permissionCard(runId, data, discovered) {
+    discovered = discovered || {};
+    var isNew = !!discovered[data.tool];
     var box = el('div', 'perm');
-    box.appendChild(el('div', 'perm-title', '写操作授权请求'));
-    box.appendChild(el('div', '', '工具：' + data.tool));
+    box.appendChild(el('div', 'perm-title',
+      isNew ? '新能力授权请求（按需发现）' : '写操作授权请求'));
+    box.appendChild(el('div', '', '工具：' + data.tool +
+      (isNew ? '（刚从按需目录发现，首次调用仍需你确认）' : '')));
     box.appendChild(el('pre', 'code', JSON.stringify(data.arguments || {}, null, 2)));
     var verdict = el('div', 'verdict');
     var actions = el('div', 'perm-actions');
@@ -635,7 +663,7 @@
     function decide(approved) {
       btnAllow.disabled = true; btnDeny.disabled = true;
       post('/api/decision', { run_id: runId, approved: approved });
-      verdict.textContent = approved ? '已允许，执行中…' : '已拒绝，该写操作不会执行';
+      verdict.textContent = approved ? '已允许，执行中…' : '已拒绝，该操作不会执行';
       verdict.style.color = approved ? 'var(--ok)' : 'var(--err)';
     }
     btnAllow.addEventListener('click', function () { decide(true); });
@@ -673,6 +701,7 @@
     var TITLES = {
       strategy_selected: '策略选择', plan_created: '生成计划', tool_call: '调用工具',
       tool_result: '工具结果', model_message: '模型消息', clarify_requested: '请求澄清',
+      capability_missing: '感知到能力缺口', tool_discovered: '发现新能力',
       error: '错误', done: '任务完成'
     };
     if (!TITLES[ev.type]) return null;
@@ -693,6 +722,19 @@
       head.appendChild(badge(data.tool));
       head.appendChild(badge(data.ok ? '成功' : '失败', data.ok ? 'ok' : 'bad'));
       body.appendChild(el('pre', 'code', data.ok ? (data.preview || '') : (data.error || '')));
+    } else if (ev.type === 'capability_missing') {
+      head.appendChild(badge('缺口'));
+      body.appendChild(el('div', '', '缺少：' + (data.missing || '')));
+      if (data.task) body.appendChild(el('div', 'muted', '任务：' + data.task));
+    } else if (ev.type === 'tool_discovered') {
+      head.appendChild(badge('已注册', 'ok'));
+      (data.registered || []).forEach(function (n) {
+        var line = el('div', '', '• ' + n);
+        line.style.fontFamily = 'Consolas,monospace';
+        body.appendChild(line);
+      });
+      body.appendChild(el('div', 'muted', '来源：' + (data.source || '') +
+        ' —— 本轮已可用，首次调用仍需授权'));
     } else if (ev.type === 'model_message') {
       body.textContent = data.text || '';
     } else if (ev.type === 'error') {

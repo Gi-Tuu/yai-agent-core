@@ -34,6 +34,7 @@ from runner_common import bootstrap, build_model, load_dotenv  # noqa: E402
 
 bootstrap()
 
+from host_e_sales_crm.catalog_capabilities import build_catalog, catalog_summary  # noqa: E402
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from host_e_sales_crm.run_agent import READ_TOOLS  # noqa: E402
 from yai_core import AgentCore, EventType, discover  # noqa: E402
@@ -100,6 +101,8 @@ class Workbench:
         self.crm = crm or SalesCrm()
         self._model_factory = model_factory
         self.model_label = model_label
+        # 按需能力目录：默认不注册，命中能力缺口才被发现并在本轮启用。
+        self.catalog = build_catalog()
         self._loop = asyncio.new_event_loop()
         self._runs: dict[str, dict] = {}
         self._lock = threading.Lock()
@@ -126,7 +129,12 @@ class Workbench:
     def state(self) -> dict:
         with self._lock:
             active = self._active_id_locked()
-        return {"model_label": self.model_label, "tools": self.tools(), "active": active}
+        return {
+            "model_label": self.model_label,
+            "tools": self.tools(),
+            "catalog": catalog_summary(),
+            "active": active,
+        }
 
     def snapshot(self) -> dict:
         """原生 CRM 界面的全部数据：与 Agent 读的是同一个 SalesCrm 对象。"""
@@ -214,6 +222,7 @@ class Workbench:
             channel=channel,
             policy=AllowlistPolicy(READ_TOOLS, mode="auto"),
             llm_router="auto",
+            discovery=self.catalog,
         )
         asyncio.run_coroutine_threadsafe(self._run_guarded(core, task, run), self._loop)
         return run_id

@@ -18,7 +18,7 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py  # 离线冒烟：同一 Core 自适应三个不同宿主
 uv run pytest                        # 单元 + 端到端测试（不需要 API Key）
-# 全量 197 项测试：建议一次装齐 extras（与 CI 一致）
+# 全量 204 项测试：建议一次装齐 extras（与 CI 一致）
 #   uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 ```
 
@@ -146,6 +146,12 @@ uv run python examples/host_e_sales_crm/web_app.py        # http://127.0.0.1:820
 推送授权卡片，浏览器点"允许/拒绝"后任务继续，执行结果实时反映在左侧原生界面（KPI、表格联动）。
 Agent 执行中原生写操作互斥（409），避免两边同时改数据；任务可随时终止，重置会先终止卡住的任务。
 只监听 127.0.0.1。
+
+工作台还内置了**按需能力目录**（`catalog_capabilities.py`：拜访天气、含税报价两个销售域能力）：
+它们默认不注册、不计入 12 个 CRM 工具；当模型判定现有工具不足（如"明天去广州拜访要带伞吗"），
+内核发出 `capability_missing` → 按关键词从目录匹配并注册新工具（`tool_discovered`）→ 本轮即可调用，
+首次调用仍弹授权卡（**发现 ≠ 授权**）。抽屉里的"按需能力"分组与两个演示 chip 可直接触发这条闭环。
+Windows 下双击 `examples/host_e_sales_crm/启动数字员工.cmd` 即可一键启动（等价于上面的 web_app.py）。
 
 ## 在线 API（X-Agent 部署要求）
 

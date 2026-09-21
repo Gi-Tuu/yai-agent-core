@@ -16,6 +16,7 @@ from runner_common import bootstrap, build_model, load_dotenv  # noqa: E402
 
 bootstrap()
 
+from host_e_sales_crm.catalog_capabilities import build_catalog  # noqa: E402
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from yai_core import AgentCore, EventType  # noqa: E402
 from yai_core.policy import AllowlistPolicy  # noqa: E402
@@ -59,6 +60,8 @@ class DemoCliChannel:
             print(f"[澄清] {d['question']}")
         elif event.type == EventType.CAPABILITY_MISSING:
             print(f"[能力缺口] 缺少：{d['missing']}（现有工具：{d['available_tools']}）")
+        elif event.type == EventType.TOOL_DISCOVERED:
+            print(f"[发现] 从 {d['source']} 按需启用：{d['registered']}（首次调用仍需授权）")
         elif event.type == EventType.MODEL_MESSAGE:
             print(f"[模型] {d.get('text', '')}")
         elif event.type == EventType.ERROR:
@@ -92,6 +95,7 @@ async def main() -> None:
         model,
         channel=DemoCliChannel(),
         policy=AllowlistPolicy(READ_TOOLS, mode="auto"),
+        discovery=build_catalog(),
         llm_router="auto",
     )
     task = " ".join(sys.argv[1:]).strip() or DEFAULT_TASK
