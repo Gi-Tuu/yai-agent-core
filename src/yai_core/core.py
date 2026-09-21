@@ -15,7 +15,13 @@ from yai_core.discovery import discover
 from yai_core.kernel import AdaptiveRouter, AgentLoop
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
-from yai_core.spi import Channel, MemoryStore, ModelProvider, PermissionPolicy
+from yai_core.spi import (
+    Channel,
+    MemoryStore,
+    ModelProvider,
+    PermissionPolicy,
+    ToolDiscovery,
+)
 from yai_core.tools import ToolExecutor, ToolRegistry
 from yai_core.types import AgentEvent, RunResult, ToolSpec
 
@@ -31,6 +37,7 @@ class AgentCore:
         router: AdaptiveRouter | None = None,
         auto_approve_tools: bool = True,
         llm_router: bool | Literal["auto"] = False,
+        discovery: ToolDiscovery | None = None,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
@@ -64,6 +71,7 @@ class AgentCore:
             channel=self.channel,
             memory=self.memory,
             router=self.router,
+            discovery=discovery,
         )
 
     # ---------- 接入 ----------

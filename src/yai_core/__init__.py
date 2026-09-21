@@ -4,9 +4,10 @@
 """
 
 from yai_core.core import AgentCore
-from yai_core.discovery import build_spec, discover
+from yai_core.discovery import DiscoveredCandidate, StaticCatalog, build_spec, discover
 from yai_core.kernel import AdaptiveRouter, AgentLoop, Context, RouteDecision
 from yai_core.llm.openai_compat import OpenAICompatProvider
+from yai_core.spi import ToolDiscovery
 from yai_core.tools import ToolExecutor, ToolRegistry
 from yai_core.types import (
     AgentEvent,
@@ -32,6 +33,9 @@ __all__ = [
     "OpenAICompatProvider",
     "build_spec",
     "discover",
+    "StaticCatalog",
+    "DiscoveredCandidate",
+    "ToolDiscovery",
     "AgentEvent",
     "ChatMessage",
     "EventType",

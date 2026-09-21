@@ -3,7 +3,7 @@
 > 目标：不是"看懂每一行"，而是按顺序读完后，能向别人讲清楚 Core 怎么转起来，并能动手改。
 > 建议节奏：每天 1～2 站，配合运行与小练习；卡住超过 30 分钟就先跳过，在文件里留 `# Q:` 注释。
 
-> **配套逐行讲解**：`docs/walkthrough/` 里有每个源码文件逐块、逐行的解释（00 总览 → 09 在线 API），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。
+> **配套逐行讲解**：`docs/walkthrough/` 里有每个源码文件逐块、逐行的解释（00 总览 → 15 能力按需发现），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。
 
 ## 0. 先跑起来（10 分钟）
 
@@ -48,7 +48,7 @@ cd "D:\YAI Agent Core"
 - 调试建议：在 `_react_cycle` 每轮循环开头打印 `len(ctx.messages)`，看消息历史如何增长。
 - 读完标志：能默画出"用户任务 → 模型 → 工具调用 → 工具结果 → 模型 → 最终答案"的闭环。
 
-### 站 6：`src/yai_core/spi/` 与默认实现 —— 可替换的四个插槽
+### 站 6：`src/yai_core/spi/` 与默认实现 —— 可替换的五个插槽
 - 解决什么：为什么 Core 不绑定模型厂商、不绑定 UI、不绑定数据库。
 - Python 知识点：`Protocol`（结构化子类型："只要长这样就能插进来"，不需要继承）、依赖注入（构造函数传入）。
 - 对照读：`llm/openai_compat.py`（真实插槽）、`channels/collect.py`（测试插槽）、`tests/test_loop.py` 里的 `ScriptedModel`（假插槽）。
@@ -62,6 +62,10 @@ async 方法里（见 walkthrough 第 11 章）。读完应能回答：为什么
 spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.py 的鉴权与响应归一。
 读完应能回答：为什么一份 OpenAPI 描述就能让 Core 不写一行适配代码获得一批工具（见 walkthrough 第 12 章）。
 
+**再加一站（v0.6）**：`src/yai_core/spi/discovery.py` + `discovery/catalog.py` —— 第五个插槽"按需发现"。
+对照 walkthrough 第 15 章读：`ToolDiscovery` 契约、`StaticCatalog` 的关键词匹配、为什么"发现源只交候选、注册/去重/权限归内核"。
+读完应能回答：能力缺口为什么能在**同一轮**被补上并调用，而不只是发一个事件；跑通 `examples/host_f_discovery/run.py`（无需 Key）。
+
 ### 站 7：`src/yai_core/core.py` 与 `batteries/fastapi_server/app.py`
 - `core.py` 是门面：宿主只需要认识 `AgentCore.auto()` 和 `run()`，内部全被藏起来（门面模式）。
 - Battery 展示"内核"与"外围"的边界：注意 fastapi/pydantic 是**懒加载**的，内核本体不依赖它们。
@@ -72,7 +76,7 @@ spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.p
 | 术语 | 在本项目里的意思 |
 |---|---|
 | 宿主 Host | 嵌入 Core 的现有软件（host_a/b/c，未来是 AMBRACE） |
-| SPI | 宿主可替换、Core 给默认实现的接口契约（Model/Channel/Memory/Policy） |
+| SPI | 宿主可替换、Core 给默认实现的接口契约（Model/Channel/Memory/Policy/Discovery） |
 | Adaptive Router | 决定任务走哪种执行策略的组件 |
 | ReAct | 推理-调用工具-观察结果-再推理的循环 |
 | Tool Bus | 统一执行工具的通道（权限、异常、结果格式化都在这） |

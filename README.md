@@ -18,7 +18,7 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py  # 离线冒烟：同一 Core 自适应三个不同宿主
 uv run pytest                        # 单元 + 端到端测试（不需要 API Key）
-# 全量 184 项测试：建议一次装齐 extras（与 CI 一致）
+# 全量 197 项测试：建议一次装齐 extras（与 CI 一致）
 #   uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 ```
 
@@ -40,9 +40,10 @@ print(result.final_text)                   # ③ 可交付结果 + 全程事件�
 1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格；外部 MCP Server 的工具经 MCP Client 同构接入注册表（v0.2 已落地，`[mcp]` 可选依赖）
 2. **接入任意 REST API（OpenAPI 发现，可选）**：给一个 OpenAPI 3 描述（URL/文件/dict），自动把 operations 注册为工具（$ref 内联、path/query/body 入参合并、bearer/apiKey 鉴权、只读模式），`[openapi]` extra 懒加载
 3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，LLM 分类器输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计；LLM 路由同时做能力边界感知，工具不足时发出 `capability_missing` 事件交给宿主（规则路径、澄清、无工具部署不发）
-4. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
-5. **宿主自适应（SPI）**：Model / Channel / Memory / Policy 四个契约宿主可替换，Core 提供零配置默认实现
-6. **过程可观测**：每次策略选择、工具调用、权限确认、能力缺口都通过 Observer 事件流对外发出
+4. **能力按需发现闭环（ToolDiscovery）**：第 5 个 SPI 契约。模型报出能力缺口后，内核向发现源（内置进程内 `StaticCatalog`，未来可接 MCP 目录 / OpenAPI 服务 / 插件市场）要候选 → 去重注册 → 发 `tool_discovered` 事件 → **本轮 ReAct 即可调用**；发现源异常不致命，且"能被发现不等于被授权执行"（执行仍走权限策略）。默认不配置发现源时行为不变，离线可复现（`examples/host_f_discovery/`）
+5. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
+6. **宿主自适应（SPI）**：Model / Channel / Memory / Policy / Discovery 五个契约宿主可替换，Core 提供零配置默认实现
+7. **过程可观测**：每次策略选择、能力缺口、工具发现、工具调用、权限确认都通过 Observer 事件流对外发出
 
 ## 目录结构
 
@@ -50,8 +51,8 @@ print(result.final_text)                   # ③ 可交付结果 + 全程事件�
 src/yai_core/
 ├── core.py              # AgentCore 门面（auto / run / astream）
 ├── types.py             # ToolSpec / ChatMessage / AgentEvent / Strategy
-├── spi/                 # 宿主可替换契约：model / channel / memory / policy
-├── discovery/           # 能力自发现（函数内省；v0.2 OpenAPI/MCP）
+├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery
+├── discovery/           # 能力自发现（函数内省）+ catalog.py（按需能力目录）
 ├── tools/               # ToolRegistry + ToolExecutor（Tool Bus）
 ├── kernel/              # AdaptiveRouter + AgentLoop + Context
 ├── llm/                 # OpenAI 兼容模型后端（可选依赖）
@@ -66,7 +67,8 @@ examples/
 ├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
 ├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
 ├── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
-└── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入；含终端与网页工作台两种形态
+├── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入；含终端与网页工作台两种形态
+└── host_f_discovery/    # 宿主 F：能力缺口 → 按需发现 → 本轮可用（离线确定性演示，无需 Key）
 tests/                   # 离线 ScriptedModel 端到端测试
 docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
 ```
@@ -95,6 +97,31 @@ bridge = await attach_mcp_tools(core.registry, McpServerConfig(alias="demo", url
 # 远端工具已作为 ToolSpec(source="mcp") 注册，Router/Loop/Executor 零感知
 await bridge.aclose()
 ```
+
+## 能力按需发现：缺口 → 发现 → 本轮可用（宿主 F）
+
+宿主可以把"非默认能力"放进一个按需目录，而不是启动时全部注册。模型在分类时
+判定现有工具不足，会输出 `missing_capability`；内核据此向 `ToolDiscovery` 发现源
+要候选，命中后注册并在**同一轮**交给模型调用。默认能力之外的工具不会凭空出现，
+注册后的执行仍走权限策略。
+
+```bash
+uv run python examples/host_f_discovery/run.py   # 离线确定性演示，无需 API Key
+```
+
+```python
+from yai_core import AgentCore, StaticCatalog, DiscoveredCandidate, build_spec
+
+catalog = StaticCatalog([
+    DiscoveredCandidate(get_weather, ("天气", "气温", "weather"))  # 显式关键词才可能被发现
+])
+core = AgentCore(model, llm_router=True, discovery=catalog)
+core.register_tools([build_spec(list_tasks), build_spec(add_task)])  # 只注册默认能力
+```
+
+`StaticCatalog` 是 `ToolDiscovery` SPI 的最小进程内实现（关键词匹配、零依赖、离线可测）；
+同一契约未来可挂 MCP 目录、OpenAPI 服务目录或插件市场。完整事件序列：
+`capability_missing → tool_discovered → tool_call → tool_result → done`。
 
 ## 普通软件零改造嵌入（宿主 E：销售 CRM）
 

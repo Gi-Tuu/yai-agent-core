@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter
-from yai_core.spi import Channel, MemoryStore, ModelProvider
+from yai_core.spi import Channel, MemoryStore, ModelProvider, ToolDiscovery
 from yai_core.tools.executor import ToolExecutor
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import (
@@ -22,6 +22,7 @@ from yai_core.types import (
     ChatMessage,
     EventType,
     Strategy,
+    ToolSpec,
 )
 
 _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
@@ -58,6 +59,7 @@ class AgentLoop:
         channel: Channel,
         memory: MemoryStore,
         router: AdaptiveRouter | None = None,
+        discovery: ToolDiscovery | None = None,
         *,
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
@@ -70,6 +72,9 @@ class AgentLoop:
         self.channel = channel
         self.memory = memory
         self.router = router or AdaptiveRouter()
+        # 工具发现源：默认 None（安全默认，只发缺口事件、不动态注册）；
+        # 宿主显式注入（如 StaticCatalog）后，缺口出现时才会发现并注册新工具。
+        self.discovery = discovery
         self.max_iters = max_iters
         self.max_clarify_rounds = max_clarify_rounds
 
@@ -103,6 +108,11 @@ class AgentLoop:
                     "strategy": strategy.value,
                 },
             )
+            # 配置了发现源时，把"缺口"闭环成"新工具"：发现 -> 注册 -> 本轮即可用。
+            # 注册发生在系统提示词构建之前，react/plan 本轮就能看到新工具。
+            if self.discovery is not None:
+                async for ev in self._discover_tools(decision.missing_capability, task):
+                    yield ev
 
         if strategy == Strategy.CLARIFY and _clarify_depth >= self.max_clarify_rounds:
             # 澄清轮数达上限仍不明确：降级为直接回答（DIRECT，不调工具），由模型说明
@@ -173,6 +183,48 @@ class AgentLoop:
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
         yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
+
+    async def _discover_tools(
+        self, need: str, task: str
+    ) -> AsyncIterator[AgentEvent]:
+        """能力缺口出现时，向发现源要候选并注册：全程可观测、失败不致命。
+
+        发现源只负责"返回候选规格"，注册去重由内核统一完成；
+        工具真正执行时仍走 PermissionPolicy（发现不等于授权）。
+        """
+        try:
+            candidates = await self.discovery.discover(
+                need,
+                task=task,
+                available=[s.name for s in self.registry.all()],
+            )
+        except Exception as exc:  # noqa: BLE001 - 发现是增强不是依赖，失败不致命
+            yield AgentEvent(
+                EventType.ERROR,
+                {"stage": "tool_discovery", "error": f"{type(exc).__name__}: {exc}"},
+            )
+            return
+
+        # 防御性去重：既跳过已注册，也跳过候选之间的同名工具。
+        new_specs: list[ToolSpec] = []
+        seen: set[str] = set()
+        for spec in candidates:
+            if spec.name in seen or self.registry.has(spec.name):
+                continue
+            seen.add(spec.name)
+            new_specs.append(spec)
+        if not new_specs:
+            return
+
+        self.registry.register_many(new_specs)
+        yield AgentEvent(
+            EventType.TOOL_DISCOVERED,
+            {
+                "missing": need,
+                "source": type(self.discovery).__name__,
+                "registered": [s.name for s in new_specs],
+            },
+        )
 
     async def _make_plan(
         self, ctx: Context, task: str, *, tier: str = "strong"

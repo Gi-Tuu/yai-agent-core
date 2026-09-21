@@ -23,8 +23,10 @@
   │
   │ ③ Router.classify(任务, 注册表) → 策略        【kernel/router.py】
   │    没有工具→direct / 行动词→react / 多步+行动→plan / 太模糊→clarify
+  │    工具不足且模型报缺口 → capability_missing 事件
+  │      └─（可选）ToolDiscovery 发现新工具 → 注册 → 本轮即可用【discovery/catalog.py】
   │
-  │ ④ Context 组装消息列表                       【kernel/context.py】
+  │ ④ Context 组装消息列表（含刚发现的工具）      【kernel/context.py】
   │
   │ ⑤（plan 时）先让强模型拆步骤，再补一条"按计划执行"的 user 指令
   │
@@ -46,8 +48,9 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 四个"插槽"的接口约定 | 插座标准 |
+| `spi/*.py` | 五个"插槽"的接口约定（model/channel/memory/policy/discovery） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
+| `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源） | 备用零件柜 |
 | `tools/registry.py` | 工具花名册 | 电话簿 |
 | `tools/executor.py` | 真正调用工具的地方 | 总机 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
@@ -76,7 +79,7 @@
 ## 4. 分篇目录
 
 - 01 · `types.py`：数据词汇表
-- 02 · `spi/`：四个可替换插槽
+- 02 · `spi/`：四个可替换插槽（第五个 ToolDiscovery 见第 15 篇）
 - 03 · `discovery/introspect.py`：能力自发现
 - 04 · `tools/`：注册表 + 执行总线
 - 05 · `kernel/router.py` + `context.py`：决策与上下文
@@ -89,6 +92,7 @@
 - 12 · `integrations/openapi/`：OpenAPI 发现（REST API 零适配变工具，$ref/鉴权/只读闸）
 - 13 · `memory/retention.py` + 两个 Store：历史保留策略（条数裁剪/TTL，轮边界对齐，opt-in）
 - 14 · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
+- 15 · `spi/discovery.py` + `discovery/catalog.py`：能力缺口的最小闭环（缺口 → 发现 → 注册 → 本轮可用）
 
 ## 5. 自检（读完本篇应能回答）
 

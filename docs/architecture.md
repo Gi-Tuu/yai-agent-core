@@ -18,13 +18,15 @@
         ▼
 YAI Kernel
   ├─ Adaptive Router   任务分类 → direct/react/plan/clarify + 模型 tier
-  ├─ Agent Loop        按策略执行（工具循环、计划拆解、澄清重入）
+  │                     工具不足 → capability_missing → ToolDiscovery 补工具（本轮可用）
+  ├─ Agent Loop        按策略执行（工具循环、计划拆解、澄清重入、缺口发现）
   ├─ Context           消息组装与 token 预算
   └─ Tool Bus          权限 → 执行（sync/async）→ 结构化结果
         ▲
 SPI 契约环（可替换 + 默认实现）
   ModelProvider(OpenAI 兼容) / Channel(CLI·FastAPI·Flutter)
   MemoryStore(内存→SQLite→向量) / PermissionPolicy(auto/ask/deny)
+  ToolDiscovery(StaticCatalog 进程内目录 → MCP/OpenAPI/插件市场)
         ▲
 Integrations（可选，懒加载）：MCP Client（integrations/mcp/，[mcp] extra）
 Batteries（可选）：FastAPI Server、SQLite Memory
@@ -73,6 +75,28 @@ httpx 执行（bearer/apiKey 鉴权令牌走环境变量、调用期校验、204
 httpx/pyyaml 在 [openapi] extra，内核本体零硬依赖；测试全部走 httpx.MockTransport 离线。
 与 MCP 桥同构，在 serve_example 的 app_lifespan 中顺序挂载、共用关闭列表。
 
+### 2.4 能力按需发现闭环（ToolDiscovery，已落地最小切片）
+
+```
+LLM 路由判定现有工具不足（missing_capability）
+   │  发 capability_missing 事件（含缺口、可用工具清单）
+   ▼
+ToolDiscovery.discover(need, task, available) → list[ToolSpec]
+   │  内置实现 StaticCatalog：进程内候选 + 显式关键词匹配（零依赖、离线可测）
+   │  未来实现：MCP 目录 / OpenAPI 服务目录 / 插件市场
+   ▼
+内核统一去重（候选间同名 + 已注册）→ ToolRegistry.register_many
+   │  发 tool_discovered 事件（missing / source / registered）
+   ▼
+本轮 ReAct：新工具已在系统提示词与工具清单中，模型本轮即可调用
+   └─ 执行仍走 PermissionPolicy（发现≠授权；发现源异常仅发 error 事件，不致命）
+```
+
+- 发现源只交候选规格，**注册/去重/权限归内核**，外部来源无法绕过审计。
+- 发现发生在系统提示词构建之前，因此新工具在**同一轮**就对模型可见，不必等下一次任务。
+- 安全默认：`discovery=None` 时只发缺口事件、不动态注册任何工具，老宿主行为不变。
+- 边界：当前只在"路由判定缺口"时发现一次；执行中途反思、语义检索、动态换工具属 v0.7/v0.8。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
@@ -81,6 +105,7 @@ httpx/pyyaml 在 [openapi] extra，内核本体零硬依赖；测试全部走 ht
 | Channel | `emit / ask / confirm` | CollectChannel、CliChannel | Web SSE、Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite、向量记忆 |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | 高危工具人工确认 |
+| ToolDiscovery | `discover(need, *, task, available) → list[ToolSpec]` | StaticCatalog（进程内目录） | 接 MCP/OpenAPI/插件市场动态发现 |
 
 ## 4. Adaptive Router 状态机
 
@@ -95,7 +120,8 @@ httpx/pyyaml 在 [openapi] extra，内核本体零硬依赖；测试全部走 ht
 v0.2（已落地）：LLM 一次性分类输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出回退规则路由；
 两条路径统一返回 RouteDecision，`strategy_selected` 事件带 `source=llm|rules` 可审计。
 LLM 路由还会做能力边界感知：现有工具不足以完成任务时，在 `strategy_selected` 之后发出
-`capability_missing` 事件（含缺口描述与可用工具清单），由宿主决定后续引导；规则路径、
+`capability_missing` 事件（含缺口描述与可用工具清单）；若注入了 `ToolDiscovery` 发现源，
+内核随即把缺口闭环成新工具（见 §2.4），否则只发事件、由宿主决定后续引导；规则路径、
 澄清与无工具部署不产生该事件。`llm_router="auto"` 时按模型后端的 `yai_live_router`
 能力标记决定是否启用 LLM 分类（真实后端声明、离线脚本模型不声明）。
 

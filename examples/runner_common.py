@@ -73,6 +73,9 @@ async def stream(core, task: str, backend: str) -> None:
         elif event.type == EventType.CAPABILITY_MISSING:
             print(f"[能力缺口] 缺少：{event.data['missing']}")
             print(f"           现有工具：{event.data['available_tools']}")
+        elif event.type == EventType.TOOL_DISCOVERED:
+            print(f"[按需发现] 新工具已注册：{event.data['registered']}"
+                  f"（来源 {event.data['source']}）")
         elif event.type == EventType.MODEL_MESSAGE:
             print(f"[模型] {event.data['text']}")
         elif event.type == EventType.ERROR:
