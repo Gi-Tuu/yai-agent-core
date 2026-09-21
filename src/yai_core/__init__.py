@@ -11,10 +11,15 @@ from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
 from yai_core.spi import SandboxResult, ToolDiscovery, ToolSandbox
 from yai_core.tools import (
+    CREATE_CODE_TOOL,
+    REQUEST_CAPABILITY,
+    CodeToolManager,
     ToolExecutor,
     ToolRegistry,
     build_composer_tool,
     build_composite_spec,
+    build_create_code_tool,
+    build_request_capability_tool,
 )
 from yai_core.types import (
     AgentEvent,
@@ -38,8 +43,13 @@ __all__ = [
     "Context",
     "ToolRegistry",
     "ToolExecutor",
+    "CodeToolManager",
     "build_composer_tool",
     "build_composite_spec",
+    "build_create_code_tool",
+    "build_request_capability_tool",
+    "CREATE_CODE_TOOL",
+    "REQUEST_CAPABILITY",
     "CompositeStep",
     "OpenAICompatProvider",
     "FallbackModelProvider",

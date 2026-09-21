@@ -35,6 +35,8 @@ class EventType(StrEnum):
     CAPABILITY_MISSING = "capability_missing"
     TOOL_DISCOVERED = "tool_discovered"
     TOOL_COMPOSED = "tool_composed"
+    CODE_TOOL_CREATED = "code_tool_created"
+    CODE_TOOL_RETIRED = "code_tool_retired"
     ERROR = "error"
     DONE = "done"
 
@@ -59,10 +61,13 @@ class ToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any]          # JSON Schema（与 MCP tools 形状一致）
-    handler: Callable[..., Any] | None    # 同步函数；异步函数同样支持；组合工具为 None
-    source: Literal["native", "openapi", "mcp", "composite"] = "native"
+    handler: Callable[..., Any] | None    # 同步函数；异步函数同样支持；组合/代码工具为 None
+    source: Literal["native", "openapi", "mcp", "composite", "code"] = "native"
     # 仅 source == "composite" 时使用：按顺序编排的内部工具步骤。
     steps: list[CompositeStep] | None = None
+    # 仅 source == "code" 时使用：模型生成、需在宿主沙箱里执行的 Python 代码。
+    # 内核不内置任何代码执行器（见 ToolSandbox SPI），handler 保持 None。
+    code: str | None = None
 
     def llm_schema(self) -> dict[str, Any]:
         """转换成 OpenAI 兼容的 function-calling 工具描述。"""

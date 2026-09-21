@@ -61,10 +61,29 @@ class ToolRegistry:
         return [self.get(name).llm_schema() for name in names]
 
     def describe(self) -> str:
-        """给系统提示词用的工具清单文本。"""
+        """给系统提示词用的工具清单文本（完整描述）。"""
         if not self._tools:
             return "（当前宿主没有提供任何工具）"
         return "\n".join(f"- {s.name}: {s.description}" for s in self._tools.values())
+
+    def catalog_text(self) -> str:
+        """给系统提示词用的**轻量**工具目录：name + 一句话摘要。
+
+        两层工具目录的第一层：系统提示只放这一行概览，完整参数结构（JSON
+        Schema）在模型需要发起 function-calling 时才经 ``schemas_for`` 注入，
+        工具数量增长后系统提示不随参数膨胀。
+        """
+        items = self.catalog()
+        if not items:
+            return "（当前宿主没有提供任何工具）"
+        return "\n".join(f"- {it['name']}: {it['summary']}" for it in items)
+
+    def unregister(self, name: str) -> bool:
+        """移除一个已注册工具；返回是否真的移除了（不存在返回 False）。"""
+        if name in self._tools:
+            del self._tools[name]
+            return True
+        return False
 
     def __len__(self) -> int:
         return len(self._tools)

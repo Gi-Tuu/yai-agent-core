@@ -4,10 +4,15 @@ import inspect
 import json
 from typing import Any
 
-from yai_core.spi import Channel, PermissionDecision, PermissionPolicy
+from yai_core.policy.authorize import authorize_tool_call
+from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
+from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import AgentEvent, EventType, ToolSpec
+
+#: 代码工具在沙箱里的最长执行秒数（默认值，可由宿主覆盖）。
+DEFAULT_CODE_TIMEOUT = 10.0
 
 
 class ToolExecutor:
@@ -22,10 +27,17 @@ class ToolExecutor:
         registry: ToolRegistry,
         policy: PermissionPolicy,
         channel: Channel,
+        *,
+        sandbox: ToolSandbox | None = None,
+        code_manager: CodeToolManager | None = None,
+        code_timeout: float = DEFAULT_CODE_TIMEOUT,
     ) -> None:
         self.registry = registry
         self.policy = policy
         self.channel = channel
+        self.sandbox = sandbox
+        self.code_manager = code_manager
+        self.code_timeout = code_timeout
 
     async def execute(
         self, name: str, arguments: dict[str, Any]
@@ -39,19 +51,16 @@ class ToolExecutor:
         if spec.source == "composite" and spec.steps:
             return await self._execute_composite(spec, arguments)
 
-        decision = await self.policy.check(name, arguments)
-        if decision == PermissionDecision.ASK:
-            events.append(
-                AgentEvent(EventType.PERMISSION_ASKED, {"tool": name, "arguments": arguments})
-            )
-            approved = await self.channel.confirm(name, arguments)
-            if not approved:
-                return events, False, f"用户/宿主拒绝执行工具 {name}"
-        if decision == PermissionDecision.DENY:
-            return events, False, f"权限策略拒绝执行工具 {name}"
+        auth_events, approved, reason = await authorize_tool_call(
+            self.policy, self.channel, name, arguments
+        )
+        events.extend(auth_events)
+        if not approved:
+            return events, False, reason
 
-        events.append(AgentEvent(EventType.TOOL_CALL, {"tool": name, "arguments": arguments}))
-        spec = self.registry.get(name)
+        if spec.source == "code":
+            return await self._execute_code(spec, arguments, events)
+
         try:
             result = spec.handler(**arguments)
             if inspect.isawaitable(result):
@@ -66,6 +75,67 @@ class ToolExecutor:
 
         events.append(
             AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": True, "preview": text[:200]})
+        )
+        return events, True, text
+
+    async def _execute_code(
+        self,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        events: list[AgentEvent],
+    ) -> tuple[list[AgentEvent], bool, str]:
+        """执行代码工具：生命周期校验后交给宿主沙箱，内核不内置执行器。"""
+        # 1) TTL 生命周期：被调用即刷新；已过期则回收并提示重新创建。
+        if self.code_manager is not None and not self.code_manager.touch(spec.name):
+            self.registry.unregister(spec.name)
+            msg = f"代码工具 {spec.name} 已超过存活期被回收，请重新创建"
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": spec.name, "ok": False, "error": msg},
+                )
+            )
+            return events, False, msg
+
+        # 2) 宿主未提供沙箱：优雅降级（能力缺失），而不是崩溃。
+        if self.sandbox is None:
+            msg = "宿主未提供代码沙箱（ToolSandbox），代码工具不可用"
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": spec.name, "ok": False, "error": msg},
+                )
+            )
+            return events, False, msg
+
+        # 3) 交给宿主沙箱执行（无网/无敏感文件/超时由沙箱保证）。
+        try:
+            sb = await self.sandbox.execute(
+                spec.code or "", inputs=arguments, timeout=self.code_timeout
+            )
+        except Exception as exc:  # noqa: BLE001 - 沙箱异常必须回灌而不是穿透
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": spec.name, "ok": False, "error": f"沙箱调用失败: {exc}"},
+                )
+            )
+            return events, False, f"工具 {spec.name} 沙箱调用失败: {exc}"
+
+        if not sb.ok:
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": spec.name, "ok": False, "error": sb.error or "沙箱执行失败"},
+                )
+            )
+            return events, False, f"工具 {spec.name} 沙箱执行失败: {sb.error}"
+
+        text = json.dumps(sb.output, ensure_ascii=False, default=str)
+        events.append(
+            AgentEvent(
+                EventType.TOOL_RESULT, {"tool": spec.name, "ok": True, "preview": text[:200]}
+            )
         )
         return events, True, text
 

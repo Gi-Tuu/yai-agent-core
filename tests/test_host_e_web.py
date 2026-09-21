@@ -623,9 +623,11 @@ def test_discovery_loop_over_sse_gap_discover_authorize_execute():
 
         gap = next(e for e in events if e["type"] == "capability_missing")
         assert "天气" in gap["data"]["missing"]
-        # 18 个 CRM 业务工具 + 1 个 compose_tool meta-tool（composition=True）
-        assert len(gap["data"]["available_tools"]) == 19
+        # 18 个 CRM 业务工具 + compose_tool（composition=True）+ request_capability
+        # （配置了发现源，内核据此注册"执行中请求发现"的 meta-tool）
+        assert len(gap["data"]["available_tools"]) == 20
         assert "compose_tool" in gap["data"]["available_tools"]
+        assert "request_capability" in gap["data"]["available_tools"]
 
         found = next(e for e in events if e["type"] == "tool_discovered")
         assert found["data"]["registered"] == ["get_visit_weather"]

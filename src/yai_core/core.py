@@ -21,8 +21,18 @@ from yai_core.spi import (
     ModelProvider,
     PermissionPolicy,
     ToolDiscovery,
+    ToolSandbox,
 )
-from yai_core.tools import ToolExecutor, ToolRegistry, build_composer_tool
+from yai_core.tools import (
+    CREATE_CODE_TOOL,
+    REQUEST_CAPABILITY,
+    ToolExecutor,
+    ToolRegistry,
+    build_composer_tool,
+    build_create_code_tool,
+    build_request_capability_tool,
+)
+from yai_core.tools.code_tools import CodeToolManager
 from yai_core.types import AgentEvent, RunResult, ToolSpec
 
 
@@ -39,6 +49,10 @@ class AgentCore:
         llm_router: bool | Literal["auto"] = False,
         discovery: ToolDiscovery | None = None,
         composition: bool = False,
+        sandbox: ToolSandbox | None = None,
+        max_iters: int = 6,
+        max_clarify_rounds: int = 2,
+        full_schema_budget: int = 24,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
@@ -64,11 +78,32 @@ class AgentCore:
             else:
                 raise ValueError('llm_router 只接受 True、False 或 "auto"')
             self.router = AdaptiveRouter(model=route_model)
-        self.executor = ToolExecutor(self.registry, self.policy, self.channel)
+        # 代码工具能力：仅当宿主提供沙箱时启用。内核不内置执行器，
+        # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
+        self.code_manager: CodeToolManager | None = None
+        if sandbox is not None:
+            self.code_manager = CodeToolManager(self.registry)
+        self.executor = ToolExecutor(
+            self.registry,
+            self.policy,
+            self.channel,
+            sandbox=sandbox,
+            code_manager=self.code_manager,
+        )
+        meta_tools: set[str] = set()
         # 组合工具能力：显式开启后注册 compose_tool meta-tool，模型可在运行时
         # 把宿主已注册的工具编排成新工具（只能引用已注册工具，每步仍走权限）。
         if composition:
             self.registry.register(build_composer_tool(self.registry))
+        # 执行中动态发现：只有配置了发现源，才注册 request_capability，
+        # 避免给模型一个注定无法兑现的工具。它由 Agent Loop 直接拦截处理。
+        if discovery is not None:
+            self.registry.register(build_request_capability_tool())
+            meta_tools.add(REQUEST_CAPABILITY)
+        # 代码工具创建：宿主提供沙箱时才注册，由 Agent Loop 拦截创建动作。
+        if sandbox is not None:
+            self.registry.register(build_create_code_tool())
+            meta_tools.add(CREATE_CODE_TOOL)
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,
@@ -77,6 +112,10 @@ class AgentCore:
             memory=self.memory,
             router=self.router,
             discovery=discovery,
+            max_iters=max_iters,
+            max_clarify_rounds=max_clarify_rounds,
+            full_schema_budget=full_schema_budget,
+            meta_tools=meta_tools,
         )
 
     # ---------- 接入 ----------
@@ -96,6 +135,26 @@ class AgentCore:
             {"name": s.name, "description": s.description, "source": s.source}
             for s in self.registry.all()
         ]
+
+    # ---------- 代码工具生命周期（后台管理） ----------
+
+    def retain_code_tool(self, name: str) -> bool:
+        """把某个代码工具置为永久保留（后台白名单化）；未启用沙箱时返回 False。"""
+        if self.code_manager is None:
+            return False
+        return self.code_manager.make_permanent(name)
+
+    def code_tools_status(self) -> dict:
+        """返回代码工具注册表状态（数量、存活、永久保留、逐项明细）。"""
+        if self.code_manager is None:
+            return {"enabled": False, "total": 0, "live": 0, "permanent": 0, "tools": []}
+        return {"enabled": True, **self.code_manager.status()}
+
+    def sweep_code_tools(self) -> list[str]:
+        """回收所有过期且非永久的代码工具，返回被回收的工具名（宿主可定时调用）。"""
+        if self.code_manager is None:
+            return []
+        return self.code_manager.expire_stale()
 
     # ---------- 运行 ----------
 
