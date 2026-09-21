@@ -42,8 +42,8 @@
 | 维度 | 权重 | 官方关注点（原文要点） | YAI 对应动作 |
 |---|---|---|---|
 | 技术创新 | 30% | 技术路线独创性、是否解决已有方案未解决的问题；"重复造轮子、仅做现成工具简单组合的项目得分较低" | 范式反转（嵌入式内核 vs 拼装式框架）；`docs/comparison.md` 诚实对比；自适应路由 + 能力缺口最小闭环（感知→发现→注册→本轮可用） |
-| 场景落地 | 30% | 可部署、可运行、可测试；需求真实；验证数据来自真实或仿真环境；具备实际部署条件 | host_e 成品门面（零 AI 依赖可独立运行）、6 个宿主示例、在线 API（Render 实跑）、219 项离线测试、Docker/render.yaml、录屏 |
-| 开源治理 | 20% | 协议与依赖合规、贡献机制、文档规范、Issue/PR 响应；"新项目重点考察规划和治理意识" | MIT、内核零硬依赖、CI 四矩阵、CONTRIBUTING、Issue/PR 模板、16 篇逐行讲义、Conventional Commits |
+| 场景落地 | 30% | 可部署、可运行、可测试；需求真实；验证数据来自真实或仿真环境；具备实际部署条件 | host_e 成品门面（零 AI 依赖可独立运行）、6 个宿主示例、在线 API（Render 实跑）、241 项离线测试、Docker/render.yaml、录屏 |
+| 开源治理 | 20% | 协议与依赖合规、贡献机制、文档规范、Issue/PR 响应；"新项目重点考察规划和治理意识" | MIT、内核零硬依赖、CI 四矩阵、CONTRIBUTING、Issue/PR 模板、18 篇逐行讲义、Conventional Commits |
 | 长期发展 | 20% | 持续维护能力、发展规划、治理结构、社区支撑 | ROADMAP、版本节奏、AMBRACE 真实回流场景（开源 AI 陪伴项目） |
 
 ## 奖项（已核实）
@@ -59,10 +59,10 @@
 - [x] ROADMAP.md（仓库根）
 - [x] docs/comparison.md（五类同类方案诚实对比）
 - [x] .github/ Issue 模板 ×2 + PR 模板
-- [x] CONTRIBUTING.md 补"新人 30 分钟跑通" + 测试数更新（现 219）
+- [x] CONTRIBUTING.md 补"新人 30 分钟跑通" + 测试数更新（现 241）
 - [x] docs/competitions/shanghai/作品介绍.md（四段式）→ PDF（入库，含 host_e 原生/发现两张门面图）
 - [x] docs/releases/v0.2.0.md（Release notes 源；tag/Release 由用户本人执行）
 - [x] README 门面（hero 发现闭环图 + 原生 CRM 图）
-- [ ] 3–4 min 演示视频（用户录制/补段7 host_e 发现闭环，脚本见 演示视频脚本.md，口播数字 219）
+- [ ] 3–4 min 演示视频（用户录制/补段7 host_e 发现闭环，脚本见 演示视频脚本.md，口播数字 241）
 - [ ] 官网报名表单（用户本人）→ 等确认邮件 → 打包发邮件（10-11 24:00 截止）
 - [ ] 版本号拍板 + 打 tag + GitHub Release 挂视频（用户本人执行）

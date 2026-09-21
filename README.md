@@ -31,7 +31,7 @@ flowchart TB
   exec["Tool Executor"]
   app --> auto --> router --> loop --> exec
   exec -->|"调用"| app
-  spi["五个 SPI 契约（宿主可替换）<br/>Model · Channel · Memory · Policy · Discovery"]
+  spi["六个 SPI 契约（宿主可替换）<br/>Model · Channel · Memory · Policy · Discovery · Sandbox"]
   ext["外部能力（可选）<br/>MCP · OpenAPI REST · 按需发现"]
   loop -.-> spi
   exec -.-> ext
@@ -109,8 +109,10 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，LLM 分类器输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计；LLM 路由同时做能力边界感知，工具不足时发出 `capability_missing` 事件交给宿主（规则路径、澄清、无工具部署不发）
 4. **能力按需发现闭环（ToolDiscovery）**：第 5 个 SPI 契约。模型报出能力缺口后，内核向发现源（内置进程内 `StaticCatalog`，未来可接 MCP 目录 / OpenAPI 服务 / 插件市场）要候选 → 去重注册 → 发 `tool_discovered` 事件 → **本轮 ReAct 即可调用**；发现源异常不致命，且"能被发现不等于被授权执行"（执行仍走权限策略）。默认不配置发现源时行为不变，离线可复现（`examples/host_f_discovery/`）
 5. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
-6. **宿主自适应（SPI）**：Model / Channel / Memory / Policy / Discovery 五个契约宿主可替换，Core 提供零配置默认实现
-7. **过程可观测**：每次策略选择、能力缺口、工具发现、工具调用、权限确认都通过 Observer 事件流对外发出
+6. **宿主自适应（SPI）**：Model / Channel / Memory / Policy / Discovery / Sandbox 六个契约宿主可替换，Core 提供零配置默认实现
+7. **组合工具（不越界地造工具）**：模型可通过 `compose_tool` 把宿主已注册工具编排成新工具（`AgentCore(composition=True)`）；组合工具只能引用已注册工具、执行时每步仍走权限，能力上限 = 被组合工具的并集，且不执行任何模型生成的代码。代码生成工具则只定义 `ToolSandbox` SPI 契约（沙箱由宿主提供），内核不内置执行器
+8. **权限三档与每轮反思**：全部审批 / 部分审批（读白名单自动、写操作询问，默认）/ 无需审批三档可运行时切换；工具失败后把原因回灌模型反思，换工具或如实说明缺口，不重复同一失败调用
+9. **过程可观测**：每次策略选择、能力缺口、工具发现、工具组合、工具调用、权限确认都通过 Observer 事件流对外发出
 
 ## 目录结构
 
@@ -118,9 +120,9 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 src/yai_core/
 ├── core.py              # AgentCore 门面（auto / run / astream）
 ├── types.py             # ToolSpec / ChatMessage / AgentEvent / Strategy
-├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery
+├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery / sandbox
 ├── discovery/           # 能力自发现（函数内省）+ catalog.py（按需能力目录）
-├── tools/               # ToolRegistry + ToolExecutor（Tool Bus）
+├── tools/               # ToolRegistry + ToolExecutor + 组合工具（composer）
 ├── kernel/              # AdaptiveRouter + AgentLoop + Context
 ├── llm/                 # OpenAI 兼容模型后端（可选依赖）
 ├── memory/ policy/ channels/   # 默认实现（内存记忆 + SQLite 持久化 opt-in / 白名单权限 / CLI·收集通道）
@@ -194,8 +196,9 @@ core.register_tools([build_spec(list_tasks), build_spec(add_task)])  # 只注册
 
 `examples/host_e_sales_crm/` 首先是一个**不依赖 YAI 也能完整运行**的销售 CRM 小软件
 （`crm_app.py` 全文不导入 yai_core，菜单 CLI、JSON 持久化、12 个业务方法）；
-同一个 `SalesCrm` 实例交给 `AgentCore.auto` 即得到数字员工——读工具自动放行，
-写工具（写跟进/建待办等）执行前请求授权，多步任务自动规划并产出销售日报。
+同一个 `SalesCrm` 实例交给 `AgentCore.auto` 即得到数字员工——应用内提供 Core 开关，可一键对比有无 Core；
+权限支持全部审批 / 部分审批（读放行、写授权，默认）/ 无需审批三档，多步任务自动规划并产出销售日报；
+模型还能把现有工具编排成组合工具（创建与每步执行都受权限约束），能力缺口则走按需发现闭环。
 
 ```bash
 # 没有 AI：独立菜单软件
