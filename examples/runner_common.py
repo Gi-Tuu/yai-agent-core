@@ -100,6 +100,15 @@ async def stream(core, task: str, backend: str) -> None:
         elif event.type == EventType.TOOL_DISCOVERED:
             print(f"[按需发现] 新工具已注册：{event.data['registered']}"
                   f"（来源 {event.data['source']}）")
+        elif event.type == EventType.TOOL_COMPOSED:
+            print(f"[组合工具] 已执行：{event.data.get('tool')}"
+                  f"（编排 {event.data.get('steps')}）")
+        elif event.type == EventType.CODE_TOOL_CREATED:
+            ttl_hours = int(event.data.get("ttl_seconds", 0)) // 3600
+            print(f"[代码工具] 已创建：{event.data.get('name')}"
+                  f"（沙箱执行，默认 {ttl_hours}h 有效）")
+        elif event.type == EventType.CODE_TOOL_RETIRED:
+            print(f"[代码工具] 已回收：{event.data.get('name')}")
         elif event.type == EventType.MODEL_MESSAGE:
             print(f"[模型] {event.data['text']}")
         elif event.type == EventType.ERROR:
