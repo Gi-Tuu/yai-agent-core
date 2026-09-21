@@ -268,17 +268,18 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 让"AI 现场造工具并执行"整条链路真正跑通。
 
 宿主是一个极简候选人应用：`capabilities.py` 只有只读的 `list_candidates`，**刻意没有**
-加权评分能力。离线模型（`run.py`，无需 API Key）依次：创建 `weighted_score` 代码工具 →
+加权评分能力。离线模型（`demo_agent.py`，无需 API Key）依次：创建 `weighted_score` 代码工具 →
 取候选人 → 调用 `weighted_score`（在沙箱里算综合分）→ 给排序结论。
 
-四个文件各司其职：
+核心文件各司其职：
 
 | 文件 | 角色 | 关键点 |
 | --- | --- | --- |
 | `capabilities.py` | 宿主原生能力 | 只读、无评分，制造"能力缺口" |
 | `_worker.py` | 子进程受限执行器 | 内置白名单、捕获 `print`、stdin/stdout 走 JSON |
 | `sandbox.py` | `ToolSandbox` 实现 | `-I -S -X utf8` 启动 worker、超时、独立进程 |
-| `run.py` | 离线确定性模型 | 演示 create → 取数 → 沙箱执行 → 收尾 |
+| `demo_agent.py` | **Core 装配点** | 离线确定性模型、生成的代码、`build_core()`，CLI 与网页共用 |
+| `run.py` / `web_app.py` | 两个入口 | 命令行打印事件流；标准库 `http.server` 起极简网页（端口 8201） |
 
 隔离是怎么做到的（对照第 17 篇契约的安全要求）：
 
@@ -300,7 +301,7 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 > 微 VM（Firecracker）——内核与 Agent 主循环一行都不用改。这正是"机制在内核、策略在宿主"
 > 的价值。
 
-运行：
+命令行版：
 
 ```powershell
 .\.venv\Scripts\python.exe examples\host_g_sandbox\run.py
@@ -308,8 +309,15 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 
 预期看到 `[代码工具] 已创建：weighted_score`、随后沙箱返回排序
 （林晓 81.6 > 周岚 81.0 > 陈默 80.0），结尾打印代码工具注册表（存活、调用次数、TTL）。
+
+还有一个**零第三方依赖的网页版**（标准库 `http.server`，双击 `启动沙箱演示.cmd` 或
+`python examples\host_g_sandbox\web_app.py`，浏览器开 http://127.0.0.1:8201）：左栏是
+"原生应用"（只有候选人数据、没有评分能力），右栏是"嵌入 Core 后"，点一下按钮就能看到
+发现能力缺口 → 现场造工具 → 沙箱执行 → 事件流逐条播放 → 最终排序，适合比赛演示。
+
 真实子进程的安全边界与端到端链路由 `tests/test_sandbox_example.py` 覆盖（8 个用例，
-含 import/open/反射被拒、超时被杀、缺 `run` 报错）。
+含 import/open/反射被拒、超时被杀、缺 `run` 报错）；网页的静态页、候选人接口与
+`/api/run` 全链路由 `tests/test_sandbox_web.py` 覆盖（5 个用例，线程起真实 HTTP 服务）。
 
 ## 10. 自检
 
