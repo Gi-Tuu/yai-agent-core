@@ -209,11 +209,22 @@ uv run python examples/host_e_sales_crm/web_app.py        # http://127.0.0.1:820
 Agent 执行中原生写操作互斥（409），避免两边同时改数据；任务可随时终止，重置会先终止卡住的任务。
 只监听 127.0.0.1。
 
+![销售 CRM 原生界面：不依赖 Core 也完整可用](docs/assets/hoste-native.png)
+
+*上图：软件本来的样子——客户 / 订单 / 跟进 / 待办 / 日报五个原生视图，没有 Core 也完整可用。*
+
 工作台还内置了**按需能力目录**（`catalog_capabilities.py`：拜访天气、含税报价两个销售域能力）：
 它们默认不注册、不计入 12 个 CRM 工具；当模型判定现有工具不足（如"明天去广州拜访要带伞吗"），
 内核发出 `capability_missing` → 按关键词从目录匹配并注册新工具（`tool_discovered`）→ 本轮即可调用，
 首次调用仍弹授权卡（**发现 ≠ 授权**）。抽屉里的"按需能力"分组与两个演示 chip 可直接触发这条闭环。
 Windows 下双击 `examples/host_e_sales_crm/启动数字员工.cmd` 即可一键启动（等价于上面的 web_app.py）。
+
+![嵌入 Core 后：左侧原生 CRM，右侧 AI 抽屉感知能力缺口 → 按需发现天气工具 → 授权后调用](docs/assets/hoste-discovery.png)
+
+*上图：同一个 CRM 嵌入 Core 后。问"明天去广州拜访要带伞吗"，现有 12 个 CRM 工具都不覆盖天气——
+内核发出 `capability_missing`（琥珀色）→ 从按需目录发现并注册 `get_visit_weather`（绿色）→
+首次调用仍弹"新能力授权请求"（黄色），允许后才执行。**发现 ≠ 授权**，宿主始终掌握最终控制权。*
+（截图中的客户、订单、天气均为虚构演示数据，模型为 DeepSeek。）
 
 ## 在线 API（X-Agent 部署要求）
 
