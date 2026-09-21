@@ -26,10 +26,15 @@ from yai_core.policy import AllowlistPolicy  # noqa: E402
 
 FIXED = date(2026, 9, 18)
 READ_TOOLS = [
-    "list_customers", "get_customer", "list_orders", "sum_amount",
+    "list_customers", "search_customers", "get_customer",
+    "list_orders", "sum_amount", "list_opportunities",
     "list_followups", "customers_due_followup", "list_todos", "daily_brief",
 ]
-WRITE_TOOLS = ["add_customer", "add_followup", "create_todo", "complete_todo"]
+WRITE_TOOLS = [
+    "add_customer", "update_customer", "add_followup",
+    "create_order", "create_opportunity", "update_opportunity_stage",
+    "create_todo", "complete_todo",
+]
 
 
 def _crm(tmp_path=None) -> SalesCrm:
@@ -62,6 +67,11 @@ def test_seed_data_self_consistent():
     assert len(crm.list_followups()) == 3
     assert len(crm.list_todos("all")) == 4
     assert len(crm.list_todos("open")) == 3
+    assert len(crm.list_opportunities()) == 4
+    assert len(crm.list_opportunities("open")) == 4  # 种子无赢单/输单
+    # 客户状态字段齐备
+    assert all("status" in c for c in crm.list_customers())
+    assert {c["name"] for c in crm.search_customers(status="潜在")} == {"周涛"}
 
 
 def test_list_customers_level_filter():
@@ -85,6 +95,100 @@ def test_orders_filter_and_sum():
     assert crm.sum_amount(region="华东") == 21500
     assert crm.sum_amount(category="服务", region="华南") == 3200
     assert len(crm.list_orders(category="软件")) == 2
+
+
+def test_search_customers_keyword_level_status():
+    crm = _crm()
+    # 关键词匹配公司名
+    assert {c["name"] for c in crm.search_customers("华东")} == {"王敏", "陈静"}
+    # 关键词匹配姓名
+    assert {c["name"] for c in crm.search_customers("王敏")} == {"王敏"}
+    # 关键词 + 等级叠加
+    assert {c["name"] for c in crm.search_customers("华东", level="重点")} == {"王敏"}
+    # 空关键词 + 状态
+    assert {c["name"] for c in crm.search_customers(status="合作中")} == {
+        "王敏", "李强", "赵雷", "陈静"}
+    # 无命中
+    assert crm.search_customers("不存在的公司xyz") == []
+
+
+def test_update_customer_fields_and_validation():
+    crm = _crm()
+    ok = crm.update_customer("周涛", status="合作中", phone="139-0000-0009", level="重点")
+    assert ok["ok"] is True
+    assert ok["changed"] == {"level": "重点", "phone": "139-0000-0009", "status": "合作中"}
+    cust = crm.get_customer("周涛")
+    assert cust["status"] == "合作中" and cust["level"] == "重点"
+    # 公司名更新
+    assert crm.update_customer("周涛", company="新公司名")["customer"]["company"] == "新公司名"
+    # 不存在
+    assert crm.update_customer("不存在", status="流失")["ok"] is False
+    # 非法枚举
+    assert crm.update_customer("周涛", level="VIP")["ok"] is False
+    assert crm.update_customer("周涛", status="冻结")["ok"] is False
+    # 无字段可更新
+    assert crm.update_customer("周涛")["ok"] is False
+
+
+def test_create_order_numbering_and_validation():
+    crm = _crm()
+    before = crm.sum_amount()
+    # 用姓名定位客户，统一存公司名
+    ok = crm.create_order("王敏", "硬件", 15000, region="华东", product="传感器")
+    assert ok["ok"] is True and ok["order"]["order"] == "S007"
+    assert ok["order"]["customer"] == "华东智造集团"
+    assert ok["order"]["product"] == "传感器"
+    # 用公司名定位
+    ok2 = crm.create_order("南方软件有限公司", "软件", 9000)
+    assert ok2["ok"] is True and ok2["order"]["order"] == "S008"
+    assert ok2["order"]["customer"] == "南方软件有限公司"
+    # 金额计入合计
+    assert crm.sum_amount() == before + 15000 + 9000
+    # 客户不存在 / 品类非法 / 金额非法
+    assert crm.create_order("不存在公司", "硬件", 100)["ok"] is False
+    assert crm.create_order("王敏", "耗材", 100)["ok"] is False
+    assert crm.create_order("王敏", "硬件", -5)["ok"] is False
+    assert crm.create_order("王敏", "硬件", "abc")["ok"] is False
+
+
+def test_opportunity_lifecycle():
+    crm = _crm()
+    # 按阶段筛选
+    assert {o["title"] for o in crm.list_opportunities("方案报价")} == {"产线改造一期"}
+    # 新建（默认初步接触），客户传姓名也能定位
+    ok = crm.create_opportunity("安全审计项目", "王敏", 42000)
+    assert ok["ok"] is True and ok["opportunity"]["stage"] == "初步接触"
+    assert ok["opportunity"]["customer"] == "华东智造集团"
+    # 推进阶段（标题模糊匹配）
+    moved = crm.update_opportunity_stage("安全审计", "需求确认")
+    assert moved["ok"] is True
+    assert moved["from_stage"] == "初步接触" and moved["to_stage"] == "需求确认"
+    # 赢单后不在在途
+    crm.update_opportunity_stage("安全审计", "赢单")
+    assert "安全审计项目" not in {o["title"] for o in crm.list_opportunities("open")}
+    # 非法阶段 / 商机不存在 / 重复 / 金额非法
+    assert crm.update_opportunity_stage("安全审计", "天上")["ok"] is False
+    assert crm.update_opportunity_stage("不存在商机", "谈判")["ok"] is False
+    assert crm.create_opportunity("安全审计项目", "王敏", 1)["ok"] is False
+    assert crm.create_opportunity("另一个", "王敏", "x")["ok"] is False
+
+
+def test_legacy_data_migration_fills_opportunities_and_status(tmp_path):
+    import json
+    db = tmp_path / "crm_data.json"
+    # 旧版本数据：没有 opportunities，客户没有 status/phone
+    legacy = {
+        "customers": [{"name": "老客户", "company": "老公司", "level": "普通",
+                       "owner": "本人", "last_followup": "2026-09-01"}],
+        "orders": [{"order": "S001", "customer": "老公司", "category": "硬件",
+                    "amount": 100, "region": "华东"}],
+        "followups": [], "todos": [],
+    }
+    db.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    crm = SalesCrm(db, clock=lambda: FIXED)
+    assert len(crm.list_opportunities()) == 4  # 商机集合被补齐
+    assert crm.get_customer("老客户")["status"] == "合作中"  # 有订单 → 合作中
+    assert crm.get_customer("老客户")["phone"] == ""
 
 
 def test_customers_due_followup_relative_dates():
@@ -153,12 +257,12 @@ def test_persistence_roundtrip_and_reset(tmp_path):
 
 # ---------- 嵌入 Core：发现 / 权限 ----------
 
-def test_discovery_registers_twelve_native_tools():
+def test_discovery_registers_eighteen_native_tools():
     crm = _crm()
     specs = discover(crm)
     names = {s.name for s in specs}
     assert names == set(READ_TOOLS) | set(WRITE_TOOLS)
-    assert len(specs) == 12
+    assert len(specs) == 18
     assert all(s.source == "native" for s in specs)
     assert not any(n.startswith("_") for n in names)
 

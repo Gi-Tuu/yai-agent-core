@@ -178,18 +178,24 @@ def _run_and_collect(base, task, on_permission=None, timeout=25):
     return box["events"]
 
 
-def test_state_lists_twelve_tools_grouped_by_access():
+def test_state_lists_eighteen_tools_grouped_by_access():
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
     try:
         status, state = _get_json(base, "/api/state")
         assert status == 200
         tools = state["tools"]
-        assert len(tools) == 12
+        assert len(tools) == 18
         reads = [t for t in tools if t["access"] == "read"]
         writes = [t for t in tools if t["access"] == "write"]
-        assert len(reads) == 8 and len(writes) == 4
+        assert len(reads) == 10 and len(writes) == 8
         assert {t["name"] for t in writes} == {
-            "add_customer", "add_followup", "create_todo", "complete_todo"
+            "add_customer", "update_customer", "add_followup", "create_order",
+            "create_opportunity", "update_opportunity_stage", "create_todo", "complete_todo",
+        }
+        assert {t["name"] for t in reads} == {
+            "list_customers", "search_customers", "get_customer", "list_orders",
+            "sum_amount", "list_opportunities", "list_followups",
+            "customers_due_followup", "list_todos", "daily_brief",
         }
     finally:
         httpd.shutdown()
@@ -350,6 +356,13 @@ def test_snapshot_returns_native_crm_data():
         assert [d["name"] for d in snap["due_followup"]] == ["周涛", "王敏", "李强"]
         assert len(snap["todos"]) == 4
         assert "销售日报" in snap["brief"]
+        # 商机管道 + 枚举单一来源
+        assert len(snap["opportunities"]) == 4
+        assert snap["pipeline_amount"] == 239000
+        assert snap["enums"]["stages"] == [
+            "初步接触", "需求确认", "方案报价", "谈判", "赢单", "输单"
+        ]
+        assert set(snap["enums"]["categories"]) == {"硬件", "软件", "服务"}
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -403,6 +416,58 @@ def test_native_add_customer_works_without_agent_and_validates():
             c["name"] == "孙琪" and c["company"] == "西南测试公司" and c["level"] == "重点"
             for c in snap["customers"]
         )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_native_crm_editor_ops_work_without_agent():
+    """客户编辑 / 订单录入 / 商机新建与阶段推进都是软件原生功能（无 Core 可用）；
+    业务校验仍由 SalesCrm 负责。"""
+    crm = _crm()
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}), crm)
+    try:
+        # 1) 客户编辑：补电话、改等级与状态
+        s1, b1 = _post(base, "/api/crm/customer_edit", {
+            "name": "周涛", "company": "华南服务外包园", "phone": "13800000099",
+            "level": "重点", "status": "合作中",
+        })
+        assert s1 == 200 and b1["ok"] is True
+        s1b, b1b = _post(base, "/api/crm/customer_edit",
+                         {"name": "不存在的人", "status": "合作中"})
+        assert s1b == 200 and b1b["ok"] is False
+
+        # 2) 订单录入（用公司名）；金额非法被拒
+        s2, b2 = _post(base, "/api/crm/order_create", {
+            "customer": "华南服务外包园", "category": "服务", "amount": 12000,
+            "region": "华南", "product": "年度运维",
+        })
+        assert s2 == 200 and b2["ok"] is True
+        s2b, b2b = _post(base, "/api/crm/order_create",
+                         {"customer": "华南服务外包园", "category": "硬件", "amount": -1})
+        assert s2b == 200 and b2b["ok"] is False
+
+        # 3) 新建商机；重名被拒
+        s3, b3 = _post(base, "/api/crm/opp_create",
+                       {"title": "测试新商机", "customer": "华南服务外包园", "amount": 50000})
+        assert s3 == 200 and b3["ok"] is True
+        s3b, b3b = _post(base, "/api/crm/opp_create",
+                         {"title": "测试新商机", "customer": "华南服务外包园", "amount": 1})
+        assert s3b == 200 and b3b["ok"] is False
+
+        # 4) 阶段推进（标题模糊匹配）
+        s4, b4 = _post(base, "/api/crm/opp_stage",
+                       {"title": "测试新商机", "stage": "需求确认"})
+        assert s4 == 200 and b4["ok"] is True
+
+        _, snap = _get_json(base, "/api/snapshot")
+        zhou = [c for c in snap["customers"] if c["name"] == "周涛"][0]
+        assert zhou["phone"] == "13800000099"
+        assert zhou["level"] == "重点" and zhou["status"] == "合作中"
+        new_orders = [o for o in snap["orders"] if o.get("product") == "年度运维"]
+        assert len(new_orders) == 1 and new_orders[0]["amount"] == 12000
+        new_opp = [o for o in snap["opportunities"] if o["title"] == "测试新商机"][0]
+        assert new_opp["stage"] == "需求确认" and new_opp["amount"] == 50000
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -499,8 +564,8 @@ def test_state_exposes_on_demand_catalog_separately_from_tools():
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
     try:
         _, state = _get_json(base, "/api/state")
-        # 默认工具仍是 12 个（候选函数不挂 SalesCrm，不被内省注册）
-        assert len(state["tools"]) == 12
+        # 默认工具 18 个（候选函数不挂 SalesCrm，不被内省注册）
+        assert len(state["tools"]) == 18
         catalog = state["catalog"]
         assert {c["name"] for c in catalog} == {
             "get_visit_weather", "calc_quote_with_tax"
@@ -558,8 +623,8 @@ def test_discovery_loop_over_sse_gap_discover_authorize_execute():
 
         gap = next(e for e in events if e["type"] == "capability_missing")
         assert "天气" in gap["data"]["missing"]
-        # 12 个 CRM 业务工具 + 1 个 compose_tool meta-tool（composition=True）
-        assert len(gap["data"]["available_tools"]) == 13
+        # 18 个 CRM 业务工具 + 1 个 compose_tool meta-tool（composition=True）
+        assert len(gap["data"]["available_tools"]) == 19
         assert "compose_tool" in gap["data"]["available_tools"]
 
         found = next(e for e in events if e["type"] == "tool_discovered")

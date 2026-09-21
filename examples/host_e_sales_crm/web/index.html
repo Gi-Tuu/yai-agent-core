@@ -184,6 +184,34 @@
   .drawer-locked p { color: var(--text-2); font-size: 12.5px; margin: 0; max-width: 300px; }
   .drawer.is-locked .drawer-head, .drawer.is-locked .perm-mode-bar,
   .drawer.is-locked .chat, .drawer.is-locked .dock { opacity: .3; pointer-events: none; }
+  /* ---------- 客户搜索筛选 / 编辑面板 ---------- */
+  .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .filter-bar input { min-width: 180px; flex: 1; max-width: 260px; }
+  .filter-bar select { min-width: 110px; }
+  .edit-panel { display: none; border-color: var(--accent); background: var(--accent-tint); }
+  .edit-panel.open { display: block; }
+  .tag.status-潜在 { background: rgba(107,114,128,.14); color: var(--text-2); }
+  .tag.status-合作中 { background: rgba(21,128,61,.12); color: var(--ok); }
+  .tag.status-流失 { background: rgba(185,28,28,.1); color: var(--err); }
+  .tag.stage { background: rgba(124,111,224,.12); color: #5B4FCF; }
+  .tag.stage-win { background: rgba(21,128,61,.12); color: var(--ok); }
+  .tag.stage-lose { background: rgba(185,28,28,.1); color: var(--err); }
+  /* ---------- 商机看板 ---------- */
+  .kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
+  .kanban-col { flex: 0 0 172px; min-width: 172px; background: #FAF9F5; border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px; }
+  .kanban-col.win { background: rgba(21,128,61,.06); }
+  .kanban-col.lose { background: rgba(185,28,28,.05); }
+  .kanban-col h4 { margin: 0 0 8px; font-size: 12.5px; display: flex; justify-content: space-between;
+    align-items: center; color: var(--text); }
+  .kanban-col .col-sum { font-weight: 500; color: var(--text-2); font-size: 11px; }
+  .kanban-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px;
+    margin-bottom: 8px; font-size: 12px; }
+  .kanban-card .kc-title { font-weight: 600; font-size: 12.5px; }
+  .kanban-card .kc-cust { color: var(--text-2); margin: 2px 0; }
+  .kanban-card .kc-amt { font-weight: 700; color: var(--accent); }
+  .kanban-card select { font-size: 11.5px; padding: 3px 6px; min-height: 28px; margin-top: 7px; width: 100%; }
+  .kanban-empty { font-size: 11.5px; color: var(--text-2); padding: 4px 0; }
 </style>
 </head>
 <body>
@@ -208,6 +236,7 @@
   <nav class="tabs">
     <button class="tab active" data-view="customers">客户</button>
     <button class="tab" data-view="orders">订单</button>
+    <button class="tab" data-view="opportunities">商机</button>
     <button class="tab" data-view="followups">跟进记录</button>
     <button class="tab" data-view="todos">待办</button>
     <button class="tab" data-view="brief">今日日报</button>
@@ -219,7 +248,7 @@
         <h3>新增客户（软件原生功能）</h3>
         <div class="form-row">
           <input id="cuName" placeholder="客户姓名" style="min-width:120px">
-          <input id="cuCompany" placeholder="公司名称" style="flex:1;min-width:200px">
+          <input id="cuCompany" placeholder="公司名称" style="flex:1;min-width:180px">
           <select id="cuLevel">
             <option value="普通">普通</option>
             <option value="重点">重点</option>
@@ -227,19 +256,75 @@
           <button class="primary small" id="btnAddCustomer" style="min-height:36px">新增客户</button>
         </div>
       </div>
+      <div class="panel edit-panel" id="editCustomerPanel">
+        <h3>编辑客户 <span id="ecName" class="muted"></span></h3>
+        <div class="form-row">
+          <input id="ecCompany" placeholder="公司名称" style="flex:1;min-width:180px">
+          <input id="ecPhone" placeholder="联系电话" style="min-width:150px">
+          <select id="ecLevel"><option value="重点">重点</option><option value="普通">普通</option></select>
+          <select id="ecStatus"><option value="潜在">潜在</option><option value="合作中">合作中</option><option value="流失">流失</option></select>
+          <button class="primary small" id="btnSaveCustomer" style="min-height:36px">保存修改</button>
+          <button class="small" id="btnCancelEditCustomer" style="min-height:36px">取消</button>
+        </div>
+      </div>
       <div class="panel">
         <h3>客户档案</h3>
-        <table><thead><tr><th>姓名</th><th>公司</th><th>等级</th><th>负责人</th><th>最近跟进</th><th>状态</th></tr></thead>
+        <div class="filter-bar" style="margin-bottom:10px">
+          <input id="cuSearch" placeholder="搜索姓名或公司…">
+          <select id="cuFilterLevel"><option value="">全部等级</option><option value="重点">重点</option><option value="普通">普通</option></select>
+          <select id="cuFilterStatus"><option value="">全部状态</option><option value="潜在">潜在</option><option value="合作中">合作中</option><option value="流失">流失</option></select>
+          <span class="muted" id="cuCount"></span>
+        </div>
+        <table><thead><tr><th>姓名</th><th>公司</th><th>电话</th><th>等级</th><th>负责人</th><th>最近跟进</th><th>状态</th><th>操作</th></tr></thead>
         <tbody id="tbCustomers"></tbody></table>
       </div>
     </section>
 
     <section class="view" id="view-orders">
       <div class="panel">
+        <h3>录入订单（软件原生功能）</h3>
+        <div class="form-row">
+          <select id="orCustomer" style="min-width:180px"></select>
+          <select id="orCategory">
+            <option value="硬件">硬件</option>
+            <option value="软件">软件</option>
+            <option value="服务">服务</option>
+          </select>
+          <input id="orAmount" type="number" min="1" placeholder="金额（元）" style="min-width:120px">
+          <input id="orRegion" placeholder="区域（可选）" style="min-width:110px">
+          <input id="orProduct" placeholder="产品（可选）" style="flex:1;min-width:140px">
+          <button class="primary small" id="btnAddOrder" style="min-height:36px">录入订单</button>
+        </div>
+      </div>
+      <div class="panel">
         <h3>订单与销售额</h3>
         <div id="orderSummary" class="muted" style="margin-bottom:8px"></div>
-        <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>金额</th><th>区域</th></tr></thead>
+        <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>产品</th><th>金额</th><th>区域</th></tr></thead>
         <tbody id="tbOrders"></tbody></table>
+      </div>
+    </section>
+
+    <section class="view" id="view-opportunities">
+      <div class="panel">
+        <h3>新建商机（软件原生功能）</h3>
+        <div class="form-row">
+          <input id="opTitle" placeholder="商机名称，如：产线改造二期" style="flex:1;min-width:200px">
+          <select id="opCustomer" style="min-width:180px"></select>
+          <input id="opAmount" type="number" min="0" placeholder="预期金额（元）" style="min-width:130px">
+          <select id="opStage">
+            <option value="初步接触">初步接触</option>
+            <option value="需求确认">需求确认</option>
+            <option value="方案报价">方案报价</option>
+            <option value="谈判">谈判</option>
+            <option value="赢单">赢单</option>
+            <option value="输单">输单</option>
+          </select>
+          <button class="primary small" id="btnAddOpp" style="min-height:36px">新建商机</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>商机管道 <span class="muted" id="pipelineSummary"></span></h3>
+        <div class="kanban" id="kanban"></div>
       </div>
     </section>
 
@@ -347,6 +432,8 @@
   var SOURCE_LABEL = { llm: '模型路由', rules: '规则兜底' };
   var busy = false, currentRunId = null, snap = null;
   var coreEnabled = true, permissionMode = 'partial';
+  var customerFilter = { keyword: '', level: '', status: '' };
+  var editingCustomer = null;
   var PERM_HINT = {
     manual: '全部审批：任何工具（含读操作）调用前都要你确认，最稳妥。',
     partial: '部分审批：读操作自动执行；写操作、新发现的能力先授权（默认）。',
@@ -447,6 +534,7 @@
       ['客户总数', s.customers.length + ' 位', ''],
       ['重点客户', keyCustomers + ' 位', ''],
       ['订单总额', money(s.total_amount), ''],
+      ['在途商机金额', money(s.pipeline_amount), ''],
       ['超 3 天未跟进', s.due_followup.length + ' 位', s.due_followup.length ? 'warn' : ''],
       ['未完成待办', openTodos.length + ' 项', '']
     ];
@@ -455,17 +543,29 @@
              k[1] + '</div></div>';
     }).join('');
 
-    document.getElementById('tbCustomers').innerHTML = s.customers.map(function (c) {
+    /* 客户档案：关键词 + 等级 + 状态筛选（纯前端过滤，不经 Agent） */
+    var kw = customerFilter.keyword.trim().toLowerCase();
+    var shownCustomers = s.customers.filter(function (c) {
+      if (customerFilter.level && c.level !== customerFilter.level) return false;
+      if (customerFilter.status && c.status !== customerFilter.status) return false;
+      if (kw && (c.name + ' ' + c.company).toLowerCase().indexOf(kw) < 0) return false;
+      return true;
+    });
+    document.getElementById('cuCount').textContent =
+      '显示 ' + shownCustomers.length + ' / 共 ' + s.customers.length + ' 位';
+    document.getElementById('tbCustomers').innerHTML = shownCustomers.length ? shownCustomers.map(function (c) {
       var overdue = dueMap[c.name];
-      var status = overdue != null
-        ? '<span class="tag overdue">超期 ' + overdue + ' 天</span>'
-        : '<span class="tag ok">正常</span>';
+      var followCell = esc(c.last_followup) +
+        (overdue != null ? '<br><span class="tag overdue">超期 ' + overdue + ' 天</span>' : '');
+      var statusTag = '<span class="tag status-' + esc(c.status) + '">' + esc(c.status) + '</span>';
       return '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.company) + '</td><td>' +
+        (c.phone ? esc(c.phone) : '<span class="muted">—</span>') + '</td><td>' +
         '<span class="tag ' + (c.level === '重点' ? 'key' : 'normal') + '">' + esc(c.level) + '</span>' +
-        '</td><td>' + esc(c.owner) + '</td><td>' + esc(c.last_followup) + '</td><td>' + status + '</td></tr>';
-    }).join('');
+        '</td><td>' + esc(c.owner) + '</td><td>' + followCell + '</td><td>' + statusTag + '</td><td>' +
+        '<button class="small" data-edit-customer="' + esc(c.name) + '">编辑</button></td></tr>';
+    }).join('') : '<tr><td colspan="8" class="muted">没有符合条件的客户</td></tr>';
 
-    var cats = ['硬件', '软件', '服务'];
+    var cats = (s.enums && s.enums.categories) || ['硬件', '软件', '服务'];
     document.getElementById('orderSummary').innerHTML = '合计 ' + money(s.total_amount) + ' · ' +
       cats.map(function (c) {
         var v = s.orders.filter(function (o) { return o.category === c; })
@@ -474,7 +574,42 @@
       }).join(' ｜ ');
     document.getElementById('tbOrders').innerHTML = s.orders.map(function (o) {
       return '<tr><td>' + esc(o.order) + '</td><td>' + esc(o.customer) + '</td><td>' + esc(o.category) +
-        '</td><td>' + money(o.amount) + '</td><td>' + esc(o.region) + '</td></tr>';
+        '</td><td>' + (o.product ? esc(o.product) : '<span class="muted">—</span>') + '</td><td>' +
+        money(o.amount) + '</td><td>' + esc(o.region) + '</td></tr>';
+    }).join('');
+
+    /* 订单 / 商机表单的客户下拉：用公司名（后端同时接受姓名与公司名） */
+    var companyOpts = s.customers.map(function (c) {
+      return '<option value="' + esc(c.company) + '">' + esc(c.company) + '</option>';
+    }).join('');
+    document.getElementById('orCustomer').innerHTML = companyOpts;
+    document.getElementById('opCustomer').innerHTML = companyOpts;
+
+    /* 商机管道：按阶段渲染看板，终态（赢单/输单）不显示推进 */
+    var stages = (s.enums && s.enums.stages) ||
+      ['初步接触', '需求确认', '方案报价', '谈判', '赢单', '输单'];
+    var openStageSet = { '初步接触': 1, '需求确认': 1, '方案报价': 1, '谈判': 1 };
+    document.getElementById('pipelineSummary').textContent =
+      '在途 ' + s.opportunities.filter(function (o) { return openStageSet[o.stage]; }).length +
+      ' 个 · ' + money(s.pipeline_amount);
+    document.getElementById('kanban').innerHTML = stages.map(function (stage) {
+      var items = s.opportunities.filter(function (o) { return o.stage === stage; });
+      var sum = items.reduce(function (a, o) { return a + o.amount; }, 0);
+      var colCls = stage === '赢单' ? 'win' : stage === '输单' ? 'lose' : '';
+      var cards = items.length ? items.map(function (o) {
+        var advance = openStageSet[stage]
+          ? '<select data-opp-stage="' + esc(o.title) + '"><option value="">推进到…</option>' +
+            stages.filter(function (st) { return st !== stage; }).map(function (st) {
+              return '<option value="' + st + '">→ ' + st + '</option>';
+            }).join('') + '</select>'
+          : '';
+        return '<div class="kanban-card"><div class="kc-title">' + esc(o.title) + '</div>' +
+          '<div class="kc-cust">' + esc(o.customer) + ' · ' + esc(o.owner || '') + '</div>' +
+          '<div class="kc-amt">' + money(o.amount) + '</div>' + advance + '</div>';
+      }).join('')
+      : '<div class="kanban-empty">暂无</div>';
+      return '<div class="kanban-col ' + colCls + '"><h4><span>' + stage + '</span>' +
+        '<span class="col-sum">' + items.length + ' · ' + money(sum) + '</span></h4>' + cards + '</div>';
     }).join('');
 
     var fuSel = document.getElementById('fuCustomer');
@@ -559,11 +694,132 @@
     });
   });
   document.addEventListener('click', function (e) {
-    var title = e.target.getAttribute && e.target.getAttribute('data-complete');
-    if (!title) return;
-    post('/api/crm/complete', { title: title }).then(function (r) {
-      if (r.s === 200 && r.j.ok) { toast('已完成：' + title); return refreshSnapshot(); }
-      toast((r.j && r.j.error) || '操作失败');
+    var t = e.target;
+    if (!t.getAttribute) return;
+    var title = t.getAttribute('data-complete');
+    if (title) {
+      post('/api/crm/complete', { title: title }).then(function (r) {
+        if (r.s === 200 && r.j.ok) { toast('已完成：' + title); return refreshSnapshot(); }
+        toast((r.j && r.j.error) || '操作失败');
+      });
+      return;
+    }
+    var editName = t.getAttribute('data-edit-customer');
+    if (editName) { openEditCustomer(editName); }
+  });
+
+  /* ---------- 客户搜索 / 筛选（纯前端，重渲染不重新请求） ---------- */
+  function bindFilter(id, key, evt) {
+    var node = document.getElementById(id);
+    node.addEventListener(evt, function () {
+      customerFilter[key] = node.value;
+      if (snap) renderSnapshot(snap);
+    });
+  }
+  bindFilter('cuSearch', 'keyword', 'input');
+  bindFilter('cuFilterLevel', 'level', 'change');
+  bindFilter('cuFilterStatus', 'status', 'change');
+
+  /* ---------- 客户编辑 ---------- */
+  function openEditCustomer(name) {
+    if (!snap) return;
+    var c = snap.customers.filter(function (x) { return x.name === name; })[0];
+    if (!c) return;
+    editingCustomer = name;
+    document.getElementById('ecName').textContent = '（' + name + '）';
+    document.getElementById('ecCompany').value = c.company || '';
+    document.getElementById('ecPhone').value = c.phone || '';
+    document.getElementById('ecLevel').value = c.level || '普通';
+    document.getElementById('ecStatus').value = c.status || '潜在';
+    var panel = document.getElementById('editCustomerPanel');
+    panel.classList.add('open');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function closeEditCustomer() {
+    editingCustomer = null;
+    document.getElementById('editCustomerPanel').classList.remove('open');
+  }
+  document.getElementById('btnCancelEditCustomer').addEventListener('click', closeEditCustomer);
+  document.getElementById('btnSaveCustomer').addEventListener('click', function () {
+    if (!editingCustomer) return;
+    var payload = {
+      name: editingCustomer,
+      company: document.getElementById('ecCompany').value.trim(),
+      phone: document.getElementById('ecPhone').value.trim(),
+      level: document.getElementById('ecLevel').value,
+      status: document.getElementById('ecStatus').value
+    };
+    if (!payload.company) { toast('公司名称不能为空'); return; }
+    post('/api/crm/customer_edit', payload).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已保存客户：' + editingCustomer);
+        closeEditCustomer();
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+
+  /* ---------- 订单录入 ---------- */
+  document.getElementById('btnAddOrder').addEventListener('click', function () {
+    var customer = document.getElementById('orCustomer').value;
+    var category = document.getElementById('orCategory').value;
+    var amount = document.getElementById('orAmount').value;
+    var region = document.getElementById('orRegion').value.trim();
+    var product = document.getElementById('orProduct').value.trim();
+    if (!customer) { toast('请选择客户'); return; }
+    if (!(Number(amount) > 0)) { toast('请输入正确的金额'); return; }
+    post('/api/crm/order_create', {
+      customer: customer, category: category, amount: amount, region: region, product: product
+    }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已录入订单 ' + (r.j.order || ''));
+        document.getElementById('orAmount').value = '';
+        document.getElementById('orRegion').value = '';
+        document.getElementById('orProduct').value = '';
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+
+  /* ---------- 商机新建 ---------- */
+  document.getElementById('btnAddOpp').addEventListener('click', function () {
+    var title = document.getElementById('opTitle').value.trim();
+    var customer = document.getElementById('opCustomer').value;
+    var amount = document.getElementById('opAmount').value;
+    var stage = document.getElementById('opStage').value;
+    if (!title) { toast('请填写商机名称'); return; }
+    if (!customer) { toast('请选择客户'); return; }
+    post('/api/crm/opp_create', {
+      title: title, customer: customer, amount: amount === '' ? 0 : amount, stage: stage
+    }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已新建商机：' + title);
+        document.getElementById('opTitle').value = '';
+        document.getElementById('opAmount').value = '';
+        document.getElementById('opStage').value = '初步接触';
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+
+  /* ---------- 商机阶段推进（看板下拉，change 委托） ---------- */
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (!t.getAttribute) return;
+    var oppTitle = t.getAttribute('data-opp-stage');
+    if (!oppTitle) return;
+    var stage = t.value;
+    if (!stage) return;
+    post('/api/crm/opp_stage', { title: oppTitle, stage: stage }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('商机「' + oppTitle + '」已推进到 ' + stage);
+      } else {
+        toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+      }
+      return refreshSnapshot();
     });
   });
 

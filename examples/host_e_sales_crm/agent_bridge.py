@@ -33,9 +33,10 @@ PROMPT_TIMEOUT_SECONDS = 600
 # 内存中最多保留的历史会话（SSE 重连/取结果用），单用户本地演示足够。
 MAX_RUNS = 10
 
-# 读工具自动放行（partial 挡位白名单）；写工具（add_*/create_*/complete_*）一律先问人。
+# 读工具自动放行（partial 挡位白名单）；写工具（add_*/update_*/create_*/complete_*）一律先问人。
 READ_TOOLS = [
-    "list_customers", "get_customer", "list_orders", "sum_amount",
+    "list_customers", "search_customers", "get_customer",
+    "list_orders", "sum_amount", "list_opportunities",
     "list_followups", "customers_due_followup", "list_todos", "daily_brief",
 ]
 

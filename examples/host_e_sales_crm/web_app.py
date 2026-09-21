@@ -42,7 +42,13 @@ from host_e_sales_crm.agent_bridge import (  # noqa: E402,F401
     WebChannel,
     resolve_pending,
 )
-from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
+from host_e_sales_crm.crm_app import (  # noqa: E402
+    CUSTOMER_LEVELS,
+    CUSTOMER_STATUS,
+    OPPORTUNITY_STAGES,
+    ORDER_CATEGORIES,
+    SalesCrm,
+)
 
 HERE = Path(__file__).resolve().parent
 WEB_DIR = HERE / "web"
@@ -78,14 +84,24 @@ class Workbench:
     def snapshot(self) -> dict:
         """原生 CRM 界面的全部数据：与 Agent 读的是同一个 SalesCrm 对象。"""
         crm = self.crm
+        open_opps = crm.list_opportunities("open")
         return {
             "customers": crm.list_customers(),
             "due_followup": crm.customers_due_followup(3),
             "orders": crm.list_orders(),
             "followups": crm.list_followups(),
             "todos": crm.list_todos("all"),
+            "opportunities": crm.list_opportunities(),
             "brief": crm.daily_brief(),
             "total_amount": crm.sum_amount(),
+            "pipeline_amount": sum(o["amount"] for o in open_opps),
+            # 业务枚举单一来源，前端下拉/看板列直接渲染，避免魔法字符串漂移。
+            "enums": {
+                "levels": list(CUSTOMER_LEVELS),
+                "statuses": list(CUSTOMER_STATUS),
+                "categories": list(ORDER_CATEGORIES),
+                "stages": list(OPPORTUNITY_STAGES),
+            },
         }
 
     # ---- 原生业务（不经过 Agent）----
@@ -110,6 +126,33 @@ class Workbench:
                 str(payload.get("name", "")),
                 str(payload.get("company", "")),
                 str(payload.get("level", "") or "普通"),
+            )
+        if op == "customer_edit":
+            return 200, crm.update_customer(
+                str(payload.get("name", "")),
+                company=str(payload.get("company", "")),
+                level=str(payload.get("level", "")),
+                phone=str(payload.get("phone", "")),
+                status=str(payload.get("status", "")),
+            )
+        if op == "order_create":
+            return 200, crm.create_order(
+                str(payload.get("customer", "")),
+                str(payload.get("category", "")),
+                payload.get("amount", ""),
+                region=str(payload.get("region", "")),
+                product=str(payload.get("product", "")),
+            )
+        if op == "opp_create":
+            return 200, crm.create_opportunity(
+                str(payload.get("title", "")),
+                str(payload.get("customer", "")),
+                payload.get("amount", ""),
+                stage=str(payload.get("stage", "") or "初步接触"),
+            )
+        if op == "opp_stage":
+            return 200, crm.update_opportunity_stage(
+                str(payload.get("title", "")), str(payload.get("stage", ""))
             )
         return 404, {"error": "unknown_action", "detail": op}
 
@@ -266,6 +309,10 @@ def make_handler(workbench: Workbench):
                 "/api/crm/todo",
                 "/api/crm/complete",
                 "/api/crm/customer",
+                "/api/crm/customer_edit",
+                "/api/crm/order_create",
+                "/api/crm/opp_create",
+                "/api/crm/opp_stage",
             ):
                 op = path.rsplit("/", 1)[-1]
                 status, result = workbench.native_action(op, payload)
