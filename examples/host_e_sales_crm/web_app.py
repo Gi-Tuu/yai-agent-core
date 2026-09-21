@@ -105,6 +105,12 @@ class Workbench:
             )
         if op == "complete":
             return 200, crm.complete_todo(str(payload.get("title", "")))
+        if op == "customer":
+            return 200, crm.add_customer(
+                str(payload.get("name", "")),
+                str(payload.get("company", "")),
+                str(payload.get("level", "") or "普通"),
+            )
         return 404, {"error": "unknown_action", "detail": op}
 
     def reset(self) -> bool:
@@ -255,7 +261,12 @@ def make_handler(workbench: Workbench):
                 ok = workbench.cancel(str(payload.get("run_id", "")))
                 self._send_json(200 if ok else 404, {"ok": ok})
                 return
-            if path in ("/api/crm/followup", "/api/crm/todo", "/api/crm/complete"):
+            if path in (
+                "/api/crm/followup",
+                "/api/crm/todo",
+                "/api/crm/complete",
+                "/api/crm/customer",
+            ):
                 op = path.rsplit("/", 1)[-1]
                 status, result = workbench.native_action(op, payload)
                 self._send_json(status, result)

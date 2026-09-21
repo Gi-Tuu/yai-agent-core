@@ -381,6 +381,33 @@ def test_native_actions_work_without_agent_and_reflect_in_snapshot():
         httpd.server_close()
 
 
+def test_native_add_customer_works_without_agent_and_validates():
+    """新增客户是软件原生功能（无 Core 可用）；业务校验仍由 SalesCrm 负责。"""
+    crm = _crm()
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}), crm)
+    try:
+        s1, b1 = _post(base, "/api/crm/customer",
+                       {"name": "孙琪", "company": "西南测试公司", "level": "重点"})
+        assert s1 == 200 and b1["ok"] is True
+        # 重名被业务层拒绝
+        s2, b2 = _post(base, "/api/crm/customer",
+                       {"name": "孙琪", "company": "另一家", "level": "普通"})
+        assert s2 == 200 and b2["ok"] is False
+        # 空姓名被业务层拒绝
+        s3, b3 = _post(base, "/api/crm/customer",
+                       {"name": "  ", "company": "某公司", "level": "普通"})
+        assert s3 == 200 and b3["ok"] is False
+
+        _, snap = _get_json(base, "/api/snapshot")
+        assert any(
+            c["name"] == "孙琪" and c["company"] == "西南测试公司" and c["level"] == "重点"
+            for c in snap["customers"]
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_native_actions_rejected_while_agent_running():
     crm = _crm()
     model = _BlockModel()

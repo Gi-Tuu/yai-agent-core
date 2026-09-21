@@ -216,6 +216,18 @@
   <main class="content">
     <section class="view active" id="view-customers">
       <div class="panel">
+        <h3>新增客户（软件原生功能）</h3>
+        <div class="form-row">
+          <input id="cuName" placeholder="客户姓名" style="min-width:120px">
+          <input id="cuCompany" placeholder="公司名称" style="flex:1;min-width:200px">
+          <select id="cuLevel">
+            <option value="普通">普通</option>
+            <option value="重点">重点</option>
+          </select>
+          <button class="primary small" id="btnAddCustomer" style="min-height:36px">新增客户</button>
+        </div>
+      </div>
+      <div class="panel">
         <h3>客户档案</h3>
         <table><thead><tr><th>姓名</th><th>公司</th><th>等级</th><th>负责人</th><th>最近跟进</th><th>状态</th></tr></thead>
         <tbody id="tbCustomers"></tbody></table>
@@ -316,6 +328,7 @@
       <button class="chip" data-task="列出超过 3 天没跟进的客户，按逾期天数排序。">超期客户</button>
       <button class="chip" data-task="明天要去广州拜访客户，帮我查一下那边的天气，要带伞吗？">查拜访天气（按需发现）</button>
       <button class="chip" data-task="S001 这笔订单按 13% 税率算，含税总价是多少？">算含税报价（按需发现）</button>
+      <button class="chip" data-task="把这套晨间例行流程固化成一个可复用工具 morning_brief：第一步列出超过 3 天未跟进的客户，第二步列出未完成待办。创建好之后立刻调用一次 morning_brief 给我看结果。">🛠 固化晨间流程（组合工具）</button>
     </div>
     <div class="input-row">
       <textarea id="taskInput" rows="1" placeholder="用自然语言交代任务，Enter 发送 / Shift+Enter 换行"></textarea>
@@ -429,8 +442,10 @@
     var dueMap = {};
     s.due_followup.forEach(function (d) { dueMap[d.name] = d.days_overdue; });
     var openTodos = s.todos.filter(function (t) { return !t.done; });
+    var keyCustomers = s.customers.filter(function (c) { return c.level === '重点'; }).length;
     var kpis = [
       ['客户总数', s.customers.length + ' 位', ''],
+      ['重点客户', keyCustomers + ' 位', ''],
       ['订单总额', money(s.total_amount), ''],
       ['超 3 天未跟进', s.due_followup.length + ' 位', s.due_followup.length ? 'warn' : ''],
       ['未完成待办', openTodos.length + ' 项', '']
@@ -521,6 +536,23 @@
         toast('已新建待办');
         document.getElementById('tdTitle').value = '';
         document.getElementById('tdDue').value = '';
+        return refreshSnapshot();
+      }
+      toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
+    });
+  });
+  document.getElementById('btnAddCustomer').addEventListener('click', function () {
+    var name = document.getElementById('cuName').value.trim();
+    var company = document.getElementById('cuCompany').value.trim();
+    var level = document.getElementById('cuLevel').value;
+    if (!name) { toast('请填写客户姓名'); return; }
+    if (!company) { toast('请填写公司名称'); return; }
+    post('/api/crm/customer', { name: name, company: company, level: level }).then(function (r) {
+      if (r.s === 200 && r.j.ok) {
+        toast('已新增客户：' + name);
+        document.getElementById('cuName').value = '';
+        document.getElementById('cuCompany').value = '';
+        document.getElementById('cuLevel').value = '普通';
         return refreshSnapshot();
       }
       toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
