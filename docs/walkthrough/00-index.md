@@ -33,9 +33,13 @@
   │ ⑥ ReAct 循环                                 【kernel/loop.py】
   │    模型.achat(消息, 工具清单)                 【llm/openai_compat.py / 任何 SPI 模型】
   │      ├─ 模型不调工具 → 最终答案，结束
-  │      └─ 模型要调工具 → ToolExecutor.execute  【tools/executor.py】
+  │      ├─ 模型调 meta-tool（内核自己拦截，不进执行器）
+  │      │     ├─ request_capability → 发现注册新工具（第 15 篇）
+  │      │     ├─ compose_tool → 组合已有工具（第 16 篇）
+  │      │     └─ create_code_tool → 注册代码工具（第 18 篇，需宿主沙箱）
+  │      └─ 模型要调普通工具 → ToolExecutor.execute  【tools/executor.py】
   │             ├─ PermissionPolicy.check 权限   【policy/allowlist.py】
-  │             ├─ 真正执行宿主的普通 Python 函数
+  │             ├─ 普通函数直接执行 / composite 逐步编排 / code 转交宿主沙箱
   │             └─ 结果包成 tool 消息塞回 Context，继续循环
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
@@ -54,7 +58,9 @@
 | `tools/registry.py` | 工具花名册 | 电话簿 |
 | `tools/executor.py` | 真正调用工具的地方（组合工具在此分流到逐步执行） | 总机 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
-| `spi/sandbox.py` | 第六个插槽：代码工具沙箱（本版只定义契约） | 高危车间的安全规程 |
+| `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
+| `tools/meta.py` | meta-tool：`request_capability`（发现）、`create_code_tool`（造代码工具） | 向内核自己提需求的按钮 |
+| `spi/sandbox.py` | 第六个插槽：代码工具沙箱（只定义契约，执行由宿主实现） | 高危车间的安全规程 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
 | `kernel/context.py` | 管理发给模型的消息 | 剪贴板 |
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
@@ -96,7 +102,8 @@
 - 14 · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
 - 15 · `spi/discovery.py` + `discovery/catalog.py`：能力缺口的最小闭环（缺口 → 发现 → 注册 → 本轮可用）
 - 16 · `tools/composer.py`：组合工具（不越界地造工具：占位符解析、逐步授权、能力并集）
-- 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，本版只定义契约不实现）
+- 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，只定义契约，执行由宿主实现）
+- 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
 
 ## 5. 自检（读完本篇应能回答）
 
