@@ -48,11 +48,13 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 五个"插槽"的接口约定（model/channel/memory/policy/discovery） | 插座标准 |
+| `spi/*.py` | 六个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
 | `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源） | 备用零件柜 |
 | `tools/registry.py` | 工具花名册 | 电话簿 |
-| `tools/executor.py` | 真正调用工具的地方 | 总机 |
+| `tools/executor.py` | 真正调用工具的地方（组合工具在此分流到逐步执行） | 总机 |
+| `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
+| `spi/sandbox.py` | 第六个插槽：代码工具沙箱（本版只定义契约） | 高危车间的安全规程 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
 | `kernel/context.py` | 管理发给模型的消息 | 剪贴板 |
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
@@ -79,7 +81,7 @@
 ## 4. 分篇目录
 
 - 01 · `types.py`：数据词汇表
-- 02 · `spi/`：四个可替换插槽（第五个 ToolDiscovery 见第 15 篇）
+- 02 · `spi/`：可替换插槽（model/channel/memory/policy；Discovery 见第 15 篇、Sandbox 见第 17 篇）
 - 03 · `discovery/introspect.py`：能力自发现
 - 04 · `tools/`：注册表 + 执行总线
 - 05 · `kernel/router.py` + `context.py`：决策与上下文
@@ -93,6 +95,8 @@
 - 13 · `memory/retention.py` + 两个 Store：历史保留策略（条数裁剪/TTL，轮边界对齐，opt-in）
 - 14 · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
 - 15 · `spi/discovery.py` + `discovery/catalog.py`：能力缺口的最小闭环（缺口 → 发现 → 注册 → 本轮可用）
+- 16 · `tools/composer.py`：组合工具（不越界地造工具：占位符解析、逐步授权、能力并集）
+- 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，本版只定义契约不实现）
 
 ## 5. 自检（读完本篇应能回答）
 

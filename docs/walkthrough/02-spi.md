@@ -5,7 +5,7 @@
 >
 > **更新（v0.6）**：本篇讲最初的四个插槽（model / channel / memory / policy）。
 > 第五个插槽 `ToolDiscovery`（能力按需发现）后加，结构与本篇完全同构；为避免本篇膨胀，
-> 它的逐行讲解放在**第 15 篇**。现在共五个 SPI 契约。
+> 它的逐行讲解放在**第 15 篇**。现在共六个 SPI 契约：Model / Channel / Memory / Policy / Discovery / Sandbox（第六个 ToolSandbox 只定义契约，代码生成工具的沙箱执行由宿主实现）。
 
 ## 0. 什么是 SPI
 

@@ -9,11 +9,17 @@ from yai_core.kernel import AdaptiveRouter, AgentLoop, Context, RouteDecision
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
-from yai_core.spi import ToolDiscovery
-from yai_core.tools import ToolExecutor, ToolRegistry
+from yai_core.spi import SandboxResult, ToolDiscovery, ToolSandbox
+from yai_core.tools import (
+    ToolExecutor,
+    ToolRegistry,
+    build_composer_tool,
+    build_composite_spec,
+)
 from yai_core.types import (
     AgentEvent,
     ChatMessage,
+    CompositeStep,
     EventType,
     ModelResponse,
     RunResult,
@@ -32,6 +38,9 @@ __all__ = [
     "Context",
     "ToolRegistry",
     "ToolExecutor",
+    "build_composer_tool",
+    "build_composite_spec",
+    "CompositeStep",
     "OpenAICompatProvider",
     "FallbackModelProvider",
     "ScriptedModel",
@@ -40,6 +49,8 @@ __all__ = [
     "StaticCatalog",
     "DiscoveredCandidate",
     "ToolDiscovery",
+    "ToolSandbox",
+    "SandboxResult",
     "AgentEvent",
     "ChatMessage",
     "EventType",

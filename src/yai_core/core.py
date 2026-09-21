@@ -22,7 +22,7 @@ from yai_core.spi import (
     PermissionPolicy,
     ToolDiscovery,
 )
-from yai_core.tools import ToolExecutor, ToolRegistry
+from yai_core.tools import ToolExecutor, ToolRegistry, build_composer_tool
 from yai_core.types import AgentEvent, RunResult, ToolSpec
 
 
@@ -38,6 +38,7 @@ class AgentCore:
         auto_approve_tools: bool = True,
         llm_router: bool | Literal["auto"] = False,
         discovery: ToolDiscovery | None = None,
+        composition: bool = False,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
@@ -64,6 +65,10 @@ class AgentCore:
                 raise ValueError('llm_router 只接受 True、False 或 "auto"')
             self.router = AdaptiveRouter(model=route_model)
         self.executor = ToolExecutor(self.registry, self.policy, self.channel)
+        # 组合工具能力：显式开启后注册 compose_tool meta-tool，模型可在运行时
+        # 把宿主已注册的工具编排成新工具（只能引用已注册工具，每步仍走权限）。
+        if composition:
+            self.registry.register(build_composer_tool(self.registry))
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,

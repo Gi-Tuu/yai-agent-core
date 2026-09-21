@@ -276,6 +276,7 @@ class AgentLoop:
                     ],
                 )
             )
+            failed: list[str] = []
             for call in resp.tool_calls:
                 tool_events, ok, result_text = await self.executor.execute(
                     call.name, call.arguments
@@ -288,6 +289,23 @@ class AgentLoop:
                         content=result_text,
                         tool_call_id=call.id,
                         name=call.name,
+                    )
+                )
+                if not ok:
+                    failed.append(f"{call.name}：{result_text}")
+            if failed:
+                # 轻量反思（不额外调用模型）：把失败观察回灌成一条明确引导，
+                # 让模型下一轮自我修正——换工具，或如实报告能力缺口，而不是重复失败调用。
+                ctx.add(
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            "【系统反思提示】上一步工具调用未成功："
+                            + "；".join(failed)
+                            + "。请判断：若能用其他现有工具完成，就改用其他工具，"
+                            "不要重复同一失败调用；若宿主确实缺少所需能力，"
+                            "请直接说明缺失了什么能力，并给出当前能给出的结论。"
+                        ),
                     )
                 )
 

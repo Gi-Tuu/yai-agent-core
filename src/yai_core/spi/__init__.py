@@ -5,6 +5,7 @@ from yai_core.spi.discovery import ToolDiscovery
 from yai_core.spi.memory import MemoryStore
 from yai_core.spi.model import ModelProvider
 from yai_core.spi.policy import PermissionDecision, PermissionPolicy
+from yai_core.spi.sandbox import SandboxResult, ToolSandbox
 
 __all__ = [
     "Channel",
@@ -13,4 +14,6 @@ __all__ = [
     "PermissionDecision",
     "PermissionPolicy",
     "ToolDiscovery",
+    "ToolSandbox",
+    "SandboxResult",
 ]

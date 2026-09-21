@@ -34,19 +34,35 @@ class EventType(StrEnum):
     CLARIFY_REQUESTED = "clarify_requested"
     CAPABILITY_MISSING = "capability_missing"
     TOOL_DISCOVERED = "tool_discovered"
+    TOOL_COMPOSED = "tool_composed"
     ERROR = "error"
     DONE = "done"
 
 
 @dataclass
+class CompositeStep:
+    """组合工具中的一步：调用一个已注册的内部工具，参数可引用前序结果。
+
+    - tool：被组合的内部工具名（必须是宿主已注册的工具，组合不产生新原始能力）；
+    - args：传给该工具的参数，支持占位符 ``{{$input.x}}``（组合工具入参）、
+      ``{{$steps.0}}``（第 0 步完整结果）、``{{$steps.0.field}}``（字典字段）。
+    """
+
+    tool: str
+    args: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ToolSpec:
-    """统一工具规格。Native / OpenAPI / MCP 工具在 Registry 中同构。"""
+    """统一工具规格。Native / OpenAPI / MCP / 组合工具在 Registry 中同构。"""
 
     name: str
     description: str
     input_schema: dict[str, Any]          # JSON Schema（与 MCP tools 形状一致）
-    handler: Callable[..., Any]           # 同步函数；异步函数同样支持
-    source: Literal["native", "openapi", "mcp"] = "native"
+    handler: Callable[..., Any] | None    # 同步函数；异步函数同样支持；组合工具为 None
+    source: Literal["native", "openapi", "mcp", "composite"] = "native"
+    # 仅 source == "composite" 时使用：按顺序编排的内部工具步骤。
+    steps: list[CompositeStep] | None = None
 
     def llm_schema(self) -> dict[str, Any]:
         """转换成 OpenAI 兼容的 function-calling 工具描述。"""
