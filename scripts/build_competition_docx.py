@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_walkthrough_docx import (  # noqa: E402
+    add_image,
     add_inline,
     parse_md,
     parse_table,
@@ -235,6 +236,8 @@ def build_docx(md_path: Path, out_docx: Path) -> None:
                     cells[j].text = ""
                     add_inline(cells[j].paragraphs[0], val, base_size=Pt(10.5))
             doc.add_paragraph()
+        elif kind == "image":
+            add_image(doc, payload, md_path.parent, width_cm=15.5)
 
     out_docx.parent.mkdir(parents=True, exist_ok=True)
     doc.save(out_docx)

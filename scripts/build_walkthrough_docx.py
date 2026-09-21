@@ -168,6 +168,11 @@ def parse_md(text: str) -> list[tuple[str, object]]:
         if line.strip() in ("---", ""):
             i += 1
             continue
+        m_img = re.match(r"^\s*!\[(.*?)\]\((.*?)\)\s*$", line)
+        if m_img:
+            blocks.append(("image", {"alt": m_img.group(1), "path": m_img.group(2)}))
+            i += 1
+            continue
         buf = [line]
         i += 1
         while i < len(lines) and not _is_block_start(lines[i]):
@@ -182,6 +187,30 @@ def parse_table(rows: list[str]) -> tuple[list[str], list[list[str]]]:
     header = matrix[0]
     body = [r for r in matrix[2:]]  # 第二行是 --- 分隔行
     return header, body
+
+
+def add_image(doc, payload: dict, base_dir: Path, *, width_cm: float = 15.0) -> None:
+    """插入一张居中图片；相对路径按 base_dir 解析，找不到时给占位文字而非崩溃。"""
+    img_path = Path(payload["path"])
+    if not img_path.is_absolute():
+        img_path = base_dir / img_path
+    par = doc.add_paragraph()
+    par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    par.paragraph_format.first_line_indent = Cm(0)
+    if img_path.exists():
+        run = par.add_run()
+        run.add_picture(str(img_path), width=Cm(width_cm))
+    else:
+        run = par.add_run(f"[图片缺失：{img_path}]")
+        run.font.color.rgb = RGBColor.from_string("C0392B")
+    alt = payload.get("alt")
+    if alt:
+        cap = doc.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap.paragraph_format.first_line_indent = Cm(0)
+        cr = cap.add_run(alt)
+        cr.font.size = Pt(9)
+        cr.font.color.rgb = RGBColor.from_string("666666")
 
 
 # ---------- docx 构建 ----------
@@ -278,7 +307,7 @@ def build() -> None:
     t.add_run("YAI Agent Core\n源码逐行讲解")
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = sub.add_run("00–14 分册合订 · 边学边造配套讲义")
+    r = sub.add_run("00–15 分册合订 · 边学边造配套讲义")
     r.font.size = Pt(13)
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -395,6 +424,8 @@ def build() -> None:
                         cells[j].text = ""
                         add_inline(cells[j].paragraphs[0], val, base_size=Pt(10.5))
                 doc.add_paragraph()
+            elif kind == "image":
+                add_image(doc, payload, SRC_DIR)
 
     for idx, fname in enumerate(CHAPTERS):
         text = (SRC_DIR / fname).read_text(encoding="utf-8")
