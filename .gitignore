@@ -41,6 +41,7 @@ docs/competitions/hangzhou/evidence/
 
 # host_e 销售 CRM 演示数据（运行时生成，不入库）
 examples/host_e_sales_crm/crm_data.json
+examples/host_e_sales_crm/route_learning.json
 
 # 路由自校准 benchmark 生成物（脚本一键复现，不入库；定稿图见 docs/assets/）
 benchmark_out/

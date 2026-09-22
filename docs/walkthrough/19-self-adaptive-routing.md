@@ -290,8 +290,9 @@ def _seed(self, rule: Strategy | None) -> dict[str, list[float]]:
     return table
 ```
 
-默认 `prior_strength=2`：规则 arm 变成 `α=3`，其余 `α=1`，于是**第一次建议大概率就是
-规则的判断**，不会冷启动瞎选；但这个先验很弱，真实反馈几次就能覆盖它。
+默认 `prior_strength=2`：规则 arm 变成 `α=3`，其余 `α=1`。配合 4.3 节"零真实反馈时
+确定性取先验最强臂"，于是**第一次建议就等于规则的判断**，不会冷启动瞎选；第一条真实
+反馈进来后才放开 Thompson 采样，而这个先验很弱，真实反馈几次就能覆盖它。
 
 ### 4.3 建议：`suggest`
 
@@ -309,9 +310,15 @@ def suggest(self, task, registry) -> RouteSuggestion | None:
     total = sum(a + b for a, b in table.values())
     if total < self.min_samples:
         return None
+    observed = self._obs.get(key, 0)
     if self.rng.random() < self.epsilon:
         arm = self.rng.choice(ARMS)
         source = "bandit:explore"
+    elif observed == 0:
+        # 该上下文还没有任何真实反馈，只有规则先验：确定性取先验最强臂（=规则判断），
+        # 不做随机采样，避免弱先验下第一次就蒙到 plan/clarify 把任务带偏。
+        arm = max(ARMS, key=lambda s: table[s.value][0] / (table[s.value][0] + table[s.value][1]))
+        source = "bandit:thompson"
     else:
         arm = max(ARMS, key=lambda s: self.rng.betavariate(*table[s.value]))
         source = "bandit:thompson"
@@ -319,13 +326,17 @@ def suggest(self, task, registry) -> RouteSuggestion | None:
     return RouteSuggestion(arm, source, a / (a + b) if (a + b) > 0 else 0.0)
 ```
 
-三个要点：
+四个要点：
 
 1. **硬规则区域不表态**：空任务（必须澄清）、宿主无工具（只能 direct）是确定性下限，
    学习器无权越过，直接返回 `None` 交回规则。
 2. **证据不足不表态**：`min_samples`（默认 4）是冷启动闸门。注意规则先验本身已经贡献
    伪计数（4 个 arm ×2 + 先验 2 = 10），所以有工具的非空任务首次就能表态。
-3. **Thompson 采样**就是这一行：
+3. **零真实反馈时确定性跟随规则**：第一次见到某类任务时，先验很弱（规则 arm `α=3`、
+   其余 `α=1`），若直接 Thompson **采样**，约有一半概率随机蒙到别的 arm，把本该查工具的
+   任务带偏成 plan/clarify。所以这个桶还没有任何真实回灌（`observed == 0`）时，改为
+   确定性地取先验均值最高的臂（正好就是规则判断）；第一条真实反馈进来后才放开随机采样。
+4. **Thompson 采样**就是这一行：
    `max(ARMS, key=lambda s: self.rng.betavariate(*table[s.value]))`
    ——从每个 arm 的 Beta 分布抽一个数，取最大。`random.betavariate` 是标准库自带的。
 
@@ -440,9 +451,32 @@ from yai_core.learning import ContextualBanditSelector
 core = AgentCore(model, learning=ContextualBanditSelector(seed=42))
 ```
 
-### 6.3 反馈在 run 结束后回灌一次
+### 6.3 反馈在事件流正常结束后回灌一次
 
-`core.run` 收集完事件、算出最终策略后，调用一次 `_record_feedback`：
+回灌闭合在 `core.astream` 的收尾，而不是 `core.run` 里——因为网页、终端这类流式宿主
+直接消费 `astream()` 的事件流，从不调用 `run()`；若只在 `run()` 回灌，流式宿主就永远
+学不到东西。`astream` 一边转发事件一边收集，正常跑完（没被取消）时在 `finally` 里
+调用一次 `_record_feedback`：
+
+```python
+async def astream(self, task):
+    events, strategy, completed = [], None, False
+    try:
+        async for event in self._loop.astream(task):
+            await self.channel.emit(event)
+            events.append(event)
+            if "strategy" in (event.data or {}):
+                strategy = Strategy(event.data["strategy"])
+            yield event
+        completed = True
+    finally:
+        # 只有正常跑完才回灌；被取消（用户中途终止）不计入，避免污染学习
+        if completed:
+            chosen = strategy or self.router.classify(task, self.registry)
+            self._record_feedback(task, chosen, events)
+```
+
+`_record_feedback` 本身只做"抽结果 + 回灌"：
 
 ```python
 def _record_feedback(self, task, chosen, events) -> None:
@@ -458,6 +492,8 @@ def _record_feedback(self, task, chosen, events) -> None:
 ```
 
 - 反馈**不进当次事件流**（事件流都跑完了才算得出结果），所以不会污染、不会影响这一次；
+- **被取消的任务不回灌**：`completed` 只在事件流正常耗尽时置真，用户中途停止不会被当成
+  负样本；
 - 宿主可以传 `on_feedback` 回调，把每次路由的成败发到自己的日志/UI；
 - `route_learning_status()` 透出学习器的可观测快照（启用了没、各上下文计数），未启用时
   返回 `{"enabled": False}`。
@@ -497,18 +533,19 @@ benchmark 自己手编的。这保证了评测用的打分逻辑和线上完全�
 | 对比线 | 末段成功率 | 整体成功率 |
 |---|---|---|
 | 规则（不学习） | 73.3% | 71.7% |
-| **自校准 bandit** | **91.3%** | **79.2%** |
+| **自校准 bandit** | **89.6%** | **80.3%** |
 | Oracle | 100% | 100% |
-| 消融 A：无规则先验 | 87.8% | 77.2% |
-| 消融 B：无上下文 | 70.1% | 63.7% |
+| 消融 A：无规则先验 | 88.5% | 75.6% |
+| 消融 B：无上下文 | 70.8% | 64.0% |
 
-学习曲线（`docs/assets/router-learning-curve.svg`）上，绿色 bandit 从冷启动约 40% 一路
-爬到 93%，灰色 rules 平在 75%，蓝色 oracle 钉在 100%。三个对照各自证明一件事：
+学习曲线（`docs/assets/router-learning-curve.svg`）上，绿色 bandit 冷启动跟随规则、随后
+一路爬升，后期稳定在 90% 附近，灰色 rules 平在 73% 左右，蓝色 oracle 钉在 100%。
+三个对照各自证明一件事：
 
-1. **学习有效**：bandit 比 rules 高 18 个百分点，且是真实爬升；
-2. **规则先验有用**：bandit 整体 79.2% 高于消融 A 的 77.2%，无先验冷启动只有 38%
-   更颠——先验让系统"开局不掉队"；
-3. **上下文特征是关键**：bandit 比消融 B 高 21 个百分点，无上下文时连规则都不如，
+1. **学习有效**：bandit 末段比 rules 高约 16 个百分点，且是真实爬升；
+2. **规则先验有用**：bandit 整体 80.3% 高于消融 A 的 75.6%，无先验冷启动更颠——
+   先验让系统"开局不掉队"；
+3. **上下文特征是关键**：bandit 末段比消融 B 高约 19 个百分点，无上下文时连规则都不如，
    证明"分桶学"是对的。
 
 benchmark 还内置一条**硬校验**：bandit 末段必须显著高于 rules（+5pp），否则脚本以非零
@@ -516,7 +553,7 @@ benchmark 还内置一条**硬校验**：bandit 末段必须显著高于 rules�
 
 ### 7.4 为什么没到 100%（诚实的边界）
 
-bandit 末段是 91.3% 而不是 100%，这是真实的，不该靠刷分掩盖：
+bandit 末段是 89.6% 而不是 100%，这是真实的，不该靠刷分掩盖：
 
 - 有些长尾上下文只有一两条任务，3 轮里反馈样本太少，先验没被完全翻转；
 - Thompson 采样天然有随机波动；
@@ -541,6 +578,29 @@ core = AgentCore(model, learning=ContextualBanditSelector(seed=42))
 # 想跨天保留学习成果：
 #   selector.save("bandit_state.json")  /  ContextualBanditSelector.load(...)
 ```
+
+### 8.1 真实宿主通电的三个坑（host_e 数字员工已踩平）
+
+内核示例是"一个 core 跑到底"，但真实宿主（网页/终端）每个任务都新建一个 `AgentCore`。
+要让学习真正跨任务累积，有三个容易错的点，host_e（`examples/host_e_sales_crm/`）都处理了：
+
+1. **学习器必须由长生命周期的宿主持有，而不是建在 core 里。**
+   每个任务新建 core 时若也新建 selector，上一个任务的反馈就丢了。host_e 的 `AgentBridge`
+   在启动时建**一个**共享的 `ContextualBanditSelector`，之后每个任务 `AgentCore.auto(...,
+   learning=self._learning)` 把同一个学习器传进去，反馈才会在任务间累积。
+
+2. **持久化用"启动加载 + 正常结束落盘"，并容忍损坏。**
+   `load_learning(path)`：文件不存在或 JSON 损坏时都冷启动新建，绝不抛给用户；
+   每个任务**正常结束**（不是被取消）后 `save_learning()` 落盘。host_e 网页的
+   "路由学习"面板和命令行终端共用同一个 `route_learning.json`，两边看到的进度一致。
+
+3. **流式宿主走 `astream` 也会回灌（见 6.3），但取消不回灌。**
+   用户中途停止任务时，事件流没有正常结束，`completed` 为假，这一次不进学习——
+   否则"用户嫌它做错了主动打断"会被错误地当成一次正常结果污染后验。
+
+> 内核默认仍是 `learning=None`（行为与不接入完全一致）；host_e 是**宿主侧 opt-in**
+> 通电，没有翻内核默认。网页权限条下方的"路由学习"面板可看到累计回灌次数、各场景
+> 桶的偏好策略与置信度，并可一键重置。
 
 ## 9. 设计取舍小结
 

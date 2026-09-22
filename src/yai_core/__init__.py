@@ -12,6 +12,7 @@ from yai_core.discovery import (
     discover,
 )
 from yai_core.kernel import AdaptiveRouter, AgentLoop, Context, RouteDecision
+from yai_core.learning import ContextualBanditSelector
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
@@ -47,6 +48,7 @@ __all__ = [
     "RouteDecision",
     "AgentLoop",
     "Context",
+    "ContextualBanditSelector",
     "ToolRegistry",
     "ToolExecutor",
     "CodeToolManager",

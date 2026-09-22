@@ -174,6 +174,25 @@
   .perm-mode-bar label { color: var(--text-2); white-space: nowrap; font-weight: 600; }
   .perm-mode-bar select { flex: 1; min-width: 170px; min-height: 30px; font-size: 12px; padding: 2px 8px; }
   .perm-mode-bar .perm-hint { flex-basis: 100%; color: var(--text-2); font-size: 11px; margin-top: 1px; }
+  /* ---------- 路由自学习面板 ---------- */
+  .learning-bar { padding: 7px 14px; background: var(--accent-tint);
+    border-bottom: 1px solid var(--border); font-size: 11.5px; }
+  .learning-bar summary { cursor: pointer; font-weight: 600; color: var(--accent-d);
+    list-style: none; display: flex; align-items: center; gap: 6px; }
+  .learning-bar summary::-webkit-details-marker { display: none; }
+  .learning-bar summary::before { content: '▸'; transition: transform .15s; }
+  .learning-bar[open] summary::before { transform: rotate(90deg); }
+  .learning-bar .learn-summary { font-weight: 400; color: var(--text-2); }
+  .learn-body { margin-top: 7px; color: var(--text-2); }
+  .learn-stat { display: flex; gap: 14px; margin-bottom: 6px; }
+  .learn-stat b { color: #1f2937; font-size: 13px; }
+  .learn-bucket { display: flex; justify-content: space-between; gap: 8px;
+    padding: 3px 0; border-top: 1px dashed var(--border); }
+  .learn-bucket .ctx { flex: 1; }
+  .learn-bucket .pref { color: var(--accent-d); font-weight: 600; white-space: nowrap; }
+  .learn-bucket .n { color: var(--text-2); margin-left: 4px; }
+  .learn-empty { font-style: italic; padding: 4px 0; }
+  .learning-bar button.small { margin-top: 7px; }
   /* ---------- Core 关闭时的抽屉锁定遮罩 ---------- */
   .drawer-locked { display: none; }
   .drawer.is-locked .drawer-locked { display: flex; flex-direction: column; align-items: center;
@@ -183,6 +202,7 @@
   .drawer-locked .lock-title { font-weight: 700; font-size: 15px; }
   .drawer-locked p { color: var(--text-2); font-size: 12.5px; margin: 0; max-width: 300px; }
   .drawer.is-locked .drawer-head, .drawer.is-locked .perm-mode-bar,
+  .drawer.is-locked .learning-bar,
   .drawer.is-locked .chat, .drawer.is-locked .dock { opacity: .3; pointer-events: none; }
   /* ---------- 客户搜索筛选 / 编辑面板 ---------- */
   .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -397,6 +417,11 @@
     </select>
     <div class="perm-hint" id="permHint"></div>
   </div>
+  <details class="learning-bar" id="learningBar">
+    <summary>🧠 路由自学习 <span class="learn-summary" id="learnSummary">连接中…</span></summary>
+    <div class="learn-body" id="learnBody"></div>
+    <button class="small" id="btnResetLearning" type="button">重置为规则先验</button>
+  </details>
   <div class="chat" id="chat">
     <div class="welcome-drawer">
       我是<b>嵌入这个 CRM 的数字员工</b>：内核内省了软件自身的业务方法作为工具。
@@ -923,8 +948,44 @@
       document.getElementById('stateText').textContent = '服务未连接';
     });
   }
+  /* ---------- 路由自学习面板 ---------- */
+  function refreshLearning() {
+    var sum = document.getElementById('learnSummary');
+    var body = document.getElementById('learnBody');
+    return fetch('/api/learning').then(function (r) { return r.json(); }).then(function (L) {
+      if (!L || L.enabled === false) { sum.textContent = '未启用'; body.textContent = ''; return; }
+      if (L.available === false) { sum.textContent = '状态暂不可用'; return; }
+      var n = L.learned_tasks || 0;
+      sum.textContent = '已回灌 ' + n + ' 次 · ' + (L.context_buckets || 0) + ' 类场景';
+      var html = '<div class="learn-stat"><span>已回灌任务 <b>' + n + '</b></span>' +
+        '<span>场景桶 <b>' + (L.context_buckets || 0) + '</b></span></div>';
+      var used = (L.buckets || []).filter(function (b) { return b.observed > 0; }).slice(0, 6);
+      if (!n) {
+        html += '<div class="learn-empty">还没有真实反馈，当前用规则先验；完成几个任务后这里会出现学到的偏好。</div>';
+      } else if (!used.length) {
+        html += '<div class="learn-empty">反馈累积中；同类任务达到阈值后学习器才开始接管路由。</div>';
+      } else {
+        used.forEach(function (b) {
+          html += '<div class="learn-bucket"><span class="ctx">' + esc(b.context) + '</span>' +
+            '<span class="pref">' + esc(b.preferred_label) +
+            '<span class="n">' + b.observed + ' 次 · ' + Math.round(b.confidence * 100) + '%</span></span></div>';
+        });
+      }
+      html += '<div class="muted" style="margin-top:5px">任务结束后按成败回灌，纯标准库上下文老虎机，离线可算；探索仍受 epsilon 与规则先验约束。</div>';
+      body.innerHTML = html;
+    }).catch(function () { if (sum) sum.textContent = '状态不可用'; });
+  }
+  document.getElementById('btnResetLearning').addEventListener('click', function () {
+    if (!window.confirm('清空路由学习状态、回到规则先验？')) return;
+    post('/api/learning/reset', {}).then(function (r) {
+      if (r.s === 200 && r.j.ok) { toast('学习状态已重置'); refreshLearning(); }
+      else { toast('重置失败（' + r.s + '）'); }
+    });
+  });
+
   refreshState();
   refreshSnapshot();
+  refreshLearning();
 
   /* ---------- 对话 ---------- */
   var chat = document.getElementById('chat'), input = document.getElementById('taskInput');
@@ -1022,6 +1083,7 @@
         setBusy(false);
         document.getElementById('runHint').textContent = '完成：左侧软件数据已随授权的写操作更新。';
         refreshSnapshot();
+        refreshLearning();
       } else {
         var node = renderEvent(evt);
         if (node) {

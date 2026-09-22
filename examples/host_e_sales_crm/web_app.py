@@ -65,6 +65,8 @@ class Workbench:
         *,
         core_enabled: bool = True,
         permission_mode: str = "partial",
+        learning_path: str | Path | None = None,
+        enable_learning: bool = True,
     ) -> None:
         self.crm = crm or SalesCrm()
         self.bridge = AgentBridge(
@@ -73,6 +75,8 @@ class Workbench:
             model_label,
             enabled=core_enabled,
             permission_mode=permission_mode,
+            learning_path=learning_path,
+            enable_learning=enable_learning,
         )
         # 原生写操作与 Agent 写操作的互斥锁（避免两边同时改数据）。
         self._lock = threading.Lock()
@@ -178,6 +182,13 @@ class Workbench:
     def set_permission_mode(self, mode: str) -> str:
         return self.bridge.set_permission_mode(mode)
 
+    # ---- 路由自学习（转发嵌入点）----
+    def learning_status(self) -> dict:
+        return self.bridge.learning_status()
+
+    def reset_learning(self) -> bool:
+        return self.bridge.reset_learning()
+
     # ---- 会话生命周期（转发嵌入点）----
     def start_run(self, task: str) -> tuple[str | None, str | None]:
         """返回 (run_id, 错误码)；错误码为 core_disabled / busy / None。"""
@@ -240,6 +251,9 @@ def make_handler(workbench: Workbench):
             if path == "/api/state":
                 self._send_json(200, workbench.state())
                 return
+            if path == "/api/learning":
+                self._send_json(200, workbench.learning_status())
+                return
             if path == "/api/snapshot":
                 self._send_json(200, workbench.snapshot())
                 return
@@ -274,6 +288,10 @@ def make_handler(workbench: Workbench):
                     return
                 workbench.set_permission_mode(mode)
                 self._send_json(200, {"ok": True, "permission_mode": mode})
+                return
+            if path == "/api/learning/reset":
+                ok = workbench.reset_learning()
+                self._send_json(200 if ok else 400, {"ok": ok})
                 return
             if path == "/api/run":
                 task = str(payload.get("task", "")).strip()

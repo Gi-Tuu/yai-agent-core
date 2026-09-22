@@ -174,9 +174,26 @@ class AgentCore:
     # ---------- 运行 ----------
 
     async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
-        async for event in self._loop.astream(task):
-            await self.channel.emit(event)
-            yield event
+        # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
+        # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
+        events: list[AgentEvent] = []
+        strategy: Strategy | None = None
+        completed = False
+        try:
+            async for event in self._loop.astream(task):
+                await self.channel.emit(event)
+                events.append(event)
+                data = event.data or {}
+                if "strategy" in data:
+                    strategy = Strategy(data["strategy"])
+                yield event
+            completed = True
+        finally:
+            # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
+            # 避免把"用户中途终止"误当成负样本污染学习。
+            if completed:
+                chosen = strategy or self.router.classify(task, self.registry)
+                self._record_feedback(task, chosen, events)
 
     async def run(self, task: str) -> RunResult:
         events: list[AgentEvent] = []
@@ -190,14 +207,12 @@ class AgentCore:
             if event.type.value == "done":
                 final_text = data.get("final_text", "")
         chosen = strategy or self.router.classify(task, self.registry)
-        result = RunResult(
+        # 反馈回灌已在 astream() 正常收尾时完成，这里不再重复记录。
+        return RunResult(
             strategy=chosen,
             events=events,
             final_text=final_text,
         )
-        # 反馈闭环：任务结束后从事件流抽取结果并回灌学习器（无学习器即 no-op）。
-        self._record_feedback(task, chosen, events)
-        return result
 
     def _record_feedback(
         self, task: str, chosen: Strategy, events: list[AgentEvent]

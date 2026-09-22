@@ -5,6 +5,7 @@ import json
 import queue
 import re
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
+from host_e_sales_crm.agent_bridge import AgentBridge, load_learning  # noqa: E402
 from host_e_sales_crm.catalog_capabilities import (  # noqa: E402
     build_catalog,
     calc_quote_with_tax,
@@ -114,9 +116,15 @@ class _BlockModel:
         return ModelResponse(content="好的")
 
 
-def _start_server(model, crm=None):
+def _start_server(model, crm=None, *, learning_path=None, enable_learning=True):
     crm = crm or _crm()
-    workbench = Workbench(model_factory=lambda: model, model_label="离线测试模型", crm=crm)
+    # 每个测试服务用独立临时学习文件，绝不污染 examples 下的真实 route_learning.json。
+    if learning_path is None:
+        learning_path = Path(tempfile.mkdtemp(prefix="yai_learn_")) / "route_learning.json"
+    workbench = Workbench(
+        model_factory=lambda: model, model_label="离线测试模型", crm=crm,
+        learning_path=learning_path, enable_learning=enable_learning,
+    )
     httpd = create_server(workbench, "127.0.0.1", 0)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -813,3 +821,120 @@ def test_bad_permission_mode_returns_400():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---------- 路由自学习：跨任务累积 / 持久化 / 重置 / 可关闭 / 中文摘要 ----------
+
+def test_learning_status_starts_enabled_with_zero():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        _, learning = _get_json(base, "/api/learning")
+        assert learning["enabled"] is True
+        assert learning["selector"] == "ContextualBanditSelector"
+        assert learning["learned_tasks"] == 0
+        assert learning["context_buckets"] == 0
+        assert learning["buckets"] == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_learning_accumulates_after_each_completed_task():
+    """每个正常结束的任务都在收尾回灌一次反馈，共享学习器跨任务累计观测。"""
+    crm = _crm()
+    workbench, httpd, base = _start_server(
+        _OneToolModel("sum_amount", {"category": "硬件", "region": "华东"}), crm
+    )
+    try:
+        events = _run_and_collect(base, "统计华东硬件销售额")
+        assert events[-1]["type"] == "done"
+        _, l1 = _get_json(base, "/api/learning")
+        assert l1["learned_tasks"] >= 1
+        _run_and_collect(base, "再统计一次华东硬件类目的销售额")
+        _, l2 = _get_json(base, "/api/learning")
+        assert l2["learned_tasks"] > l1["learned_tasks"]
+        assert isinstance(l2["buckets"], list) and l2["buckets"]
+        # 面板桶的偏好策略用中文标签，不暴露内部枚举
+        valid_labels = {"直接回答", "工具推理", "先规划", "先澄清"}
+        for bucket in l2["buckets"]:
+            assert bucket["preferred_label"] in valid_labels
+            assert set(["context", "observed", "preferred", "preferred_label",
+                        "confidence", "means"]).issubset(bucket)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_learning_persists_across_workbench_restart(tmp_path):
+    """落盘后用同一文件新建 Workbench（模拟重启），历史学习量应保留。"""
+    learn_file = tmp_path / "route_learning.json"
+    model = _OneToolModel("sum_amount", {"category": "硬件", "region": "华东"})
+    _, httpd1, base1 = _start_server(model, learning_path=learn_file)
+    try:
+        _run_and_collect(base1, "统计华东硬件销售额")
+        assert learn_file.exists()
+    finally:
+        httpd1.shutdown()
+        httpd1.server_close()
+
+    _, httpd2, base2 = _start_server(model, learning_path=learn_file)
+    try:
+        _, learning = _get_json(base2, "/api/learning")
+        assert learning["enabled"] is True
+        assert learning["learned_tasks"] >= 1
+    finally:
+        httpd2.shutdown()
+        httpd2.server_close()
+
+
+def test_learning_reset_clears_accumulated_state(tmp_path):
+    learn_file = tmp_path / "route_learning.json"
+    workbench, httpd, base = _start_server(
+        _OneToolModel("sum_amount", {"category": "硬件", "region": "华东"}),
+        learning_path=learn_file,
+    )
+    try:
+        _run_and_collect(base, "统计华东硬件销售额")
+        _, before = _get_json(base, "/api/learning")
+        assert before["learned_tasks"] >= 1
+        status, body = _post(base, "/api/learning/reset", {})
+        assert status == 200 and body["ok"] is True
+        _, after = _get_json(base, "/api/learning")
+        assert after["learned_tasks"] == 0 and after["context_buckets"] == 0
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_learning_disabled_reports_enabled_false_and_reset_400(tmp_path):
+    workbench, httpd, base = _start_server(
+        _OneToolModel("sum_amount", {}),
+        learning_path=tmp_path / "off.json",
+        enable_learning=False,
+    )
+    try:
+        _, learning = _get_json(base, "/api/learning")
+        assert learning == {"enabled": False}
+        status, body = _post(base, "/api/learning/reset", {})
+        assert status == 400 and body["ok"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_load_learning_cold_start_and_corrupt_file_tolerated(tmp_path):
+    learn_file = tmp_path / "route_learning.json"
+    fresh = load_learning(learn_file)
+    assert fresh.to_dict()["obs"] == {}  # 文件不存在：冷启动
+    learn_file.write_text("这不是合法 JSON", encoding="utf-8")
+    recovered = load_learning(learn_file)  # 损坏文件：不抛、冷启动
+    assert recovered.to_dict()["obs"] == {}
+
+
+def test_describe_context_renders_chinese_bucket_label():
+    # 9 维顺序：length, action, multistep, vague, question, has_latin,
+    # data_object, unspecified, tools
+    label = AgentBridge._describe_context(
+        ["medium", True, False, False, False, False, False, False, "few"]
+    )
+    assert "中等任务" in label and "单步行动" in label and "工具少" in label

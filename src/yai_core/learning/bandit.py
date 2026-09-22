@@ -114,9 +114,20 @@ class ContextualBanditSelector:
         if total < self.min_samples:
             return None
 
+        observed = self._obs.get(key, 0)
         if self.rng.random() < self.epsilon:
             arm = self.rng.choice(ARMS)
             source = "bandit:explore"
+        elif observed == 0:
+            # 冷启动：该上下文还没有任何真实反馈，只有规则先验伪计数。
+            # 此时若直接 Thompson 采样，弱先验（α=3 vs 其余 α=1）下约有一半概率
+            # 随机蒙到 plan/clarify，把本该查工具的任务带偏。改为确定性地取先验
+            # 最强臂（即规则判断），等第一条真实回灌后再进入 Thompson 采样。
+            arm = max(
+                ARMS,
+                key=lambda s: table[s.value][0] / (table[s.value][0] + table[s.value][1]),
+            )
+            source = "bandit:thompson"
         else:
             arm = max(ARMS, key=lambda s: self.rng.betavariate(*table[s.value]))
             source = "bandit:thompson"

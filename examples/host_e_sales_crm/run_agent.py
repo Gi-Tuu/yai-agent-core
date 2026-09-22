@@ -16,7 +16,11 @@ from runner_common import bootstrap, build_model, load_dotenv  # noqa: E402
 
 bootstrap()
 
-from host_e_sales_crm.agent_bridge import READ_TOOLS  # noqa: E402
+from host_e_sales_crm.agent_bridge import (  # noqa: E402
+    READ_TOOLS,
+    load_learning,
+    save_learning,
+)
 from host_e_sales_crm.catalog_capabilities import build_catalog  # noqa: E402
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from yai_core import AgentCore, EventType  # noqa: E402
@@ -88,6 +92,8 @@ async def main() -> None:
     load_dotenv()
     model, backend = build_model()
     crm = SalesCrm()
+    # 与网页工作台共享同一个学习状态文件：终端跑的任务也会回灌、累积并落盘。
+    learning = load_learning()
     core = AgentCore.auto(
         crm,
         model,
@@ -95,6 +101,7 @@ async def main() -> None:
         policy=AllowlistPolicy(READ_TOOLS, mode="auto"),
         discovery=build_catalog(),
         llm_router="auto",
+        learning=learning,
     )
     task = " ".join(sys.argv[1:]).strip() or DEFAULT_TASK
     print("=" * 60)
@@ -104,6 +111,11 @@ async def main() -> None:
     print("-" * 60)
     async for _ in core.astream(task):
         pass
+    # 任务结束后内核已回灌本次反馈，这里落盘并打印累计学习量。
+    before = sum(learning.to_dict().get("obs", {}).values())
+    save_learning(learning)
+    print("-" * 60)
+    print(f"[学习] 已累计回灌 {before} 个任务，路由学习状态已保存（与网页工作台共享）。")
 
 
 if __name__ == "__main__":
