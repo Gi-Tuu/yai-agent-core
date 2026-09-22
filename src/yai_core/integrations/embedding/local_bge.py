@@ -87,10 +87,13 @@ class LocalBgeEmbedder:
         return self._model
 
     def _embed_one_sync(self, text: str) -> list[float]:
+        # 先完成模型/可选依赖检查：缺模型抛 bge-m3 RuntimeError、缺 onnxruntime/tokenizers
+        # 抛安装提示。必须在 import numpy 之前——未装 [local-embed] 的环境（如 CI）没有
+        # numpy，若先 import 会抛 ModuleNotFoundError，掩盖真正的"缺模型"错误。
+        # numpy 是 onnxruntime 的伴随依赖，_load() 成功后必然可用。
+        tokenizer, session = self._load()
         # 与 AMBRACE 完全一致：单条编码 → ONNX → CLS pooling → L2 归一化。
         import numpy as np  # noqa: PLC0415
-
-        tokenizer, session = self._load()
         enc = tokenizer.encode(text)
         ids = np.array([enc.ids], dtype=np.int64)
         mask = np.array([enc.attention_mask], dtype=np.int64)

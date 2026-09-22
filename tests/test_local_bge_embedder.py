@@ -7,6 +7,7 @@
 import asyncio
 import importlib.util
 import math
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,16 @@ def test_default_dir_none_when_no_env_and_no_cwd_model(monkeypatch, tmp_path) ->
 
 
 def test_missing_model_raises(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("EMBEDDING_MODEL_DIR", raising=False)
+    emb = LocalBgeEmbedder(str(tmp_path / "nope"))
+    with pytest.raises(RuntimeError, match="bge-m3"):
+        asyncio.run(emb.embed_texts(["天气"]))
+
+
+def test_missing_model_error_precedes_numpy_import(monkeypatch, tmp_path) -> None:
+    # 回归：未装 [local-embed] 的环境（CI）没有 numpy，缺模型时必须报 bge-m3
+    # RuntimeError，而不是先在 import numpy 处抛 ModuleNotFoundError。
+    monkeypatch.setitem(sys.modules, "numpy", None)
     monkeypatch.delenv("EMBEDDING_MODEL_DIR", raising=False)
     emb = LocalBgeEmbedder(str(tmp_path / "nope"))
     with pytest.raises(RuntimeError, match="bge-m3"):
