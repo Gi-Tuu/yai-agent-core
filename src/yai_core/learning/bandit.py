@@ -41,10 +41,19 @@ ARMS: tuple[Strategy, ...] = (
 _BASE_ALPHA = 1.0
 _BASE_BETA = 1.0
 
-_DEFAULT_EPSILON = 0.10
+#: 默认不叠加 ε-greedy：Beta 后验的 Thompson Sampling 本身就提供探索
+#: （未被充分验证的 arm 采样分布宽，仍有机会被选中；被证实失败的 arm 也不会
+#: 被永久判死，偶发的高采样让它有自愈机会）。benchmark 显示纯 Thompson 收敛
+#: 最好；epsilon 仅作为可选的"安全网"保留（离线测试/特殊宿主可显式开启）。
+_DEFAULT_EPSILON = 0.0
 _DEFAULT_MIN_SAMPLES = 4.0
-_DEFAULT_PRIOR_STRENGTH = 3.0
+#: 规则先验强度：冷启动时给规则 arm 加 2 个伪成功，使第一次建议≈规则
+#: （规则 arm α=3 vs 其余 α=1，明显占优但不锁死），又能被真实反馈较快覆盖。
+_DEFAULT_PRIOR_STRENGTH = 2.0
 _STATE_VERSION = 1
+
+#: 非上下文模式（消融用）下所有任务共享的固定上下文键。
+_GLOBAL_KEY = ("__global__",)
 
 
 @dataclass(frozen=True)
@@ -67,11 +76,15 @@ class ContextualBanditSelector:
         min_samples: float = _DEFAULT_MIN_SAMPLES,
         prior_strength: float = _DEFAULT_PRIOR_STRENGTH,
         router: AdaptiveRouter | None = None,
+        contextual: bool = True,
     ) -> None:
         self.rng = random.Random(seed)
         self.epsilon = epsilon
         self.min_samples = min_samples
         self.prior_strength = prior_strength
+        # contextual=False 时所有任务共享一个上下文（退化为普通 4-arm bandit），
+        # 仅供 benchmark 消融实验验证"上下文特征"的价值，产品路径恒为 True。
+        self.contextual = contextual
         # 规则先验分类器：默认即纯规则 AdaptiveRouter（无 LLM、零网络）。
         self.router = router if router is not None else AdaptiveRouter()
         # state[key][arm_value] = [alpha, beta]
@@ -90,7 +103,7 @@ class ContextualBanditSelector:
         if features.length_bucket == "empty" or features.tools_bucket == "none":
             return None
 
-        key = features.key()
+        key = self._key(features)
         table = self._state.get(key)
         if table is None:
             rule = self.router.classify(features.text, registry)
@@ -126,7 +139,7 @@ class ContextualBanditSelector:
     ) -> None:
         """回灌一次结果：连续奖励做 fractional update。"""
         features = TaskFeatures.from_task(task, registry)
-        key = features.key()
+        key = self._key(features)
         table = self._state.get(key)
         if table is None:
             # 正常流程先 suggest 后 record；防御性兜底：未播种过则用均匀先验。
@@ -139,6 +152,10 @@ class ContextualBanditSelector:
         self._obs[key] = self._obs.get(key, 0) + 1
 
     # ------------------------------------------------------------------ 内部
+
+    def _key(self, features: TaskFeatures) -> tuple:
+        """上下文键；非上下文模式（消融）下所有任务共享一个全局键。"""
+        return features.key() if self.contextual else _GLOBAL_KEY
 
     def _seed(self, rule: Strategy | None) -> dict[str, list[float]]:
         table = {s.value: [_BASE_ALPHA, _BASE_BETA] for s in ARMS}
@@ -174,6 +191,7 @@ class ContextualBanditSelector:
                 "epsilon": self.epsilon,
                 "min_samples": self.min_samples,
                 "prior_strength": self.prior_strength,
+                "contextual": self.contextual,
             },
             "obs": {
                 json.dumps(list(k), ensure_ascii=False): n for k, n in self._obs.items()
@@ -196,6 +214,7 @@ class ContextualBanditSelector:
             epsilon=float(params.get("epsilon", _DEFAULT_EPSILON)),
             min_samples=float(params.get("min_samples", _DEFAULT_MIN_SAMPLES)),
             prior_strength=float(params.get("prior_strength", _DEFAULT_PRIOR_STRENGTH)),
+            contextual=bool(params.get("contextual", True)),
         )
         obj._state = {
             tuple(json.loads(k)): {

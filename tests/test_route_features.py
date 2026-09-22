@@ -63,6 +63,43 @@ def test_english_ascii_lowercased() -> None:
     assert f.action is True
 
 
+# ---------- 长尾细分特征（学习器在规则词表之外多看的信号） ----------
+
+def test_latin_signal() -> None:
+    assert TaskFeatures.from_task("List my pending orders", _registry(2)).has_latin is True
+    assert TaskFeatures.from_task("列出我待办的订单", _registry(2)).has_latin is False
+
+
+def test_data_object_signal() -> None:
+    assert TaskFeatures.from_task("帮我看看上周的日记", _registry(2)).has_data_object is True
+    assert TaskFeatures.from_task("讲个轻松的笑话", _registry(2)).has_data_object is False
+
+
+def test_unspecified_signal() -> None:
+    assert TaskFeatures.from_task("那个东西帮我处理下", _registry(2)).has_unspecified is True
+    assert TaskFeatures.from_task("帮我润色这句话", _registry(2)).has_unspecified is False
+
+
+def test_widened_multistep_catches_single_connective() -> None:
+    # 规则 _PLAN_HINTS 只认"再把/并且"，学习器加宽后单字"并/汇总"也应识别为多步。
+    f = TaskFeatures.from_task("筛选订单并汇总销售额", _registry(2))
+    assert f.multistep is True
+
+
+def test_sha_question_word() -> None:
+    assert TaskFeatures.from_task("待办现在都有啥", _registry(2)).question is True
+
+
+def test_long_tail_separates_english_from_chinese_direct() -> None:
+    # 英文工具意图（应 react）与中文创作（应 direct）必须落到不同上下文。
+    reg = _registry(3)
+    en = TaskFeatures.from_task("Search my notes for Q3", reg)
+    cn = TaskFeatures.from_task("写一首关于春天的短诗", reg)
+    assert en.has_latin is True and en.has_data_object is True
+    assert cn.has_latin is False and cn.has_data_object is False
+    assert en.key() != cn.key()
+
+
 # ---------- 工具规模分桶 ----------
 
 def test_tools_bucket() -> None:
