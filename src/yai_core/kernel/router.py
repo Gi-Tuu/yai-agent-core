@@ -16,9 +16,13 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import Strategy
+
+if TYPE_CHECKING:
+    from yai_core.spi.learning import RouteSelector
 
 # 多步骤信号：出现时倾向先规划再执行
 # （"一共"是数量信号而非多步信号，已移入行动信号，避免"一共多少条"误判）
@@ -59,11 +63,15 @@ class AdaptiveRouter:
         min_plan_steps: int = 2,
         model: object | None = None,
         classify_timeout: float = 15.0,
+        selector: RouteSelector | None = None,
     ) -> None:
         self.min_plan_steps = min_plan_steps
         # model 可选：注入了才启用 LLM 分类；不注入时 aclassify 直接走规则。
         self.model = model
         self.classify_timeout = classify_timeout
+        # 学习型路由先验源（第六个 SPI RouteSelector）：默认 None，路由行为与
+        # 纯规则逐字节一致。第一版仅在未配置 LLM 路由（model is None）时由它前置。
+        self.selector = selector
 
     # ---------- 规则路径（同步、永远可用的兜底） ----------
 
@@ -98,19 +106,50 @@ class AdaptiveRouter:
 
     async def aclassify(self, task: str, registry: ToolRegistry) -> RouteDecision:
         text = task.strip()
-        # 空任务、未配置模型、宿主无工具：直接走规则，不浪费一次模型调用。
-        if not text or self.model is None or len(registry) == 0:
+        # 1) 硬规则（确定性下限，最高优先级）：空任务必须澄清、无工具只能直接回答，
+        #    学习器与模型都不可越过。
+        if not text or len(registry) == 0:
             return self._rules(task, registry)
-        try:
-            raw = await asyncio.wait_for(
-                self._llm_classify(text, registry), timeout=self.classify_timeout
-            )
-            decision = self._parse(raw, registry)
-            return decision
-        except Exception as exc:  # noqa: BLE001 - 分类是增强不是依赖，任何失败都兜底
-            fallback = self._rules(task, registry)
-            fallback.reason = f"LLM 分类失败（{type(exc).__name__}），回退规则：{fallback.reason}"
-            return fallback
+        # 2) 学习层建议：注入了 selector 且未配置 LLM 路由时前置；
+        #    冷启动 / 证据不足 / 显式不表态时返回 None，继续往下。
+        if self.selector is not None and self.model is None:
+            learned = self._learned_decision(task, registry)
+            if learned is not None:
+                return learned
+        # 3) LLM 分类（仅当配置了路由模型）；任何异常/超时/非法输出都回退规则。
+        if self.model is not None:
+            try:
+                raw = await asyncio.wait_for(
+                    self._llm_classify(text, registry), timeout=self.classify_timeout
+                )
+                return self._parse(raw, registry)
+            except Exception as exc:  # noqa: BLE001 - 分类是增强不是依赖，任何失败都兜底
+                fallback = self._rules(task, registry)
+                fallback.reason = (
+                    f"LLM 分类失败（{type(exc).__name__}），回退规则：{fallback.reason}"
+                )
+                return fallback
+        # 4) 规则兜底（永远可用）。
+        return self._rules(task, registry)
+
+    def _learned_decision(
+        self, task: str, registry: ToolRegistry
+    ) -> RouteDecision | None:
+        """把学习器建议转成 RouteDecision；学习器不表态时返回 None。"""
+        if self.selector is None:
+            return None
+        suggestion = self.selector.suggest(task, registry)
+        if suggestion is None:
+            return None
+        return RouteDecision(
+            strategy=suggestion.strategy,
+            source=suggestion.source,
+            reason=(
+                f"自校准路由建议（{suggestion.source}，"
+                f"置信度 {suggestion.confidence:.2f}）"
+            ),
+            tier="strong" if suggestion.strategy == Strategy.PLAN else "standard",
+        )
 
     async def _llm_classify(self, task: str, registry: ToolRegistry) -> str:
         """一次轻量模型调用，要求只输出路由 JSON。"""

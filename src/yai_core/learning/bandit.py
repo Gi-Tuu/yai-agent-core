@@ -82,9 +82,10 @@ class ContextualBanditSelector:
     # ------------------------------------------------------------------ 建议
 
     def suggest(
-        self, features: TaskFeatures, registry: ToolRegistry
+        self, task: str, registry: ToolRegistry
     ) -> RouteSuggestion | None:
         """返回建议策略；硬规则区域或证据不足时返回 None（交回规则/LLM）。"""
+        features = TaskFeatures.from_task(task, registry)
         # 硬规则区域：学习器不表态，确定性下限不可越过。
         if features.length_bucket == "empty" or features.tools_bucket == "none":
             return None
@@ -118,11 +119,13 @@ class ContextualBanditSelector:
 
     def record(
         self,
-        features: TaskFeatures,
+        task: str,
+        registry: ToolRegistry,
         chosen: Strategy,
         outcome: RouteOutcome,
     ) -> None:
         """回灌一次结果：连续奖励做 fractional update。"""
+        features = TaskFeatures.from_task(task, registry)
         key = features.key()
         table = self._state.get(key)
         if table is None:

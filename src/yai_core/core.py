@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
 from yai_core.kernel import AdaptiveRouter, AgentLoop
+from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
 from yai_core.spi import (
@@ -20,6 +21,7 @@ from yai_core.spi import (
     MemoryStore,
     ModelProvider,
     PermissionPolicy,
+    RouteSelector,
     ToolDiscovery,
     ToolSandbox,
 )
@@ -33,7 +35,10 @@ from yai_core.tools import (
     build_request_capability_tool,
 )
 from yai_core.tools.code_tools import CodeToolManager
-from yai_core.types import AgentEvent, RunResult, ToolSpec
+from yai_core.types import AgentEvent, RunResult, Strategy, ToolSpec
+
+#: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
+FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
 
 
 class AgentCore:
@@ -53,9 +58,16 @@ class AgentCore:
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
+        learning: RouteSelector | None = None,
+        on_feedback: FeedbackHook | None = None,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
+        # 自校准路由学习器（第六个 SPI）：默认 None，行为与不接入学习完全一致。
+        self.learning = learning
+        self.on_feedback = on_feedback
+        self.max_iters = max_iters
+        self.max_clarify_rounds = max_clarify_rounds
         self.channel = channel or CollectChannel()
         self.memory = memory or InMemoryStore()
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
@@ -77,7 +89,10 @@ class AgentCore:
                 route_model = None
             else:
                 raise ValueError('llm_router 只接受 True、False 或 "auto"')
-            self.router = AdaptiveRouter(model=route_model)
+            self.router = AdaptiveRouter(model=route_model, selector=learning)
+        # 外部传入的 router 若支持 selector 属性，也挂上学习器（唯一前置点）。
+        if learning is not None and hasattr(self.router, "selector"):
+            self.router.selector = learning
         # 代码工具能力：仅当宿主提供沙箱时启用。内核不内置执行器，
         # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
         self.code_manager: CodeToolManager | None = None
@@ -166,18 +181,50 @@ class AgentCore:
     async def run(self, task: str) -> RunResult:
         events: list[AgentEvent] = []
         final_text = ""
-        strategy = None
+        strategy: Strategy | None = None
         async for event in self.astream(task):
             events.append(event)
             data = event.data
             if "strategy" in data:
-                from yai_core.types import Strategy
-
                 strategy = Strategy(data["strategy"])
             if event.type.value == "done":
                 final_text = data.get("final_text", "")
-        return RunResult(
-            strategy=strategy or self.router.classify(task, self.registry),
+        chosen = strategy or self.router.classify(task, self.registry)
+        result = RunResult(
+            strategy=chosen,
             events=events,
             final_text=final_text,
         )
+        # 反馈闭环：任务结束后从事件流抽取结果并回灌学习器（无学习器即 no-op）。
+        self._record_feedback(task, chosen, events)
+        return result
+
+    def _record_feedback(
+        self, task: str, chosen: Strategy, events: list[AgentEvent]
+    ) -> None:
+        """事后回灌：学习只发生在任务结束后，不影响当次稳定性。
+
+        反馈不进当次事件流（事件流在收集完才算得出结果），通过 ``on_feedback``
+        回调与 :meth:`route_learning_status` 暴露给宿主（方案 A）。
+        """
+        if self.learning is None:
+            return
+        outcome = extract_route_outcome(
+            events,
+            chosen,
+            max_iters=self.max_iters,
+            clarify_budget=self.max_clarify_rounds,
+        )
+        self.learning.record(task, self.registry, chosen, outcome)
+        if self.on_feedback is not None:
+            self.on_feedback(task, chosen, outcome)
+
+    def route_learning_status(self) -> dict:
+        """路由学习器的可观测状态；未启用返回 {"enabled": False}。"""
+        if self.learning is None:
+            return {"enabled": False}
+        snapshot = getattr(self.learning, "to_dict", None)
+        status: dict = {"enabled": True, "selector": type(self.learning).__name__}
+        if callable(snapshot):
+            status.update(snapshot())
+        return status
