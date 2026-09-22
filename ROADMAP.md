@@ -53,8 +53,8 @@
 
 ### v0.7 — 自适应能力扩展（开发中）
 
-- **自校准路由（已落地，opt-in）**：把一次性关键词路由升级为会从执行反馈学习的**上下文老虎机（contextual bandit）**，坐实项目名 self-adaptive。四个路由策略各是一个 arm，按 9 维任务特征分桶，每桶维护 Beta(α,β) 后验，用 Thompson Sampling 选策略；冷启动注入规则先验（第一次建议≈规则），任务结束后从事件流抽成败一次性回灌（fractional update），不影响当次稳定性。纯标准库、零依赖、状态可 JSON 持久化；默认关闭，空任务/无工具等硬规则区域学习器不表态。新增第七个 SPI `RouteSelector`，学习算法可整体替换。
-  - **离线可复现证据**：`scripts/benchmark_router.py` 用 60 条标注任务做确定性仿真（奖励仍由真实 `extract_route_outcome` 计算），五线对比 + 消融。8 seeds × 3 epochs：自校准末段成功率 **91.3%** vs 规则基线 73.3%（**+18pp**），Oracle 100%；消融"无规则先验"87.8%（冷启动更颠）、消融"无上下文"70.1%（证明按上下文分桶是关键）。学习曲线见 `docs/assets/router-learning-curve.svg`，脚本内置"bandit 必须显著优于 rules"的硬校验。见讲义第 19 篇。
+- **自校准路由（已落地，opt-in）**：把一次性关键词路由升级为会从执行反馈学习的**上下文老虎机（contextual bandit）**，坐实项目名 self-adaptive。四个路由策略各是一个 arm，按 9 维任务特征分桶，每桶维护 Beta(α,β) 后验，用 Thompson Sampling 选策略；冷启动注入规则先验，且某上下文桶零真实反馈时确定性取先验最强臂（第一次建议=规则，避免弱先验随机采样把任务带偏），首条真实反馈后才放开采样；任务结束后从事件流抽成败一次性回灌（fractional update，流式 astream 正常结束也回灌、取消不回灌），不影响当次稳定性。纯标准库、零依赖、状态可 JSON 持久化；默认关闭，空任务/无工具等硬规则区域学习器不表态。新增第七个 SPI `RouteSelector`，学习算法可整体替换。
+  - **离线可复现证据**：`scripts/benchmark_router.py` 用 60 条标注任务做确定性仿真（奖励仍由真实 `extract_route_outcome` 计算），五线对比 + 消融。8 seeds × 3 epochs：自校准末段成功率 **89.6%** vs 规则基线 73.3%（**约 +16pp**），Oracle 100%；消融"无规则先验"88.5%（整体 75.6%，冷启动更颠）、消融"无上下文"70.8%（整体 64.0%，证明按上下文分桶是关键）。学习曲线见 `docs/assets/router-learning-curve.svg`，脚本内置"bandit 必须显著优于 rules"的硬校验。见讲义第 19 篇。
 - **权限三档产品化**：全部审批 / 部分审批（读白名单自动放行、写操作询问）/ 无需审批，宿主可在应用内切换；宿主 E 网页工作台提供 Core 开关，直观对比"有无 Core"。
 - **两层工具目录（已接线）**：系统提示只放 `catalog_text()`（名称 + 一句话摘要），完整 JSON Schema 走 function-calling；工具数超 `full_schema_budget`（默认 24）后先让模型按目录选工具、再用 `schemas_for(names)` 只注入所选 schema，聚焦失败回退全量，宁多勿漏。
 - **执行中动态发现（已落地）**：react 中途模型可调用 meta-tool `request_capability(need)` 显式声明能力缺口，内核授权后发 `capability_missing`（`phase="react"`）→ 发现注册 → 下一轮直接调用，`tool_discovered` 事件让新工具 schema 立即可见。
@@ -62,7 +62,7 @@
 - **双通道语义发现（已落地，opt-in）**：把"关键词子串"升级为可排序相关度。第一通道 `discovery/scoring.py` 纯标准库（NFKC 规范化、中文单字+bigram、小同义词表、关键词强信号+token 重叠），零依赖、永远可用；第二通道是新增的第八个 SPI `EmbeddingProvider`，`SemanticCatalog` 用标准库 `math` 算余弦，配两层摘要（轻量摘要检索、命中才内省完整 Schema）。召回用词法 gate OR 语义 gate（绝对门槛 + 多候选 top1 边际 margin 防误召回），融合分仅排序。真实后端两个：本地 bge-m3 ONNX（`[local-embed]`，CPU、离线、免费，与 AMBRACE 同模型同后处理）与 OpenAI 兼容云端（`[llm]`，按 index 保序）；不配置或报错自动降级纯词法。阈值用真实 bge-m3 校准（无关≈0.30、语义相关≥0.48、词法≈0.68）。宿主 F 支持 `--local` 真实向量演示。见讲义第 20 篇。
 - **组合工具（已落地）**：模型可通过 `compose_tool` 把宿主已注册的工具编排成新工具（`AgentCore(composition=True)` 开启）。组合工具只能引用已注册工具、执行时每步仍走权限，因此**能力上限 = 被组合工具的并集，物理不越界**，且不执行任何模型生成的代码。
 - **代码工具注册表 + 生命周期（已落地，执行走宿主沙箱）**：宿主提供 `ToolSandbox` 后，模型可经 meta-tool `create_code_tool` 生成代码工具；内核负责注册、48h TTL、被调用刷新、后台永久保留（`retain_code_tool` / `sweep_code_tools` / `code_tools_status`），创建与首次执行都过权限闸；**内核仍不内置任何代码执行器**，真正执行在宿主沙箱。见下文"代码生成工具"。
-- **宿主沙箱示例 host_g（已落地）**：`examples/host_g_sandbox/` 给出最小可运行的 `ToolSandbox`（标准库子进程 + 内置白名单 + 超时），离线演示"AI 现场 create_code_tool 造加权评分工具并在沙箱执行"，把代码工具的 SPI 契约真正跑通；定位为教学级隔离，生产级用容器/微 VM 替换同一 SPI。
+- **宿主沙箱示例 host_g（已落地）**：`examples/host_g_sandbox/` 给出最小可运行的 `ToolSandbox`（标准库子进程 + 内置白名单 + 超时；print 4k 字符 / 结果 64KB 上界；Unix 另加内存 256MB / CPU 15s rlimit），离线演示"AI 现场 create_code_tool 造加权评分工具并在沙箱执行"，把代码工具的 SPI 契约真正跑通；定位为教学级隔离（**Windows 无标准库内存/CPU rlimit，仅靠超时兜底、不做 OS 级网络隔离**），生产级用容器/微 VM 替换同一 SPI。
 - 网页工作台渲染 `capability_missing` / `tool_discovered` / `tool_composed` / `code_tool_created` 事件。
 - 运维向：KV TTL（SQLite schema v2 迁移）、响应体大小守卫、API 鉴权。
 
@@ -84,11 +84,12 @@
 
 ### v1.x 之后（方向，不排序）
 
-- **代码生成工具（Code Tool）**：在组合工具之上，允许模型在沙箱里生成并执行新代码，产生宿主原本没有的能力。**内核侧已落地**：`ToolSandbox` SPI、`CodeToolManager`（注册/48h TTL/调用刷新/永久保留）、`create_code_tool` meta-tool、创建与首次执行双重授权、过期回收事件。**宿主侧已有教学级示例**：`examples/host_g_sandbox/` 用标准库子进程实现 `ToolSandbox`（`-I -S` 干净解释器 + 内置白名单 + 一次性进程 + 超时，无 import/open/反射），`tests/test_sandbox_example.py` 用真实子进程覆盖安全边界与端到端闭环。**生产级仍待宿主替换**：跑不可信代码应改用一次性容器 / gVisor / 微 VM（Firecracker）实现同一 SPI，内核无需改动；不提供沙箱则优雅降级为"无沙箱不可用"。
+- **代码生成工具（Code Tool）**：在组合工具之上，允许模型在沙箱里生成并执行新代码，产生宿主原本没有的能力。**内核侧已落地**：`ToolSandbox` SPI、`CodeToolManager`（注册/48h TTL/调用刷新/永久保留）、`create_code_tool` meta-tool、创建与首次执行双重授权、过期回收事件。**宿主侧已有教学级示例**：`examples/host_g_sandbox/` 用标准库子进程实现 `ToolSandbox`（`-I -S` 干净解释器 + 内置白名单 + 一次性进程 + 超时，无 import/open/反射；print 4k 字符、结果 64KB 上界；Unix 另加内存 256MB / CPU 15s rlimit），`tests/test_sandbox_example.py` 用真实子进程覆盖安全边界与端到端闭环。**生产级仍待宿主替换**：跑不可信代码应改用一次性容器 / gVisor / 微 VM（Firecracker）实现同一 SPI，内核无需改动；不提供沙箱则优雅降级为"无沙箱不可用"。
   - 授权（已落地）：除"无需审批"档外，创建与首次执行代码工具都必须经 `PermissionPolicy` 取得用户授权；
   - 生命周期（已落地）：代码工具默认临时保留 48h，期间被多次调用则刷新 TTL；宿主可在后台把某个工具置为永久保留（`retain_code_tool`），定时 `sweep_code_tools()` 回收过期工具；
-  - 隔离（教学级示例已落地，生产级待宿主）：host_g 子进程沙箱默认无 import（无网络）、无文件、强制超时（`code_timeout`，默认 10s）；容器/资源上限等强隔离由生产宿主实现；
+  - 隔离（教学级示例已落地，生产级待宿主）：host_g 子进程沙箱默认无 import（无网络）、无文件、强制超时（`code_timeout`，默认 10s）、print 与结果大小上界；Unix 额外限内存/CPU，**Windows 无标准库 rlimit、内存不硬限、不做 OS 级网络隔离**；容器/资源上限等强隔离由生产宿主实现；
   - 与组合工具的关系：能用现有工具编排解决的优先走组合工具（零沙箱风险），确需新原始能力时才进入代码生成。
+  - **生产级沙箱适配器（待做，宿主侧，不进内核）**：按隔离强度递进提供同一 `ToolSandbox` 协议的可选实现——①一次性 Docker 容器（drop capabilities、只读根fs、无网络 namespace、内存/CPU cgroup 限制，最易落地）；②gVisor（runsc，系统调用拦截，容器启动快、隔离更强）；③微 VM Firecracker（最强隔离，冷启动稍重）；④远程沙箱 e2b / Daytona（把执行移出本机）。每个适配器独立成可选 extra，内核零改动。
 - 组合工具的可视化编排与版本管理（宿主侧）。
 
 ## 明确不做（防止内核膨胀）

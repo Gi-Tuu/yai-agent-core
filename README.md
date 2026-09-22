@@ -108,7 +108,7 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 1. **能力自发现**：Python 函数 type hints + docstring 自动生成 JSON Schema 工具规格；外部 MCP Server 的工具经 MCP Client 同构接入注册表（v0.2 已落地，`[mcp]` 可选依赖）
 2. **接入任意 REST API（OpenAPI 发现，可选）**：给一个 OpenAPI 3 描述（URL/文件/dict），自动把 operations 注册为工具（$ref 内联、path/query/body 入参合并、bearer/apiKey 鉴权、只读模式），`[openapi]` extra 懒加载
 3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，LLM 分类器输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计；LLM 路由同时做能力边界感知，工具不足时发出 `capability_missing` 事件交给宿主（规则路径、澄清、无工具部署不发）
-4. **自校准路由学习（contextual bandit，可选）**：路由不再是开环的一次性判断——任务结束后从事件流抽取成败，按 9 维任务特征分桶累计 Beta(α,β) 后验，用 Thompson Sampling 为同类任务选策略；冷启动注入规则先验（首次建议≈规则），纯标准库、零依赖、状态可 JSON 持久化。默认关闭、空任务/无工具等硬规则区域不表态，新增第七个 SPI `RouteSelector` 可整体替换学习算法。离线 benchmark（8 seeds × 3 epochs）末段成功率 **91.3% vs 规则 73.3%（+18pp）**，五线含消融，见下图与讲义第 19 篇
+4. **自校准路由学习（contextual bandit，可选）**：路由不再是开环的一次性判断——任务结束后从事件流抽取成败，按 9 维任务特征分桶累计 Beta(α,β) 后验，用 Thompson Sampling 为同类任务选策略；冷启动注入规则先验，且某类任务零真实反馈时确定性跟随规则（首条真实反馈后才放开采样），纯标准库、零依赖、状态可 JSON 持久化。默认关闭、空任务/无工具等硬规则区域不表态，新增第七个 SPI `RouteSelector` 可整体替换学习算法。离线 benchmark（8 seeds × 3 epochs）末段成功率 **89.6% vs 规则 73.3%（约 +16pp）**，五线含消融，见下图与讲义第 19 篇。宿主 E 已把学习器**真正通电**：跨任务共享、JSON 持久化，网页"路由学习"面板可看累计回灌次数与各类场景偏好并一键重置（流式任务正常结束才回灌、取消不回灌）
 5. **能力按需发现闭环（ToolDiscovery）**：第 5 个 SPI 契约。模型报出能力缺口后，内核向发现源（内置进程内 `StaticCatalog` / `SemanticCatalog`，未来可接 MCP 目录 / OpenAPI 服务 / 插件市场）要候选 → 去重注册 → 发 `tool_discovered` 事件 → **本轮 ReAct 即可调用**；发现源异常不致命，且"能被发现不等于被授权执行"（执行仍走权限策略）。默认不配置发现源时行为不变，离线可复现（`examples/host_f_discovery/`）
    - **双通道语义发现（可选）**：`SemanticCatalog` 把"关键词子串"升级为可排序相关度——词法通道（`scoring.py`，纯标准库：规范化、中文 bigram、同义词，零依赖）+ 语义通道（第 8 个 SPI `EmbeddingProvider`，标准库 `math` 算余弦，两层摘要不爆上下文）。召回用词法 gate OR 语义 gate（绝对门槛 + 多候选 top1 边际 margin 防误召回），融合分仅排序。真实后端二选一：本地 bge-m3 ONNX（`[local-embed]`，CPU、离线、免费，与 AMBRACE 同模型）或 OpenAI 兼容云端（`[llm]`）；不配置或报错自动降级纯词法。阈值用真实 bge-m3 校准（无关≈0.30、语义相关≥0.48），见讲义第 20 篇
 6. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
@@ -117,7 +117,7 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 9. **权限三档与每轮反思**：全部审批 / 部分审批（读白名单自动、写操作询问，默认）/ 无需审批三档可运行时切换；工具失败后把原因回灌模型反思，换工具或如实说明缺口，不重复同一失败调用
 10. **过程可观测**：每次策略选择、能力缺口、工具发现、工具组合、工具调用、权限确认都通过 Observer 事件流对外发出
 
-![自校准路由学习曲线：绿色 bandit 从冷启动约 40% 爬到 93%，灰色规则基线平在 75%，蓝色 Oracle 为完美路由天花板；两条消融分别证明规则先验与上下文特征的价值](docs/assets/router-learning-curve.svg)
+![自校准路由学习曲线：绿色 bandit 冷启动跟随规则、随后爬升到约 90%，灰色规则基线平在 73% 左右，蓝色 Oracle 为完美路由天花板；两条消融分别证明规则先验与上下文特征的价值](docs/assets/router-learning-curve.svg)
 
 ## 目录结构
 
@@ -246,6 +246,9 @@ uv run python examples/host_e_sales_crm/web_app.py        # http://127.0.0.1:820
 点右上角"AI 数字员工"才展开右侧抽屉，用自然语言交代任务——读工具自动放行，写工具经 SSE
 推送授权卡片，浏览器点"允许/拒绝"后任务继续，执行结果实时反映在左侧原生界面（KPI、表格联动）。
 Agent 执行中原生写操作互斥（409），避免两边同时改数据；任务可随时终止，重置会先终止卡住的任务。
+权限条下方还有一个可展开的**路由学习面板**：数字员工默认开启自校准路由（宿主侧 opt-in，内核默认仍关闭），
+跨任务共享一个学习器并落盘 `route_learning.json`，面板实时显示累计回灌次数、各场景桶当前偏好的策略与置信度，
+可一键重置；只有正常结束的任务才回灌，中途取消不进学习。
 只监听 127.0.0.1。
 
 ![销售 CRM 原生界面：不依赖 Core 也完整可用](docs/assets/hoste-native.png)

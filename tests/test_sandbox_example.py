@@ -9,6 +9,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
@@ -16,6 +18,9 @@ sys.path.insert(0, str(ROOT / "examples"))
 from host_g_sandbox import capabilities as cap  # noqa: E402
 from host_g_sandbox.sandbox import SubprocessSandbox  # noqa: E402
 from yai_core import AgentCore, ModelResponse, ToolCallRequest, build_spec  # noqa: E402
+
+# worker 对 print 捕获上限 4000 字符，再加一条截断提示，总量应远小于此。
+_MAX_STDOUT_WITH_MARKER = 4000 + 32
 
 WEIGHTED_CODE = """
 def run(inputs):
@@ -93,6 +98,42 @@ def test_sandbox_kills_infinite_loop_on_timeout() -> None:
     assert not r.ok and "超时" in r.error
     # 确实等满了超时窗口才返回，说明子进程是被超时机制终止的。
     assert r.meta.get("elapsed_ms", 0) >= 1000
+
+
+def test_sandbox_rejects_oversized_output() -> None:
+    sb = SubprocessSandbox()
+    # 返回 70KB 字符串，超过 worker 64KB 的结果上限。
+    r = asyncio.run(sb.execute("def run(inputs):\n    return 'x' * 70000", {}))
+    assert not r.ok
+    assert "结果过大" in r.error
+
+
+def test_sandbox_caps_unbounded_print() -> None:
+    sb = SubprocessSandbox()
+    code = (
+        "def run(inputs):\n"
+        "    for i in range(100000):\n"
+        "        print('line', i)\n"
+        "    return 1"
+    )
+    r = asyncio.run(sb.execute(code, {}))
+    # 无限打印不应卡死 / 撑爆内存，任务正常完成，stdout 被截断。
+    assert r.ok and r.output == 1
+    out = r.meta.get("stdout", "")
+    assert len(out) <= _MAX_STDOUT_WITH_MARKER
+    assert "截断" in out
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="RLIMIT_AS 内存硬限仅在 Unix 可用，Windows 靠超时兜底",
+)
+def test_sandbox_enforces_memory_limit_on_unix() -> None:
+    sb = SubprocessSandbox()
+    # 尝试分配 300MB，超过 256MB 的地址空间上限。
+    r = asyncio.run(sb.execute("def run(inputs):\n    return 'x' * (300 * 1024 * 1024)", {}))
+    assert not r.ok
+    assert "内存" in r.error
 
 
 # ---------- 端到端：AgentCore 现场造工具并在沙箱执行 ----------
