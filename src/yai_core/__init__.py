@@ -4,12 +4,18 @@
 """
 
 from yai_core.core import AgentCore
-from yai_core.discovery import DiscoveredCandidate, StaticCatalog, build_spec, discover
+from yai_core.discovery import (
+    DiscoveredCandidate,
+    SemanticCatalog,
+    StaticCatalog,
+    build_spec,
+    discover,
+)
 from yai_core.kernel import AdaptiveRouter, AgentLoop, Context, RouteDecision
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
-from yai_core.spi import SandboxResult, ToolDiscovery, ToolSandbox
+from yai_core.spi import EmbeddingProvider, SandboxResult, ToolDiscovery, ToolSandbox
 from yai_core.tools import (
     CREATE_CODE_TOOL,
     REQUEST_CAPABILITY,
@@ -57,7 +63,9 @@ __all__ = [
     "build_spec",
     "discover",
     "StaticCatalog",
+    "SemanticCatalog",
     "DiscoveredCandidate",
+    "EmbeddingProvider",
     "ToolDiscovery",
     "ToolSandbox",
     "SandboxResult",

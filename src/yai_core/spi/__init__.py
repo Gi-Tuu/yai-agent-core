@@ -2,6 +2,7 @@
 
 from yai_core.spi.channel import Channel
 from yai_core.spi.discovery import ToolDiscovery
+from yai_core.spi.embedding import EmbeddingProvider
 from yai_core.spi.learning import RouteSelector
 from yai_core.spi.memory import MemoryStore
 from yai_core.spi.model import ModelProvider
@@ -10,6 +11,7 @@ from yai_core.spi.sandbox import SandboxResult, ToolSandbox
 
 __all__ = [
     "Channel",
+    "EmbeddingProvider",
     "MemoryStore",
     "ModelProvider",
     "PermissionDecision",

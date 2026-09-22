@@ -31,8 +31,8 @@ flowchart TB
   exec["Tool Executor"]
   app --> auto --> router --> loop --> exec
   exec -->|"调用"| app
-  spi["七个 SPI 契约（宿主可替换）<br/>Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector"]
-  ext["外部能力（可选）<br/>MCP · OpenAPI REST · 按需发现"]
+  spi["八个 SPI 契约（宿主可替换）<br/>Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding"]
+  ext["外部能力（可选）<br/>MCP · OpenAPI REST · 语义发现 · 本地 bge-m3"]
   loop -.-> spi
   exec -.-> ext
 ```
@@ -87,6 +87,7 @@ uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py   # 离线冒烟：同一 Core 自适应三个不同宿主
 uv run pytest                         # 全量单元 + 端到端测试，不需要 API Key
 # 全量 extras（与 CI 一致）：uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+# 本地语义发现（可选）：uv pip install -e ".[local-embed]"，并按 models/README.md 放置 bge-m3
 ```
 
 **第一次读代码**：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线；[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是每个源码文件的逐行讲解。
@@ -108,9 +109,10 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 2. **接入任意 REST API（OpenAPI 发现，可选）**：给一个 OpenAPI 3 描述（URL/文件/dict），自动把 operations 注册为工具（$ref 内联、path/query/body 入参合并、bearer/apiKey 鉴权、只读模式），`[openapi]` extra 懒加载
 3. **策略自适应**：Adaptive Router 将任务路由到 `direct / react / plan / clarify`；规则实现零成本可测，LLM 分类器输出 `{strategy, reason, tier, missing_capability}`，异常/超时/非法输出自动回退规则，决策来源随事件流可审计；LLM 路由同时做能力边界感知，工具不足时发出 `capability_missing` 事件交给宿主（规则路径、澄清、无工具部署不发）
 4. **自校准路由学习（contextual bandit，可选）**：路由不再是开环的一次性判断——任务结束后从事件流抽取成败，按 9 维任务特征分桶累计 Beta(α,β) 后验，用 Thompson Sampling 为同类任务选策略；冷启动注入规则先验（首次建议≈规则），纯标准库、零依赖、状态可 JSON 持久化。默认关闭、空任务/无工具等硬规则区域不表态，新增第七个 SPI `RouteSelector` 可整体替换学习算法。离线 benchmark（8 seeds × 3 epochs）末段成功率 **91.3% vs 规则 73.3%（+18pp）**，五线含消融，见下图与讲义第 19 篇
-5. **能力按需发现闭环（ToolDiscovery）**：第 5 个 SPI 契约。模型报出能力缺口后，内核向发现源（内置进程内 `StaticCatalog`，未来可接 MCP 目录 / OpenAPI 服务 / 插件市场）要候选 → 去重注册 → 发 `tool_discovered` 事件 → **本轮 ReAct 即可调用**；发现源异常不致命，且"能被发现不等于被授权执行"（执行仍走权限策略）。默认不配置发现源时行为不变，离线可复现（`examples/host_f_discovery/`）
+5. **能力按需发现闭环（ToolDiscovery）**：第 5 个 SPI 契约。模型报出能力缺口后，内核向发现源（内置进程内 `StaticCatalog` / `SemanticCatalog`，未来可接 MCP 目录 / OpenAPI 服务 / 插件市场）要候选 → 去重注册 → 发 `tool_discovered` 事件 → **本轮 ReAct 即可调用**；发现源异常不致命，且"能被发现不等于被授权执行"（执行仍走权限策略）。默认不配置发现源时行为不变，离线可复现（`examples/host_f_discovery/`）
+   - **双通道语义发现（可选）**：`SemanticCatalog` 把"关键词子串"升级为可排序相关度——词法通道（`scoring.py`，纯标准库：规范化、中文 bigram、同义词，零依赖）+ 语义通道（第 8 个 SPI `EmbeddingProvider`，标准库 `math` 算余弦，两层摘要不爆上下文）。召回用词法 gate OR 语义 gate（绝对门槛 + 多候选 top1 边际 margin 防误召回），融合分仅排序。真实后端二选一：本地 bge-m3 ONNX（`[local-embed]`，CPU、离线、免费，与 AMBRACE 同模型）或 OpenAI 兼容云端（`[llm]`）；不配置或报错自动降级纯词法。阈值用真实 bge-m3 校准（无关≈0.30、语义相关≥0.48），见讲义第 20 篇
 6. **模型自适应**：标准任务/规划任务可路由到不同模型（tier: standard/strong），失败可回退；OpenAI 兼容（DeepSeek、通义千问等）；`llm_router="auto"` 按模型后端的 `yai_live_router` 能力标记自动开关 LLM 路由
-7. **宿主自适应（SPI）**：Model / Channel / Memory / Policy / Discovery / Sandbox / RouteSelector 七个契约宿主可替换，Core 提供零配置默认实现
+7. **宿主自适应（SPI）**：Model / Channel / Memory / Policy / Discovery / Sandbox / RouteSelector / Embedding 八个契约宿主可替换，Core 提供零配置默认实现
 8. **组合工具（不越界地造工具）**：模型可通过 `compose_tool` 把宿主已注册工具编排成新工具（`AgentCore(composition=True)`）；组合工具只能引用已注册工具、执行时每步仍走权限，能力上限 = 被组合工具的并集，且不执行任何模型生成的代码。代码生成工具则只定义 `ToolSandbox` SPI 契约（沙箱由宿主提供），内核不内置执行器
 9. **权限三档与每轮反思**：全部审批 / 部分审批（读白名单自动、写操作询问，默认）/ 无需审批三档可运行时切换；工具失败后把原因回灌模型反思，换工具或如实说明缺口，不重复同一失败调用
 10. **过程可观测**：每次策略选择、能力缺口、工具发现、工具组合、工具调用、权限确认都通过 Observer 事件流对外发出
@@ -123,8 +125,8 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 src/yai_core/
 ├── core.py              # AgentCore 门面（auto / run / astream）
 ├── types.py             # ToolSpec / ChatMessage / AgentEvent / Strategy
-├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery / sandbox / learning
-├── discovery/           # 能力自发现（函数内省）+ catalog.py（按需能力目录）
+├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery / sandbox / learning / embedding
+├── discovery/           # 能力自发现（函数内省）+ catalog（关键词）+ scoring（词法）+ semantic（双通道语义）
 ├── tools/               # ToolRegistry + ToolExecutor + 组合工具（composer）
 ├── kernel/              # AdaptiveRouter + AgentLoop + Context
 ├── learning/            # 自校准路由（可选）：特征/反馈/上下文老虎机，零第三方依赖
@@ -132,7 +134,8 @@ src/yai_core/
 ├── memory/ policy/ channels/   # 默认实现（内存记忆 + SQLite 持久化 opt-in / 白名单权限 / CLI·收集通道）
 ├── integrations/
 │   ├── mcp/             # MCP Client 桥接（可选 [mcp] 依赖，懒加载，v0.2）
-│   └── openapi/         # OpenAPI 3 发现 → 工具（可选 [openapi] 依赖，懒加载，v0.2）
+│   ├── openapi/         # OpenAPI 3 发现 → 工具（可选 [openapi] 依赖，懒加载，v0.2）
+│   └── embedding/       # 嵌入后端：本地 bge-m3 ONNX（[local-embed]）/ OpenAI 兼容云端（[llm]），懒加载
 └── batteries/
     └── fastapi_server/  # 在线 API + /health + X-Agent 验证端点
 examples/
@@ -141,7 +144,8 @@ examples/
 ├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
 ├── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
 ├── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入；含终端与网页工作台两种形态
-└── host_f_discovery/    # 宿主 F：能力缺口 → 按需发现 → 本轮可用（离线确定性演示，无需 Key）
+├── host_f_discovery/    # 宿主 F：缺口 → 发现 → 本轮可用（run.py 关键词；run_semantic.py 双通道语义，--local 用真实 bge-m3）
+└── host_g_sandbox/      # 宿主 G：教学级 ToolSandbox 子进程，现场造代码工具并在沙箱执行（极简网页）
 tests/                   # 离线 ScriptedModel 端到端测试
 docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
 ```
@@ -195,6 +199,29 @@ core.register_tools([build_spec(list_tasks), build_spec(add_task)])  # 只注册
 `StaticCatalog` 是 `ToolDiscovery` SPI 的最小进程内实现（关键词匹配、零依赖、离线可测）；
 同一契约未来可挂 MCP 目录、OpenAPI 服务目录或插件市场。完整事件序列：
 `capability_missing → tool_discovered → tool_call → tool_result → done`。
+
+关键词匹配要求缺口里出现"天气"字样；用户说"出门该怎么穿、要不要带外套"时召不回。`SemanticCatalog`
+在同一契约上叠加语义通道：词法（零依赖）+ 可选 embedding，两条通道独立召回、融合分仅排序。
+
+```bash
+uv run python examples/host_f_discovery/run_semantic.py           # 离线教学概念轴，无需 Key
+uv run python examples/host_f_discovery/run_semantic.py --local   # 本地 bge-m3 真实向量（需 .[local-embed] 与模型文件）
+```
+
+```python
+from yai_core import SemanticCatalog, DiscoveredCandidate
+# 不接 embedder：纯词法增强；接 LocalBgeEmbedder / OpenAICompatEmbedder：双通道语义
+from yai_core.integrations.embedding import LocalBgeEmbedder
+
+catalog = SemanticCatalog(
+    [DiscoveredCandidate(get_weather, ("天气", "气温", "weather"), description="查询指定城市的实时天气")],
+    LocalBgeEmbedder(),          # 可选；不传则退化为纯词法，报错也自动降级
+)
+```
+
+本地 bge-m3（1024 维、CPU、离线、免费）模型文件约 560MB 不入库，放置方式见 `models/README.md`
+（与 AMBRACE 同模型同后处理，未来回流可共享向量空间）；云端则用任何 OpenAI 兼容 `/embeddings`
+（Agnes/DeepSeek 免费档不提供 embedding，需选支持 embedding 的厂商）。
 
 ## 普通软件零改造嵌入（宿主 E：销售 CRM）
 

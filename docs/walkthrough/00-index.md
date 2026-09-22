@@ -26,6 +26,7 @@
   │    （可选）自校准学习器按"同类任务历史成败"建议策略【learning/，第 19 篇】
   │    工具不足且模型报缺口 → capability_missing 事件
   │      └─（可选）ToolDiscovery 发现新工具 → 注册 → 本轮即可用【discovery/catalog.py】
+  │           发现匹配：词法打分（零依赖）+ 可选 embedding 语义双通道【discovery/scoring.py、semantic.py，第 20 篇】
   │
   │ ④ Context 组装消息列表（含刚发现的工具）      【kernel/context.py】
   │
@@ -54,9 +55,12 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 七个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning） | 插座标准 |
+| `spi/*.py` | 八个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning/embedding） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
-| `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源） | 备用零件柜 |
+| `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源，关键词） | 备用零件柜 |
+| `discovery/scoring.py` | 词法相关度打分（规范化、中文 bigram、同义词，零依赖） | 字面匹配的标尺 |
+| `discovery/semantic.py` | 双通道语义发现 `SemanticCatalog`（词法 + embedding，标准库余弦） | 懂同义改写的检索员 |
+| `integrations/embedding/` | 真实嵌入后端：本地 bge-m3 ONNX / OpenAI 兼容云端（可选 extra） | 语义向量的发动机 |
 | `tools/registry.py` | 工具花名册 | 电话簿 |
 | `tools/executor.py` | 真正调用工具的地方（组合工具在此分流到逐步执行） | 总机 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
@@ -108,6 +112,7 @@
 - 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，只定义契约，执行由宿主实现）
 - 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
 - 19 · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
+- 20 · `discovery/scoring.py` + `spi/embedding.py` + `discovery/semantic.py`：双通道语义发现（词法打分 + 可选 embedding，本地 bge-m3 / 云端双后端，margin 防误召回）
 
 ## 5. 自检（读完本篇应能回答）
 

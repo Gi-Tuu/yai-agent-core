@@ -9,7 +9,7 @@
 ## 设计原则（所有版本不变）
 
 1. **Library-first**：YAI 是被 import 的内核，不是需要单独部署的平台；内核本体 `dependencies = []`，第三方能力全部走可选 extra 懒加载。
-2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）、路由学习（RouteSelector）七个契约宿主可替换。
+2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）、路由学习（RouteSelector）、文本嵌入（Embedding）八个契约宿主可替换。
 3. **事件流唯一出口**：每个自适应决策都必须发出 `AgentEvent`，禁止静默决策。
 4. **可离线测试**：全部测试不依赖网络与 API Key（假模型 / MockTransport / 注入时钟）。
 
@@ -59,6 +59,7 @@
 - **两层工具目录（已接线）**：系统提示只放 `catalog_text()`（名称 + 一句话摘要），完整 JSON Schema 走 function-calling；工具数超 `full_schema_budget`（默认 24）后先让模型按目录选工具、再用 `schemas_for(names)` 只注入所选 schema，聚焦失败回退全量，宁多勿漏。
 - **执行中动态发现（已落地）**：react 中途模型可调用 meta-tool `request_capability(need)` 显式声明能力缺口，内核授权后发 `capability_missing`（`phase="react"`）→ 发现注册 → 下一轮直接调用，`tool_discovered` 事件让新工具 schema 立即可见。
 - **每轮反思（已落地）**：工具失败后把失败原因回灌模型，引导其改用现有工具、请求发现新能力或如实说明能力缺口，不再反复撞同一失败调用。
+- **双通道语义发现（已落地，opt-in）**：把"关键词子串"升级为可排序相关度。第一通道 `discovery/scoring.py` 纯标准库（NFKC 规范化、中文单字+bigram、小同义词表、关键词强信号+token 重叠），零依赖、永远可用；第二通道是新增的第八个 SPI `EmbeddingProvider`，`SemanticCatalog` 用标准库 `math` 算余弦，配两层摘要（轻量摘要检索、命中才内省完整 Schema）。召回用词法 gate OR 语义 gate（绝对门槛 + 多候选 top1 边际 margin 防误召回），融合分仅排序。真实后端两个：本地 bge-m3 ONNX（`[local-embed]`，CPU、离线、免费，与 AMBRACE 同模型同后处理）与 OpenAI 兼容云端（`[llm]`，按 index 保序）；不配置或报错自动降级纯词法。阈值用真实 bge-m3 校准（无关≈0.30、语义相关≥0.48、词法≈0.68）。宿主 F 支持 `--local` 真实向量演示。见讲义第 20 篇。
 - **组合工具（已落地）**：模型可通过 `compose_tool` 把宿主已注册的工具编排成新工具（`AgentCore(composition=True)` 开启）。组合工具只能引用已注册工具、执行时每步仍走权限，因此**能力上限 = 被组合工具的并集，物理不越界**，且不执行任何模型生成的代码。
 - **代码工具注册表 + 生命周期（已落地，执行走宿主沙箱）**：宿主提供 `ToolSandbox` 后，模型可经 meta-tool `create_code_tool` 生成代码工具；内核负责注册、48h TTL、被调用刷新、后台永久保留（`retain_code_tool` / `sweep_code_tools` / `code_tools_status`），创建与首次执行都过权限闸；**内核仍不内置任何代码执行器**，真正执行在宿主沙箱。见下文"代码生成工具"。
 - **宿主沙箱示例 host_g（已落地）**：`examples/host_g_sandbox/` 给出最小可运行的 `ToolSandbox`（标准库子进程 + 内置白名单 + 超时），离线演示"AI 现场 create_code_tool 造加权评分工具并在沙箱执行"，把代码工具的 SPI 契约真正跑通；定位为教学级隔离，生产级用容器/微 VM 替换同一 SPI。
@@ -71,7 +72,7 @@
 > 本阶段把"进程内静态目录"换成"运行时动态发现源"。
 
 - 发现源扩展：MCP 目录（按语义找到公共 MCP Server 并 list_tools）、OpenAPI 服务目录、宿主插件市场。
-- 语义匹配（关键词之外的向量/嵌入检索），用于大规模工具目录。
+- 语义匹配（关键词之外的向量/嵌入检索）——**检索层已在 v0.7 落地**（`SemanticCatalog` + 第八 SPI，本地 bge-m3 / 云端双后端，见上）；本阶段把它接到 MCP/OpenAPI/插件市场等动态发现源。
 - 每轮反思中按需再次发现（与 v0.7 反思循环联动）。
 - 发现的工具注册前经权限策略确认（高危能力显式授权）——该约束在静态目录阶段已由权限闸保证。
 

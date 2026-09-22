@@ -44,3 +44,7 @@ examples/host_e_sales_crm/crm_data.json
 
 # 路由自校准 benchmark 生成物（脚本一键复现，不入库；定稿图见 docs/assets/）
 benchmark_out/
+
+# 本地 bge-m3 向量模型（约 560MB，不入库；下载说明见 models/README.md）
+models/*
+!models/README.md
