@@ -2,6 +2,7 @@
 
 from yai_core.spi.channel import Channel
 from yai_core.spi.discovery import ToolDiscovery
+from yai_core.spi.learning import RouteSelector
 from yai_core.spi.memory import MemoryStore
 from yai_core.spi.model import ModelProvider
 from yai_core.spi.policy import PermissionDecision, PermissionPolicy
@@ -14,6 +15,7 @@ __all__ = [
     "PermissionDecision",
     "PermissionPolicy",
     "ToolDiscovery",
+    "RouteSelector",
     "ToolSandbox",
     "SandboxResult",
 ]
