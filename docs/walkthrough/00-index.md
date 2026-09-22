@@ -23,6 +23,7 @@
   │
   │ ③ Router.classify(任务, 注册表) → 策略        【kernel/router.py】
   │    没有工具→direct / 行动词→react / 多步+行动→plan / 太模糊→clarify
+  │    （可选）自校准学习器按"同类任务历史成败"建议策略【learning/，第 19 篇】
   │    工具不足且模型报缺口 → capability_missing 事件
   │      └─（可选）ToolDiscovery 发现新工具 → 注册 → 本轮即可用【discovery/catalog.py】
   │
@@ -44,6 +45,7 @@
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
   │ ⑧ 历史写进 Memory（InMemoryStore / SqliteStore）【memory/】
+  │ ⑨（可选）任务结束后从事件流抽成败，回灌 learning 学习器  【learning/】
   └ 返回 RunResult（策略 + 事件列表 + 最终文本）
 ```
 
@@ -52,7 +54,7 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 六个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox） | 插座标准 |
+| `spi/*.py` | 七个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
 | `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源） | 备用零件柜 |
 | `tools/registry.py` | 工具花名册 | 电话簿 |
@@ -62,6 +64,7 @@
 | `tools/meta.py` | meta-tool：`request_capability`（发现）、`create_code_tool`（造代码工具） | 向内核自己提需求的按钮 |
 | `spi/sandbox.py` | 第六个插槽：代码工具沙箱（只定义契约，执行由宿主实现） | 高危车间的安全规程 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
+| `learning/` | 自校准路由：特征/反馈/上下文老虎机（从执行结果学习，opt-in） | 会复盘的作战参谋 |
 | `kernel/context.py` | 管理发给模型的消息 | 剪贴板 |
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
 | `memory/inmemory.py` | 默认记忆 | 短期便签本 |
@@ -104,6 +107,7 @@
 - 16 · `tools/composer.py`：组合工具（不越界地造工具：占位符解析、逐步授权、能力并集）
 - 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，只定义契约，执行由宿主实现）
 - 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
+- 19 · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
 
 ## 5. 自检（读完本篇应能回答）
 

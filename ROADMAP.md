@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-09-21。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
+> 最后更新：2026-09-22。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
 
 ## 愿景
 
@@ -9,7 +9,7 @@
 ## 设计原则（所有版本不变）
 
 1. **Library-first**：YAI 是被 import 的内核，不是需要单独部署的平台；内核本体 `dependencies = []`，第三方能力全部走可选 extra 懒加载。
-2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）六个契约宿主可替换。
+2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）、路由学习（RouteSelector）七个契约宿主可替换。
 3. **事件流唯一出口**：每个自适应决策都必须发出 `AgentEvent`，禁止静默决策。
 4. **可离线测试**：全部测试不依赖网络与 API Key（假模型 / MockTransport / 注入时钟）。
 
@@ -53,6 +53,8 @@
 
 ### v0.7 — 自适应能力扩展（开发中）
 
+- **自校准路由（已落地，opt-in）**：把一次性关键词路由升级为会从执行反馈学习的**上下文老虎机（contextual bandit）**，坐实项目名 self-adaptive。四个路由策略各是一个 arm，按 9 维任务特征分桶，每桶维护 Beta(α,β) 后验，用 Thompson Sampling 选策略；冷启动注入规则先验（第一次建议≈规则），任务结束后从事件流抽成败一次性回灌（fractional update），不影响当次稳定性。纯标准库、零依赖、状态可 JSON 持久化；默认关闭，空任务/无工具等硬规则区域学习器不表态。新增第七个 SPI `RouteSelector`，学习算法可整体替换。
+  - **离线可复现证据**：`scripts/benchmark_router.py` 用 60 条标注任务做确定性仿真（奖励仍由真实 `extract_route_outcome` 计算），五线对比 + 消融。8 seeds × 3 epochs：自校准末段成功率 **91.3%** vs 规则基线 73.3%（**+18pp**），Oracle 100%；消融"无规则先验"87.8%（冷启动更颠）、消融"无上下文"70.1%（证明按上下文分桶是关键）。学习曲线见 `docs/assets/router-learning-curve.svg`，脚本内置"bandit 必须显著优于 rules"的硬校验。见讲义第 19 篇。
 - **权限三档产品化**：全部审批 / 部分审批（读白名单自动放行、写操作询问）/ 无需审批，宿主可在应用内切换；宿主 E 网页工作台提供 Core 开关，直观对比"有无 Core"。
 - **两层工具目录（已接线）**：系统提示只放 `catalog_text()`（名称 + 一句话摘要），完整 JSON Schema 走 function-calling；工具数超 `full_schema_budget`（默认 24）后先让模型按目录选工具、再用 `schemas_for(names)` 只注入所选 schema，聚焦失败回退全量，宁多勿漏。
 - **执行中动态发现（已落地）**：react 中途模型可调用 meta-tool `request_capability(need)` 显式声明能力缺口，内核授权后发 `capability_missing`（`phase="react"`）→ 发现注册 → 下一轮直接调用，`tool_discovered` 事件让新工具 schema 立即可见。
