@@ -5,7 +5,7 @@
 
 详细的版本说明源稿见 [`docs/releases/`](docs/releases/)。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.7.0] - 2026-09-22
 
 ### Added
 
@@ -17,6 +17,11 @@
 - **能力缺口感知**：LLM 路由输出 `missing_capability`，内核据此发 `capability_missing` 事件（规则路径、澄清、无工具部署不发）。
 - **`llm_router="auto"`**：按模型后端 `yai_live_router` 标记自动决定是否启用 LLM 分类，真实模型开启、离线脚本模型走规则。
 - **开源治理资产**：`ROADMAP.md`、`docs/comparison.md`（与主流框架的诚实对比）、Issue/PR 模板、CONTRIBUTING"新人 30 分钟跑通"、CI 四矩阵（Ubuntu 3.11/3.12/3.13 + Windows 3.13）。
+- **自校准路由（第 8 个 SPI `learning`）**：`ContextualBanditSelector` 按 9 维任务特征在线学习路由策略选择，宿主 E 持久化反馈、网页学习面板可查看；离线 benchmark 随反馈累积末段准确率较纯规则约 +18pp；无反馈取规则先验，冷启动确定、模型不可用不影响。
+- **双通道语义工具发现**：新增 `EmbeddingProvider` SPI 与 `SemanticCatalog`，词法相关度与语义向量相似度融合，支持同义改写/跨语言召回；本地 `bge-m3` ONNX 离线后端与 OpenAI 兼容云端后端可选，无 embedder 或出错时自动降级纯词法。
+- **两层工具目录与执行中动态发现**：系统提示只放工具摘要目录，LLM 选定后再注入完整 Schema；ReAct 循环执行中可触发发现源、注册新工具并在本轮使用。
+- **组合工具 composer 与权限三档**：模型可把已注册工具编排成新工具（只引用已注册工具、每步仍授权，能力不越界）；权限支持全部审批 / 读放行写授权 / 无需审批三档 + 白名单，运行时可切换。
+- **代码工具注册 / TTL / 授权闸与子进程教学沙箱**：`ToolSandbox` 契约 + 宿主侧 `SubprocessSandbox`（白名单内置、超时杀循环、输出截断、Unix 内存上限、授权后执行、TTL 到期回收），新增 host_g 教学沙箱宿主。
 
 ### Changed
 
@@ -25,6 +30,7 @@
 ### Fixed
 
 - 澄清循环死锁：意图不清时追问最多两轮、上下文累积合并、空回答体面收尾，重置会先终止卡住的任务。
+- 无 `[local-embed]` 环境下 `LocalBgeEmbedder` 缺模型时先抛 `ModuleNotFoundError: numpy` 而非设计的 `RuntimeError("bge-m3…")`：调整为先 `_load()` 完成模型/依赖检查再 `import numpy`，并用 `sys.modules['numpy']=None` 加回归测试锁定顺序，修复 CI 四矩阵失败。
 
 ## [v0.5.0-hangzhou]
 

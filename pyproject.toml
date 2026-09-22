@@ -1,6 +1,6 @@
 [project]
 name = "yai-agent-core"
-version = "0.1.0"
+version = "0.7.0"
 description = "YAI Agent Core — an embeddable, self-adaptive agent kernel for host applications"
 readme = "README.md"
 requires-python = ">=3.11"

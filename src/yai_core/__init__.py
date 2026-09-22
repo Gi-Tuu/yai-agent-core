@@ -40,7 +40,7 @@ from yai_core.types import (
     ToolSpec,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "AgentCore",
