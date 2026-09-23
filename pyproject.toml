@@ -31,8 +31,6 @@ dev = [
 ]
 # 构建 docs/walkthrough 讲义 Word（PDF 导出走 LibreOffice UNO，无需 pip 包）
 docs = ["python-docx>=1.1"]
-# host_h 示例：嵌入真实开源项目 sherlock（92.5k stars, MIT）做用户名跨平台查询
-sherlock = ["sherlock-project>=0.16"]
 
 [build-system]
 requires = ["hatchling"]
