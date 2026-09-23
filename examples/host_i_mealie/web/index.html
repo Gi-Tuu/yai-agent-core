@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>host_i — Mealie × YAI Core</title>
+<style>
+  :root { --green:#2e7d32; --green-soft:#e8f5e9; --line:#e0e0e0; --ink:#2b2b2b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: var(--ink); background:#fafafa; }
+  header { padding:14px 22px; background:#fff; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; }
+  header .tag { font-size:12px; color:#888; }
+  .wrap { display:grid; grid-template-columns: 1fr 1fr; gap:18px; padding:18px; }
+  .pane { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .pane h2 { font-size:14px; margin:0 0 10px; color:var(--green); }
+  .cards { display:grid; grid-template-columns: repeat(2,1fr); gap:10px; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:10px; font-size:13px; }
+  .card .img { height:60px; background:linear-gradient(135deg,#fff3e0,#ffe0b2);
+    border-radius:6px; margin-bottom:6px; display:flex; align-items:center; justify-content:center;
+    font-size:24px; }
+  .card .name { font-weight:600; }
+  .card .desc { color:#888; font-size:12px; margin-top:2px; }
+  .btn { background:var(--green); color:#fff; border:0; border-radius:8px;
+    padding:9px 16px; font-size:13px; cursor:pointer; }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .task { margin:10px 0; font-size:13px; color:#555; }
+  .timeline { margin-top:10px; font-size:12.5px; }
+  .ev { padding:6px 10px; border-left:3px solid #ccc; margin-bottom:6px;
+    background:#f7f7f7; border-radius:0 6px 6px 0; animation:pop .25s ease-out both; }
+  .ev.tool { border-color:#1976d2; }
+  .ev.result { border-color:#7b1fa2; }
+  .ev.model { border-color:#f57c00; }
+  .ev .t { font-weight:600; }
+  .ev .d { color:#666; margin-top:2px; word-break:break-all; }
+  .final { margin-top:12px; border:1px solid #c8e6c9; background:var(--green-soft);
+    border-radius:10px; padding:10px 12px; font-size:13px; }
+  @keyframes pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>host_i — Mealie × YAI Agent Core</h1>
+  <span class="tag">左边是 Mealie 原生界面 · 右边是嵌入 Core 后</span>
+</header>
+<div class="wrap">
+  <div class="pane">
+    <h2>原生 Mealie（你得自己点）</h2>
+    <div class="cards">
+      <div class="card"><div class="img">🍅</div><div class="name">番茄炒蛋</div><div class="desc">家常快炒 15 分钟</div></div>
+      <div class="card"><div class="img">🍜</div><div class="name">番茄牛腩</div><div class="desc">慢炖 2 小时</div></div>
+      <div class="card"><div class="img">🥚</div><div class="name">蒸水蛋</div><div class="desc">嫩滑 10 分钟</div></div>
+      <div class="card"><div class="img">🥗</div><div class="name">蔬菜沙拉</div><div class="desc">清爽 5 分钟</div></div>
+    </div>
+    <p style="font-size:12px;color:#888;margin-top:12px;">
+      原生用法：点搜索 → 输入"番茄" → 翻食谱 → 看食材 → 切到购物清单 → 手动加"鸡蛋"。
+    </p>
+  </div>
+  <div class="pane">
+    <h2>嵌入 YAI Core 后（说一句话）</h2>
+    <button class="btn" id="btn">今晚做番茄炒蛋，缺的食材加进购物清单</button>
+    <div class="task" id="taskBox" style="display:none"></div>
+    <div class="timeline" id="tl"></div>
+    <div class="final" id="final" style="display:none"></div>
+  </div>
+</div>
+<script>
+const btn = document.getElementById('btn');
+const tl = document.getElementById('tl');
+const finalBox = document.getElementById('final');
+const taskBox = document.getElementById('taskBox');
+
+function addEv(kind, title, detail) {
+  const div = document.createElement('div');
+  div.className = 'ev ' + kind;
+  div.innerHTML = '<div class="t"></div><div class="d"></div>';
+  div.querySelector('.t').textContent = title;
+  div.querySelector('.d').textContent = detail || '';
+  tl.appendChild(div);
+}
+
+btn.addEventListener('click', async () => {
+  btn.disabled = true; tl.innerHTML = ''; finalBox.style.display = 'none';
+  taskBox.style.display = 'block';
+  const task = '今晚做番茄炒蛋，缺的食材加进购物清单';
+  taskBox.textContent = '任务：' + task;
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task})
+    });
+    const data = await r.json();
+    if (data.strategy) addEv('route', '路由 → ' + data.strategy, 'Core 自动选策略');
+    (data.events || []).forEach(e => {
+      if (e.type === 'tool_call') addEv('tool', '调工具 ' + e.data.name, JSON.stringify(e.data.arguments));
+      else if (e.type === 'tool_result') addEv('result', '工具返回', (e.data.preview || e.data.error || '').toString());
+      else if (e.type === 'model') addEv('model', '模型', e.data.content || '');
+    });
+    if (data.final_text) {
+      finalBox.style.display = 'block';
+      finalBox.textContent = '最终：' + data.final_text;
+    }
+  } catch (err) {
+    addEv('result', '错误', String(err));
+  } finally { btn.disabled = false; }
+});
+</script>
+</body>
+</html>
