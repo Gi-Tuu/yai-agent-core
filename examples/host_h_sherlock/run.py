@@ -33,7 +33,10 @@ def _make_core() -> tuple[AgentCore, str]:
     if os.getenv("OPENAI_API_KEY"):
         model, label = build_model()
         core = AgentCore(model, auto_approve_tools=True)
-        core.register_tools([build_spec(cap.lookup_username)])
+        core.register_tools([
+            build_spec(cap.list_available_sites),
+            build_spec(cap.lookup_username),
+        ])
         return core, label
     return build_core(), "离线脚本模型（未检测到 OPENAI_API_KEY）"
 

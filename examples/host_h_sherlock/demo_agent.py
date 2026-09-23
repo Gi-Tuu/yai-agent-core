@@ -1,10 +1,11 @@
-"""host_h 的 Core 装配点（CLI 入口）。
+"""host_h 的 Core 装配点（CLI 与网页共用的唯一 Agent 接线处）。
 
-宿主就是 sherlock 本身——我们只包了一个 ``lookup_username`` 函数。
-这里把 YAI Agent Core 接进来，注册这个函数，模型就能用自然语言调度它。
+宿主把 sherlock 包成两个工具：
+- ``list_available_sites``：本地元数据，秒回，列出 sherlock 支持的站点；
+- ``lookup_username``：真联网查用户名。
 
-为了离线、确定、无需 API Key，默认用脚本化模型走"调用查询 → 总结报告"两步；
-配置了 ``OPENAI_API_KEY`` 时会自动换成真实模型，同一条链路同样成立。
+脚本化模型演示"多工具调用"：先调 list_available_sites 了解能力边界，
+再调 lookup_username 真查 torvalds。这就是"先了解、再行动"的多步工具链。
 """
 
 from __future__ import annotations
@@ -12,11 +13,11 @@ from __future__ import annotations
 from host_h_sherlock import capabilities as cap
 from yai_core import AgentCore, ModelResponse, ToolCallRequest, build_spec
 
-DEFAULT_TASK = "查一下 torvalds 这个用户名在哪些社交平台有账号"
+DEFAULT_TASK = "先看看 sherlock 能查哪些站，再查 torvalds 的社交账号"
 
 
 class ScriptedSearchModel:
-    """离线确定性模型：调一次 lookup_username，然后给出报告。"""
+    """离线确定性模型：先 list_available_sites，再 lookup_username，最后总结。"""
 
     def __init__(self, username: str = "torvalds", limit: int = 10) -> None:
         self.calls = 0
@@ -26,30 +27,44 @@ class ScriptedSearchModel:
     async def achat(self, messages, tools=None, *, tier="standard"):
         self.calls += 1
         if self.calls == 1:
+            # 第一步：先了解有哪些站可查（不联网，快）。
             return ModelResponse(
                 content="",
                 tool_calls=[
                     ToolCallRequest(
                         id="h1",
+                        name="list_available_sites",
+                        arguments={"limit": 10},
+                    )
+                ],
+            )
+        if self.calls == 2:
+            # 第二步：知道站点范围后，真查 torvalds。
+            return ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="h2",
                         name="lookup_username",
                         arguments={"username": self.username, "limit": self.limit},
                     )
                 ],
             )
-        # 第二次：基于工具返回的结果总结（离线演示里直接给报告模板）。
+        # 第三步：总结。
         return ModelResponse(
             content=(
-                f"已用 sherlock 检查 {self.limit} 个社交平台，"
-                f"torvalds 命中的站点见上方工具结果；"
-                "这就是 YAI 嵌入真实开源项目的效果——宿主没改一行源码，"
-                "Core 自动完成了工具发现与调用。"
+                f"先查了 sherlock 支持的站点清单（共数百个），再真查 {self.username}，"
+                f"命中站点见上方工具结果。这就是 YAI 的多工具调用：Core 先了解能力、再行动。"
             )
         )
 
 
 def build_core(username: str = "torvalds", limit: int = 10) -> AgentCore:
-    """装配一个全新的 Core：注册 sherlock 查询工具，默认全放行（离线演示）。"""
+    """装配一个全新的 Core：注册 sherlock 两个工具，默认全放行（离线演示）。"""
     model = ScriptedSearchModel(username, limit)
     core = AgentCore(model, auto_approve_tools=True)
-    core.register_tools([build_spec(cap.lookup_username)])
+    core.register_tools([
+        build_spec(cap.list_available_sites),
+        build_spec(cap.lookup_username),
+    ])
     return core

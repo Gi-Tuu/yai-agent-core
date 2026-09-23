@@ -97,6 +97,16 @@ def test_lookup_accepts_string_limit() -> None:
     assert result["checked"] == 2
 
 
+def test_list_available_sites() -> None:
+    """list_available_sites 返回站点名列表，不联网。"""
+    fake_sites = _fake_sites("GitHub", "9GAG", "Reddit")
+    with patch("sherlock_project.sites.SitesInformation", return_value=fake_sites):
+        result = cap.list_available_sites(limit=2)
+
+    assert result["total"] == 3
+    assert result["sites"] == ["GitHub", "9GAG"]
+
+
 def test_core_drives_lookup_tool() -> None:
     """脚本化模型 → Core 自动调 lookup_username → 最终结果。"""
     fake_sites = _fake_sites("GitHub", "9GAG")
