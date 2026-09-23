@@ -64,6 +64,12 @@
     font-size: 11.5px; overflow-x: auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
   .final { margin-top: 14px; border: 1px solid #cddccd; background: var(--green-soft);
     border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
+  .sites { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .site-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+    font-size: 12.5px; background: #fbfdfb; }
+  .site-card a { color: var(--green); text-decoration: none; word-break: break-all; }
+  .site-card a:hover { text-decoration: underline; }
+  .site-name { font-weight: 600; margin-bottom: 2px; }
   @keyframes pop { to { opacity: 1; transform: none; } }
 </style>
 </head>
@@ -99,6 +105,7 @@
     <button class="run-btn" id="runBtn">跑一次："查 torvalds 在哪些社交平台有账号"</button>
     <div class="task-box" id="taskBox" style="display:none"></div>
     <div class="timeline" id="timeline"></div>
+    <div class="sites" id="sites"></div>
     <div class="final" id="final" style="display:none"></div>
   </section>
 </main>
@@ -107,6 +114,7 @@ const btn = document.getElementById('runBtn');
 const tl = document.getElementById('timeline');
 const finalBox = document.getElementById('final');
 const taskBox = document.getElementById('taskBox');
+const sitesBox = document.getElementById('sites');
 
 function addEv(type, title, body) {
   const div = document.createElement('div');
@@ -118,7 +126,7 @@ function addEv(type, title, body) {
 }
 
 btn.addEventListener('click', async () => {
-  btn.disabled = true; tl.innerHTML = ''; finalBox.style.display = 'none';
+  btn.disabled = true; tl.innerHTML = ''; finalBox.style.display = 'none'; sitesBox.innerHTML = '';
   taskBox.style.display = 'block';
   const task = "查一下 torvalds 这个用户名在哪些社交平台有账号，只查前 10 个站";
   taskBox.textContent = '任务：' + task;
@@ -130,6 +138,14 @@ btn.addEventListener('click', async () => {
       if (e.type === 'tool_call') addEv('tool', '调用工具 ' + e.data.tool, JSON.stringify(e.data.arguments));
       else if (e.type === 'tool_result') addEv('result', '工具返回', (e.data.preview || e.data.error || '').toString());
       else if (e.type === 'model') addEv('model', '模型思考', e.data.content || '');
+    });
+    (data.found_sites || []).forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'site-card';
+      card.innerHTML = '<div class="site-name"></div><a target="_blank" rel="noopener"></a>';
+      card.querySelector('.site-name').textContent = s.site;
+      const a = card.querySelector('a'); a.textContent = s.url; a.href = s.url;
+      sitesBox.appendChild(card);
     });
     if (data.final_text) {
       finalBox.style.display = 'block';

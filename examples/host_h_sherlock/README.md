@@ -16,12 +16,26 @@
 ## 运行
 
 ```bash
-# 离线演示（脚本化模型，无需 API Key）
+# 终端版（离线脚本模型，无需 API Key）
 uv run python examples/host_h_sherlock/run.py
 uv run python examples/host_h_sherlock/run.py "查 gi-tuu 的社交账号"
+
+# 网页版（左侧原生 CLI，右侧 Core 对话，命中站点渲染成链接卡片）
+uv run python examples/host_h_sherlock/web_app.py
+# 浏览器自动打开 http://127.0.0.1:8202
 ```
 
 配置 `OPENAI_API_KEY` 后会自动换成真实模型，同一条链路同样成立。
+
+## 安装
+
+sherlock 是可选依赖：
+
+```bash
+uv pip install "yai-agent-core[sherlock]"
+# 或在本仓库开发时：
+uv pip install sherlock-project
+```
 
 ## 注意
 
