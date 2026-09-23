@@ -3,7 +3,8 @@
 [![CI](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-pytest-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
+[![Version](https://img.shields.io/badge/version-v0.7.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-392%20passing-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 > 进程内嵌入式、自适应的 Agent 内核（Embeddable Self-Adaptive Agent Kernel）。
@@ -293,7 +294,11 @@ YAI_RATE_LIMIT_WINDOW_SECONDS=60
 
 - **v0.1（已完成）**：函数内省、规则路由、Agent Loop、SPI 默认实现、FastAPI Battery、三宿主 demo、容器化与 PaaS 部署
 - **v0.2（已完成）**：MCP Client、LLM 路由器（规则兜底）、SQLite 持久化记忆（opt-in，`YAI_DB_PATH`）、OpenAPI 发现（opt-in，`OPENAPI_SPEC_URL/PATH`）
-- **v0.3（部分完成）**：历史保留策略（条数裁剪/TTL，opt-in，轮边界对齐，已落地）、限流 Battery（已落地）；检查点与失败恢复、Flutter Channel（后续）
+- **v0.3（已完成）**：历史保留策略（条数裁剪/TTL，opt-in，轮边界对齐）、限流 Battery；检查点与失败恢复、Flutter Channel（后续）
+- **v0.4（已完成）**：能力缺口感知 + ToolDiscovery 最小闭环（缺口→发现→注册→本轮可用）、host_f 离线演示
+- **v0.5（已完成，杭州赛快照）**：host_e 销售 CRM 零改造嵌入、权限三档、两层工具目录、组合工具
+- **v0.6（已完成）**：双通道语义工具发现（词法 + 本地 bge-m3/云端 embedding）、执行中动态发现
+- **v0.7（已完成，本版）**：自校准路由 contextual bandit（第 8 个 SPI RouteSelector，离线 +16pp）、代码工具注册/TTL/授权闸、host_g 子进程教学沙箱
 - v1.0：作为 AMBRACE 的 Agent 内核回流嵌入
 
 ## 许可证
