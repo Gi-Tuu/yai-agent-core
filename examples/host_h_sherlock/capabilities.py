@@ -36,6 +36,10 @@ def lookup_username(
     from sherlock_project.sherlock import sherlock
     from sherlock_project.sites import SitesInformation
 
+    # LLM 常把数字参数传成字符串，归一化避免 int/str 比较错误。
+    limit = int(limit) if limit is not None else None
+    timeout = int(timeout)
+
     class _Collector(QueryNotify):
         """把 sherlock 的逐站回调收进内存，不打印。"""
 

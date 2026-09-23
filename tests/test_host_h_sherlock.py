@@ -85,6 +85,18 @@ def test_lookup_respects_limit() -> None:
     assert result["checked"] == 2
 
 
+def test_lookup_accepts_string_limit() -> None:
+    """LLM 常把数字传成字符串，wrapper 应归一化。"""
+    fake_sites = _fake_sites("A", "B", "C")
+    with (
+        patch("sherlock_project.sites.SitesInformation", return_value=fake_sites),
+        patch("sherlock_project.sherlock.sherlock", side_effect=_run_sherlock(claimed=[])),
+    ):
+        result = cap.lookup_username("u", limit="2", timeout="5")  # type: ignore[arg-type]
+
+    assert result["checked"] == 2
+
+
 def test_core_drives_lookup_tool() -> None:
     """脚本化模型 → Core 自动调 lookup_username → 最终结果。"""
     fake_sites = _fake_sites("GitHub", "9GAG")
