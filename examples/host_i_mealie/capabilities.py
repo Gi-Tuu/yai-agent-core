@@ -155,9 +155,12 @@ def add_mealplan(date: str, slug: str, title: str = "") -> dict:
 
 
 def get_shopping_list() -> dict:
-    """看当前购物清单。"""
+    """看当前购物清单（Mealie v4 端点变更时优雅降级）。"""
     client = _get_client()
-    data = client.get("/households/shopping-lists")
+    try:
+        data = client.get("/households/shopping-lists")
+    except Exception:
+        return {"count": 0, "items": [], "note": "Mealie v4 shopping-lists endpoint 变更，待适配"}
     items = data.get("items") or data.get("data") or []
     lists = items if isinstance(items, list) else []
     if lists:
@@ -184,7 +187,10 @@ def add_shopping_item(food_name: str, note: str = "") -> dict:
         note: 备注（可选，如"2 盒"）。
     """
     client = _get_client()
-    lists = client.get("/households/shopping-lists")
+    try:
+        lists = client.get("/households/shopping-lists")
+    except Exception:
+        return {"added": False, "reason": "Mealie v4 shopping-lists endpoint 变更，待适配"}
     items = lists.get("items") or lists.get("data") or []
     if not items:
         return {"added": False, "reason": "没有购物清单，请先在 Mealie 网页里建一个"}
