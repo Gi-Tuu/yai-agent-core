@@ -1,14 +1,15 @@
-"""把任意 markdown 构建成带封面与页码的 Word，并可选转 PDF（比赛材料通用）。
+"""把任意 markdown 构建成带学术封面、自动目录与页码的 Word，并可选转 PDF（比赛材料通用）。
 
 用法：
   .venv/Scripts/python.exe scripts/build_competition_docx.py \\
       docs/competitions/shanghai/作品介绍.md docs/exports/作品介绍.docx --pdf
 
 约定：
-- markdown 第一个一级标题作为封面标题，第一个引用块（>）作为封面副标题；
-- 不生成目录（短材料）；正文从第 1 页起页码；
-- 样式与解析函数复用 build_walkthrough_docx（同目录 import，不改动讲义脚本）；
-- --pdf 时调用本机 LibreOffice（soffice）无头转换，不新增任何 pip 依赖。
+- markdown 第一个一级标题作为封面主标题；
+- 第一个 h1 之后、第一个 h2 之前的块作为封面内容（引用块作副标题，表格作元数据表）；
+- 封面后插入可刷新的 Word 目录（TOC，1-2 级）；正文 h2 为章、另起一页；
+- 图片以其 alt 文本作为居中图注；
+- --pdf 时调用本机 LibreOffice（soffice）无头转换，并设置 updateFields 以更新目录页码。
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_walkthrough_docx import (  # noqa: E402
-    add_image,
     add_inline,
     parse_md,
     parse_table,
@@ -75,10 +75,20 @@ def configure_styles(doc: Document) -> None:
         st = doc.styles[name]
         set_east_asian(st, "Arial", "黑体", Pt(size), bold=True, color="000000")
     title_style = doc.styles["Title"]
-    set_east_asian(title_style, "Arial", "黑体", Pt(22), bold=True)
+    set_east_asian(title_style, "Arial", "黑体", Pt(24), bold=True)
     title_bdr = title_style.element.get_or_add_pPr().find(qn("w:pBdr"))
     if title_bdr is not None:
         title_style.element.get_or_add_pPr().remove(title_bdr)
+
+    # 目录页中“目录”字样（不被 TOC 收录，故不使用 Heading 样式）
+    toc_head = doc.styles.add_style("TOCHead", WD_STYLE_TYPE.PARAGRAPH)
+    toc_head.base_style = doc.styles["Normal"]
+    set_east_asian(toc_head, "Arial", "黑体", Pt(18), bold=True, color="000000")
+    thpr = toc_head.element.get_or_add_pPr()
+    thind = OxmlElement("w:ind")
+    thind.set(qn("w:firstLine"), "0")
+    thind.set(qn("w:firstLineChars"), "0")
+    thpr.append(thind)
 
     code_style = doc.styles.add_style("CodeBlock", WD_STYLE_TYPE.PARAGRAPH)
     code_style.base_style = doc.styles["Normal"]
@@ -109,39 +119,150 @@ def add_footer_pagenum(doc: Document) -> None:
         run.append(el)
 
 
+def enable_update_fields(doc: Document) -> None:
+    """让 Word/LibreOffice 在加载时更新所有域（用于生成目录页码）。"""
+    upd = OxmlElement("w:updateFields")
+    upd.set(qn("w:val"), "true")
+    doc.settings.element.append(upd)
+
+
+def add_cover_meta_table(doc: Document, payload) -> None:
+    """封面元数据表：两列，首列浅底加粗，无表头行。"""
+    _, body = parse_table(payload)
+    table = doc.add_table(rows=0, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = "Table Grid"
+    for row in body:
+        cells = table.add_row().cells
+        for j, val in enumerate(row[:2]):
+            cells[j].text = ""
+            par = cells[j].paragraphs[0]
+            par.paragraph_format.first_line_indent = Cm(0)
+            run = par.add_run(val)
+            run.font.size = Pt(10.5)
+            if j == 0:
+                run.bold = True
+                tcpr = cells[j]._tc.get_or_add_tcPr()
+                shd = OxmlElement("w:shd")
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:fill"), "EDF1F6")
+                tcpr.append(shd)
+    # 列宽
+    for row in table.rows:
+        row.cells[0].width = Cm(4.2)
+        row.cells[1].width = Cm(11.3)
+
+
+def add_toc(doc: Document) -> None:
+    head = doc.add_paragraph(style="TOCHead")
+    head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    head.add_run("目　录")
+    par = doc.add_paragraph()
+    par.paragraph_format.first_line_indent = Cm(0)
+    run = par.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = r'TOC \o "1-2" \h \z \u'
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    placeholder = OxmlElement("w:t")
+    placeholder.text = "（目录将在打开文档或转换时自动生成）"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    for el in (begin, instr, separate, placeholder, end):
+        run._r.append(el)
+
+
+def add_figure(doc: Document, payload: dict, base_dir: Path) -> None:
+    """插入居中图片，并以 alt 作为正式图注（10.5pt 深灰居中）。"""
+    img_path = Path(payload["path"])
+    if not img_path.is_absolute():
+        img_path = base_dir / img_path
+    pic_par = doc.add_paragraph()
+    pic_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    pic_par.paragraph_format.first_line_indent = Cm(0)
+    pic_par.paragraph_format.keep_with_next = True
+    pic_par.paragraph_format.keep_together = True
+    if img_path.exists():
+        pic_par.add_run().add_picture(str(img_path), width=Cm(15.2))
+    else:
+        r = pic_par.add_run(f"[图片缺失：{img_path}]")
+        r.font.color.rgb = RGBColor.from_string("C0392B")
+    alt = payload.get("alt")
+    if alt:
+        cap = doc.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap.paragraph_format.first_line_indent = Cm(0)
+        cap.paragraph_format.keep_together = True
+        cr = cap.add_run(alt)
+        cr.font.size = Pt(10.5)
+        cr.font.color.rgb = RGBColor.from_string("333333")
+        cr.bold = True
+
+
 def build_docx(md_path: Path, out_docx: Path) -> None:
     blocks = parse_md(md_path.read_text(encoding="utf-8"))
 
     title = md_path.stem
-    subtitle = ""
+    cover_blocks: list[tuple[str, object]] = []
     body_blocks: list[tuple[str, object]] = []
     h1_seen = False
+    in_cover = True
     for kind, payload in blocks:
         if kind == "h1" and not h1_seen:
             title = str(payload)
             h1_seen = True
             continue
-        if kind == "quote" and not subtitle:
-            subtitle = str(payload)
-            continue
-        body_blocks.append((kind, payload))
+        if in_cover:
+            if kind == "h2":
+                in_cover = False
+                body_blocks.append((kind, payload))
+            else:
+                cover_blocks.append((kind, payload))
+        else:
+            body_blocks.append((kind, payload))
 
     doc = Document()
     configure_styles(doc)
     add_footer_pagenum(doc)
+    enable_update_fields(doc)
 
-    # 封面
-    for _ in range(6):
+    # ---------------- 封面
+    for _ in range(5):
         doc.add_paragraph()
     t = doc.add_paragraph(style="Title")
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t.paragraph_format.first_line_indent = Cm(0)
     t.add_run(title)
-    if subtitle:
-        sub = doc.add_paragraph()
-        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = sub.add_run(subtitle)
-        r.font.size = Pt(11)
-        r.font.color.rgb = RGBColor.from_string("555555")
+    quote_n = 0
+    for kind, payload in cover_blocks:
+        if kind == "quote":
+            sub = doc.add_paragraph()
+            sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            sub.paragraph_format.first_line_indent = Cm(0)
+            r = sub.add_run(str(payload))
+            if quote_n == 0:
+                r.font.size = Pt(15)
+                r.bold = True
+                r.font.color.rgb = RGBColor.from_string("1F3A5F")
+            else:
+                r.font.size = Pt(10.5)
+                r.font.color.rgb = RGBColor.from_string("4A4A4A")
+            quote_n += 1
+        elif kind == "table":
+            for _ in range(3):
+                doc.add_paragraph()
+            add_cover_meta_table(doc, payload)
+        elif kind == "p":
+            par = doc.add_paragraph()
+            par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            add_inline(par, str(payload))
+    doc.add_page_break()
+
+    # ---------------- 目录
+    add_toc(doc)
     doc.add_page_break()
 
     # 有序列表独立编号（每个列表从 1 开始）
@@ -174,7 +295,7 @@ def build_docx(md_path: Path, out_docx: Path) -> None:
     first_h2 = True
     for kind, payload in body_blocks:
         if kind == "h2":
-            # 章标题（## 一、/## 二、……）另起一页
+            # 章标题另起一页（第一个 h2 紧随目录页，不再额外加页）
             if not first_h2:
                 doc.add_page_break()
             first_h2 = False
@@ -237,7 +358,7 @@ def build_docx(md_path: Path, out_docx: Path) -> None:
                     add_inline(cells[j].paragraphs[0], val, base_size=Pt(10.5))
             doc.add_paragraph()
         elif kind == "image":
-            add_image(doc, payload, md_path.parent, width_cm=15.5)
+            add_figure(doc, payload, md_path.parent)
 
     out_docx.parent.mkdir(parents=True, exist_ok=True)
     doc.save(out_docx)
