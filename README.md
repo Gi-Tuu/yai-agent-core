@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-v0.7.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-392%20passing-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-395%20passing-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 > 进程内嵌入式、自适应的 Agent 内核（Embeddable Self-Adaptive Agent Kernel）。
@@ -124,31 +124,23 @@ print(result.final_text)                           # ③ 可交付结果 + 全�
 
 ```
 src/yai_core/
-├── core.py              # AgentCore 门面（auto / run / astream）
+├── core.py              # AgentCore：auto / run / astream
 ├── types.py             # ToolSpec / ChatMessage / AgentEvent / Strategy
-├── spi/                 # 宿主可替换契约：model / channel / memory / policy / discovery / sandbox / learning / embedding
-├── discovery/           # 能力自发现（函数内省）+ catalog（关键词）+ scoring（词法）+ semantic（双通道语义）
-├── tools/               # ToolRegistry + ToolExecutor + 组合工具（composer）
-├── kernel/              # AdaptiveRouter + AgentLoop + Context
-├── learning/            # 自校准路由（可选）：特征/反馈/上下文老虎机，零第三方依赖
-├── llm/                 # OpenAI 兼容模型后端（可选依赖）
-├── memory/ policy/ channels/   # 默认实现（内存记忆 + SQLite 持久化 opt-in / 白名单权限 / CLI·收集通道）
-├── integrations/
-│   ├── mcp/             # MCP Client 桥接（可选 [mcp] 依赖，懒加载，v0.2）
-│   ├── openapi/         # OpenAPI 3 发现 → 工具（可选 [openapi] 依赖，懒加载，v0.2）
-│   └── embedding/       # 嵌入后端：本地 bge-m3 ONNX（[local-embed]）/ OpenAI 兼容云端（[llm]），懒加载
+├── spi/                 # 八个宿主可替换契约
+├── kernel/              # Router · Loop · Context
+├── tools/               # Registry · Executor · composer
+├── discovery/           # 内省 · 目录 · 词法 · 语义
+├── learning/            # 上下文老虎机（可选，零依赖）
+├── llm/                 # OpenAI 兼容后端（可选）
+├── memory/ policy/ channels/   # 默认记忆 · 权限 · 通道
+├── integrations/        # mcp · openapi · embedding（可选，懒加载）
 └── batteries/
-    └── fastapi_server/  # 在线 API + /health + X-Agent 验证端点
-examples/
-├── host_a_notes/        # 宿主 A：笔记应用（只有业务函数，零 Agent 代码）
-├── host_b_data/         # 宿主 B：销售数据应用（同一 Core 零修改适配）
-├── host_c_companion/    # 宿主 C：AI 陪伴应用（AMBRACE 回流形态预演）
-├── host_d_mcp/          # 宿主 D：接入外部 MCP Server 工具（自带 stdio 演示 Server）
-├── host_e_sales_crm/    # 宿主 E：销售 CRM——独立菜单软件零 AI 依赖可运行，同一 SalesCrm 对象零改造嵌入；含终端与网页工作台两种形态
-├── host_f_discovery/    # 宿主 F：缺口 → 发现 → 本轮可用（run.py 关键词；run_semantic.py 双通道语义，--local 用真实 bge-m3）
-└── host_g_sandbox/      # 宿主 G：教学级 ToolSandbox 子进程，现场造代码工具并在沙箱执行（极简网页）
-tests/                   # 离线 ScriptedModel 端到端测试
-docs/                    # 架构设计、代码学习导览、三个比赛的提交清单
+    └── fastapi_server/  # HTTP API · 健康检查 · 验证端点
+examples/               # a 笔记 · b 数据 · c 陪伴 · d MCP · f 发现
+├── host_e_sales_crm/    # 旗舰：独立 CRM，一个开关嵌入 Core（终端 + 网页）
+└── host_g_sandbox/      # 教学沙箱：现场造代码工具并执行
+tests/                  # 离线端到端测试（ScriptedModel）
+docs/                   # 架构 · 学习导览 · 发布说明
 ```
 
 ## 接入外部 MCP 工具（v0.2）
@@ -266,7 +258,7 @@ Windows 下双击 `examples/host_e_sales_crm/启动数字员工.cmd` 即可一�
 （琥珀色）→ 从按需目录发现并注册 `get_visit_weather`（绿色）→ 首次调用仍弹"新能力授权请求"（黄色），
 允许后才执行。**发现 ≠ 授权**，宿主始终掌握最终控制权。（截图中的客户、订单、天气均为虚构演示数据。）
 
-## 在线 API（X-Agent 部署要求）
+## 在线 HTTP API（部署与验证）
 
 ```bash
 uvicorn 启动示例见 docs/architecture.md
@@ -296,7 +288,7 @@ YAI_RATE_LIMIT_WINDOW_SECONDS=60
 - **v0.2（已完成）**：MCP Client、LLM 路由器（规则兜底）、SQLite 持久化记忆（opt-in，`YAI_DB_PATH`）、OpenAPI 发现（opt-in，`OPENAPI_SPEC_URL/PATH`）
 - **v0.3（已完成）**：历史保留策略（条数裁剪/TTL，opt-in，轮边界对齐）、限流 Battery；检查点与失败恢复、Flutter Channel（后续）
 - **v0.4（已完成）**：能力缺口感知 + ToolDiscovery 最小闭环（缺口→发现→注册→本轮可用）、host_f 离线演示
-- **v0.5（已完成，杭州赛快照）**：host_e 销售 CRM 零改造嵌入、权限三档、两层工具目录、组合工具
+- **v0.5（已完成）**：host_e 销售 CRM 零改造嵌入、权限三档、两层工具目录、组合工具
 - **v0.6（已完成）**：双通道语义工具发现（词法 + 本地 bge-m3/云端 embedding）、执行中动态发现
 - **v0.7（已完成，本版）**：自校准路由 contextual bandit（第 8 个 SPI RouteSelector，离线 +16pp）、代码工具注册/TTL/授权闸、host_g 子进程教学沙箱
 - v1.0：作为 AMBRACE 的 Agent 内核回流嵌入
