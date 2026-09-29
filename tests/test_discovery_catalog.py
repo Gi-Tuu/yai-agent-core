@@ -250,3 +250,109 @@ def test_discovered_tool_still_gated_by_permission_policy() -> None:
     called = [e for e in result.events if e.type.value == "tool_call"]
     assert all(e.data["tool"] != "get_weather" for e in called)
     assert "get_weather" in channel.asked
+
+
+# ---------- 可发现能力对路由可见（list_discoverable） ----------
+
+def calc_quote_with_tax(amount: float, rate: float = 13.0) -> dict:
+    """按税率计算含税报价。"""
+    tax = round(amount * rate / 100, 2)
+    return {
+        "amount_excl_tax": amount,
+        "tax": tax,
+        "amount_incl_tax": round(amount + tax, 2),
+    }
+
+
+def _tax_catalog() -> StaticCatalog:
+    return StaticCatalog(
+        [DiscoveredCandidate(calc_quote_with_tax, ("含税", "税率", "价税合计", "tax"))]
+    )
+
+
+def test_list_discoverable_returns_declared_name_and_summary() -> None:
+    items = _catalog_with_weather().list_discoverable()
+    assert items == [{"name": "get_weather", "summary": "查询指定城市的实时天气。"}]
+    # 只暴露声明，不含 handler 等运行时字段
+    assert set(items[0].keys()) == {"name", "summary"}
+
+
+class _PromptCapturingTaxModel:
+    """记录分类 prompt；分类判 react+含税缺口，随后调用含税工具并收尾。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.classify_prompt = ""
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        if self.calls == 1:
+            self.classify_prompt = messages[1]["content"]
+            return ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"走含税工具",'
+                '"missing_capability":"含税价计算能力 calc_quote_with_tax"}'
+            )
+        if self.calls == 2:
+            return ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="t1",
+                        name="calc_quote_with_tax",
+                        arguments={"amount": 10000, "rate": 13.0},
+                    )
+                ],
+            )
+        return ModelResponse(content="含税价合计 11300 元。")
+
+
+def test_discoverable_section_routes_cognitive_task_to_tool() -> None:
+    # 真机复现：含税是模型"自己也会算"的认知任务，原本判 direct 代做；
+    # 可发现能力对路由可见后，应改判 react、发现并调用宿主含税工具。
+    model = _PromptCapturingTaxModel()
+    core = AgentCore(model, llm_router=True, discovery=_tax_catalog())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("帮我算一个含税报价，不含税金额10000，税率13%"))
+
+    # 1) 分类 prompt 含"可按需启用"段与含税工具名（真机 LLM 据此改判）
+    assert "可按需启用" in model.classify_prompt
+    assert "calc_quote_with_tax" in model.classify_prompt
+    # 2) 含税工具被发现注册
+    discovered = next(e for e in result.events if e.type.value == "tool_discovered")
+    assert discovered.data["registered"] == ["calc_quote_with_tax"]
+    # 3) 本轮真正调用，结果走宿主工具口径
+    calls = [e.data["tool"] for e in result.events if e.type.value == "tool_call"]
+    assert "calc_quote_with_tax" in calls
+    assert "11300" in result.final_text
+
+
+class _PlainDiscoverer:
+    """只有 discover，没有可选方法 list_discoverable。"""
+
+    async def discover(self, need, *, task, available):
+        return []
+
+
+def test_discovery_without_list_discoverable_keeps_behavior() -> None:
+    model = _PromptCapturingTaxModel()
+    core = AgentCore(model, llm_router=True, discovery=_PlainDiscoverer())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("帮我算一个含税报价"))
+
+    # 分类 prompt 不含可发现段，流程照常收尾不报错
+    assert "可按需启用" not in model.classify_prompt
+    assert result.events[-1].type.value == "done"
+
+
+def test_discoverable_section_omitted_when_all_registered() -> None:
+    model = _PromptCapturingTaxModel()
+    core = AgentCore(model, llm_router=True, discovery=_tax_catalog())
+    core.register_tools([build_spec(search_notes), build_spec(calc_quote_with_tax)])
+
+    result = asyncio.run(core.run("帮我算一个含税报价"))
+
+    # 候选已注册：loop 过滤后无可激活项，分类 prompt 不含可发现段
+    assert "可按需启用" not in model.classify_prompt
+    assert result.events[-1].type.value == "done"

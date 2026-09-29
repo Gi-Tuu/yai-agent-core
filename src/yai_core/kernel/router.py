@@ -104,7 +104,13 @@ class AdaptiveRouter:
 
     # ---------- LLM 路径（失败一律回退规则） ----------
 
-    async def aclassify(self, task: str, registry: ToolRegistry) -> RouteDecision:
+    async def aclassify(
+        self,
+        task: str,
+        registry: ToolRegistry,
+        *,
+        discoverable: list[dict[str, str]] | None = None,
+    ) -> RouteDecision:
         text = task.strip()
         # 1) 硬规则（确定性下限，最高优先级）：空任务必须澄清、无工具只能直接回答，
         #    学习器与模型都不可越过。
@@ -120,7 +126,8 @@ class AdaptiveRouter:
         if self.model is not None:
             try:
                 raw = await asyncio.wait_for(
-                    self._llm_classify(text, registry), timeout=self.classify_timeout
+                    self._llm_classify(text, registry, discoverable),
+                    timeout=self.classify_timeout,
                 )
                 return self._parse(raw, registry)
             except Exception as exc:  # noqa: BLE001 - 分类是增强不是依赖，任何失败都兜底
@@ -151,11 +158,32 @@ class AdaptiveRouter:
             tier="strong" if suggestion.strategy == Strategy.PLAN else "standard",
         )
 
-    async def _llm_classify(self, task: str, registry: ToolRegistry) -> str:
+    async def _llm_classify(
+        self,
+        task: str,
+        registry: ToolRegistry,
+        discoverable: list[dict[str, str]] | None = None,
+    ) -> str:
         """一次轻量模型调用，要求只输出路由 JSON。"""
         tools_text = "\n".join(
             f"- {s.name}: {s.description}" for s in registry.all()
         )
+        # 可按需启用能力段：让 LLM 在"自己也会做"的认知任务上仍选择走宿主工具，
+        # 而不是 direct 代做（否则绕过业务工具，丢失统一口径与留痕）。只给声明、
+        # 不含 handler；注册与执行授权仍由内核与 PermissionPolicy 负责。
+        discoverable_block = ""
+        if discoverable:
+            discoverable_lines = "\n".join(
+                f"- {it['name']}: {it['summary']}" for it in discoverable
+            )
+            discoverable_block = (
+                "宿主还有以下**可按需启用（当前尚未激活）**的能力：\n"
+                f"{discoverable_lines}\n"
+                "- 当任务匹配其中某项时，strategy 必须判 react（**不要判 direct 自己做、"
+                "也不要自己计算或编造结果**），并在 missing_capability 里用一句话点明该能力"
+                "（直接包含其工具名或关键词），系统会自动启用对应工具；\n"
+                "- 不匹配上述能力时照常判断，不要因这些能力存在而改判。\n"
+            )
         prompt = (
             "你是嵌入式 Agent 的任务路由器。根据任务与宿主可用工具，只输出一个 JSON 对象，"
             "不要输出 JSON 以外的任何内容：\n"
@@ -175,6 +203,7 @@ class AdaptiveRouter:
             "missing_capability 字段：如果现有工具都不足以完成任务，用一句话描述缺失的能力"
             "（例如“天气查询能力”“含税价计算能力”）；现有工具足够则填 null。\n"
             f"宿主可用工具：\n{tools_text}\n"
+            f"{discoverable_block}"
             f"任务：{task}"
         )
         messages = [

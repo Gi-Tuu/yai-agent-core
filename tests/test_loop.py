@@ -337,7 +337,7 @@ class AlwaysClarifyRouter:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def aclassify(self, task, registry):
+    async def aclassify(self, task, registry, **_kwargs):
         self.calls += 1
         return RouteDecision(Strategy.CLARIFY, "llm", "测试桩：始终判澄清")
 

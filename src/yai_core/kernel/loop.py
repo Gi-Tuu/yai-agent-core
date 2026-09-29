@@ -97,7 +97,9 @@ class AgentLoop:
         self.meta_tools: set[str] = set(meta_tools)
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
-        decision = await self.router.aclassify(task, self.registry)
+        decision = await self.router.aclassify(
+            task, self.registry, discoverable=self._discoverable_catalog()
+        )
         strategy = decision.strategy
         # 决策来源（llm/rules）、理由与模型档位随事件流出：每次自适应决策都可审计。
         yield AgentEvent(
@@ -205,6 +207,30 @@ class AgentLoop:
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
         yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
+
+    def _discoverable_catalog(self) -> list[dict[str, str]] | None:
+        """从发现源取"可按需启用"能力的轻量目录，过滤已注册名后交给路由。
+
+        发现源未实现可选方法 ``list_discoverable``、或调用失败时返回 None，
+        退化为"只在缺口出现后被动发现"的原有行为；该增强不构成依赖。
+        只透传 name + 摘要（声明），handler 与授权都不在此暴露。
+        """
+        if self.discovery is None:
+            return None
+        getter = getattr(self.discovery, "list_discoverable", None)
+        if not callable(getter):
+            return None
+        try:
+            items = getter()
+        except Exception:  # noqa: BLE001 - 可发现目录是增强，失败静默退化
+            return None
+        registered = {s.name for s in self.registry.all()}
+        catalog = [
+            {"name": str(it.get("name")), "summary": str(it.get("summary", ""))}
+            for it in items
+            if isinstance(it, dict) and it.get("name") and it.get("name") not in registered
+        ]
+        return catalog or None
 
     async def _discover_tools(
         self, need: str, task: str

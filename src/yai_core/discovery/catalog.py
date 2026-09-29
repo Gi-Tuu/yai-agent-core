@@ -21,6 +21,9 @@ from typing import Any
 from yai_core.discovery.introspect import build_spec
 from yai_core.types import ToolSpec
 
+#: 可发现能力摘要的最大长度：路由阶段只展示一句话能力说明。
+_SUMMARY_CHARS = 80
+
 
 @dataclass
 class DiscoveredCandidate:
@@ -77,3 +80,28 @@ class StaticCatalog:
             specs.append(spec)
             seen.add(name)
         return specs
+
+    def list_discoverable(self) -> list[dict[str, str]]:
+        """暴露"可按需启用"能力的**轻量声明目录**（name + 一句话摘要）。
+
+        与 :meth:`discover` 的分工：``discover`` 在缺口出现后按关键词返回完整
+        ``ToolSpec``（含 handler、可注册）；本方法只返回声明，**不含 handler、
+        不注册、不授权**，供路由阶段让 LLM 知道"宿主还能激活哪些能力"，从而在
+        任务匹配时选择走工具（react），而不是凭自身认知能力直接代做（例如模型
+        明明会算税却绕过宿主的含税报价工具）。
+
+        安全边界与 ``discover`` 完全一致：目录里没有的能力不可见；"可见"只代表
+        可被发现，真正注册与执行仍分别经过内核去重与 PermissionPolicy。
+        """
+        items: list[dict[str, str]] = []
+        for cand in self._candidates:
+            name = cand.spec_name()
+            text = (cand.description or "").strip()
+            if not text:
+                doc = (cand.fn.__doc__ or "").strip()
+                text = doc.splitlines()[0].strip() if doc else name
+            text = text.splitlines()[0].strip() or name
+            if len(text) > _SUMMARY_CHARS:
+                text = text[: _SUMMARY_CHARS - 1] + "…"
+            items.append({"name": name, "summary": text})
+        return items

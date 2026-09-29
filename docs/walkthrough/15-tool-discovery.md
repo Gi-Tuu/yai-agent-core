@@ -226,6 +226,62 @@ yield AgentEvent(
 
 注册只是"上架"，执行还要过 `PermissionPolicy`。测试 `test_discovered_tool_still_gated_by_permission_policy` 验证了：在 `auto_approve_tools=False` 下，新发现的 `get_weather` 不在白名单，执行时照样发 `permission_asked`，用户拒绝就不会真正调用。这就是"能被发现 ≠ 被授权执行"。
 
+### 3.5 让可发现能力在"路由阶段"就可见（`list_discoverable`）
+
+真机端到端验证时暴露了一个上面闭环覆盖不到的盲区。给数字员工派任务"帮我算一个含税报价，不含税金额 10000，税率 13%"，模型第一次的路由是：
+
+```
+route> direct（"简单数学计算，无需调用工具"）
+DONE> 11300          # 模型自己心算，没有 MISSING、没有 DISCOVERED
+```
+
+数值虽然对，但它**绕过了宿主的 `calc_quote_with_tax` 工具**——税率口径、结构化结果、业务留痕全丢了。根因有两层：
+
+1. 按需候选默认**不注册**，所以在路由分类时，模型看到的"宿主可用工具"里根本没有含税工具；
+2. 算术恰好是 LLM 的**认知强项**，它不觉得自己"缺能力"，于是直接代做，也就不会触发"报缺口"。
+
+也就是说，原闭环是**被动**的：只有模型肯喊"我缺什么"，发现才启动；遇到"模型自己也会做"的任务，它干脆不喊。
+
+解法是让发现源额外暴露一份**轻量声明目录**（只说"宿主还能激活什么"，不给 handler）：
+
+```python
+# discovery/catalog.py
+def list_discoverable(self) -> list[dict[str, str]]:
+    return [
+        {"name": cand.spec_name(), "summary": "一句话能力说明"}
+        for cand in self._candidates
+    ]
+```
+
+内核在分类前把它取出来、过滤掉已注册的名字，交给路由器拼进分类提示词：
+
+```python
+# kernel/loop.py
+decision = await self.router.aclassify(
+    task, self.registry, discoverable=self._discoverable_catalog()
+)
+```
+
+分类提示词因此多出一段引导：
+
+> 宿主还有以下**可按需启用（当前尚未激活）**的能力：`- calc_quote_with_tax: 按税率计算含税报价 …`
+> 任务匹配其中某项时，strategy **必须判 react（不要 direct 自己做、也不要自己算）**，并在 missing_capability 点明该能力。
+
+真机复验结果，含税任务变成了期望的链路：
+
+```
+route> react（"需调用按税率计算含税报价工具"）
+MISSING> calc_quote_with_tax（按税率计算含税报价）
+DISCOVERED> ['calc_quote_with_tax']
+result> {"amount_excl_tax": 10000.0, "tax": 1300.0, "amount_incl_tax": 11300.0}
+```
+
+三点设计约束：
+
+- **只给声明、不给 handler**：`list_discoverable` 不暴露函数、不注册、不授权，"可见"仍然不等于"可执行"，注册去重与执行授权一道不少；
+- **可选、可失败**：它不是 `ToolDiscovery` 的必需方法，内核用 `getattr(..., "list_discoverable")` 探测，发现源没实现、或调用抛错，就退化为 3.1–3.4 的被动闭环，行为完全不变；
+- **不误伤简单任务**：像"1+1 等于几"在可发现目录里没有对应项，模型仍判 direct，不会被硬拉去发现工具。
+
 ## 4. 门面透传（`core.py`）
 
 `AgentCore.__init__` 增加 `discovery: ToolDiscovery | None = None`（L40），原样传给 `AgentLoop`（L74）。于是宿主的接线方式是：
