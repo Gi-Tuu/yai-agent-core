@@ -19,6 +19,24 @@ _DATA_FILE = Path(__file__).parent / "crm_data.json"
 CUSTOMER_LEVELS = ("重点", "普通")
 CUSTOMER_STATUS = ("潜在", "合作中", "流失")
 ORDER_CATEGORIES = ("硬件", "软件", "服务")
+ORDER_REGIONS = ("华东", "华南", "华北")
+# 区域筛选时容忍的常见后缀：真实用户与 LLM 常把"华东"说成"华东区/华东地区"。
+_REGION_SUFFIXES = ("地区", "区域", "省", "市", "区")
+
+
+def _normalize_region(value: str) -> str:
+    """把区域写法归一到 ORDER_REGIONS；无法识别时原样返回（不强行吞值）。"""
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text in ORDER_REGIONS:
+        return text
+    for suffix in _REGION_SUFFIXES:
+        if text.endswith(suffix) and text[: -len(suffix)] in ORDER_REGIONS:
+            return text[: -len(suffix)]
+    return text
+
+
 # 商机管道阶段（顺序即看板列、也是推进顺序）；赢单/输单为终态。
 OPPORTUNITY_STAGES = ("初步接触", "需求确认", "方案报价", "谈判", "赢单", "输单")
 OPPORTUNITY_OPEN_STAGES = ("初步接触", "需求确认", "方案报价", "谈判")
@@ -216,12 +234,14 @@ class SalesCrm:
         }
 
     def list_orders(self, category: str = "", region: str = "") -> list[dict]:
-        """列出全部订单，可按品类（硬件/软件/服务）和区域筛选，参数为空表示不筛。"""
+        """列出全部订单，可按品类（硬件/软件/服务）、区域（华东/华南/华北，
+        "华东区/华东地区"等写法会自动归一）筛选，参数为空表示不筛。"""
         rows = self._data["orders"]
         if category:
             rows = [r for r in rows if r["category"] == category]
-        if region:
-            rows = [r for r in rows if r["region"] == region]
+        norm_region = _normalize_region(region)
+        if norm_region:
+            rows = [r for r in rows if r["region"] == norm_region]
         return rows
 
     def sum_amount(self, category: str = "", region: str = "") -> int:

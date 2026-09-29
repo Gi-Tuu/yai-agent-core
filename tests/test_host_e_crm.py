@@ -112,6 +112,15 @@ def test_orders_filter_and_sum():
     assert len(crm.list_orders(category="软件")) == 2
 
 
+def test_orders_region_alias_normalized():
+    crm = _crm()
+    # 用户/LLM 常把"华东"说成"华东区/华东地区"，应归一后正确筛选
+    assert {o["order"] for o in crm.list_orders(region="华东区")} == {"S001", "S004", "S006"}
+    assert crm.sum_amount(region="华东地区") == 21500
+    # 无法识别的区域原样匹配，返回空（不强行吞值）
+    assert crm.list_orders(region="华西") == []
+
+
 def test_search_customers_keyword_level_status():
     crm = _crm()
     # 关键词匹配公司名
