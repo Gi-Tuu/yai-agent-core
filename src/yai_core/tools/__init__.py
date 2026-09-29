@@ -3,6 +3,13 @@
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import build_composer_tool, build_composite_spec
 from yai_core.tools.executor import ToolExecutor
+from yai_core.tools.manifest import (
+    MANIFEST_VERSION,
+    read_manifest,
+    specs_from_manifest,
+    specs_to_manifest,
+    write_manifest,
+)
 from yai_core.tools.meta import (
     CREATE_CODE_TOOL,
     REQUEST_CAPABILITY,
@@ -24,4 +31,9 @@ __all__ = [
     "REQUEST_CAPABILITY",
     "sanitize_schema",
     "EMPTY_OBJECT_SCHEMA",
+    "MANIFEST_VERSION",
+    "specs_to_manifest",
+    "specs_from_manifest",
+    "write_manifest",
+    "read_manifest",
 ]

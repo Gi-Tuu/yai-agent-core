@@ -80,6 +80,81 @@ class ToolSpec:
             },
         }
 
+    #: 合法的工具来源（manifest 反序列化时校验，防止脏数据进入注册表）。
+    _SOURCES = ("native", "openapi", "mcp", "composite", "code")
+
+    def to_manifest_dict(self) -> dict[str, Any]:
+        """导出语言中立、可 JSON 序列化的能力清单（**不含运行时 handler**）。
+
+        - composite：随清单携带 ``steps``（每步 {tool, args}），工作流即数据；
+        - code：随清单携带 ``code`` 字符串（执行仍需宿主沙箱）；
+        - native/openapi/mcp：handler 是运行时对象、不可移植，只导出声明。
+        """
+        manifest: dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "source": self.source,
+        }
+        if self.source == "composite" and self.steps:
+            manifest["steps"] = [
+                {"tool": step.tool, "args": step.args} for step in self.steps
+            ]
+        if self.source == "code":
+            manifest["code"] = self.code
+        return manifest
+
+    @classmethod
+    def from_manifest_dict(cls, data: dict[str, Any]) -> ToolSpec:
+        """从语言中立清单重建工具规格；``handler`` 始终为 ``None``。
+
+        composite / code 的可执行信息（steps / code）随清单携带，注册后即可
+        （在宿主沙箱内）执行；native/openapi/mcp 仅为能力声明，需另行绑定
+        执行后端（跨语言接入请直接走 MCP / OpenAPI 集成，它们自带 handler）。
+        """
+        if not isinstance(data, dict):
+            raise TypeError(f"manifest 工具必须是 object，得到 {type(data)!r}")
+        name = str(data.get("name", "")).strip()
+        if not name:
+            raise ValueError("manifest 工具缺少非空 name")
+        source = data.get("source", "native")
+        if source not in cls._SOURCES:
+            raise ValueError(
+                f"manifest 工具 {name!r} 的 source 非法: {source!r}，"
+                f"合法值 {cls._SOURCES}"
+            )
+
+        steps: list[CompositeStep] | None = None
+        if source == "composite":
+            raw_steps = data.get("steps")
+            if not isinstance(raw_steps, list) or not raw_steps:
+                raise ValueError(f"组合工具 {name!r} 的 manifest 缺少非空 steps")
+            steps = []
+            for index, raw in enumerate(raw_steps):
+                if not isinstance(raw, dict):
+                    raise ValueError(
+                        f"组合工具 {name!r} 第 {index + 1} 步必须是 object"
+                    )
+                tool = str(raw.get("tool", "")).strip()
+                if not tool:
+                    raise ValueError(
+                        f"组合工具 {name!r} 第 {index + 1} 步缺少 tool"
+                    )
+                steps.append(
+                    CompositeStep(tool=tool, args=dict(raw.get("args", {})))
+                )
+
+        code = data.get("code") if source == "code" else None
+        return cls(
+            name=name,
+            description=str(data.get("description", "")),
+            input_schema=dict(data.get("input_schema") or {}),
+            handler=None,
+            source=source,  # type: ignore[arg-type]
+            steps=steps,
+            code=code,
+        )
+
 
 @dataclass
 class ChatMessage:

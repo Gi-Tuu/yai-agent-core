@@ -65,6 +65,7 @@
 | `tools/executor.py` | 真正调用工具的地方（组合工具在此分流到逐步执行） | 总机 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
+| `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
 | `tools/meta.py` | meta-tool：`request_capability`（发现）、`create_code_tool`（造代码工具） | 向内核自己提需求的按钮 |
 | `spi/sandbox.py` | 第六个插槽：代码工具沙箱（只定义契约，执行由宿主实现） | 高危车间的安全规程 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
@@ -113,6 +114,7 @@
 - 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
 - 19 · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
 - 20 · `discovery/scoring.py` + `spi/embedding.py` + `discovery/semantic.py`：双通道语义发现（词法打分 + 可选 embedding，本地 bge-m3 / 云端双后端，margin 防误召回）
+- 21 · `types.py`（ToolSpec 序列化）+ `tools/manifest.py`：能力清单交换（语言中立 manifest，composite / code 跨实例移植，不造调用通道）
 
 ## 5. 自检（读完本篇应能回答）
 
