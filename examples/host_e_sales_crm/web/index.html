@@ -338,6 +338,16 @@
       </div>
       <div class="panel">
         <h3>订单与销售额</h3>
+        <div class="form-row" style="margin-bottom:8px;gap:8px">
+          <select id="orFilterCategory" style="min-width:120px">
+            <option value="">全部品类</option>
+            <option value="硬件">硬件</option>
+            <option value="软件">软件</option>
+            <option value="服务">服务</option>
+          </select>
+          <select id="orFilterRegion" style="min-width:120px"><option value="">全部区域</option></select>
+          <input id="orFilterKw" placeholder="搜索订单号 / 客户 / 产品" style="flex:1;min-width:200px">
+        </div>
         <div id="orderSummary" class="muted" style="margin-bottom:8px"></div>
         <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>产品</th><th>金额</th><th>区域</th><th></th></tr></thead>
         <tbody id="tbOrders"></tbody></table>
@@ -488,6 +498,7 @@
   var busy = false, currentRunId = null, snap = null;
   var coreEnabled = true, permissionMode = 'partial';
   var customerFilter = { keyword: '', level: '', status: '' };
+  var orderFilter = { category: '', region: '', kw: '' };
   var editingCustomer = null;
   var PERM_HINT = {
     manual: '全部审批：任何工具（含读操作）调用前都要你确认，最稳妥。',
@@ -622,19 +633,32 @@
         '<button class="small danger" data-delete-customer="' + esc(c.name) + '">删除</button></td></tr>';
     }).join('') : '<tr><td colspan="8" class="muted">没有符合条件的客户</td></tr>';
 
-    var cats = (s.enums && s.enums.categories) || ['硬件', '软件', '服务'];
-    document.getElementById('orderSummary').innerHTML = '合计 ' + money(s.total_amount) + ' · ' +
-      cats.map(function (c) {
-        var v = s.orders.filter(function (o) { return o.category === c; })
-                       .reduce(function (a, o) { return a + o.amount; }, 0);
-        return c + ' ' + money(v);
-      }).join(' ｜ ');
-    document.getElementById('tbOrders').innerHTML = s.orders.map(function (o) {
+    /* 订单筛选：品类 + 区域 + 关键词（纯前端，不经 Agent）；区域下拉按数据动态生成 */
+    var regionSel = document.getElementById('orFilterRegion');
+    var regions = s.orders.map(function (o) { return o.region; })
+      .filter(function (r, i, a) { return r && a.indexOf(r) === i; });
+    regionSel.innerHTML = '<option value="">全部区域</option>' +
+      regions.map(function (r) {
+        return '<option value="' + esc(r) + '"' + (orderFilter.region === r ? ' selected' : '') + '>' +
+          esc(r) + '</option>';
+      }).join('');
+    var okw = orderFilter.kw.trim().toLowerCase();
+    var shownOrders = s.orders.filter(function (o) {
+      if (orderFilter.category && o.category !== orderFilter.category) return false;
+      if (orderFilter.region && o.region !== orderFilter.region) return false;
+      if (okw && (o.order + ' ' + o.customer + ' ' + (o.product || '')).toLowerCase().indexOf(okw) < 0) return false;
+      return true;
+    });
+    var shownTotal = shownOrders.reduce(function (a, o) { return a + o.amount; }, 0);
+    document.getElementById('orderSummary').innerHTML =
+      '显示 ' + shownOrders.length + ' / 共 ' + s.orders.length + ' 笔 · 合计 ' + money(shownTotal) +
+      (shownOrders.length === s.orders.length ? '（总 ' + money(s.total_amount) + '）' : '');
+    document.getElementById('tbOrders').innerHTML = shownOrders.length ? shownOrders.map(function (o) {
       return '<tr><td>' + esc(o.order) + '</td><td>' + esc(o.customer) + '</td><td>' + esc(o.category) +
         '</td><td>' + (o.product ? esc(o.product) : '<span class="muted">—</span>') + '</td><td>' +
         money(o.amount) + '</td><td>' + esc(o.region) + '</td><td>' +
         '<button class="small danger" data-delete-order="' + esc(o.order) + '">删除</button></td></tr>';
-    }).join('');
+    }).join('') : '<tr><td colspan="7" class="muted">没有符合条件的订单</td></tr>';
 
     /* 订单 / 商机表单的客户下拉：用公司名（后端同时接受姓名与公司名） */
     var companyOpts = s.customers.map(function (c) {
@@ -812,16 +836,19 @@
   });
 
   /* ---------- 客户搜索 / 筛选（纯前端，重渲染不重新请求） ---------- */
-  function bindFilter(id, key, evt) {
+  function bindFilter(id, store, key, evt) {
     var node = document.getElementById(id);
     node.addEventListener(evt, function () {
-      customerFilter[key] = node.value;
+      store[key] = node.value;
       if (snap) renderSnapshot(snap);
     });
   }
-  bindFilter('cuSearch', 'keyword', 'input');
-  bindFilter('cuFilterLevel', 'level', 'change');
-  bindFilter('cuFilterStatus', 'status', 'change');
+  bindFilter('cuSearch', customerFilter, 'keyword', 'input');
+  bindFilter('cuFilterLevel', customerFilter, 'level', 'change');
+  bindFilter('cuFilterStatus', customerFilter, 'status', 'change');
+  bindFilter('orFilterCategory', orderFilter, 'category', 'change');
+  bindFilter('orFilterRegion', orderFilter, 'region', 'change');
+  bindFilter('orFilterKw', orderFilter, 'kw', 'input');
 
   /* ---------- 客户编辑 ---------- */
   function openCustomerDetail(name) {
