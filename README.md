@@ -4,11 +4,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-v0.7.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-395%20passing-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-409%20passing-22c55e)](https://github.com/Gi-Tuu/yai-agent-core/tree/main/tests)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
-> 进程内嵌入式、自适应的 Agent 内核（Embeddable Self-Adaptive Agent Kernel）。
-> 宿主软件只声明"我有什么能力"，Core 自动发现能力、自适应选择策略并完成任务——**宿主不写一行 Agent Loop / Planner / 工具选择代码**。
+<p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
+
+> 进程内嵌入式、自适应的 Agent 内核——**Agent 世界的 SQLite**（Embeddable Self-Adaptive Agent Kernel）。
+> 不必部署一个智能体平台，只需把内核 `import` 进你已有的软件：宿主只声明“我有什么能力”，Core 自动发现能力、自适应选择策略并完成任务——**不写一行 Agent Loop / Planner / 工具选择代码**。
 
 ![普通软件零改造嵌入：左侧是不依赖 Core 的销售 CRM，右侧 AI 抽屉在能力不足时自动发现天气工具并请求授权](docs/assets/hoste-discovery.png)
 

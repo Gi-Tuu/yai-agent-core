@@ -26,6 +26,7 @@ AGENTS.md
 .ruff_cache/
 .coverage
 htmlcov/
+.preview/
 
 # Editor / OS
 .idea/
