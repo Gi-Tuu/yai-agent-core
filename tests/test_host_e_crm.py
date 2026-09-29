@@ -85,6 +85,20 @@ def test_get_customer_found_and_missing():
     found = crm.get_customer("王敏")
     assert found["company"] == "华东智造集团"
     assert len(found["followups"]) == 1
+    # 聚合订单：S001 + S006，共 2 笔、合计 17000
+    assert {o["order"] for o in found["orders"]} == {"S001", "S006"}
+    assert found["order_total"] == 17000
+    # 聚合商机：产线改造一期（方案报价，在途）合计 120000
+    assert len(found["opportunities"]) == 1
+    assert found["opportunities"][0]["title"] == "产线改造一期"
+    assert found["opportunity_total"] == 120000
+    assert found["open_opportunity_total"] == 120000
+    # 陈静有订单 S004、无商机：商机聚合为空、汇总为 0
+    chen = crm.get_customer("陈静")
+    assert {o["order"] for o in chen["orders"]} == {"S004"}
+    assert chen["opportunities"] == []
+    assert chen["opportunity_total"] == 0
+    assert chen["open_opportunity_total"] == 0
     missing = crm.get_customer("不存在的人")
     assert missing["ok"] is False
 

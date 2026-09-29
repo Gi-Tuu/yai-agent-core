@@ -196,12 +196,24 @@ class SalesCrm:
         return rows
 
     def get_customer(self, name: str) -> dict:
-        """按姓名查询单个客户档案，包含其全部跟进记录。"""
+        """按姓名查询单个客户档案，聚合其跟进、订单、商机与金额汇总。"""
         customer = self._find_customer(name)
         if customer is None:
             return {"ok": False, "error": f"客户 {name!r} 不存在"}
-        records = [f for f in self._data["followups"] if f["customer"] == customer["name"]]
-        return {**customer, "followups": records}
+        cname, company = customer["name"], customer["company"]
+        records = [f for f in self._data["followups"] if f["customer"] == cname]
+        orders = [r for r in self._data["orders"] if r["customer"] == company]
+        opportunities = [o for o in self._data["opportunities"] if o["customer"] == company]
+        open_opps = [o for o in opportunities if o["stage"] in OPPORTUNITY_OPEN_STAGES]
+        return {
+            **customer,
+            "followups": records,
+            "orders": orders,
+            "opportunities": opportunities,
+            "order_total": sum(r["amount"] for r in orders),
+            "open_opportunity_total": sum(o["amount"] for o in open_opps),
+            "opportunity_total": sum(o["amount"] for o in opportunities),
+        }
 
     def list_orders(self, category: str = "", region: str = "") -> list[dict]:
         """列出全部订单，可按品类（硬件/软件/服务）和区域筛选，参数为空表示不筛。"""

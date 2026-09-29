@@ -265,6 +265,12 @@ def make_handler(workbench: Workbench):
             if path == "/api/snapshot":
                 self._send_json(200, workbench.snapshot())
                 return
+            if path == "/api/crm/customer":
+                query = parse_qs(parsed.query)
+                name = (query.get("name") or [""])[0]
+                result = workbench.crm.get_customer(name)
+                self._send_json(200 if result.get("ok", True) else 404, result)
+                return
             if path == "/api/stream":
                 query = parse_qs(parsed.query)
                 run_id = (query.get("run_id") or [""])[0]

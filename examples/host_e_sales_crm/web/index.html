@@ -66,6 +66,26 @@
   input:focus, select:focus, textarea:focus { outline: 2px solid rgba(15,118,110,.35); border-color: var(--accent); }
   .muted { color: var(--text-2); font-size: 12.5px; }
   .brief { white-space: pre-wrap; font-size: 13.5px; line-height: 1.9; }
+  /* ---------- 客户详情弹层 ---------- */
+  .modal-mask { position: fixed; inset: 0; background: rgba(30,30,28,.42);
+    display: none; align-items: flex-start; justify-content: center; z-index: 60;
+    padding: 46px 16px; overflow-y: auto; }
+  .modal-mask.open { display: flex; }
+  .modal { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    width: 100%; max-width: 720px; box-shadow: 0 18px 48px rgba(0,0,0,.22); }
+  .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); }
+  .modal-head h3 { margin: 0; font-size: 15px; flex: 1; }
+  .modal-body { padding: 16px 18px 20px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 5px 18px;
+    margin-bottom: 14px; font-size: 13px; }
+  .detail-grid .k { color: var(--text-2); }
+  .detail-summary { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .detail-summary .chip { background: var(--accent-tint); border: 1px solid rgba(15,118,110,.18);
+    border-radius: 10px; padding: 8px 12px; font-size: 12.5px; }
+  .detail-summary .chip b { font-size: 15px; }
+  .detail-section h4 { margin: 16px 0 6px; font-size: 13px; }
+  .detail-empty { color: var(--text-2); font-size: 12.5px; padding: 4px 0; }
   .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
     background: #1A1B1C; color: #fff; font-size: 13px; padding: 9px 16px; border-radius: 10px;
     opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 60; max-width: 80vw; }
@@ -450,6 +470,16 @@
 
 <div class="toast" id="toast"></div>
 
+<div class="modal-mask" id="customerModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="cmTitle">客户详情</h3>
+      <button class="small" id="cmClose">关闭</button>
+    </div>
+    <div class="modal-body" id="cmBody"></div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -587,6 +617,7 @@
         (c.phone ? esc(c.phone) : '<span class="muted">—</span>') + '</td><td>' +
         '<span class="tag ' + (c.level === '重点' ? 'key' : 'normal') + '">' + esc(c.level) + '</span>' +
         '</td><td>' + esc(c.owner) + '</td><td>' + followCell + '</td><td>' + statusTag + '</td><td>' +
+        '<button class="small" data-detail-customer="' + esc(c.name) + '">详情</button> ' +
         '<button class="small" data-edit-customer="' + esc(c.name) + '">编辑</button> ' +
         '<button class="small danger" data-delete-customer="' + esc(c.name) + '">删除</button></td></tr>';
     }).join('') : '<tr><td colspan="8" class="muted">没有符合条件的客户</td></tr>';
@@ -742,6 +773,8 @@
       });
       return;
     }
+    var detailName = t.getAttribute('data-detail-customer');
+    if (detailName) { openCustomerDetail(detailName); return; }
     var editName = t.getAttribute('data-edit-customer');
     if (editName) { openEditCustomer(editName); return; }
 
@@ -791,6 +824,54 @@
   bindFilter('cuFilterStatus', 'status', 'change');
 
   /* ---------- 客户编辑 ---------- */
+  function openCustomerDetail(name) {
+    var mask = document.getElementById('customerModal');
+    var body = document.getElementById('cmBody');
+    document.getElementById('cmTitle').textContent = '客户详情';
+    body.innerHTML = '<div class="detail-empty">加载中…</div>';
+    mask.classList.add('open');
+    fetch('/api/crm/customer?name=' + encodeURIComponent(name))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok === false) { body.innerHTML = '<div class="detail-empty">' + esc(d.error || '未找到') + '</div>'; return; }
+        document.getElementById('cmTitle').textContent = d.name + ' · ' + d.company;
+        body.innerHTML = renderCustomerDetail(d);
+      })
+      .catch(function (e) { body.innerHTML = '<div class="detail-empty">加载失败：' + esc(String(e)) + '</div>'; });
+  }
+
+  function renderCustomerDetail(d) {
+    var h = '<div class="detail-summary">' +
+      '<span class="chip">订单 <b>' + d.orders.length + '</b> 笔 · ' + money(d.order_total) + '</span>' +
+      '<span class="chip">商机 <b>' + d.opportunities.length + '</b> 个 · ' + money(d.open_opportunity_total) + '</span>' +
+      '<span class="chip">跟进 <b>' + d.followups.length + '</b> 条</span></div>';
+    h += '<div class="detail-grid">' +
+      '<div><span class="k">姓名：</span>' + esc(d.name) + '</div>' +
+      '<div><span class="k">公司：</span>' + esc(d.company) + '</div>' +
+      '<div><span class="k">等级：</span>' + esc(d.level) + '</div>' +
+      '<div><span class="k">状态：</span>' + esc(d.status) + '</div>' +
+      '<div><span class="k">电话：</span>' + esc(d.phone || '—') + '</div>' +
+      '<div><span class="k">负责人：</span>' + esc(d.owner) + '</div>' +
+      '<div><span class="k">最近跟进：</span>' + esc(d.last_followup) + '</div></div>';
+    h += detailList('跟进记录', d.followups, function (f) {
+      return esc(f.created_at) + ' · ' + esc(f.content);
+    });
+    h += detailList('订单', d.orders, function (o) {
+      return esc(o.order) + ' · ' + esc(o.category) + ' · ' + money(o.amount) + ' · ' + esc(o.region);
+    });
+    h += detailList('商机', d.opportunities, function (o) {
+      return esc(o.title) + ' · ' + esc(o.stage) + ' · ' + money(o.amount);
+    });
+    return h;
+  }
+
+  function detailList(heading, rows, fn) {
+    var h = '<div class="detail-section"><h4>' + heading + '（' + rows.length + '）</h4>';
+    if (!rows.length) { return h + '<div class="detail-empty">暂无</div></div>'; }
+    rows.forEach(function (r) { h += '<div>' + fn(r) + '</div>'; });
+    return h + '</div>';
+  }
+
   function openEditCustomer(name) {
     if (!snap) return;
     var c = snap.customers.filter(function (x) { return x.name === name; })[0];
@@ -1020,6 +1101,15 @@
       body.innerHTML = html;
     }).catch(function () { if (sum) sum.textContent = '状态不可用'; });
   }
+  var customerModal = document.getElementById('customerModal');
+  function closeCustomerModal() { customerModal.classList.remove('open'); }
+  document.getElementById('cmClose').addEventListener('click', closeCustomerModal);
+  customerModal.addEventListener('click', function (e) {
+    if (e.target === customerModal) closeCustomerModal();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeCustomerModal();
+  });
   document.getElementById('btnResetLearning').addEventListener('click', function () {
     if (!window.confirm('清空路由学习状态、回到规则先验？')) return;
     post('/api/learning/reset', {}).then(function (r) {

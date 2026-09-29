@@ -377,6 +377,28 @@ def test_snapshot_returns_native_crm_data():
         httpd.server_close()
 
 
+def test_customer_detail_endpoint_aggregates_and_404():
+    from urllib.parse import quote
+
+    crm = _crm()
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}), crm)
+    try:
+        status, wang = _get_json(base, "/api/crm/customer?name=" + quote("王敏"))
+        assert status == 200
+        assert {o["order"] for o in wang["orders"]} == {"S001", "S006"}
+        assert wang["order_total"] == 17000
+        assert wang["open_opportunity_total"] == 120000
+        try:
+            _get_json(base, "/api/crm/customer?name=" + quote("无名氏"))
+            raise AssertionError("不存在的客户应返回 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+            assert json.loads(exc.read().decode("utf-8"))["ok"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_native_actions_work_without_agent_and_reflect_in_snapshot():
     crm = _crm()
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}), crm)
