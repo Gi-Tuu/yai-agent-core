@@ -444,3 +444,65 @@ class SalesCrm:
                 self._save()
                 return {"ok": True, "todo": todo}
         return {"ok": False, "error": f"没有找到标题包含 {title!r} 的未完成待办"}
+
+    # ---------- 删除（敏感操作：嵌入 Core 后同样触发权限确认） ----------
+
+    def delete_todo(self, title: str) -> dict:
+        """按标题删除一条待办（完成与否均可），模糊匹配。"""
+        for index, todo in enumerate(self._data["todos"]):
+            if title in todo["title"]:
+                removed = self._data["todos"].pop(index)
+                self._save()
+                return {"ok": True, "removed": removed}
+        return {"ok": False, "error": f"没有找到标题包含 {title!r} 的待办"}
+
+    def delete_order(self, order_no: str) -> dict:
+        """按订单号删除一笔订单。"""
+        order_no = order_no.strip().upper()
+        for index, row in enumerate(self._data["orders"]):
+            if row["order"] == order_no:
+                removed = self._data["orders"].pop(index)
+                self._save()
+                return {"ok": True, "removed": removed}
+        return {"ok": False, "error": f"订单 {order_no!r} 不存在"}
+
+    def delete_opportunity(self, title: str) -> dict:
+        """按标题删除一个商机，模糊匹配。"""
+        title = title.strip()
+        for index, opp in enumerate(self._data["opportunities"]):
+            if title in opp["title"]:
+                removed = self._data["opportunities"].pop(index)
+                self._save()
+                return {"ok": True, "removed": removed}
+        return {"ok": False, "error": f"没有找到标题包含 {title!r} 的商机"}
+
+    def delete_customer(self, name: str) -> dict:
+        """删除客户并级联清理其跟进、订单、商机（订单/商机按公司名关联）。"""
+        customer = self._find_customer(name)
+        if customer is None:
+            return {"ok": False, "error": f"客户 {name!r} 不存在"}
+        cname, company = customer["name"], customer["company"]
+
+        self._data["customers"] = [
+            c for c in self._data["customers"] if c["name"] != cname
+        ]
+        followups_before = len(self._data["followups"])
+        self._data["followups"] = [
+            f for f in self._data["followups"] if f["customer"] != cname
+        ]
+        orders_before = len(self._data["orders"])
+        self._data["orders"] = [
+            r for r in self._data["orders"] if r["customer"] != company
+        ]
+        opps_before = len(self._data["opportunities"])
+        self._data["opportunities"] = [
+            o for o in self._data["opportunities"] if o["customer"] != company
+        ]
+        self._save()
+        return {
+            "ok": True,
+            "removed_customer": customer,
+            "deleted_followups": followups_before - len(self._data["followups"]),
+            "deleted_orders": orders_before - len(self._data["orders"]),
+            "deleted_opportunities": opps_before - len(self._data["opportunities"]),
+        }

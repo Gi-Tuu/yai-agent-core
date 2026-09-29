@@ -186,19 +186,20 @@ def _run_and_collect(base, task, on_permission=None, timeout=25):
     return box["events"]
 
 
-def test_state_lists_eighteen_tools_grouped_by_access():
+def test_state_lists_twentytwo_tools_grouped_by_access():
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
     try:
         status, state = _get_json(base, "/api/state")
         assert status == 200
         tools = state["tools"]
-        assert len(tools) == 18
+        assert len(tools) == 22
         reads = [t for t in tools if t["access"] == "read"]
         writes = [t for t in tools if t["access"] == "write"]
-        assert len(reads) == 10 and len(writes) == 8
+        assert len(reads) == 10 and len(writes) == 12
         assert {t["name"] for t in writes} == {
             "add_customer", "update_customer", "add_followup", "create_order",
             "create_opportunity", "update_opportunity_stage", "create_todo", "complete_todo",
+            "delete_todo", "delete_order", "delete_opportunity", "delete_customer",
         }
         assert {t["name"] for t in reads} == {
             "list_customers", "search_customers", "get_customer", "list_orders",
@@ -572,8 +573,8 @@ def test_state_exposes_on_demand_catalog_separately_from_tools():
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
     try:
         _, state = _get_json(base, "/api/state")
-        # 默认工具 18 个（候选函数不挂 SalesCrm，不被内省注册）
-        assert len(state["tools"]) == 18
+        # 默认工具 22 个（候选函数不挂 SalesCrm，不被内省注册）
+        assert len(state["tools"]) == 22
         catalog = state["catalog"]
         assert {c["name"] for c in catalog} == {
             "get_visit_weather", "calc_quote_with_tax"
@@ -631,9 +632,9 @@ def test_discovery_loop_over_sse_gap_discover_authorize_execute():
 
         gap = next(e for e in events if e["type"] == "capability_missing")
         assert "天气" in gap["data"]["missing"]
-        # 18 个 CRM 业务工具 + compose_tool（composition=True）+ request_capability
+        # 22 个 CRM 业务工具 + compose_tool（composition=True）+ request_capability
         # （配置了发现源，内核据此注册"执行中请求发现"的 meta-tool）
-        assert len(gap["data"]["available_tools"]) == 20
+        assert len(gap["data"]["available_tools"]) == 24
         assert "compose_tool" in gap["data"]["available_tools"]
         assert "request_capability" in gap["data"]["available_tools"]
 

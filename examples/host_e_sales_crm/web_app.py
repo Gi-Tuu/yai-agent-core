@@ -158,6 +158,14 @@ class Workbench:
             return 200, crm.update_opportunity_stage(
                 str(payload.get("title", "")), str(payload.get("stage", ""))
             )
+        if op == "todo_delete":
+            return 200, crm.delete_todo(str(payload.get("title", "")))
+        if op == "order_delete":
+            return 200, crm.delete_order(str(payload.get("order", "")))
+        if op == "opp_delete":
+            return 200, crm.delete_opportunity(str(payload.get("title", "")))
+        if op == "customer_delete":
+            return 200, crm.delete_customer(str(payload.get("name", "")))
         return 404, {"error": "unknown_action", "detail": op}
 
     def reset(self) -> bool:
@@ -331,6 +339,10 @@ def make_handler(workbench: Workbench):
                 "/api/crm/order_create",
                 "/api/crm/opp_create",
                 "/api/crm/opp_stage",
+                "/api/crm/todo_delete",
+                "/api/crm/order_delete",
+                "/api/crm/opp_delete",
+                "/api/crm/customer_delete",
             ):
                 op = path.rsplit("/", 1)[-1]
                 status, result = workbench.native_action(op, payload)

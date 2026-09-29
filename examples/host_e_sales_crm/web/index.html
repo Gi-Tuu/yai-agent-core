@@ -319,7 +319,7 @@
       <div class="panel">
         <h3>订单与销售额</h3>
         <div id="orderSummary" class="muted" style="margin-bottom:8px"></div>
-        <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>产品</th><th>金额</th><th>区域</th></tr></thead>
+        <table><thead><tr><th>订单号</th><th>客户</th><th>品类</th><th>产品</th><th>金额</th><th>区域</th><th></th></tr></thead>
         <tbody id="tbOrders"></tbody></table>
       </div>
     </section>
@@ -587,7 +587,8 @@
         (c.phone ? esc(c.phone) : '<span class="muted">—</span>') + '</td><td>' +
         '<span class="tag ' + (c.level === '重点' ? 'key' : 'normal') + '">' + esc(c.level) + '</span>' +
         '</td><td>' + esc(c.owner) + '</td><td>' + followCell + '</td><td>' + statusTag + '</td><td>' +
-        '<button class="small" data-edit-customer="' + esc(c.name) + '">编辑</button></td></tr>';
+        '<button class="small" data-edit-customer="' + esc(c.name) + '">编辑</button> ' +
+        '<button class="small danger" data-delete-customer="' + esc(c.name) + '">删除</button></td></tr>';
     }).join('') : '<tr><td colspan="8" class="muted">没有符合条件的客户</td></tr>';
 
     var cats = (s.enums && s.enums.categories) || ['硬件', '软件', '服务'];
@@ -600,7 +601,8 @@
     document.getElementById('tbOrders').innerHTML = s.orders.map(function (o) {
       return '<tr><td>' + esc(o.order) + '</td><td>' + esc(o.customer) + '</td><td>' + esc(o.category) +
         '</td><td>' + (o.product ? esc(o.product) : '<span class="muted">—</span>') + '</td><td>' +
-        money(o.amount) + '</td><td>' + esc(o.region) + '</td></tr>';
+        money(o.amount) + '</td><td>' + esc(o.region) + '</td><td>' +
+        '<button class="small danger" data-delete-order="' + esc(o.order) + '">删除</button></td></tr>';
     }).join('');
 
     /* 订单 / 商机表单的客户下拉：用公司名（后端同时接受姓名与公司名） */
@@ -630,7 +632,9 @@
           : '';
         return '<div class="kanban-card"><div class="kc-title">' + esc(o.title) + '</div>' +
           '<div class="kc-cust">' + esc(o.customer) + ' · ' + esc(o.owner || '') + '</div>' +
-          '<div class="kc-amt">' + money(o.amount) + '</div>' + advance + '</div>';
+          '<div class="kc-amt">' + money(o.amount) + '</div>' + advance +
+          '<button class="small danger" style="margin-top:6px" data-delete-opp="' +
+            esc(o.title) + '">删除商机</button></div>';
       }).join('')
       : '<div class="kanban-empty">暂无</div>';
       return '<div class="kanban-col ' + colCls + '"><h4><span>' + stage + '</span>' +
@@ -649,11 +653,13 @@
 
     document.getElementById('tbTodosOpen').innerHTML = openTodos.length ? openTodos.map(function (t) {
       return '<tr><td>' + esc(t.title) + '</td><td>' + (t.due ? esc(t.due) : '<span class="muted">无</span>') +
-        '</td><td><button class="small" data-complete="' + esc(t.title) + '">标记完成</button></td></tr>';
+        '</td><td><button class="small" data-complete="' + esc(t.title) + '">标记完成</button> ' +
+        '<button class="small danger" data-delete-todo="' + esc(t.title) + '">删除</button></td></tr>';
     }).join('') : '<tr><td colspan="3" class="muted">没有未完成待办</td></tr>';
     var doneTodos = s.todos.filter(function (t) { return t.done; });
     document.getElementById('tbTodosDone').innerHTML = doneTodos.length ? doneTodos.map(function (t) {
-      return '<tr><td><span class="tag done">' + esc(t.title) + '</span></td><td></td></tr>';
+      return '<tr><td><span class="tag done">' + esc(t.title) + '</span></td><td>' +
+        '<button class="small danger" data-delete-todo="' + esc(t.title) + '">删除</button></td></tr>';
     }).join('') : '<tr><td class="muted">暂无</td></tr>';
 
     document.getElementById('briefBox').textContent = s.brief;
@@ -718,6 +724,13 @@
       toast((r.j && r.j.error) || ('失败（' + r.s + '）'));
     });
   });
+  function deleteDone(label) {
+    return function (r) {
+      if (r.s === 200 && r.j.ok) { toast('已删除：' + label); return refreshSnapshot(); }
+      toast((r.j && r.j.error) || '删除失败');
+    };
+  }
+
   document.addEventListener('click', function (e) {
     var t = e.target;
     if (!t.getAttribute) return;
@@ -730,7 +743,39 @@
       return;
     }
     var editName = t.getAttribute('data-edit-customer');
-    if (editName) { openEditCustomer(editName); }
+    if (editName) { openEditCustomer(editName); return; }
+
+    var delCust = t.getAttribute('data-delete-customer');
+    if (delCust) {
+      if (!window.confirm('删除客户「' + delCust + '」？将同时删除其全部跟进、订单和商机，此操作不可恢复。')) return;
+      post('/api/crm/customer_delete', { name: delCust }).then(function (r) {
+        if (r.s === 200 && r.j.ok) {
+          toast('已删除客户（跟进 ' + r.j.deleted_followups + ' / 订单 ' +
+                r.j.deleted_orders + ' / 商机 ' + r.j.deleted_opportunities + '）');
+          return refreshSnapshot();
+        }
+        toast((r.j && r.j.error) || '删除失败');
+      });
+      return;
+    }
+    var delOrder = t.getAttribute('data-delete-order');
+    if (delOrder) {
+      if (!window.confirm('删除订单 ' + delOrder + ' ？此操作不可恢复。')) return;
+      post('/api/crm/order_delete', { order: delOrder }).then(deleteDone('订单 ' + delOrder));
+      return;
+    }
+    var delOpp = t.getAttribute('data-delete-opp');
+    if (delOpp) {
+      if (!window.confirm('删除商机「' + delOpp + '」？此操作不可恢复。')) return;
+      post('/api/crm/opp_delete', { title: delOpp }).then(deleteDone('商机「' + delOpp + '」'));
+      return;
+    }
+    var delTodo = t.getAttribute('data-delete-todo');
+    if (delTodo) {
+      if (!window.confirm('删除待办「' + delTodo + '」？')) return;
+      post('/api/crm/todo_delete', { title: delTodo }).then(deleteDone('待办「' + delTodo + '」'));
+      return;
+    }
   });
 
   /* ---------- 客户搜索 / 筛选（纯前端，重渲染不重新请求） ---------- */

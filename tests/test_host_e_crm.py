@@ -34,6 +34,7 @@ WRITE_TOOLS = [
     "add_customer", "update_customer", "add_followup",
     "create_order", "create_opportunity", "update_opportunity_stage",
     "create_todo", "complete_todo",
+    "delete_todo", "delete_order", "delete_opportunity", "delete_customer",
 ]
 
 
@@ -243,6 +244,31 @@ def test_todo_lifecycle_and_customer_add():
     assert dup["ok"] is False
 
 
+def test_delete_operations_and_cascade():
+    crm = _crm()
+    # 删除待办（模糊匹配，完成与否均可）
+    assert crm.delete_todo("合同条款")["ok"] is True
+    assert len(crm.list_todos("all")) == 3
+    assert crm.delete_todo("不存在待办xyz")["ok"] is False
+    # 删除订单（订单号大写归一）；选华北云服务的 S003，不影响王敏
+    removed_order = crm.delete_order("s003")
+    assert removed_order["ok"] is True and removed_order["removed"]["order"] == "S003"
+    assert crm.delete_order("S999")["ok"] is False
+    # 删除商机（模糊匹配）；选华北云服务的云迁移咨询，不影响王敏
+    assert crm.delete_opportunity("云迁移")["ok"] is True
+    assert "云迁移咨询" not in {o["title"] for o in crm.list_opportunities()}
+    assert crm.delete_opportunity("不存在商机xyz")["ok"] is False
+    # 删除客户王敏（华东智造集团）：完整级联
+    # 跟进 1（初次拜访）；订单 S001/S006 共 2 笔；商机产线改造一期 1 个
+    cascade = crm.delete_customer("王敏")
+    assert cascade["ok"] is True
+    assert cascade["deleted_followups"] == 1
+    assert cascade["deleted_orders"] == 2
+    assert cascade["deleted_opportunities"] == 1
+    assert crm.get_customer("王敏")["ok"] is False
+    assert crm.delete_customer("王敏")["ok"] is False  # 再次删除找不到
+
+
 def test_persistence_roundtrip_and_reset(tmp_path):
     db = tmp_path / "crm_data.json"
     crm = _crm(db)
@@ -257,12 +283,12 @@ def test_persistence_roundtrip_and_reset(tmp_path):
 
 # ---------- 嵌入 Core：发现 / 权限 ----------
 
-def test_discovery_registers_eighteen_native_tools():
+def test_discovery_registers_twentytwo_native_tools():
     crm = _crm()
     specs = discover(crm)
     names = {s.name for s in specs}
     assert names == set(READ_TOOLS) | set(WRITE_TOOLS)
-    assert len(specs) == 18
+    assert len(specs) == 22
     assert all(s.source == "native" for s in specs)
     assert not any(n.startswith("_") for n in names)
 
