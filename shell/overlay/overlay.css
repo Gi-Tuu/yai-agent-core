@@ -1,0 +1,445 @@
+/* YAI 数字员工浮窗样式。深色玻璃质感，青绿为主、琥珀点缀，动效即状态。 */
+
+:root {
+  --bg-deep: #0a111d;
+  --glass: rgba(15, 23, 36, 0.78);
+  --glass-line: rgba(120, 160, 190, 0.16);
+  --text: #e6eef7;
+  --muted: #8fa6bd;
+  --teal: #2dd4bf;
+  --teal-deep: #0f9488;
+  --cyan: #38bdf8;
+  --amber: #f59e0b;
+  --red: #f87171;
+  --green: #34d399;
+  --radius: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--text);
+}
+
+.hidden { display: none !important; }
+
+/* ---------- 宿主背景占位（仅独立演示） ---------- */
+
+.host-backdrop {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, #16233a 0%, transparent 60%),
+    linear-gradient(160deg, #0c1424, #080d17);
+  display: grid;
+  place-items: center;
+}
+
+.host-card {
+  padding: 28px 40px;
+  border: 1px dashed rgba(140, 170, 200, 0.28);
+  border-radius: 14px;
+  color: var(--muted);
+  letter-spacing: 2px;
+}
+
+/* ---------- 悬浮球 ---------- */
+
+.orb {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  width: 64px;
+  height: 64px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: radial-gradient(circle at 32% 28%, #5eead4, var(--teal-deep) 75%);
+  box-shadow: 0 10px 30px rgba(20, 184, 166, 0.35);
+  z-index: 40;
+  transition: transform 0.25s ease;
+}
+
+.orb:hover { transform: scale(1.06); }
+.orb:active { transform: scale(0.96); }
+
+.orb-core {
+  position: absolute;
+  inset: 20px;
+  border-radius: 50%;
+  background: #eafffb;
+  box-shadow: 0 0 14px rgba(234, 255, 251, 0.9);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(45, 212, 191, 0.55);
+  animation: ring 2.6s ease-out infinite;
+}
+
+.orb.busy .orb-core { animation-duration: 0.9s; background: var(--cyan); }
+.orb.busy .orb-ring { animation-duration: 1.1s; border-color: rgba(56, 189, 248, 0.6); }
+
+.orb-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--amber);
+  color: #1a1206;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(0.78); opacity: 1; }
+}
+
+@keyframes ring {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
+/* ---------- 抽屉 ---------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass);
+  backdrop-filter: blur(18px);
+  border-left: 1px solid var(--glass-line);
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
+  transform: translateX(105%);
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 50;
+}
+
+.drawer.open { transform: translateX(0); }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.head-title { display: flex; align-items: center; gap: 10px; }
+
+.head-mark {
+  width: 10px;
+  height: 26px;
+  border-radius: 6px;
+  background: linear-gradient(var(--teal), var(--teal-deep));
+  box-shadow: 0 0 12px rgba(45, 212, 191, 0.6);
+}
+
+.head-name { font-weight: 700; font-size: 15px; }
+.head-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+.head-actions { display: flex; align-items: center; gap: 8px; }
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--glass-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { color: var(--text); border-color: var(--teal); }
+
+.perm-select {
+  height: 30px;
+  border: 1px solid var(--glass-line);
+  border-radius: 9px;
+  background: rgba(10, 17, 29, 0.7);
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+/* Core 开关 */
+.switch { position: relative; display: inline-block; width: 44px; height: 26px; }
+.switch input { display: none; }
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 13px;
+  background: rgba(120, 150, 180, 0.3);
+  transition: 0.25s;
+}
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: #d7e4f0;
+  transition: 0.25s;
+}
+.switch input:checked + .switch-slider {
+  background: linear-gradient(90deg, var(--teal-deep), var(--teal));
+}
+.switch input:checked + .switch-slider::before { transform: translateX(18px); }
+
+/* ---------- 动效舞台 ---------- */
+
+.stage {
+  margin: 12px 14px 6px;
+  height: 96px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(45, 212, 191, 0.1), transparent 60%),
+    rgba(8, 14, 24, 0.55);
+  overflow: hidden;
+  position: relative;
+}
+
+.stage-flow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.stage-flow::-webkit-scrollbar { display: none; }
+
+.fx {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--glass-line);
+  background: rgba(20, 30, 46, 0.7);
+  animation: pop-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.fx .dot { width: 8px; height: 8px; border-radius: 50%; }
+.fx.strategy .dot { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+.fx.tool .dot { background: var(--teal); box-shadow: 0 0 10px var(--teal); }
+.fx.compose .dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+.fx.gap {
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fcd9a0;
+  animation: pop-in 0.4s ease, blink-gap 1s ease-in-out 2;
+}
+.fx.gap .dot { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+
+.fx.sprout .dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+.fx-connector {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--teal), transparent);
+  background-size: 200% 100%;
+  animation: dash 1s linear infinite;
+}
+
+@keyframes pop-in {
+  from { transform: translateY(10px) scale(0.9); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes blink-gap {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes dash {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* ---------- 事件 / 对话流 ---------- */
+
+.feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  max-width: 86%;
+  padding: 9px 12px;
+  border-radius: 13px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: fade-up 0.3s ease;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, var(--teal-deep), #0e7490);
+  border-bottom-right-radius: 4px;
+}
+
+.msg.model {
+  align-self: flex-start;
+  background: rgba(30, 42, 60, 0.8);
+  border: 1px solid var(--glass-line);
+  border-bottom-left-radius: 4px;
+}
+
+.msg.sys {
+  align-self: center;
+  max-width: 96%;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: rgba(20, 30, 46, 0.5);
+  border: 1px solid var(--glass-line);
+  border-radius: 9px;
+  padding: 6px 10px;
+}
+
+.msg.tool {
+  align-self: flex-start;
+  font-family: Consolas, monospace;
+  font-size: 11.5px;
+  color: #bfe3dd;
+  background: rgba(15, 40, 38, 0.6);
+  border: 1px solid rgba(45, 212, 191, 0.25);
+  border-radius: 9px;
+}
+
+.msg.tool.bad {
+  color: #f6c9c9;
+  background: rgba(50, 20, 24, 0.6);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+@keyframes fade-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ---------- 弹窗（授权 / 澄清） ---------- */
+
+.popup {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 78px;
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: rgba(16, 25, 40, 0.96);
+  border: 1px solid var(--glass-line);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  animation: pop-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 20;
+}
+
+.popup-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 18px;
+}
+.popup-icon.shield { background: rgba(245, 158, 11, 0.16); color: var(--amber); }
+.popup-icon.ask { background: rgba(56, 189, 248, 0.16); color: var(--cyan); }
+
+.popup-body { flex: 1; min-width: 0; }
+.popup-title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+.popup-line { font-size: 12.5px; color: var(--muted); }
+.popup-args {
+  margin: 6px 0 0;
+  max-height: 90px;
+  overflow: auto;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  color: #cfe0ee;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.popup-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 按钮 / 输入 ---------- */
+
+.btn {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn.primary {
+  background: linear-gradient(135deg, var(--teal), var(--teal-deep));
+  color: #04201d;
+}
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--glass-line);
+  color: var(--muted);
+}
+.btn.ghost:hover { color: var(--red); border-color: var(--red); }
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px 16px;
+  border-top: 1px solid var(--glass-line);
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  background: rgba(8, 14, 24, 0.7);
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 13px;
+}
+.text-input:focus { outline: none; border-color: var(--teal); }
+.text-input::placeholder { color: #60758c; }
