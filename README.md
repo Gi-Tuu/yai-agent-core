@@ -138,15 +138,34 @@ src/yai_core/
 ├── integrations/        # mcp · openapi · embedding（可选，懒加载）
 └── batteries/
     └── fastapi_server/  # HTTP API · 健康检查 · 验证端点
-examples/               # a 笔记 · b 数据 · c 陪伴 · d MCP · f 发现
+examples/               # 7 个宿主，由浅入深（推荐学习顺序见下）
+├── host_a_notes/        # 最小接入：普通函数自动变工具
+├── host_c_companion/    # 换领域：AI 陪伴（AMBRACE 预演）
+├── host_d_mcp/          # 接入外部 MCP 工具
+├── host_f_discovery/    # 能力缺口 → 按需发现（静态 / 语义）
+├── host_g_sandbox/      # 教学沙箱：现场造代码工具并执行
 ├── host_e_sales_crm/    # 旗舰：独立 CRM，一个开关嵌入 Core（终端 + 网页）
-└── host_g_sandbox/      # 教学沙箱：现场造代码工具并执行
+└── host_i_mealie/       # 适配真实第三方开源项目（Mealie）
 shell/                 # 可选员工薄壳（不进发行包）：原生桌面端 + 子员工委派
 ├── desktop/             # PySide6 + QML：灵动岛三态（球/胶囊/面板）+ 多专员工作台
 └── employee/            # delegate 工具：并行子员工（白名单收窄、结果只回流根）
 tests/                  # 离线端到端测试（ScriptedModel）
 docs/                   # 架构 · 学习导览 · 发布说明
 ```
+
+## 示例学习顺序（由浅入深）
+
+| 顺序 | 宿主 | 看什么 |
+|---|---|---|
+| 1 | `host_a_notes` | 最小接入：只写普通函数，Core 自动内省成工具 |
+| 2 | `host_c_companion` | 换领域即换岗位；主动关怀与 plan 模式 |
+| 3 | `host_d_mcp` | 作为 Client 接入外部 MCP Server |
+| 4 | `host_f_discovery` | 能力缺口 → 发现 → 本轮可用 |
+| 5 | `host_g_sandbox` | 沙箱内现场造代码工具并执行 |
+| 6 | `host_e_sales_crm` | 完整产品：一个开关嵌入 Core，含自学习与网页 |
+| 7 | `host_i_mealie` | 适配真实第三方高 star 开源项目 |
+
+> 目录名保留历史编号（a/c/d/e/f/g/i），不随学习顺序重排，以便与各版材料、讲义里的路径保持一致。
 
 ## 接入外部 MCP 工具（v0.2）
 

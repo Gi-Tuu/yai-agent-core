@@ -12,7 +12,7 @@
 ## 2. 分层
 
 ```
-宿主应用（AMBRACE / host_a / host_b）      只声明能力，零 Agent 代码
+宿主应用（AMBRACE / host_a / host_c）      只声明能力，零 Agent 代码
         │ 内省 / 注册
 能力自发现 Auto-Discovery（函数 / OpenAPI[v0.3] / MCP Client[v0.2 已落地]）
         ▼
