@@ -43,6 +43,8 @@ class SpecialistSpec:
     live_factory: StreamFactory | None = None
     #: 该专员代码工具的持久化仓库路径；None = 没有可管理的工具仓库。
     code_storage: Path | None = None
+    #: 该专员路由自学习状态的持久化路径；None = 不启用/不展示学习面板。
+    learning_path: Path | None = None
 
 
 def event_name(event: Any) -> str:

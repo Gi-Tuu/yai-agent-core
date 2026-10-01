@@ -24,13 +24,16 @@
 
 ```
 WorkbenchRuntime（1 个，唯一后台 asyncio 线程）
-   ├─ SpecialistRuntime "sales"      独立 busy/pending/挡位/未读
-   ├─ SpecialistRuntime "warehouse"  └─ live：DemoWarehouse + AgentCore.auto
-   ├─ SpecialistRuntime "notes"      └─ live：DemoNotes + AgentCore.auto
+   ├─ SpecialistRuntime "sales"      └─ live：DemoSales + AgentCore.auto（全开）
+   ├─ SpecialistRuntime "warehouse"  └─ live：DemoWarehouse + AgentCore.auto（全开·样板间）
+   ├─ SpecialistRuntime "notes"      └─ live：DemoNotes + AgentCore.auto（全开）
    └─ SpecialistRuntime "companion"  仅演示脚本
         ↓ 事件带 sid 汇聚
    specialistEvent(sid, type, payloadJson)   → QML 一份信号入口
 ```
+
+> "全开"指路由学习 + 沙箱造工具 + 工具持久化/管理在同一专员进程协同，
+> 逐行讲解见第 24 篇；本篇聚焦多专员隔离与三态交互。
 
 - **`SpecialistRuntime`**（`specialist.py`）就是第 22 篇的 `ShellRuntime` 去掉线程所有权：
   loop 由工作台注入，**不为每个专员开一条线程**。方法签名不变。

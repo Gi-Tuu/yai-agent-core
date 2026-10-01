@@ -64,8 +64,44 @@ class DemoNotes:
         return {"keyword": keyword, "count": len(self._notes[keyword])}
 
 
+class DemoSales:
+    """销售 CRM：客户 / 商机 / 订单的最小内存数据，live 形态真跑查询与录入。"""
+
+    def __init__(self) -> None:
+        self._customers = {
+            "星河科技": {"contact": "王经理", "level": "A"},
+            "云海贸易": {"contact": "李总", "level": "B"},
+        }
+        self._opportunities = [
+            {"name": "星河年度续约", "customer": "星河科技",
+             "stage": "方案", "amount": 120000},
+            {"name": "云海增购", "customer": "云海贸易",
+             "stage": "线索", "amount": 35000},
+        ]
+        self._orders: list[dict] = []
+
+    def list_customers(self) -> dict:
+        """列出全部客户及联系人、等级。"""
+        return dict(self._customers)
+
+    def get_customer(self, name: str) -> dict:
+        """按客户名称查询单个客户资料。"""
+        return self._customers.get(name, {})
+
+    def list_opportunities(self) -> list[dict]:
+        """列出商机管道及阶段、金额。"""
+        return list(self._opportunities)
+
+    def add_order(self, customer: str, product: str, amount: float) -> dict:
+        """为指定客户录入一笔订单。"""
+        order = {"customer": customer, "product": product, "amount": amount}
+        self._orders.append(order)
+        return {"order_no": len(self._orders), **order}
+
+
 #: 各专员的"读工具"白名单：部分审批挡下自动放行，写操作仍要授权。
 _READ_TOOLS = {
+    "sales": ("list_customers", "get_customer", "list_opportunities"),
     "warehouse": ("list_products", "get_stock"),
     "notes": ("search_notes",),
 }
@@ -90,13 +126,19 @@ def _live_factory(
     *,
     with_sandbox: bool = False,
     storage_path=None,
+    learning_path=None,
 ):
     """为一个小宿主生成"每任务一个真 Core"的事件流工厂。
 
     with_sandbox=True 时给该专员接产品层子进程沙箱（shell.desktop.sandbox），
     模型即可在授权后于沙箱中自建代码工具；不接则只保留组合工具。
     storage_path 给定时，代码工具跨任务落盘恢复（48h TTL、调用刷新）。
+    learning_path 给定时，**跨任务共享**一个自校准路由选择器并在每次任务后
+    落盘，让真机路由越用越准；None = 不启用学习，行为与原来完全一致。
     """
+    # 每任务新建 Core，但路由学习必须在任务之间累积：选择器在闭包里共享，
+    # 首个任务时才从磁盘恢复。同专员 busy 时拒绝第二个任务，访问天然串行。
+    shared = {"selector": None}
 
     async def factory(task: str, channel):
         # 必须是 async generator（体内含 yield）：调用 factory(...) 直接返回
@@ -113,6 +155,11 @@ def _live_factory(
 
             sandbox = SubprocessSandbox()
 
+        if learning_path is not None and shared["selector"] is None:
+            from shell.desktop.learning_vault import load_selector
+
+            shared["selector"] = load_selector(learning_path)
+
         load_dotenv()
         model, _label = build_model()
         core = AgentCore.auto(
@@ -124,20 +171,32 @@ def _live_factory(
             composition=True,
             sandbox=sandbox,
             code_storage=storage_path,
+            learning=shared["selector"],
         )
         from shell.employee import attach_delegate
 
         attach_delegate(core, depth=1)
         async for event in core.astream(task):
             yield event
+        # 任务正常跑完后落盘学习状态（取消时 astream 不回灌、也走不到这里）。
+        if shared["selector"] is not None:
+            from shell.desktop.learning_vault import save_selector
+
+            save_selector(shared["selector"], learning_path)
 
     return factory
 
 
 def build_specs() -> list[SpecialistSpec]:
     """阶段 0 的四个专员：销售 / 仓库 / 笔记 / 陪伴。"""
-    # 仓库专员的代码工具仓库路径只构造一次：装配 Core 与工具管理面板共用同一份。
+    # 各专员代码工具仓库路径只构造一次：装配 Core 与工具管理面板共用同一份。
+    sales_storage = _DESKTOP_DATA / "sales_code_tools.json"
     wh_storage = _DESKTOP_DATA / "warehouse_code_tools.json"
+    notes_storage = _DESKTOP_DATA / "notes_code_tools.json"
+    # 各专员路由自学习状态文件（与代码工具仓库并列，跨任务累积、重启不丢）。
+    sales_learning = _DESKTOP_DATA / "sales_route_learning.json"
+    wh_learning = _DESKTOP_DATA / "warehouse_route_learning.json"
+    notes_learning = _DESKTOP_DATA / "notes_route_learning.json"
     return [
         SpecialistSpec(
             id="sales",
@@ -148,6 +207,15 @@ def build_specs() -> list[SpecialistSpec]:
                 {"委派": SCRIPT_DELEGATE, "并行": SCRIPT_DELEGATE,
                  "子员工": SCRIPT_DELEGATE},
             ),
+            live_factory=_live_factory(
+                DemoSales(),
+                _READ_TOOLS["sales"],
+                with_sandbox=True,
+                storage_path=sales_storage,
+                learning_path=sales_learning,
+            ),
+            code_storage=sales_storage,
+            learning_path=sales_learning,
         ),
         SpecialistSpec(
             id="warehouse",
@@ -159,15 +227,25 @@ def build_specs() -> list[SpecialistSpec]:
                 _READ_TOOLS["warehouse"],
                 with_sandbox=True,
                 storage_path=wh_storage,
+                learning_path=wh_learning,
             ),
             code_storage=wh_storage,
+            learning_path=wh_learning,
         ),
         SpecialistSpec(
             id="notes",
             name="笔记专员",
             glyph="笔",
             demo_factory=make_demo_stream(SCRIPT_NOTES),
-            live_factory=_live_factory(DemoNotes(), _READ_TOOLS["notes"]),
+            live_factory=_live_factory(
+                DemoNotes(),
+                _READ_TOOLS["notes"],
+                with_sandbox=True,
+                storage_path=notes_storage,
+                learning_path=notes_learning,
+            ),
+            code_storage=notes_storage,
+            learning_path=notes_learning,
         ),
         SpecialistSpec(
             id="companion",
