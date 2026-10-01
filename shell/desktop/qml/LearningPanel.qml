@@ -33,6 +33,8 @@ Rectangle {
     MouseArea {
         anchors.fill: parent
         onClicked: overlay.visible = false
+        // 吞掉遮罩区域滚轮：弹层打开时不允许滚动后面的聊天列表
+        onWheel: (wheel) => { wheel.accepted = true; }
     }
 
     ColumnLayout {
@@ -47,7 +49,11 @@ Rectangle {
             border.width: 1
             border.color: Theme.edge
 
-            MouseArea { anchors.fill: parent }   // 挡住遮罩，卡片内点击不误关
+            // 挡住遮罩，卡片内点击不误关；同时吞掉卡片内（ListView 之外）的滚轮
+            MouseArea {
+                anchors.fill: parent
+                onWheel: (wheel) => { wheel.accepted = true; }
+            }
 
             ColumnLayout {
                 id: cardCol
@@ -98,7 +104,8 @@ Rectangle {
                     // 保底 96px：0 高度时委托不会被创建，contentHeight 就永远长不出来
                     spacing: 8
                     clip: true
-                    interactive: contentHeight > 300
+                    // 内容溢出可视高度才滚动；不溢出时滚轮穿透到卡片 MouseArea 被吞
+                    interactive: learnList.contentHeight > learnList.height
                     model: overlay.buckets
 
                     delegate: Rectangle {
