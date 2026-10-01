@@ -319,7 +319,25 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 含 import/open/反射被拒、超时被杀、缺 `run` 报错）；网页的静态页、候选人接口与
 `/api/run` 全链路由 `tests/test_sandbox_web.py` 覆盖（5 个用例，线程起真实 HTTP 服务）。
 
-## 10. 自检
+## 10. 仓库管理：永久保留可逆开关与立即删除
+
+`make_permanent` 只能"钉住"、不能反悔，`expire_stale` 只批量回收过期项——给界面做
+"工具管理"时两者都不够用，于是内核补两个原语：
+
+```python
+manager.set_permanent("tax_quote", False)   # 可逆；值没变就不落盘；未知工具返回 False
+manager.remove("weighted_score")            # 立即删除任意一个：注销注册表 + 删记录 + 落盘
+```
+
+`make_permanent(name)` 保留，改为 `set_permanent(name, True)` 的委托，避免两处各写一遍落盘。
+`records()` 每项额外带 `description`（从注册表取，未注册给空串），UI 才说得清"这个工具是干什么的"。
+
+薄壳侧的用法见第 22 / 23 篇：`shell/desktop/tool_vault.py` 用**不接模型、不接沙箱**的轻量
+`CodeToolManager(ToolRegistry(), storage_path=…)` 直接读写同一份持久化文件——复用内核的格式、
+原子写与过期判定，shell 不重复实现存储；读写全部派发到常驻 worker loop，与运行中的 Core
+同线程串行。**为什么不能依赖"当前 Core"**：Core 是每任务临时的，空闲时根本没有实例。
+
+## 11. 自检
 
 1. 代码工具的 `ToolSpec.handler` 为什么是 `None`？真正的"函数体"放在哪个字段、由谁执行？
 2. TTL 为什么以 `last_used_at` 而不是 `created_at` 为基准？`touch` 一次做了哪三件事？
@@ -329,3 +347,5 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
 6. 模型创建完一个代码工具后，下一轮为什么能立刻在 function-calling 里看到它？是哪段接线保证的？
 7. host_g 的 worker 为什么用 `-I -S` 启动、又为什么要把 `__builtins__` 换成白名单？这个
    教学级沙箱的边界在哪里，生产环境应该替换成什么、为什么不用改内核？
+8. 为什么"永久保留"要做成 `set_permanent(name, on)` 而不是只有 `make_permanent(name)`？
+9. 工具管理面板为什么不能读"当前 Core"的内存状态？它改用什么、竞态又靠什么避免？
