@@ -31,6 +31,8 @@ dev = [
 ]
 # 构建 docs/walkthrough 讲义 Word（PDF 导出走 LibreOffice UNO，无需 pip 包）
 docs = ["python-docx>=1.1"]
+# 原生桌面端：PySide6 + QML 把员工做成贴顶胶囊窗口（仅 shell 用，内核仍零依赖）
+desktop = ["PySide6>=6.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -42,7 +44,7 @@ packages = ["src/yai_core"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests", "examples"]
+src = ["src", "tests", "examples", "shell"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
