@@ -76,7 +76,9 @@ def build_create_code_tool() -> ToolSpec:
                 "type": "string",
                 "description": (
                     "实现该工具的 Python 代码：定义函数 run(inputs: dict)，"
-                    "返回可 JSON 序列化的结果；不得访问网络或敏感文件。"
+                    "返回可 JSON 序列化的结果。代码在隔离沙箱中运行，"
+                    "不能调用宿主的任何其他工具或函数，所有数据都从 inputs 获取；"
+                    "不得访问网络或敏感文件。"
                 ),
             },
         },
@@ -85,10 +87,13 @@ def build_create_code_tool() -> ToolSpec:
     return ToolSpec(
         name=CREATE_CODE_TOOL,
         description=(
-            "当且仅当现有工具和组合工具都无法完成任务时，创建一个由一段 "
-            "Python 代码实现的新工具。代码在宿主隔离沙箱中运行，默认无网络、"
-            "无敏感文件访问、有超时，默认 48 小时后回收。优先用 compose_tool "
-            "组合现有工具；不要创建危险或越权的工具。"
+            "仅当需要一段宿主尚未提供的【纯计算 / 数据处理】逻辑、且组合工具也无法"
+            "完成时，创建由 Python 代码实现的新工具（如加权评分、单位换算、统计、"
+            "排序、格式整理：数据由调用方通过 inputs 传入）。代码在隔离沙箱中运行，"
+            "【不能调用宿主的其他工具、不能访问宿主对象】——凡是需要先从宿主取数或"
+            "复用宿主能力的，一律改用 compose_tool，绝不要在代码里重写宿主已有的功能。"
+            "沙箱默认无网络、无敏感文件、有超时，工具默认 48 小时后回收；"
+            "不要创建危险或越权工具。"
         ),
         input_schema=schema,
         handler=_unreachable,

@@ -164,9 +164,11 @@ def build_composer_tool(registry: ToolRegistry) -> ToolSpec:
     return ToolSpec(
         name="compose_tool",
         description=(
-            "当现有工具需要多步固定编排、且每一步都是宿主已提供的工具时，"
-            "把它们组合成一个可复用的新工具。只能引用已注册工具，不能创造新能力；"
-            "组合工具执行时每一步仍会按权限策略确认。"
+            "当新能力需要固定多步调用宿主【已提供】的工具时使用，包括先取数、再对"
+            "结果加工汇总——组合工具能真正执行宿主工具，凡是复用 / 编排宿主能力的"
+            "（哪怕之后还要计算）都用它。只能引用已注册工具、不能创造新能力，"
+            "执行时每一步仍会按权限策略确认。若数据已在入参中、只需全新的纯计算"
+            "算法（不回调任何宿主工具），则改用 create_code_tool。"
         ),
         input_schema=schema,
         handler=compose_tool,

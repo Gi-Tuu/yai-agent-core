@@ -407,3 +407,24 @@ def test_remove_deletes_immediately_persisted(tmp_path) -> None:
     m2 = CodeToolManager(r2, clock=_Clock(), storage_path=path)
     assert m2.status()["total"] == 0
     assert m2.remove("double") is False  # 未知工具返回 False
+
+
+def test_tool_creation_guidance_states_sandbox_boundary() -> None:
+    """引导文本必须讲清沙箱边界：防止模型在沙箱里重写宿主能力、造出空壳工具。"""
+    from yai_core.kernel.loop import _SYSTEM_TEMPLATE
+    from yai_core.tools.composer import build_composer_tool
+    from yai_core.tools.meta import build_create_code_tool
+
+    code_desc = build_create_code_tool().description
+    # 关键边界：沙箱内不能回调宿主工具；需要取数/复用宿主能力就改用组合。
+    assert "不能调用宿主" in code_desc
+    assert "compose_tool" in code_desc
+
+    comp_desc = build_composer_tool(ToolRegistry()).description
+    # 组合能真正执行宿主工具，覆盖"先取数、再加工"。
+    assert "真正执行宿主工具" in comp_desc
+
+    # 系统提示顶层给出三类扩展能力的选择顺序。
+    assert "compose_tool" in _SYSTEM_TEMPLATE
+    assert "create_code_tool" in _SYSTEM_TEMPLATE
+    assert "request_capability" in _SYSTEM_TEMPLATE
