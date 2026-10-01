@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Literal
 
 from yai_core.channels import CollectChannel
@@ -55,6 +56,7 @@ class AgentCore:
         discovery: ToolDiscovery | None = None,
         composition: bool = False,
         sandbox: ToolSandbox | None = None,
+        code_storage: Path | str | None = None,
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
@@ -97,7 +99,9 @@ class AgentCore:
         # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
         self.code_manager: CodeToolManager | None = None
         if sandbox is not None:
-            self.code_manager = CodeToolManager(self.registry)
+            self.code_manager = CodeToolManager(
+                self.registry, storage_path=code_storage
+            )
         self.executor = ToolExecutor(
             self.registry,
             self.policy,

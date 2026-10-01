@@ -287,3 +287,123 @@ def test_retain_and_sweep_via_core() -> None:
     core2 = AgentCore(_CreateThenCallModel())
     assert core2.retain_code_tool("x") is False
     assert core2.sweep_code_tools() == []
+
+
+# ---------- 跨任务持久化（标准库 JSON，tmp_path） ----------
+
+def test_persisted_code_tool_restored_in_new_manager(tmp_path) -> None:
+    path = tmp_path / "code_tools.json"
+    reg1 = ToolRegistry()
+    m1 = CodeToolManager(reg1, clock=_Clock(), storage_path=path)
+    m1.create(**_code_spec_body())
+    assert path.exists()
+
+    reg2 = ToolRegistry()
+    m2 = CodeToolManager(reg2, clock=_Clock(), storage_path=path)
+    assert reg2.has("double")
+    assert m2.is_live("double") and m2.status()["live"] == 1
+    restored = reg2.get("double")
+    assert restored.source == "code" and restored.code == _code_spec_body()["code"]
+
+
+def test_persisted_touch_refreshes_and_keeps_call_count(tmp_path) -> None:
+    path = tmp_path / "code_tools.json"
+    reg1 = ToolRegistry()
+    m1 = CodeToolManager(reg1, clock=_Clock(), storage_path=path)
+    m1.create(**_code_spec_body())
+
+    clock2 = _Clock()
+    clock2.advance(3600)
+    reg2 = ToolRegistry()
+    m2 = CodeToolManager(reg2, clock=clock2, storage_path=path)
+    assert m2.touch("double") is True  # 恢复后调用：刷新 TTL、计数 +1
+    assert m2.records()[0]["call_count"] == 1
+
+    reg3 = ToolRegistry()
+    m3 = CodeToolManager(reg3, clock=clock2, storage_path=path)
+    assert m3.records()[0]["call_count"] == 1  # 计数跨任务落盘保留
+
+
+def test_expired_persisted_tool_not_restored_and_file_cleaned(tmp_path) -> None:
+    import json
+
+    path = tmp_path / "code_tools.json"
+    reg1 = ToolRegistry()
+    m1 = CodeToolManager(reg1, clock=_Clock(), storage_path=path)
+    m1.create(**_code_spec_body())
+
+    late_clock = _Clock()
+    late_clock.advance(TTL + 1)
+    reg2 = ToolRegistry()
+    m2 = CodeToolManager(reg2, clock=late_clock, storage_path=path)
+    assert not reg2.has("double")
+    assert m2.status()["total"] == 0
+    # 启动即清理：重写后的文件不再含过期工具。
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["tools"] == []
+
+
+def test_permanent_persisted_tool_restored_after_long_idle(tmp_path) -> None:
+    path = tmp_path / "code_tools.json"
+    reg1 = ToolRegistry()
+    m1 = CodeToolManager(reg1, clock=_Clock(), storage_path=path)
+    m1.create(**_code_spec_body())
+    assert m1.make_permanent("double") is True
+
+    late_clock = _Clock()
+    late_clock.advance(100 * TTL)
+    reg2 = ToolRegistry()
+    m2 = CodeToolManager(reg2, clock=late_clock, storage_path=path)
+    assert reg2.has("double") and m2.is_live("double")
+
+
+def test_corrupt_storage_tolerated_and_overwritten(tmp_path) -> None:
+    path = tmp_path / "code_tools.json"
+    path.write_text("{ not valid json", encoding="utf-8")
+    reg = ToolRegistry()
+    manager = CodeToolManager(reg, clock=_Clock(), storage_path=path)
+    assert manager.status()["total"] == 0  # 损坏不抛、冷启动空库
+    manager.create(**_code_spec_body())  # 随后正常写覆盖
+    assert reg.has("double")
+
+
+# ---------- 工具管理：description / set_permanent / remove ----------
+
+
+def test_records_include_description() -> None:
+    manager = _make_manager(_Clock())
+    manager.create(**_code_spec_body())
+    assert manager.records()[0]["description"] == _code_spec_body()["description"]
+
+
+def test_set_permanent_toggle_persisted(tmp_path) -> None:
+    path = tmp_path / "c.json"
+    r1 = ToolRegistry()
+    CodeToolManager(r1, clock=_Clock(), storage_path=path).create(**_code_spec_body())
+
+    m1 = CodeToolManager(ToolRegistry(), clock=_Clock(), storage_path=path)
+    assert m1.set_permanent("double", True) is True
+
+    r2 = ToolRegistry()
+    m2 = CodeToolManager(r2, clock=_Clock(), storage_path=path)
+    assert m2.records()[0]["permanent"] is True
+
+    assert m2.set_permanent("double", False) is True
+    r3 = ToolRegistry()
+    m3 = CodeToolManager(r3, clock=_Clock(), storage_path=path)
+    assert m3.records()[0]["permanent"] is False
+
+
+def test_remove_deletes_immediately_persisted(tmp_path) -> None:
+    path = tmp_path / "c.json"
+    r1 = ToolRegistry()
+    m1 = CodeToolManager(r1, clock=_Clock(), storage_path=path)
+    m1.create(**_code_spec_body())
+
+    assert m1.remove("double") is True
+    assert not r1.has("double") and not m1.has_record("double")
+
+    r2 = ToolRegistry()
+    m2 = CodeToolManager(r2, clock=_Clock(), storage_path=path)
+    assert m2.status()["total"] == 0
+    assert m2.remove("double") is False  # 未知工具返回 False
