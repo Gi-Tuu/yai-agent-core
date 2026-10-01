@@ -268,3 +268,34 @@ def test_learning_unavailable_without_path(qapp) -> None:
     workbench.openLearning()          # 没有学习路径时静默不动作，不抛
     assert workbench.learningVault == "{}"
     workbench.shutdown()
+
+
+def test_launch_mode_property(qapp) -> None:
+    """整体启动模式暴露给 QML：demo=False / live=True。"""
+    demo = _workbench(("a", lambda task, channel: _script([])))
+    assert demo.launchLive is False
+    demo.shutdown()
+    live = WorkbenchRuntime(
+        [_spec("a", lambda task, channel: _script([]))], mode="live")
+    assert live.launchLive is True
+    live.shutdown()
+
+
+def test_onboarding_dismiss_persists(qapp) -> None:
+    """首次引导 dismiss 后 onboardingDone 落盘为 True；测试后恢复本机原值。"""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("YAI", "Desktop")
+    original = settings.value("onboarding/done", False, type=bool)
+    settings.setValue("onboarding/done", False)
+    try:
+        workbench = _workbench(("a", lambda task, channel: _script([])))
+        assert workbench.onboardingDone is False
+        workbench.dismissOnboarding()
+        assert workbench.onboardingDone is True
+        # 另开一个 QSettings 也能读到，确认确实落盘而非只在内存
+        assert QSettings("YAI", "Desktop").value(
+            "onboarding/done", False, type=bool) is True
+        workbench.shutdown()
+    finally:
+        settings.setValue("onboarding/done", original)

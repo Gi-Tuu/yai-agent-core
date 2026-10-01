@@ -15,13 +15,14 @@ import argparse
 import ctypes
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QUrl
+from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap, QPolygonF
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from shell.desktop.host import build_workbench, prepare_paths
+from shell.desktop.hotkey import YaiWindow, register_global_hotkey
 from shell.desktop.specialist import PERMISSION_MODES
 
 #: QML 资源目录。
@@ -46,6 +47,27 @@ def place_top_center(window) -> None:
     area = screen.availableGeometry()
     window.setX(area.x() + (area.width() - window.width()) // 2)
     window.setY(area.y() + TOP_MARGIN)
+
+
+def _point_on_any_screen(x: int, y: int) -> bool:
+    """该点是否落在任一屏幕几何内（多屏断开后旧坐标会落在空处）。"""
+    for screen in QGuiApplication.screens():
+        geo = screen.geometry()
+        if (geo.x() <= x < geo.x() + geo.width()
+                and geo.y() <= y < geo.y() + geo.height()):
+            return True
+    return False
+
+
+def restore_window_position(window, settings: QSettings) -> None:
+    """优先恢复上次拖动后的位置；无记录或已不在任何屏幕时回退顶部居中。"""
+    x = settings.value("window/x")
+    y = settings.value("window/y")
+    if x is not None and y is not None and _point_on_any_screen(int(x), int(y)):
+        window.setX(int(x))
+        window.setY(int(y))
+        return
+    place_top_center(window)
 
 
 def hide_from_taskbar(window) -> None:
@@ -137,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.core_off:
         workbench.setCoreEnabled(False)
 
+    # 根窗口用重写了 nativeEvent 的 YaiWindow，接收全局热键的 WM_HOTKEY
+    qmlRegisterType(YaiWindow, "YaiWindow", 1, 0, "YaiWindow")
+
     engine = QQmlApplicationEngine()
     engine.addImportPath(str(QML_DIR))  # 载入 YaiTheme 单例模块
     engine.rootContext().setContextProperty("workbench", workbench)
@@ -146,11 +171,37 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
-    place_top_center(window)
+    settings = QSettings("YAI", "Desktop")
+    restore_window_position(window, settings)
     hide_from_taskbar(window)
+
+    # 位置落盘：拖动结束（x/y 变化停 400ms）自动保存，重启即恢复。
+    save_timer = QTimer()
+    save_timer.setInterval(400)
+    save_timer.setSingleShot(True)
+
+    def _save_position() -> None:
+        settings.setValue("window/x", window.x())
+        settings.setValue("window/y", window.y())
+
+    save_timer.timeout.connect(_save_position)
+    window.xChanged.connect(save_timer.start)
+    window.yChanged.connect(save_timer.start)
+
+    def _summon() -> None:
+        """全局热键 Ctrl+Alt+Y：把岛拉到前台并展开面板。"""
+        _set_visible(window, True)
+        window.raise_()
+        window.requestActivate()
+        window.setProperty("shape", "panel")
+
+    unregister_hotkey = register_global_hotkey(app, window, _summon)
     tray = None if args.no_tray else install_tray(app, workbench, window)
 
     def _cleanup() -> None:
+        if unregister_hotkey is not None:
+            unregister_hotkey()
+        _save_position()
         if tray is not None:
             tray.hide()
         engine.deleteLater()  # 先拆界面，再收运行时，避免绑定读到已销毁对象

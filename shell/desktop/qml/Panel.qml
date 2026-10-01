@@ -125,6 +125,27 @@ Item {
             Pill { label: "退出"; tone: Theme.dim; onClicked: workbench.requestQuit() }
         }
 
+        // 整体以离线模式启动时，明确告知这是脚本，引导评委走"真实员工"入口
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? 28 : 0
+            visible: !workbench.launchLive
+            radius: 8
+            color: "#22F5A524"
+            border.width: 1
+            border.color: Theme.warn
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: "离线演示：回复为预设脚本；真实能力请用桌面「真实员工」入口启动"
+                color: Theme.warn
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+        }
+
         // ---------- 专员切换条 ----------
         Row {
             spacing: 6
@@ -190,7 +211,7 @@ Item {
                     clip: true
                     Text {
                         id: codeText
-                        width: pendingScroll.viewport.width
+                        width: pendingScroll.width - 12
                         text: panel.pendingSummary
                         color: Theme.text
                         font.pixelSize: 12

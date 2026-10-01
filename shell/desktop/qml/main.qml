@@ -8,8 +8,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 import YaiTheme
+import YaiWindow 1.0
 
-Window {
+YaiWindow {
     id: root
 
     property string shape: "ball"        // ball | capsule | panel
@@ -21,6 +22,7 @@ Window {
     property bool delegating: false
 
     readonly property bool expanded: shape === "panel"
+    readonly property bool onboardingOpen: shape === "ball" && !workbench.onboardingDone
     readonly property var pending: workbench
                                    ? JSON.parse(workbench.activePendingPayload || "{}") : ({})
 
@@ -282,6 +284,23 @@ Window {
                     ColorAnimation { target: amberOverlay; property: "border.color"; to: "transparent"; duration: 280 }
                 }
             }
+
+            // 首次引导：外圈 accent 呼吸，吸引点击（在窗口内，不撑大）
+            Rectangle {
+                id: onboardingRing
+                anchors.fill: parent
+                radius: shell.radius
+                color: "transparent"
+                border.width: 2
+                border.color: Theme.accent
+                visible: root.onboardingOpen
+                SequentialAnimation {
+                    running: root.onboardingOpen
+                    loops: Animation.Infinite
+                    NumberAnimation { target: onboardingRing; property: "opacity"; to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { target: onboardingRing; property: "opacity"; to: 1.0; duration: 700; easing.type: Easing.InOutSine }
+                }
+            }
         }
 
         // ---------- 球 / 胶囊 ----------
@@ -313,9 +332,23 @@ Window {
                 }
                 onReleased: {
                     root.dragging = false;
-                    if (!moved) root.shape = "panel";
+                    if (!moved) {
+                        root.shape = "panel";
+                        workbench.dismissOnboarding();
+                    }
                 }
                 onCanceled: root.dragging = false
+            }
+
+            // 首次引导：球内显示"点我"，配合边框呼吸（见 shell），点过即恢复。
+            // 不向窗口外加气泡，避免把球/窗口撑宽。
+            Text {
+                anchors.centerIn: parent
+                visible: root.onboardingOpen
+                text: "点我"
+                color: Theme.accent
+                font.pixelSize: 13
+                font.bold: true
             }
 
             // 动态波形：空闲静止，执行中起伏（5 根 3px 小条）
@@ -324,6 +357,7 @@ Window {
                 spacing: 3
                 y: (parent.height - 22) / 2
                 x: root.shape === "capsule" ? 18 : (parent.width - implicitWidth) / 2
+                visible: !root.onboardingOpen
                 Behavior on x { PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
                 Repeater {
                     model: 5

@@ -20,6 +20,7 @@ from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
     QObject,
+    QSettings,
     Qt,
     Signal,
     Slot,
@@ -126,6 +127,11 @@ class WorkbenchRuntime(QObject):
         super().__init__()
         if not specs:
             raise ValueError("工作台至少需要一个专员")
+        self._launch_mode = mode
+        self._settings = QSettings("YAI", "Desktop")
+        self._onboarding_done = bool(
+            self._settings.value("onboarding/done", False, type=bool)
+        )
         self._specialists: dict[str, SpecialistRuntime] = {}
         self._order: list[str] = []
         self._active_id = active_id or specs[0].id
@@ -236,6 +242,12 @@ class WorkbenchRuntime(QObject):
     def _get_ids(self) -> list[str]:
         return list(self._order)
 
+    def _get_launch_live(self) -> bool:
+        return self._launch_mode == "live"
+
+    def _get_onboarding_done(self) -> bool:
+        return self._onboarding_done
+
     def _get_model(self) -> QObject:
         return self.model
 
@@ -256,6 +268,8 @@ class WorkbenchRuntime(QObject):
     activeGlyph = Property(str, _get_glyph, notify=stateChanged)
     unreadTotal = Property(int, _get_unread_total, notify=stateChanged)
     specialistIds = Property(list, _get_ids, notify=stateChanged)
+    launchLive = Property(bool, _get_launch_live, constant=True)
+    onboardingDone = Property(bool, _get_onboarding_done, notify=stateChanged)
 
     def _get_code_vault(self) -> str:
         return self._vault_json
@@ -309,6 +323,15 @@ class WorkbenchRuntime(QObject):
     @Slot(str)
     def setPermissionMode(self, mode: str) -> None:
         self._active().setPermissionMode(mode)
+
+    @Slot()
+    def dismissOnboarding(self) -> None:
+        """首次引导被点开后落盘，之后不再提示。"""
+        if self._onboarding_done:
+            return
+        self._onboarding_done = True
+        self._settings.setValue("onboarding/done", True)
+        self.stateChanged.emit()
 
     @Slot()
     def requestQuit(self) -> None:
