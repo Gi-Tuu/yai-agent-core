@@ -260,6 +260,7 @@ YaiWindow {
 
         Rectangle {
             id: shell
+            objectName: "shell"
             anchors.fill: parent
             // 每态各自的小圆角（都不超过短边一半）：形变中间帧不会再割出扇形/椭圆
             radius: root.shape === "panel" ? 28
@@ -508,6 +509,7 @@ YaiWindow {
         // ---------- 员工面板 ----------
         Loader {
             id: panelLoader
+            objectName: "panelLoader"
             anchors.fill: parent
             anchors.margins: 8
             source: "Panel.qml"

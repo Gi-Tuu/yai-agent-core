@@ -71,6 +71,7 @@ Item {
     }
 
     ColumnLayout {
+        objectName: "panelLayout"
         anchors.fill: parent
         spacing: 10
 
@@ -416,9 +417,11 @@ Item {
         property real maxWidth: 400
         readonly property real avail: Math.max(40, maxWidth - 24)
 
-        // 文字宽度固定、气泡宽度跟着 paintedWidth 走：
-        // 用 implicitWidth 自引用会形成绑定环，气泡会塌成零宽
-        width: Math.min(avail, label.paintedWidth) + 24
+        // 气泡按文字自然宽度收缩、长文本才 wrap 到 avail 上限。
+        // MarkdownText 的 paintedWidth 会错误返回 Text.width（实测短文本也全宽）；
+        // 用内部 Text 的 implicitWidth：它等于"不换行自然宽度"、不受 Text.width 影响，
+        // 且 label 是子项、引用它不会像引用气泡自身 implicitWidth 那样形成绑定环。
+        width: Math.min(avail, label.implicitWidth) + 24
         height: label.paintedHeight + 18
         radius: 14
         color: fromUser ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.22)
