@@ -27,6 +27,7 @@ from shell.desktop.host import (  # noqa: E402
     DemoSales,
     DemoWarehouse,
     _live_factory,
+    build_specs,
     prepare_paths,
 )
 from shell.desktop.learning_vault import summarize  # noqa: E402
@@ -210,3 +211,17 @@ def test_warehouse_showcase_full_adaptive(qapp, monkeypatch, tmp_path) -> None:
     # 第二个任务：同一专员再跑，路由学习必须累积（"越用越准"的可执行证据）。
     asyncio.run(_collect(factory, "再查一下螺丝库存"))
     assert summarize(learning)["learned_tasks"] == 2
+
+
+def test_build_specs_all_specialists_live(qapp) -> None:
+    """四个专员都必须挂上 live Core + 工具仓库 + 路由学习路径（产品完整度承诺）。"""
+    specs = build_specs()
+    by_id = {spec.id: spec for spec in specs}
+    assert set(by_id) == {"sales", "warehouse", "notes", "companion"}
+    for sid, spec in by_id.items():
+        assert spec.demo_factory is not None
+        assert spec.live_factory is not None, f"{sid} 未接 live Core"
+        assert spec.code_storage is not None, f"{sid} 缺工具仓库路径"
+        assert spec.learning_path is not None, f"{sid} 缺路由学习路径"
+    # 陪伴读白名单：心情趋势可自动放行，记心情（写）仍需授权。
+    assert _READ_TOOLS["companion"] == ("mood_trend",)

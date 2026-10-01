@@ -4,8 +4,8 @@
 
 - 每个专员代表**一个被 AI 化的应用**及其内置 Core，工具 / 历史 / 权限各走各的；
 - demo 形态全部离线脚本，无 Key 也能切换专员看动效；
-- live 形态只给确实能真跑的专员接真 Core（仓库、笔记），
-  其余回退演示脚本并在切换条上标"离线演示"；
+- live 形态四个专员都接真 Core（销售 / 仓库 / 笔记 / 陪伴），
+  离线形态在切换条上标"离线演示"；
 - 不强耦合 host_e / AMBRACE，真接入放阶段 1（跨进程）。
 """
 
@@ -99,11 +99,31 @@ class DemoSales:
         return {"order_no": len(self._orders), **order}
 
 
+class DemoCompanion:
+    """陪伴应用：心情记录与趋势，live 形态真跑记录与回顾（AMBRACE 预演）。"""
+
+    def __init__(self) -> None:
+        self._moods = [
+            {"mood": "平静", "note": "开始做 Core"},
+            {"mood": "开心", "note": "灵动岛跑通"},
+        ]
+
+    def mood_trend(self) -> list[dict]:
+        """查看最近记录的心情与备注。"""
+        return list(self._moods)
+
+    def log_mood(self, mood: str, note: str) -> dict:
+        """记录此刻的心情和一句备注。"""
+        self._moods.append({"mood": mood, "note": note})
+        return {"logged": True, "total": len(self._moods)}
+
+
 #: 各专员的"读工具"白名单：部分审批挡下自动放行，写操作仍要授权。
 _READ_TOOLS = {
     "sales": ("list_customers", "get_customer", "list_opportunities"),
     "warehouse": ("list_products", "get_stock"),
     "notes": ("search_notes",),
+    "companion": ("mood_trend",),
 }
 
 #: 代码工具跨任务持久化目录（根 data/ 已在 .gitignore；按专员各一份）。
@@ -193,10 +213,12 @@ def build_specs() -> list[SpecialistSpec]:
     sales_storage = _DESKTOP_DATA / "sales_code_tools.json"
     wh_storage = _DESKTOP_DATA / "warehouse_code_tools.json"
     notes_storage = _DESKTOP_DATA / "notes_code_tools.json"
+    companion_storage = _DESKTOP_DATA / "companion_code_tools.json"
     # 各专员路由自学习状态文件（与代码工具仓库并列，跨任务累积、重启不丢）。
     sales_learning = _DESKTOP_DATA / "sales_route_learning.json"
     wh_learning = _DESKTOP_DATA / "warehouse_route_learning.json"
     notes_learning = _DESKTOP_DATA / "notes_route_learning.json"
+    companion_learning = _DESKTOP_DATA / "companion_route_learning.json"
     return [
         SpecialistSpec(
             id="sales",
@@ -252,6 +274,15 @@ def build_specs() -> list[SpecialistSpec]:
             name="陪伴专员",
             glyph="陪",
             demo_factory=make_demo_stream(SCRIPT_COMPANION),
+            live_factory=_live_factory(
+                DemoCompanion(),
+                _READ_TOOLS["companion"],
+                with_sandbox=True,
+                storage_path=companion_storage,
+                learning_path=companion_learning,
+            ),
+            code_storage=companion_storage,
+            learning_path=companion_learning,
         ),
     ]
 

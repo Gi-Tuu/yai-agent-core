@@ -40,6 +40,34 @@ Item {
                (parts.length ? "（" + parts.join(" · ") + "）" : "");
     }
 
+    // 权限三挡：全审（琥珀，每次都问）/ 部审（紫，读放行、写询问）/ 免审（红，风险最高）。
+    // 点标题栏小 Pill 循环切换；经 channel.permission_mode 在"下一个任务"装配策略时生效。
+    readonly property var permLabels: ({
+        "manual": "全审",
+        "partial": "部审",
+        "auto": "免审"
+    })
+    readonly property var permOrder: ["manual", "partial", "auto"]
+    readonly property string permLabel:
+        panel.permLabels[workbench.activePermissionMode] || "部审"
+    readonly property color permTone: {
+        var mode = workbench.activePermissionMode;
+        if (mode === "manual") return Theme.warn;
+        if (mode === "auto") return Theme.bad;
+        return Theme.accent;
+    }
+
+    function cyclePermission() {
+        var modes = panel.permOrder;
+        var idx = modes.indexOf(workbench.activePermissionMode);
+        workbench.setPermissionMode(modes[(idx + 1) % modes.length]);
+    }
+
+    // 用户主动点开面板时聚焦输入框，展开即可直接打字（由 main.qml 在动画后调用）。
+    function focusInput() {
+        inputField.forceActiveFocus();
+    }
+
     function send() {
         var text = inputField.text.trim();
         if (text === "") return;
@@ -77,7 +105,7 @@ Item {
 
         // ---------- 标题 ----------
         RowLayout {
-            spacing: 8
+            spacing: 6
             Text {
                 text: "YAI 灵动岛"
                 color: Theme.text
@@ -107,6 +135,11 @@ Item {
                 onClicked: workbench.setCoreEnabled(!workbench.activeCoreEnabled)
             }
             Pill {
+                label: panel.permLabel
+                tone: panel.permTone
+                onClicked: panel.cyclePermission()
+            }
+            Pill {
                 label: "工具"
                 tone: workbench.codeVaultAvailable ? Theme.accent : Theme.dim
                 onClicked: {
@@ -122,8 +155,8 @@ Item {
                     learningLayer.open();
                 }
             }
-            Pill { label: "收起"; tone: Theme.dim; onClicked: panel.collapseRequested() }
-            Pill { label: "退出"; tone: Theme.dim; onClicked: workbench.requestQuit() }
+            Pill { label: "收"; tone: Theme.dim; onClicked: panel.collapseRequested() }
+            Pill { label: "退"; tone: Theme.dim; onClicked: workbench.requestQuit() }
         }
 
         // 整体以离线模式启动时，明确告知这是脚本，引导评委走"真实员工"入口

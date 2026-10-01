@@ -248,6 +248,20 @@ YaiWindow {
         onTriggered: if (!root.hovering) root.collapse()
     }
 
+    // 用户主动点开面板：等展开动画落定再聚焦输入框，可直接打字。
+    // 授权/澄清触发的展开不走这里，不抢"允许/回答"的焦点。
+    Timer {
+        id: focusOpenTimer
+        interval: Theme.msSlow + 40
+        onTriggered: {
+            if (root.shape === "panel"
+                    && workbench.activePendingKind === ""
+                    && panelLoader.item) {
+                panelLoader.item.focusInput();
+            }
+        }
+    }
+
     // ---------- 唯一内容根：hover 挂在这里才覆盖全部子树 ----------
     Item {
         id: surface
@@ -336,6 +350,7 @@ YaiWindow {
                     if (!moved) {
                         root.shape = "panel";
                         workbench.dismissOnboarding();
+                        focusOpenTimer.start();
                     }
                 }
                 onCanceled: root.dragging = false
