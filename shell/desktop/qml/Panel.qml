@@ -382,6 +382,19 @@ Item {
             }
         }
 
+        // ---------- 出错重试：当前专员刚出错、且不在执行中 ----------
+        Row {
+            visible: workbench.activeCanRetry && !workbench.activeBusy
+            Pill {
+                label: "重试上次任务"
+                tone: Theme.warn
+                onClicked: {
+                    workbench.retry();
+                    feedView.positionViewAtEnd();
+                }
+            }
+        }
+
         // ---------- 输入 ----------
         RowLayout {
             spacing: 8

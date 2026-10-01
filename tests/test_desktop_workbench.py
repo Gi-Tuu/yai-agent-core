@@ -299,3 +299,73 @@ def test_onboarding_dismiss_persists(qapp) -> None:
         workbench.shutdown()
     finally:
         settings.setValue("onboarding/done", original)
+
+
+def test_retry_reruns_last_task_after_error(qapp) -> None:
+    """出错后进入可重试状态，retry 用上次文本重跑；成功后可重试状态清除。"""
+    state = {"n": 0}
+
+    async def fail_then_ok(task, channel):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise RuntimeError("boom")
+        yield DemoEvent("done", final_text="好了")
+
+    workbench = _workbench(("a", fail_then_ok))
+    try:
+        assert workbench.activeCanRetry is False
+        assert workbench.startTask("第一次任务") is True
+        # 第一次抛异常出错：进入可重试、且 busy 已复位（can_retry 先于 settle 置位）
+        assert _pump(qapp,
+                    lambda: workbench.activeCanRetry and not workbench.activeBusy)
+        assert state["n"] == 1
+        # 重试：用上次的任务文本再跑一次，这次成功
+        assert workbench.retry() is True
+        assert _pump(qapp, lambda: state["n"] == 2 and not workbench.activeBusy)
+        assert workbench.activeCanRetry is False
+    finally:
+        workbench.shutdown()
+
+
+def test_retry_after_error_event_not_only_exception(qapp) -> None:
+    """内核直接 yield error 终结事件（而非抛异常）时，同样进入可重试。"""
+    state = {"n": 0}
+
+    async def error_event_then_ok(task, channel):
+        state["n"] += 1
+        if state["n"] == 1:
+            yield DemoEvent("error", error="LLMError: 上游不可用")
+            return
+        yield DemoEvent("done", final_text="好了")
+
+    workbench = _workbench(("a", error_event_then_ok))
+    try:
+        workbench.startTask("任务")
+        assert _pump(qapp,
+                     lambda: workbench.activeCanRetry and not workbench.activeBusy)
+        assert workbench.retry() is True
+        assert _pump(qapp, lambda: state["n"] == 2 and not workbench.activeBusy)
+        assert workbench.activeCanRetry is False
+    finally:
+        workbench.shutdown()
+
+
+def test_retry_blocked_while_busy_or_without_history(qapp) -> None:
+    """busy 中、或从未发过任务时，retry 不动作。"""
+    fresh = _workbench(("a", lambda task, channel: _script([])))
+    try:
+        assert fresh.retry() is False               # 没有历史任务
+    finally:
+        fresh.shutdown()
+
+    async def slow(task, channel):
+        await asyncio.sleep(0.6)
+        yield DemoEvent("done")
+
+    workbench = _workbench(("a", slow))
+    try:
+        workbench.startTask("慢任务")
+        assert _pump(qapp, lambda: workbench.activeBusy)
+        assert workbench.retry() is False           # busy 中不允许重试
+    finally:
+        workbench.shutdown()

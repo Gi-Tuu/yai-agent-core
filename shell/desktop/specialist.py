@@ -97,6 +97,8 @@ class SpecialistRuntime(QObject):
         self._pending_kind = ""
         self._pending_json = "{}"
         self._task: asyncio.Task | None = None
+        self._last_task = ""
+        self._can_retry = False
         self._lock = threading.Lock()
 
     # ---------- 供工作台读取的身份与状态 ----------
@@ -133,6 +135,10 @@ class SpecialistRuntime(QObject):
     def unread(self) -> int:
         return self._unread
 
+    @property
+    def can_retry(self) -> bool:
+        return self._can_retry
+
     def clear_unread(self) -> None:
         if self._unread:
             self._unread = 0
@@ -158,6 +164,11 @@ class SpecialistRuntime(QObject):
     coreEnabled = Property(bool, _get_core_enabled, notify=stateChanged)
     permissionMode = Property(str, _get_permission_mode, notify=stateChanged)
 
+    def _get_can_retry(self) -> bool:
+        return self._can_retry
+
+    canRetry = Property(bool, _get_can_retry, notify=stateChanged)
+
     # ---------- 任务生命周期 ----------
 
     @Slot(str, result=bool)
@@ -176,9 +187,18 @@ class SpecialistRuntime(QObject):
                 return False
             self._busy = True
             self._cancel_requested = False
+            self._last_task = task_text
+            self._can_retry = False
         self.stateChanged.emit()
         asyncio.run_coroutine_threadsafe(self._guarded(task_text), self._loop)
         return True
+
+    @Slot(result=bool)
+    def retry(self) -> bool:
+        """出错后用上次的任务文本重跑一次；busy 或没有历史时不动作。"""
+        if self._busy or not self._last_task:
+            return False
+        return self.startTask(self._last_task)
 
     @Slot()
     def cancel(self) -> None:
@@ -214,6 +234,8 @@ class SpecialistRuntime(QObject):
                 self.eventReceived.emit(name, dump(getattr(event, "data", {})))
                 if name in _TERMINAL_EVENTS:
                     ended = True
+                    if name == "error":
+                        self._can_retry = True
                     if name == "done":
                         break
         except asyncio.CancelledError:
@@ -222,6 +244,7 @@ class SpecialistRuntime(QObject):
             raise
         except Exception as exc:  # noqa: BLE001 - 界面需看到错误而非静止不动
             ended = True
+            self._can_retry = True
             self._finish("error", {"error": f"{type(exc).__name__}: {exc}"})
         finally:
             await stream.aclose()

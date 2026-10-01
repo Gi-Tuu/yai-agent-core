@@ -230,6 +230,9 @@ class WorkbenchRuntime(QObject):
     def _get_run_mode(self) -> str:
         return self._active().run_mode
 
+    def _get_can_retry(self) -> bool:
+        return self._active().can_retry
+
     def _get_name(self) -> str:
         return self._active().spec.name
 
@@ -264,6 +267,7 @@ class WorkbenchRuntime(QObject):
     activeCoreEnabled = Property(bool, _get_core_enabled, notify=stateChanged)
     activePermissionMode = Property(str, _get_permission_mode, notify=stateChanged)
     activeRunMode = Property(str, _get_run_mode, notify=stateChanged)
+    activeCanRetry = Property(bool, _get_can_retry, notify=stateChanged)
     activeName = Property(str, _get_name, notify=stateChanged)
     activeGlyph = Property(str, _get_glyph, notify=stateChanged)
     unreadTotal = Property(int, _get_unread_total, notify=stateChanged)
@@ -303,6 +307,10 @@ class WorkbenchRuntime(QObject):
     @Slot(str, result=bool)
     def startTask(self, text: str) -> bool:
         return self._active().startTask(text)
+
+    @Slot(result=bool)
+    def retry(self) -> bool:
+        return self._active().retry()
 
     @Slot()
     def cancel(self) -> None:
