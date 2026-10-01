@@ -117,6 +117,31 @@ preferred = max(means, key=lambda arm: means[arm])
 `summarize` 的外壳同样容错：文件缺失/损坏返回
 `{"enabled": False, "learned_tasks": 0, ...}`，面板在"从没学过"时也能正常渲染。
 
+### 2.5 学习面板怎么上岛：workbench 派发（与工具仓库同一套）
+
+`summarize` 只是个纯函数，真正把它接到灵动岛的是 `workbench.py`，
+路径与第 23 篇 / 工具管理面板**完全同构**：
+
+```python
+learningVault = Property(str, ..., notify=learningUpdated)
+learningAvailable = Property(bool, ..., notify=stateChanged)
+
+@Slot()
+def openLearning(self):
+    self._submit_learning(self._learning_refresh)
+```
+
+- 标题栏"学习"按钮调 `openLearning()` → `_submit_learning` 把 `summarize(path)`
+  排到工作台**唯一那条常驻 loop**（空闲时没有 Core 实例，真实状态只在磁盘 JSON 里）；
+- worker 线程读好、`json.dumps` 后经 `learningUpdated` 回传，`LearningPanel.qml`
+  再 `JSON.parse` 渲染；
+- 面板对用户是**只读**的：Beta 后验只能由任务成败自然更新，不提供手工编辑，
+  避免误操作清空"越用越准"的积累。
+
+`LearningPanel.qml` 每个场景桶画四条后验均值条（直接回答 / 工具推理 / 先规划 /
+先澄清），偏好臂用绿色高亮——四臂成功率的此消彼长一眼可见。切专员时面板自动
+关闭（`boundSid` 变化），免得把上一个专员的学习状态误当成当前专员的。
+
 ## 3. `_live_factory` 的三处接线（`host.py`）
 
 `_live_factory(host, read_tools, *, with_sandbox, storage_path, learning_path)`

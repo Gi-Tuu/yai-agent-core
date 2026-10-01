@@ -55,7 +55,7 @@ Window {
     // 离开留一点宽限：指针跨子项时 hover 可能瞬时抖动，别立刻收
     Timer {
         id: leaveGrace
-        interval: 320
+        interval: 150
         onTriggered: {
             if (root.hovering || root.dragging) return;
             if (root.shape === "capsule") root.shape = "ball";

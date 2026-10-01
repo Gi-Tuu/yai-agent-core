@@ -112,6 +112,8 @@ class WorkbenchRuntime(QObject):
     quitRequested = Signal()
     #: 当前专员的代码工具仓库刷新（payload = status JSON 字符串）
     codeVaultUpdated = Signal(str)
+    #: 当前专员的路由学习状态刷新（payload = summary JSON 字符串）
+    learningUpdated = Signal(str)
 
     def __init__(
         self,
@@ -129,6 +131,7 @@ class WorkbenchRuntime(QObject):
         self._active_id = active_id or specs[0].id
         self._lock = threading.Lock()
         self._vault_json = "{}"
+        self._learning_json = "{}"
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop, name="yai-workbench-loop", daemon=True
@@ -260,8 +263,16 @@ class WorkbenchRuntime(QObject):
     def _get_code_vault_available(self) -> bool:
         return self._active_storage() is not None
 
+    def _get_learning(self) -> str:
+        return self._learning_json
+
+    def _get_learning_available(self) -> bool:
+        return self._active_learning_path() is not None
+
     codeVault = Property(str, _get_code_vault, notify=codeVaultUpdated)
     codeVaultAvailable = Property(bool, _get_code_vault_available, notify=stateChanged)
+    learningVault = Property(str, _get_learning, notify=learningUpdated)
+    learningAvailable = Property(bool, _get_learning_available, notify=stateChanged)
     specialistModel = Property(QObject, _get_model, notify=stateChanged)
 
     # ---------- 转发到当前专员 ----------
@@ -353,6 +364,37 @@ class WorkbenchRuntime(QObject):
     @Slot(str)
     def removeCodeTool(self, name: str) -> None:
         self._submit_vault(self._vault_remove, name)
+
+    # ---------- 路由学习状态（只读，派发到常驻 loop） ----------
+
+    def _active_learning_path(self) -> Path | None:
+        item = self._specialists.get(self._active_id)
+        return None if item is None else item.spec.learning_path
+
+    def _submit_learning(self, work) -> None:
+        """空闲也能看：读取排到 worker loop，与运行中的 Core 同线程串行。"""
+        path = self._active_learning_path()
+        if path is None:
+            return
+
+        async def _coro() -> None:
+            work(path)
+
+        asyncio.run_coroutine_threadsafe(_coro(), self._loop)
+
+    def _emit_learning(self, data: dict) -> None:
+        # 在 worker 线程读好再 emit；Qt 以 QueuedConnection 投递到 GUI 线程。
+        self._learning_json = json.dumps(data, ensure_ascii=False, default=str)
+        self.learningUpdated.emit(self._learning_json)
+
+    def _learning_refresh(self, path: Path) -> None:
+        from shell.desktop.learning_vault import summarize
+
+        self._emit_learning(summarize(path))
+
+    @Slot()
+    def openLearning(self) -> None:
+        self._submit_learning(self._learning_refresh)
 
     def shutdown(self) -> None:
         """退出前收尾：取消并**排空**全部任务，再关掉唯一那条后台循环。

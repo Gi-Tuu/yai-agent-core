@@ -216,3 +216,55 @@ def test_code_vault_unavailable_without_storage(qapp) -> None:
     workbench.openCodeVault()          # 没有仓库路径时静默不动作，不抛
     assert workbench.codeVault == "{}"
     workbench.shutdown()
+
+
+def _feed_learning(path: Path, task: str = "帮我查一下这个 key 的值",
+                   reward: float = 0.95) -> None:
+    """跑一次 suggest + record 并落盘，构造一个有数据的学习文件。"""
+    from shell.desktop.learning_vault import load_selector, save_selector
+
+    from yai_core import Strategy, ToolRegistry, discover
+    from yai_core.learning import RouteOutcome
+
+    class _Host:
+        def get_value(self, key: str) -> str:
+            """按键取值。"""
+            return key
+
+    reg = ToolRegistry()
+    reg.register_many(discover(_Host()))
+    selector = load_selector(path)
+    selector.suggest(task, reg)
+    selector.record(task, reg, Strategy.REACT,
+                    RouteOutcome(success=True, reward=reward))
+    save_selector(selector, path)
+
+
+def test_learning_roundtrip_on_worker_loop(qapp, tmp_path) -> None:
+    """空闲也能看学习：读取派发到常驻 loop，结果经信号回 GUI。"""
+    learning = tmp_path / "warehouse_route_learning.json"
+    _feed_learning(learning)
+
+    spec = SpecialistSpec(
+        id="warehouse", name="仓库专员", glyph="仓",
+        demo_factory=lambda task, channel: _script([]), learning_path=learning)
+    workbench = WorkbenchRuntime([spec], mode="demo")
+    updates: list[str] = []
+    workbench.learningUpdated.connect(updates.append)
+
+    assert workbench.learningAvailable is True
+    workbench.openLearning()
+    assert _pump(qapp, lambda: '"enabled": true' in workbench.learningVault)
+    assert '"learned_tasks": 1' in workbench.learningVault
+    assert '"context_buckets": 1' in workbench.learningVault
+    assert '"direct"' in workbench.learningVault and '"react"' in workbench.learningVault
+    assert len(updates) >= 1
+    workbench.shutdown()
+
+
+def test_learning_unavailable_without_path(qapp) -> None:
+    workbench = _workbench(("a", lambda task, channel: _script([])))
+    assert workbench.learningAvailable is False
+    workbench.openLearning()          # 没有学习路径时静默不动作，不抛
+    assert workbench.learningVault == "{}"
+    workbench.shutdown()

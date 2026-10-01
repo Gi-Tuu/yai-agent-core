@@ -7,7 +7,7 @@ QtObject {
     readonly property int ballSize: 56
     readonly property int capW: 340
     readonly property int capH: 52
-    readonly property int panelW: 420
+    readonly property int panelW: 470
     readonly property int panelH: 620
     readonly property int topMargin: 10
     // 按下后移动超过这个距离算拖动，否则算点击

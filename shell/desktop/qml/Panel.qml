@@ -113,6 +113,14 @@ Item {
                     vaultLayer.open();
                 }
             }
+            Pill {
+                label: "学习"
+                tone: workbench.learningAvailable ? Theme.accent : Theme.dim
+                onClicked: {
+                    if (!workbench.learningAvailable) return;
+                    learningLayer.open();
+                }
+            }
             Pill { label: "收起"; tone: Theme.dim; onClicked: panel.collapseRequested() }
             Pill { label: "退出"; tone: Theme.dim; onClicked: workbench.requestQuit() }
         }
@@ -174,12 +182,23 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
-                Text {
-                    text: panel.pendingSummary
-                    color: Theme.text
-                    font.pixelSize: 12
-                    wrapMode: Text.WordWrap
+                // 待授权代码可能很长：限高 + 内部滚动，保证下方"允许/拒绝"始终可点
+                ScrollView {
+                    id: pendingScroll
                     Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(220, codeText.implicitHeight + 2)
+                    clip: true
+                    Text {
+                        id: codeText
+                        width: pendingScroll.viewport.width
+                        text: panel.pendingSummary
+                        color: Theme.text
+                        font.pixelSize: 12
+                        font.family: workbench.activePendingKind === "confirm"
+                                     ? "Consolas, 'Courier New', monospace"
+                                     : Qt.application.font.family
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
                 RowLayout {
@@ -359,6 +378,12 @@ Item {
     // 代码工具仓库弹层：放在最后，保证盖在所有内容之上
     ToolVaultPanel {
         id: vaultLayer
+        anchors.fill: parent
+    }
+
+    // 路由学习状态弹层：放在最后，保证盖在所有内容之上
+    LearningPanel {
+        id: learningLayer
         anchors.fill: parent
     }
 
