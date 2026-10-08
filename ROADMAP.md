@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-09-22。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
+> 最后更新：2026-10-09。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
 
 ## 愿景
 
@@ -65,17 +65,18 @@
 - **代码工具注册表 + 生命周期（已落地，执行走宿主沙箱）**：宿主提供 `ToolSandbox` 后，模型可经 meta-tool `create_code_tool` 生成代码工具；内核负责注册、48h TTL、被调用刷新、后台永久保留（`retain_code_tool` / `sweep_code_tools` / `code_tools_status`），创建与首次执行都过权限闸；**内核仍不内置任何代码执行器**，真正执行在宿主沙箱。见下文"代码生成工具"。
 - **宿主沙箱示例 host_g（已落地）**：`examples/host_g_sandbox/` 给出最小可运行的 `ToolSandbox`（标准库子进程 + 内置白名单 + 超时；print 4k 字符 / 结果 64KB 上界；Unix 另加内存 256MB / CPU 15s rlimit），离线演示"AI 现场 create_code_tool 造加权评分工具并在沙箱执行"，把代码工具的 SPI 契约真正跑通；定位为教学级隔离（**Windows 无标准库内存/CPU rlimit，仅靠超时兜底、不做 OS 级网络隔离**），生产级用容器/微 VM 替换同一 SPI。
 - 网页工作台渲染 `capability_missing` / `tool_discovered` / `tool_composed` / `code_tool_created` 事件。
-- 运维向：KV TTL（SQLite schema v2 迁移）、响应体大小守卫、API 鉴权。
+- **运维向（已落地）**：KV TTL（`MemoryStore.put` 可选 `ttl_seconds`，SQLite schema v1→v2 自动迁移、旧数据保留、过期边界时刻保留）；响应体大小守卫（final / 事件数 / 整体三级截断、头+尾保留、附 truncated 与 events_total 标记，不静默删改）；API Key 鉴权（`YAI_API_KEY` / `YAI_API_KEYS`，Bearer / X-API-Key、常量时间比较，硬门槛路径公开、未带 key 在花模型钱前返回 401）。
 
 ### v0.8 — Tool Discovery（发现工具，动态发现源）
 
 > 最小切片已在 v0.6 落地：`ToolDiscovery` SPI + 进程内 `StaticCatalog` + 缺口→注册→本轮可用闭环（见上）。
-> 本阶段把"进程内静态目录"换成"运行时动态发现源"。
+> 本阶段把"进程内静态目录"扩展为"运行时远程发现源"。
 
-- 发现源扩展：MCP 目录（按语义找到公共 MCP Server 并 list_tools）、OpenAPI 服务目录、宿主插件市场。
-- 语义匹配（关键词之外的向量/嵌入检索）——**检索层已在 v0.7 落地**（`SemanticCatalog` + 第八 SPI，本地 bge-m3 / 云端双后端，见上）；本阶段把它接到 MCP/OpenAPI/插件市场等动态发现源。
+- **远程发现源（已落地）**：`discovery/remote_sources.py` 的 `RemoteSourceDiscovery` 复用 MCP / OpenAPI bridge，懒连接一组外部源（首次 discover 才连接、单源失败跳过、连接常驻以保持 handler、缓存 specs），`mcp_discovery(configs)` / `openapi_discovery(configs)` 工厂构造；配置即白名单，注册去重与执行授权仍归内核 / PermissionPolicy。
+- **多源聚合（已落地）**：`discovery/aggregate.py` 的 `CompositeDiscovery` 把进程内 StaticCatalog 与远程源串成单个 discovery（内核只接受一个），跨源去重、把已返回工具名并入后续源的 available，并聚合 `list_discoverable` 声明。
+- 语义匹配（向量 / 嵌入检索）——**检索层已在 v0.7 落地**（`SemanticCatalog` + 第八 SPI，本地 bge-m3 / 云端双后端，见上）；后续把它接到远程发现源做 need 相关性筛选（当前远程源返回配置内全部工具，need 保留给语义层）。
 - 每轮反思中按需再次发现（与 v0.7 反思循环联动）。
-- 发现的工具注册前经权限策略确认（高危能力显式授权）——该约束在静态目录阶段已由权限闸保证。
+- 宿主插件市场发现源（AMBRACE）待 v1.0 回流时接入。
 
 ### v1.0 — 回流 AMBRACE
 
@@ -90,7 +91,7 @@
   - 生命周期（已落地）：代码工具默认临时保留 48h，期间被多次调用则刷新 TTL；宿主可在后台把某个工具置为永久保留（`retain_code_tool`），定时 `sweep_code_tools()` 回收过期工具；
   - 隔离（教学级示例已落地，生产级待宿主）：host_g 子进程沙箱默认无 import（无网络）、无文件、强制超时（`code_timeout`，默认 10s）、print 与结果大小上界；Unix 额外限内存/CPU，**Windows 无标准库 rlimit、内存不硬限、不做 OS 级网络隔离**；容器/资源上限等强隔离由生产宿主实现；
   - 与组合工具的关系：能用现有工具编排解决的优先走组合工具（零沙箱风险），确需新原始能力时才进入代码生成。
-  - **生产级沙箱适配器（待做，宿主侧，不进内核）**：按隔离强度递进提供同一 `ToolSandbox` 协议的可选实现——①一次性 Docker 容器（drop capabilities、只读根fs、无网络 namespace、内存/CPU cgroup 限制，最易落地）；②gVisor（runsc，系统调用拦截，容器启动快、隔离更强）；③微 VM Firecracker（最强隔离，冷启动稍重）；④远程沙箱 e2b / Daytona（把执行移出本机）。每个适配器独立成可选 extra，内核零改动。
+  - **生产级沙箱适配器（Docker 已落地，宿主侧，不进内核）**：`shell/desktop/docker_sandbox.py` 的 `DockerSandbox` 复用同一白名单 worker（源码剥到 `from __future__`、经 `python -c` 作为单个 argv 传入，纵深防御第二层），外层一次性容器做 OS 级硬隔离：`--rm`、`--network none`、`--read-only` + noexec tmpfs、`--cap-drop ALL`、`no-new-privileges`、`--memory`/`--cpus` cgroup（跨平台、补齐 Windows 无 rlimit）、`--pids-limit`；payload 走 stdin、不挂载代码卷；超时按唯一容器名 `docker rm -f` 兜底。真机端到端需启动 Docker Desktop（测试在无 Docker 时自动 skip）。按隔离强度递进的后续可选：②gVisor（runsc，系统调用拦截）；③微 VM Firecracker（最强隔离，冷启动稍重）；④远程 e2b / Daytona（执行移出本机）。每个适配器独立可选，内核零改动。
 - 组合工具的可视化编排与版本管理（宿主侧）。
 
 ## 明确不做（防止内核膨胀）

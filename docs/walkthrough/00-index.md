@@ -85,6 +85,11 @@
 | `integrations/openapi/` | OpenAPI 发现（opt-in） | REST API 的自动翻译官 |
 | `batteries/fastapi_server/app.py` | 包成 HTTP 服务 | 对外营业窗口 |
 | `batteries/fastapi_server/ratelimit.py` | 评审期限流（每 IP 滑动窗口） | 门口的取号机 |
+| `batteries/fastapi_server/payload_guard.py` | 响应体大小守卫（三级截断、标记不静默） | 行李限重秤 |
+| `batteries/fastapi_server/auth.py` | API Key 鉴权（Bearer / X-API-Key，常量时间比较） | 门卫查证件 |
+| `discovery/remote_sources.py` | 远程发现源：MCP / OpenAPI bridge 懒连接、缓存常驻 | 外部供应商名录 |
+| `discovery/aggregate.py` | `CompositeDiscovery`：多个发现源串成一个、跨源去重 | 总台汇总窗口 |
+| `shell/desktop/docker_sandbox.py` | 生产级沙箱：一次性容器 OS 级隔离（无网/只读/限资源） | 加固的隔离车间 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
 
@@ -121,6 +126,8 @@
 - 23 · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
 - 24 · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）
 - 25 · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
+- 26 · `discovery/remote_sources.py` + `aggregate.py`：远程动态发现源（MCP / OpenAPI 懒连接）与多源聚合去重
+- 27 · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
 
 ## 5. 自检（读完本篇应能回答）
 
