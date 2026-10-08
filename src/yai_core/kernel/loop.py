@@ -12,6 +12,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Iterable
 
+from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter
 from yai_core.policy.authorize import authorize_tool_call
@@ -77,6 +78,7 @@ class AgentLoop:
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
         meta_tools: Iterable[str] = (),
+        compaction_policy: CompactionPolicy | None = None,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -85,6 +87,8 @@ class AgentLoop:
         # 工具把上下文撑爆。聚焦失败一律回退全量，宁多勿漏。
         # meta_tools：由内核直接拦截处理的工具名（如 request_capability），
         # 它们注册进目录让模型可见，但不进 ToolExecutor 的普通 handler 执行路径。
+        # compaction_policy：上下文摘要压缩策略；None（默认）= 关闭、只走硬裁剪，
+        # 非 None 时在 react 每轮模型调用前检查高水位，把旧轮压成摘要并发事件。
     ) -> None:
         self.model = model
         self.registry = registry
@@ -99,6 +103,8 @@ class AgentLoop:
         self.max_clarify_rounds = max_clarify_rounds
         self.full_schema_budget = full_schema_budget
         self.meta_tools: set[str] = set(meta_tools)
+        # 摘要压缩：默认 None（关闭，行为与旧版一致）；宿主显式传入后启用。
+        self.compaction_policy = compaction_policy
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
         decision = await self.router.aclassify(
@@ -363,6 +369,14 @@ class AgentLoop:
         else:
             tools_schema, focused_names = None, None
         for _ in range(self.max_iters):
+            # 摘要压缩：超高水位时把旧轮压成摘要（最近完整轮保留），避免长对话
+            # 硬裁剪丢失早期事实；压缩本身可观测，模型失败回退硬裁剪。
+            if self.compaction_policy is not None:
+                compact_ev = await compact_context(
+                    ctx, self.model, self.compaction_policy
+                )
+                if compact_ev is not None:
+                    yield compact_ev
             try:
                 resp = await self.model.achat(ctx.llm_messages(), tools=tools_schema)
             except Exception as exc:  # noqa: BLE001

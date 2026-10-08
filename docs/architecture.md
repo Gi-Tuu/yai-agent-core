@@ -62,8 +62,9 @@ Loop/Core/宿主示例零改动。边界（历史裁剪、多进程写、临时�
 两种 Store 以构造参数 max_messages / ttl_seconds / clock 对等支持；裁剪边界按"轮"
 对齐（一条 user 到下一条 user 之前为一轮），保证 assistant(tool_calls)/tool 配对
 不被拆散；SQLite 构造时自动 prune 一次覆盖重启场景。MemoryStore 契约与 schema
-版本（仍为 v1）不变；KV 的 TTL 需 schema v2 迁移，留待 v0.4。`Context._compact`
-同步改为轮边界丢弃（kernel 内同源私有实现）。
+版本（仍为 v1）不变；KV 的 TTL 需 schema v2 迁移，留待 v0.4。`Context` 的字符预算
+硬裁剪（原私有 `_compact`，现公共方法 `enforce_budget`）同为轮边界丢弃（kernel 内同源实现）；
+v0.7 起在其之上新增摘要压缩，见 2.5 节。
 
 ### 2.3 OpenAPI 发现（v0.2 已落地）
 
@@ -96,6 +97,27 @@ ToolDiscovery.discover(need, task, available) → list[ToolSpec]
 - 发现发生在系统提示词构建之前，因此新工具在**同一轮**就对模型可见，不必等下一次任务。
 - 安全默认：`discovery=None` 时只发缺口事件、不动态注册任何工具，老宿主行为不变。
 - 边界：当前只在"路由判定缺口"时发现一次；执行中途反思、语义检索、动态换工具属 v0.7/v0.8。
+
+### 2.5 上下文摘要压缩（Context Compaction，v0.7 已落地，opt-in）
+
+```
+ReAct 每轮模型调用前：Context.total_chars() 超 hard_max_chars 高水位？
+   │  否 → 照常进入模型
+   ▼ 是
+select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_rounds 个 user 轮首
+   │  render_for_summary：旧轮转纯文本（用户 / 助手[调用工具] / 工具结果）
+   ▼
+摘要模型 achat([摘要指令, 旧轮文本], tools=None)
+   │  成功 → replace_range 把区间换成一条 system「早期对话摘要」，发 context_compacted 事件
+   └─ 异常 / 空摘要 → 回退 enforce_budget() 硬裁剪（轮边界、不拆工具对），不致命
+   ▼
+最近 keep_recent_rounds 个完整轮原样保留，长对话不丢早期目标与事实
+```
+
+- 三段式窗口：system（index 0）永留 / 旧轮压成一条摘要 / 最近完整轮全保留；`replace_range` 强制 `start≥1`、两端对齐 user 轮首，消息结构对模型永远合法。
+- 摘像是增强不是依赖：模型异常、超时、空摘要一律退回已验证的硬裁剪 `enforce_budget()`。
+- 开关：`AgentCore(context_compaction=True)` 用默认 `CompactionPolicy`（hard 24000 / target 16000 / keep 2 轮），也可传自定义 policy；默认关闭，老宿主行为不变。灵动岛真机工厂已开启。
+- 边界：压缩只重排本次上下文、不改写 MemoryStore 中的持久历史；跨请求历史裁剪仍走 retention（见 2.2）。
 
 ## 3. SPI 契约
 

@@ -29,6 +29,7 @@
   │           发现匹配：词法打分（零依赖）+ 可选 embedding 语义双通道【discovery/scoring.py、semantic.py，第 20 篇】
   │
   │ ④ Context 组装消息列表（含刚发现的工具）      【kernel/context.py】
+  │    超预算时旧轮压成摘要、recent 完整保留（第 25 篇）【kernel/compaction.py】
   │
   │ ⑤（plan 时）先让强模型拆步骤，再补一条"按计划执行"的 user 指令
   │
@@ -71,6 +72,7 @@
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
 | `learning/` | 自校准路由：特征/反馈/上下文老虎机（从执行结果学习，opt-in） | 会复盘的作战参谋 |
 | `kernel/context.py` | 管理发给模型的消息 | 剪贴板 |
+| `kernel/compaction.py` | 超预算时把旧轮压成摘要（失败回退硬裁剪） | 会做会议纪要的秘书 |
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
 | `memory/inmemory.py` | 默认记忆 | 短期便签本 |
 | `memory/sqlite_store.py` | 持久化记忆（opt-in） | 带锁的笔记本 |
@@ -118,6 +120,7 @@
 - 22 · `shell/desktop/`：原生桌面端（PySide6 + QML 灵动岛，内核与界面同进程，事件驱动动效与线程纪律）
 - 23 · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
 - 24 · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）
+- 25 · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
 
 ## 5. 自检（读完本篇应能回答）
 

@@ -1,4 +1,4 @@
-"""Context._compact 轮边界丢弃专项：压缩不得拆散 assistant(tool_calls)/tool 对。"""
+"""Context.enforce_budget 轮边界丢弃专项：硬裁剪不得拆散 assistant(tool_calls)/tool 对。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_compact_drops_whole_round_and_keeps_system() -> None:
             ChatMessage(role="assistant", content="完成"),
         ]
     )
-    ctx._compact()
+    ctx.enforce_budget()
     assert [m.role for m in ctx.messages] == ["system", "user", "assistant"]
     assert ctx.messages[0].content == "系统提示"
     assert ctx.messages[1].content == "新任务"
@@ -38,14 +38,14 @@ def test_compact_within_budget_unchanged() -> None:
     ctx = Context("系统提示", max_chars=24000)
     ctx.messages.extend(_tool_round("x", 10))
     before = list(ctx.messages)
-    ctx._compact()
+    ctx.enforce_budget()
     assert ctx.messages == before
 
 
 def test_compact_keeps_last_round_even_if_over_budget() -> None:
     ctx = Context("系统提示", max_chars=10)
     ctx.messages.extend(_tool_round("大", 50))  # 只有一轮且超预算
-    ctx._compact()
+    ctx.enforce_budget()
     # 宁可超预算也不裁：system + 完整工具轮（4 条）
     assert [m.role for m in ctx.messages] == [
         "system",

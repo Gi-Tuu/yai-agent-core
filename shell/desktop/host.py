@@ -192,6 +192,7 @@ def _live_factory(
             sandbox=sandbox,
             code_storage=storage_path,
             learning=shared["selector"],
+            context_compaction=True,
         )
         from shell.employee import attach_delegate
 

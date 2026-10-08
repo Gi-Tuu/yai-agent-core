@@ -13,7 +13,7 @@ from typing import Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
-from yai_core.kernel import AdaptiveRouter, AgentLoop
+from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
@@ -62,6 +62,7 @@ class AgentCore:
         full_schema_budget: int = 24,
         learning: RouteSelector | None = None,
         on_feedback: FeedbackHook | None = None,
+        context_compaction: bool | CompactionPolicy = False,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
@@ -123,6 +124,18 @@ class AgentCore:
         if sandbox is not None:
             self.registry.register(build_create_code_tool())
             meta_tools.add(CREATE_CODE_TOOL)
+        # 上下文摘要压缩：False 关闭（零额外模型调用）；True 用默认策略；
+        # 传入 CompactionPolicy 则用自定义水位（测试 / 宿主可调）。
+        if context_compaction is True:
+            comp_policy: CompactionPolicy | None = CompactionPolicy()
+        elif isinstance(context_compaction, CompactionPolicy):
+            comp_policy = context_compaction
+        elif context_compaction is False:
+            comp_policy = None
+        else:
+            raise ValueError(
+                "context_compaction 只接受 False、True 或 CompactionPolicy"
+            )
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,
@@ -135,6 +148,8 @@ class AgentCore:
             max_clarify_rounds=max_clarify_rounds,
             full_schema_budget=full_schema_budget,
             meta_tools=meta_tools,
+            # 上下文摘要压缩：opt-in，默认关闭；灵动岛真机开启。
+            compaction_policy=comp_policy,
         )
 
     # ---------- 接入 ----------

@@ -37,6 +37,7 @@ class EventType(StrEnum):
     TOOL_COMPOSED = "tool_composed"
     CODE_TOOL_CREATED = "code_tool_created"
     CODE_TOOL_RETIRED = "code_tool_retired"
+    CONTEXT_COMPACTED = "context_compacted"
     ERROR = "error"
     DONE = "done"
 
