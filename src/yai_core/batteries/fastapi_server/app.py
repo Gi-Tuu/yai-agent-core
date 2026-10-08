@@ -21,6 +21,11 @@ except ImportError as exc:  # pragma: no cover - 仅在缺少可选依赖时触�
         "FastAPI Battery 需要可选依赖：uv pip install -e '.[server]'"
     ) from exc
 
+from yai_core.batteries.fastapi_server.auth import ApiKeyAuth
+from yai_core.batteries.fastapi_server.payload_guard import (
+    ResponseGuardConfig,
+    bound_payload,
+)
 from yai_core.batteries.fastapi_server.ratelimit import (
     RateLimitConfig,
     SlidingWindowLimiter,
@@ -38,7 +43,12 @@ class RunRequest(BaseModel):
 
 
 def create_app(
-    core: Any, lifespan: Any = None, *, rate_limit: RateLimitConfig | None = None
+    core: Any,
+    lifespan: Any = None,
+    *,
+    auth: ApiKeyAuth | None = None,
+    rate_limit: RateLimitConfig | None = None,
+    guard: ResponseGuardConfig | None = None,
 ) -> FastAPI:
     app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
@@ -47,6 +57,10 @@ def create_app(
     # 评审期限流（opt-out via env）：None -> 从环境变量读默认策略；
     # enabled=False 时不注册中间件，零开销、零行为变化。
     config = rate_limit if rate_limit is not None else RateLimitConfig.from_env()
+    # 响应体大小守卫（opt-out via env）：默认开启，正常小响应不受影响。
+    guard_config = guard if guard is not None else ResponseGuardConfig.from_env()
+    # API Key 鉴权（opt-in via env）：未配置 Key 时关闭、全公开，本地/评审零门槛。
+    auth_cfg = auth if auth is not None else ApiKeyAuth.from_env()
     if config.enabled:
         limiter = SlidingWindowLimiter(config)
 
@@ -71,6 +85,27 @@ def create_app(
                     )
             return await call_next(request)
 
+    # API Key 鉴权（opt-in）：未配置 Key 时不注册中间件，零开销、行为不变。
+    if auth_cfg.enabled:
+
+        @app.middleware("http")
+        async def _auth_middleware(request, call_next):
+            if auth_cfg.should_protect(request.url.path):
+                if not auth_cfg.check_header(
+                    request.headers.get("authorization"),
+                    request.headers.get("x-api-key"),
+                ):
+                    # 未授权在中间件层直接 401：不进 core，不花模型钱。
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error": "unauthorized",
+                            "detail": "缺少或无效的 API Key（Authorization: Bearer <key>）",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+            return await call_next(request)
+
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "commit": commit}
@@ -86,13 +121,16 @@ def create_app(
     @app.post("/v1/agent/run")
     async def run_agent(req: RunRequest) -> dict:
         result = await core.run(req.task)
-        return {
+        payload = {
             "strategy": result.strategy.value,
             "final_text": result.final_text,
             "events": [
-                {"type": e.type.value, "data": _jsonable(e.data)} for e in result.events
+                {"type": e.type.value, "data": _jsonable(e.data)}
+                for e in result.events
             ],
         }
+        # 守卫默认开启：超上限的事件/正文被有界裁剪并标记 truncated。
+        return bound_payload(payload, guard_config) if guard_config.enabled else payload
 
     return app
 
