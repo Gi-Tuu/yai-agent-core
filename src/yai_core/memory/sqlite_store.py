@@ -9,7 +9,8 @@
 2. history() 按契约保持同步方法；其余 async 方法内执行同步小事务（单条毫秒级，
    v0.2 不引入 aiosqlite，边界与取舍写进 walkthrough 第 11 章）；
 3. scope 实现会话/宿主隔离，默认 "default"，不传参与 InMemoryStore 的单空间行为对齐；
-4. PRAGMA user_version 作为 schema 迁移钩子（v0.3 仍是 v1，历史裁剪不动 schema）；
+4. PRAGMA user_version 作为 schema 迁移钩子（v0.7 升至 v2：kv 加 expires_at；
+   v1 老库打开时自动 ALTER 迁移，历史表不动）；
 5. check_same_thread=False 只是放开 sqlite 的线程限制，真正的互斥由 self._lock 保证
    （uvicorn 会把同步函数丢到线程池，多线程可能同时碰一个连接）；
 6. v0.3 历史保留策略（opt-in）：max_messages/ttl_seconds/clock 与 InMemoryStore 对等；
@@ -36,7 +37,7 @@ from yai_core.memory.retention import (
 from yai_core.types import ChatMessage
 
 # 当前代码支持的 schema 版本；_ensure_schema 用它判断"未来版本数据库"并拒绝打开。
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 # 建表语句整体作为一个脚本执行；PRAGMA user_version 不能参数化，必须写字面量。
 _SCHEMA_SQL = """
@@ -57,10 +58,18 @@ CREATE TABLE IF NOT EXISTS kv (
     key        TEXT NOT NULL,
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+    expires_at TEXT,
     PRIMARY KEY (scope, key)
 );
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
+"""
+
+# v1 → v2 迁移：kv 增加可空 expires_at（NULL = 永不过期）；history 表不动。
+# 单独成脚本，ALTER TABLE ADD COLUMN 在老库上幂等性由 user_version=1 分支保证只跑一次。
+_MIGRATE_v1_v2_SQL = """
+ALTER TABLE kv ADD COLUMN expires_at TEXT;
+PRAGMA user_version = 2;
 """
 
 _DB_PATH_ENV = "YAI_DB_PATH"
@@ -149,6 +158,10 @@ class SqliteStore:
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             if version == 0:
                 conn.executescript(_SCHEMA_SQL)
+                conn.commit()
+            elif version == 1:
+                # 老库（v1）升级到 v2：kv 补 expires_at，数据原样保留。
+                conn.executescript(_MIGRATE_v1_v2_SQL)
                 conn.commit()
             elif version > _SCHEMA_VERSION:
                 raise RuntimeError(
@@ -266,25 +279,34 @@ class SqliteStore:
         with self._lock:
             return self._prune_locked()
 
-    async def put(self, key: str, value: str) -> None:
-        """KV 写入（UPSERT）：同 scope 同 key 覆盖并刷新 updated_at。"""
+    async def put(
+        self, key: str, value: str, ttl_seconds: int | None = None
+    ) -> None:
+        """KV 写入（UPSERT）：覆盖 value/updated_at；ttl_seconds 非 None 时写过期时刻。"""
+        expires_at = (
+            (self._clock() + timedelta(seconds=ttl_seconds)).strftime(_TS_FORMAT)
+            if ttl_seconds is not None
+            else None
+        )
         with self._lock:
             conn = self._require_conn_locked()
             conn.execute(
-                "INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)"
+                "INSERT INTO kv(scope, key, value, expires_at) VALUES (?, ?, ?, ?)"
                 " ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value,"
-                " updated_at = CURRENT_TIMESTAMP",
-                (self._scope, key, value),
+                " updated_at = CURRENT_TIMESTAMP, expires_at = excluded.expires_at",
+                (self._scope, key, value, expires_at),
             )
             conn.commit()
 
     async def get(self, key: str) -> str | None:
-        """KV 读取；未命中返回 None（不是 KeyError），与 InMemoryStore 对齐。"""
+        """KV 读取；未命中或已过 TTL 返回 None（等于过期时刻保留，与 InMemoryStore 对齐）。"""
+        now_text = self._clock().strftime(_TS_FORMAT)
         with self._lock:
             conn = self._require_conn_locked()
             row = conn.execute(
-                "SELECT value FROM kv WHERE scope = ? AND key = ?",
-                (self._scope, key),
+                "SELECT value FROM kv WHERE scope = ? AND key = ?"
+                " AND (expires_at IS NULL OR expires_at >= ?)",
+                (self._scope, key, now_text),
             ).fetchone()
         return None if row is None else row["value"]
 

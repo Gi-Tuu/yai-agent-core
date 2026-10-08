@@ -29,6 +29,7 @@ class InMemoryStore:
         self._history: list[ChatMessage] = []
         self._timestamps: list[datetime] = []  # 与 _history 严格同长同序
         self._kv: dict[str, str] = {}
+        self._kv_expires: dict[str, datetime | None] = {}  # 与 _kv 同键；None=永不过期
         self._max_messages = max_messages
         self._ttl_seconds = ttl_seconds
         self._clock = clock or utc_now
@@ -65,13 +66,28 @@ class InMemoryStore:
         del self._timestamps[:k]
         return k
 
-    async def put(self, key: str, value: str) -> None:
+    async def put(
+        self, key: str, value: str, ttl_seconds: int | None = None
+    ) -> None:
+        """写 KV；ttl_seconds 非 None 时记录过期时刻，get 时惰性过期。"""
         self._kv[key] = value
+        self._kv_expires[key] = (
+            self._clock() + timedelta(seconds=ttl_seconds)
+            if ttl_seconds is not None
+            else None
+        )
 
     async def get(self, key: str) -> str | None:
+        """读 KV；当前时间严格超过过期时刻则删除并返回 None（等于过期时刻保留）。"""
+        expires = self._kv_expires.get(key)
+        if expires is not None and self._clock() > expires:
+            self._kv.pop(key, None)
+            self._kv_expires.pop(key, None)
+            return None
         return self._kv.get(key)
 
     async def clear(self) -> None:
         self._history.clear()
         self._timestamps.clear()
         self._kv.clear()
+        self._kv_expires.clear()
