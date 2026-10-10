@@ -8,6 +8,7 @@ name: Publish to PyPI
 #   Scorecard 只对“GitHub Release 上、资产本身带签名或 provenance”计分；
 #   PyPI 的 attestation、Docker 的 provenance 都不算。因此每个 wheel/sdist 都：
 #     1) cosign sign-blob 产出同名 .bundle（Sigstore keyless 签名束，含签名与证书），随 Release 上传；
+#        并从 bundle 导出传统 .sig（签名）/.pem（证书），供 Scorecard 与传统工具识别；
 #     2) attest-build-provenance 生成 SLSA 构建证明（绑定资产 SHA256）。
 #   另附 SHA256SUMS 及其签名，供使用者核对完整性与来源。
 #
@@ -59,7 +60,18 @@ jobs:
               --bundle "$f.bundle" \
               --yes
           done
-          ls -la
+
+      # Scorecard 只认 .sig/.sign/.sigstore 等后缀、不认 .bundle；
+      # 从每个 bundle 导出真实签名 .sig 与证书 .pem（内容来自 bundle，非空壳）。
+      - name: Export legacy .sig/.pem from bundles
+        run: |
+          set -euo pipefail
+          cd dist
+          for b in *.bundle; do
+            base="${b%.bundle}"
+            python3 "../scripts/extract_sigstore_bundle.py" "$b" \
+              --sig "$base.sig" --pem "$base.pem"
+          done
 
       - name: GitHub Release (upload signed artifacts)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -69,6 +81,8 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/*.bundle
+            dist/*.sig
+            dist/*.pem
           generate_release_notes: true
 
       # PyPI 发布只认 wheel / sdist；dist 里的 SHA256SUMS 与 .bundle 会被
