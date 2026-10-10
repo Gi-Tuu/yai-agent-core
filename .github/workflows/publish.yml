@@ -7,7 +7,7 @@ name: Publish to PyPI
 # 为什么 Release 资产必须签名（OpenSSF Scorecard · Signed-Releases）：
 #   Scorecard 只对“GitHub Release 上、资产本身带签名或 provenance”计分；
 #   PyPI 的 attestation、Docker 的 provenance 都不算。因此每个 wheel/sdist 都：
-#     1) cosign sign-blob 产出同名 .sig/.crt（Sigstore keyless），随 Release 上传；
+#     1) cosign sign-blob 产出同名 .bundle（Sigstore keyless 签名束，含签名与证书），随 Release 上传；
 #     2) attest-build-provenance 生成 SLSA 构建证明（绑定资产 SHA256）。
 #   另附 SHA256SUMS 及其签名，供使用者核对完整性与来源。
 #
@@ -56,8 +56,7 @@ jobs:
           sha256sum -- *.whl *.tar.gz > SHA256SUMS
           for f in *.whl *.tar.gz SHA256SUMS; do
             cosign sign-blob "$f" \
-              --output-signature "$f.sig" \
-              --output-certificate "$f.crt" \
+              --bundle "$f.bundle" \
               --yes
           done
           ls -la
@@ -69,8 +68,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/SHA256SUMS
-            dist/*.sig
-            dist/*.crt
+            dist/*.bundle
           generate_release_notes: true
 
       - name: Publish to PyPI (Trusted Publishing / OIDC)
