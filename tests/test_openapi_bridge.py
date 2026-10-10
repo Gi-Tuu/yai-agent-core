@@ -355,3 +355,110 @@ def test_no_toplevel_third_party_imports(relative):
             assert all(not a.name.startswith(("httpx", "yaml")) for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert node.module is None or not node.module.startswith(("httpx", "yaml"))
+
+
+# ---------- 9. load_spec 额外校验：path 超限/非对象、URL 失败、三选一缺失 ----------
+
+def test_load_path_oversize_rejected(tmp_path):
+    p = tmp_path / "big.json"
+    p.write_text(json.dumps({"openapi": "3.0.0", "data": "x" * 100}), encoding="utf-8")
+    with pytest.raises(ValueError, match="字节上限"):
+        load_spec(OpenApiSpecConfig(path=p, max_spec_bytes=50))
+
+
+def test_load_path_root_not_object(tmp_path):
+    p = tmp_path / "arr.json"
+    p.write_text(json.dumps(["not", "object"]), encoding="utf-8")
+    with pytest.raises(ValueError, match="根节点必须是对象"):
+        load_spec(OpenApiSpecConfig(path=p))
+
+
+def test_load_json_path_ok(tmp_path):
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}), encoding="utf-8")
+    assert load_spec(OpenApiSpecConfig(path=p))["openapi"] == "3.0.3"
+
+
+def test_load_missing_all_sources():
+    with pytest.raises(ValueError, match="url / path / spec"):
+        load_spec(OpenApiSpecConfig())
+
+
+def test_load_missing_openapi_field():
+    with pytest.raises(ValueError, match="缺少 openapi"):
+        load_spec(OpenApiSpecConfig(spec={"paths": {}}))
+
+
+def test_load_url_http_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        load_spec(
+            OpenApiSpecConfig(url="http://x/spec.json"),
+            transport=httpx.MockTransport(handler),
+        )
+
+
+def test_load_url_oversize():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"openapi": "3.0.0", "x": "y" * 100})
+
+    with pytest.raises(ValueError, match="字节上限"):
+        load_spec(
+            OpenApiSpecConfig(url="http://x/spec.json", max_spec_bytes=20),
+            transport=httpx.MockTransport(handler),
+        )
+
+
+# ---------- 10. resolve_base_url ----------
+
+from yai_core.integrations.openapi.spec import resolve_base_url  # noqa: E402
+
+
+def test_base_url_override_wins():
+    cfg = OpenApiSpecConfig(base_url_override="https://override/api")
+    assert resolve_base_url(cfg, {"servers": [{"url": "https://server/"}]}) == (
+        "https://override/api"
+    )
+
+
+def test_base_url_from_servers():
+    assert resolve_base_url(
+        OpenApiSpecConfig(), {"servers": [{"url": "https://api.example.com/"}]}
+    ) == "https://api.example.com/"
+
+
+def test_base_url_relative_resolved():
+    cfg = OpenApiSpecConfig(url="https://host/openapi/spec.json")
+    assert resolve_base_url(cfg, {"servers": [{"url": "/v1"}]}) == "https://host/v1"
+
+
+def test_base_url_none_without_servers():
+    assert resolve_base_url(OpenApiSpecConfig(), {}) is None
+
+
+# ---------- 11. 外部 $ref 与兄弟键覆盖 ----------
+
+def test_external_ref_preserved_with_note():
+    spec, notes = resolve_refs({"a": {"$ref": "other.yaml#/x"}})
+    assert spec["a"] == {"$ref": "other.yaml#/x"}
+    assert any("外部" in n for n in notes)
+
+
+def test_ref_with_siblings_overrides():
+    spec = {
+        "components": {
+            "schemas": {
+                "Base": {
+                    "type": "object",
+                    "properties": {"x": {"type": "integer"}},
+                }
+            }
+        },
+        "a": {"$ref": "#/components/schemas/Base", "description": "覆盖描述"},
+    }
+    out, _ = resolve_refs(spec)
+    # 内联 Base，同时兄弟键 description 保留。
+    assert out["a"]["type"] == "object"
+    assert out["a"]["description"] == "覆盖描述"

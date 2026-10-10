@@ -85,3 +85,24 @@ def test_real_embed_semantic_neighbors() -> None:
     # 语义排序正确，且相关项越过语义门槛、显著高于无关项。
     assert related >= 0.45
     assert related > unrelated + 0.1
+
+
+def test_default_dir_from_cwd_models(monkeypatch, tmp_path) -> None:
+    # 无环境变量时，回退到当前工作目录的 models/bge-m3（需存在 tokenizer.json）。
+    monkeypatch.delenv("EMBEDDING_MODEL_DIR", raising=False)
+    model_dir = tmp_path / "models" / "bge-m3"
+    model_dir.mkdir(parents=True)
+    (model_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert LocalBgeEmbedder().model_dir == str(model_dir)
+
+
+def test_missing_onnx_raises(monkeypatch, tmp_path) -> None:
+    # tokenizer 在、onnx/model_int8.onnx 缺失：报缺模型错误。
+    monkeypatch.delenv("EMBEDDING_MODEL_DIR", raising=False)
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    (partial / "tokenizer.json").write_text("{}", encoding="utf-8")
+    emb = LocalBgeEmbedder(str(partial))
+    with pytest.raises(RuntimeError, match="bge-m3"):
+        asyncio.run(emb.embed_texts(["x"]))
