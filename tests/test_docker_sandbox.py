@@ -40,7 +40,9 @@ def _docker_info_ok() -> bool:
         return subprocess.run(
             ["docker", "info"], capture_output=True, timeout=10, check=False
         ).returncode == 0
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # docker CLI 存在但 daemon 冷启动慢（Windows Docker Desktop 常见）：
+        # 超时视为"未就绪"，让真机用例 skip，而不是在收集阶段抛错中断。
         return False
 
 
@@ -62,7 +64,7 @@ def _docker_available() -> bool:
             ["docker", "info", "--format", "{{.OSType}}"],
             capture_output=True, text=True, timeout=10, check=False,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         proc = None
     ostype = (
         proc.stdout.strip().lower()
