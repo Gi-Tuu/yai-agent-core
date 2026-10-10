@@ -7,9 +7,32 @@
 
 ## [Unreleased]
 
+## [v0.8.1] - 2026-10-11
+
+> v0.8.0 之后的供应链安全、开源治理与工程加固版本；内核定位与 API 不变。
+
 ### Added
 
 - 通过 **OpenSSF Best Practices 自评并获得 Passing（过境）徽章**（项目编号 [#15360](https://www.bestpractices.dev/projects/15360)，2026-10-10，Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足）；中英 README 顶部加入 Passing 徽章。
+- **英文门面文档**：新增 `README.en.md`、`CONTRIBUTING.en.md`、`docs/architecture.en.md`、`docs/comparison.en.md`，`SECURITY.md` 英文化（中文另存 `SECURITY.zh-CN.md`），各份顶部双向互链并约定事实性内容中英同步、防漂移；逐行讲义与比赛过程文档不翻译。
+- **发布资产签名 + SLSA 来源证明**：`publish.yml` 发版时对 wheel / tar.gz 生成 build provenance（`attest-build-provenance`），并用 cosign keyless 对 wheel / tar.gz / SHA256SUMS 逐个签名（随附 `.sig` / `.crt`），全部作为已签名资产随 GitHub Release 发布；补齐 PyPI `Project-URL: Documentation`。
+- **SAST 与供应链安全体检**：接入 CodeQL（python，0 alerts）与 OpenSSF Scorecard（Linux 跑分、公开发布结果并加 badge），workflow 的 token 权限收敛到 job 级最小集。
+- **atheris 模糊测试**：新增 `fuzzing/`（schema / 路由特征 / 上下文压缩三组 harness）与非门禁 CI fuzz job；atheris 仅有 Linux x86_64、py3.12+ 的 wheel，Windows / macOS 不跑。
+- **CI 路由基准任务**：新增非门禁 `benchmark` job，离线跑路由自校准基准并上传 `router-benchmark` artifact（学习曲线 SVG + JSON，保留 90 天），为"末段 bandit 显著优于规则"提供 CI 证据链。
+- **pre-commit 本地钩子**：新增 `.pre-commit-config.yaml`（ruff / mypy / gitleaks）。
+
+### Changed
+
+- **工程整洁**：`.gitignore` 统一收纳 `inbox/`、增长方案与赛事 / 文档过程稿，保持工作区干净。
+- **降低内核复杂度**：重构 `AgentLoop` 提取 helper 方法，并补 cli / introspection / bge / openapi 等模块的边界测试。
+
+### Fixed
+
+- **发现目录健壮性**：发现源可选的 `list_discoverable()` 返回非列表（如 `None`）时退化为被动发现，不再让"None 不可迭代"错误穿透主循环；`kernel/loop.py` 行覆盖率达到 **100%**（全量 **535 passed、8 skipped、总覆盖率 95.22%**）。
+
+### Security
+
+- **依赖与镜像加固**：基础镜像 pin 完整 digest，pyjwt 升级至 2.15.1，消除若干已知 PYSEC。
 
 ## [v0.8.0] - 2026-10-10
 
