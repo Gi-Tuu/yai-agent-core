@@ -25,6 +25,7 @@ Homepage = "https://github.com/Gi-Tuu/yai-agent-core"
 Repository = "https://github.com/Gi-Tuu/yai-agent-core"
 Issues = "https://github.com/Gi-Tuu/yai-agent-core/issues"
 Changelog = "https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Gi-Tuu/yai-agent-core/blob/main/docs/architecture.md"
 
 [project.optional-dependencies]
 # 真实模型接入（OpenAI 兼容：DeepSeek / 通义千问 / OpenAI 等）
