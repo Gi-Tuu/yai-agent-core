@@ -1,0 +1,39 @@
+name: Scorecard supply-chain security
+
+# OpenSSF Scorecard 供应链安全评分。在 Linux runner 上对 checkout 的代码跑分，
+# 结果以 SARIF 上传到 Code scanning，并公开发布到 api.securityscorecards.dev
+# （可在 README 加 Scorecard badge）。
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '27 7 * * 6' # 每周六 07:27 UTC 定期评分
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run OpenSSF Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          sarif_file: results.sarif
