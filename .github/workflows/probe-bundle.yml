@@ -1,0 +1,26 @@
+name: Probe bundle structure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign and dump bundle structure
+        run: |
+          echo "hello probe" > f.txt
+          cosign sign-blob f.txt --bundle f.bundle --yes
+          echo "=== KEY MAP ==="
+          python3 -c "import json; b=json.load(open('f.bundle')); print('top:',list(b.keys())); print('mediaType:',b.get('mediaType')); print('vm:',list(b.get('verificationMaterial',{}).keys()))"
+          echo "=== FULL BUNDLE ==="
+          python3 -m json.tool f.bundle
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: probe-bundle
+          path: f.bundle
