@@ -15,7 +15,7 @@
 
 - 通过 **OpenSSF Best Practices 自评并获得 Passing（过境）徽章**（项目编号 [#15360](https://www.bestpractices.dev/projects/15360)，2026-10-10，Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足）；中英 README 顶部加入 Passing 徽章。
 - **英文门面文档**：新增 `README.en.md`、`CONTRIBUTING.en.md`、`docs/architecture.en.md`、`docs/comparison.en.md`，`SECURITY.md` 英文化（中文另存 `SECURITY.zh-CN.md`），各份顶部双向互链并约定事实性内容中英同步、防漂移；逐行讲义与比赛过程文档不翻译。
-- **发布资产签名 + SLSA 来源证明**：`publish.yml` 发版时对 wheel / tar.gz 生成 build provenance（`attest-build-provenance`），并用 cosign keyless 对 wheel / tar.gz / SHA256SUMS 逐个签名（随附 `.sig` / `.crt`），全部作为已签名资产随 GitHub Release 发布；补齐 PyPI `Project-URL: Documentation`。
+- **发布资产签名 + SLSA 来源证明**：`publish.yml` 发版时对 wheel / tar.gz 生成 build provenance（`attest-build-provenance`），并用 cosign keyless 对 wheel / tar.gz / SHA256SUMS 逐个签名（随附签名束 `.bundle`，含签名与证书），全部作为已签名资产随 GitHub Release 发布；补齐 PyPI `Project-URL: Documentation`。
 - **SAST 与供应链安全体检**：接入 CodeQL（python，0 alerts）与 OpenSSF Scorecard（Linux 跑分、公开发布结果并加 badge），workflow 的 token 权限收敛到 job 级最小集。
 - **atheris 模糊测试**：新增 `fuzzing/`（schema / 路由特征 / 上下文压缩三组 harness）与非门禁 CI fuzz job；atheris 仅有 Linux x86_64、py3.12+ 的 wheel，Windows / macOS 不跑。
 - **CI 路由基准任务**：新增非门禁 `benchmark` job，离线跑路由自校准基准并上传 `router-benchmark` artifact（学习曲线 SVG + JSON，保留 90 天），为"末段 bandit 显著优于规则"提供 CI 证据链。
