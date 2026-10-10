@@ -10,16 +10,18 @@ on:
   schedule:
     - cron: "0 6 * * 1" # 每周一 06:00 UTC 定期全量扫描
 
-# 最小权限：只读代码 + 上传安全告警，不授予内容写权限
+# 顶层保持只读；上传安全告警所需的 security-events: write 收敛到 analyze job 级
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 jobs:
   analyze:
     name: CodeQL analyze (python)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
