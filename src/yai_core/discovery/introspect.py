@@ -93,8 +93,8 @@ def discover(host: Any) -> list[ToolSpec]:
             specs.append(build_spec(fn))
         return specs
 
-    for member_name, fn in inspect.getmembers(host, inspect.ismethod):
+    for member_name, method in inspect.getmembers(host, inspect.ismethod):
         if member_name.startswith("_"):
             continue
-        specs.append(build_spec(fn))
+        specs.append(build_spec(method))
     return specs

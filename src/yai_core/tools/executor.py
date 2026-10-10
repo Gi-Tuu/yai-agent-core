@@ -61,8 +61,11 @@ class ToolExecutor:
         if spec.source == "code":
             return await self._execute_code(spec, arguments, events)
 
+        handler = spec.handler
+        if handler is None:
+            return events, False, f"工具 {name} 没有可执行 handler"
         try:
-            result = spec.handler(**arguments)
+            result = handler(**arguments)
             if inspect.isawaitable(result):
                 result = await result
             text = json.dumps(result, ensure_ascii=False, default=str)
@@ -148,7 +151,10 @@ class ToolExecutor:
         （那会让用户看到一个黑盒名字）；权限精确落到每一步的内部工具上。
         """
         events: list[AgentEvent] = []
-        step_names = [step.tool for step in spec.steps]  # type: ignore[union-attr]
+        steps = spec.steps
+        if not steps:
+            return events, False, f"组合工具 {spec.name} 缺少步骤"
+        step_names = [step.tool for step in steps]
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,
@@ -158,7 +164,7 @@ class ToolExecutor:
 
         step_results: list[Any] = []
         context = {"input": arguments, "steps": step_results}
-        for index, step in enumerate(spec.steps):  # type: ignore[union-attr]
+        for index, step in enumerate(steps):
             try:
                 resolved = resolve_args(step.args, context)
             except Exception as exc:  # noqa: BLE001 - 编排错误要回灌而非崩溃

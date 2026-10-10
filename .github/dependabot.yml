@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Python 依赖（pyproject.toml / uv.lock）
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+
+  # GitHub Actions：钉了完整 SHA，Dependabot 负责滚动更新 SHA 与版本注释
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3

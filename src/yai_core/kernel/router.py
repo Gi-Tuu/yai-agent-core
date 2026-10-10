@@ -23,6 +23,7 @@ from yai_core.types import Strategy
 
 if TYPE_CHECKING:
     from yai_core.spi.learning import RouteSelector
+    from yai_core.spi.model import ModelProvider
 
 # 多步骤信号：出现时倾向先规划再执行
 # （"一共"是数量信号而非多步信号，已移入行动信号，避免"一共多少条"误判）
@@ -61,7 +62,7 @@ class AdaptiveRouter:
         self,
         *,
         min_plan_steps: int = 2,
-        model: object | None = None,
+        model: ModelProvider | None = None,
         classify_timeout: float = 15.0,
         selector: RouteSelector | None = None,
     ) -> None:
@@ -165,6 +166,8 @@ class AdaptiveRouter:
         discoverable: list[dict[str, str]] | None = None,
     ) -> str:
         """一次轻量模型调用，要求只输出路由 JSON。"""
+        if self.model is None:
+            raise RuntimeError("_llm_classify 需要已配置 model")
         tools_text = "\n".join(
             f"- {s.name}: {s.description}" for s in registry.all()
         )

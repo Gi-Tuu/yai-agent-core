@@ -34,6 +34,7 @@ from yai_core.discovery.scoring import (
     DEFAULT_SYNONYM_GROUPS,
     lexical_score,
 )
+from yai_core.spi.embedding import EmbeddingProvider
 from yai_core.types import ToolSpec
 
 # 召回门槛（用本地 bge-m3 实测校准）：完全无关 query 余弦约 0.30~0.32，
@@ -99,7 +100,7 @@ class SemanticCatalog:
     def __init__(
         self,
         candidates: Iterable[DiscoveredCandidate],
-        embedder: object | None = None,
+        embedder: EmbeddingProvider | None = None,
         *,
         top_k: int = DEFAULT_TOP_K,
         score_threshold: float = DEFAULT_SCORE_THRESHOLD,

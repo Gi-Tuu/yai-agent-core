@@ -250,6 +250,8 @@ class AgentLoop:
         发现源只负责"返回候选规格"，注册去重由内核统一完成；
         工具真正执行时仍走 PermissionPolicy（发现不等于授权）。
         """
+        if self.discovery is None:
+            return
         try:
             candidates = await self.discovery.discover(
                 need,

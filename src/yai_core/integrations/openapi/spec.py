@@ -70,7 +70,7 @@ def config_from_env(
     )
 
 
-def _load_from_path(path: Path, max_bytes: int) -> dict:
+def _load_from_path(path: str | Path, max_bytes: int) -> dict:
     p = Path(path).expanduser()
     data = p.read_bytes()
     if len(data) > max_bytes:

@@ -151,7 +151,7 @@ class ToolSpec:
             description=str(data.get("description", "")),
             input_schema=dict(data.get("input_schema") or {}),
             handler=None,
-            source=source,  # type: ignore[arg-type]
+            source=source,
             steps=steps,
             code=code,
         )

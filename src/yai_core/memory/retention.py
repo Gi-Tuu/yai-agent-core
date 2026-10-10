@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 _MAX_ENV = "YAI_HISTORY_MAX_MESSAGES"
@@ -48,7 +49,7 @@ def _parse_positive_int(raw: str | None, env_name: str) -> int | None:
 
 
 def retention_from_env(
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[int | None, int | None]:
     """读历史保留策略，返回 (max_messages, ttl_seconds)，未配置项为 None。
 
@@ -62,7 +63,7 @@ def retention_from_env(
     )
 
 
-def _next_round_start(roles: list[str], start: int) -> int | None:
+def _next_round_start(roles: Sequence[str], start: int) -> int | None:
     """从 start（含）向后找第一个轮首下标（role == "user"），找不到返回 None。"""
     for i in range(start, len(roles)):
         if roles[i] == "user":
@@ -70,7 +71,7 @@ def _next_round_start(roles: list[str], start: int) -> int | None:
     return None
 
 
-def _prev_round_start(roles: list[str], start: int) -> int | None:
+def _prev_round_start(roles: Sequence[str], start: int) -> int | None:
     """从 start（含）向前找最近的轮首下标；start 允许等于 len（整体过期场景）。"""
     for i in range(min(start, len(roles) - 1), -1, -1):
         if roles[i] == "user":
@@ -78,7 +79,7 @@ def _prev_round_start(roles: list[str], start: int) -> int | None:
     return None
 
 
-def count_cut(roles: list[str], max_messages: int | None) -> int | None:
+def count_cut(roles: Sequence[str], max_messages: int | None) -> int | None:
     """条数裁剪：返回删除上界 k（删 [0, k)），不裁返回 None。
 
     候选边界 = len(roles) - max_messages，再向后对齐到轮首：
@@ -97,7 +98,7 @@ def count_cut(roles: list[str], max_messages: int | None) -> int | None:
     return k
 
 
-def ttl_cut(roles: list[str], expired: list[bool]) -> int | None:
+def ttl_cut(roles: Sequence[str], expired: list[bool]) -> int | None:
     """TTL 裁剪：返回删除上界 k（删 [0, k)），不裁返回 None。
 
     expired[i] 表示第 i 条是否已过期（严格早于 cutoff；恰好等于 cutoff 不算过期）。

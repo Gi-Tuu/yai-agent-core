@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 # bge-m3 输出 1024 维（仅用于文档与自检，真实维度以模型输出为准）。
 BGE_M3_DIM = 1024
@@ -54,7 +55,7 @@ class LocalBgeEmbedder:
     ) -> None:
         self.model_dir = model_dir or default_model_dir()
         self.providers = providers or ["CPUExecutionProvider"]
-        self._model: tuple[object, object] | None = None
+        self._model: tuple[Any, Any] | None = None
 
     def _missing_error(self) -> RuntimeError:
         return RuntimeError(
@@ -63,7 +64,7 @@ class LocalBgeEmbedder:
             "backend/models/bge-m3），并安装可选依赖：uv pip install -e '.[local-embed]'"
         )
 
-    def _load(self) -> tuple[object, object]:
+    def _load(self) -> tuple[Any, Any]:
         if self._model is not None:
             return self._model
         if not self.model_dir:

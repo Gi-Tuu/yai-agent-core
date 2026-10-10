@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: true
 
@@ -40,5 +40,8 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check src tests examples scripts
 
-      - name: Pytest
-        run: uv run pytest
+      - name: Type check (mypy)
+        run: uv run mypy src/yai_core
+
+      - name: Pytest with coverage gate
+        run: uv run pytest --cov=src/yai_core --cov-report=term-missing --cov-fail-under=90

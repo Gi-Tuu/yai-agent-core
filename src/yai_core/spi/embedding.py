@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 
@@ -27,7 +28,7 @@ from typing import Protocol, runtime_checkable
 class EmbeddingProvider(Protocol):
     """把一批文本编码为等长向量。实现通常是 OpenAI 兼容的 /embeddings 客户端。"""
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> Sequence[Sequence[float]]:
         """返回与 ``texts`` 等长、等维度的向量列表。
 
         约定：
