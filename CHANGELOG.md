@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-10-10
+
 ### Added
 
 - **代码工具仓库管理（灵动岛「工具」入口）**：内核 `CodeToolManager` 新增 `set_permanent(name, on)`（可逆开关，值未变不落盘）与 `remove(name)`（立即删除任意指定工具，区别于只批量回收过期项的 `expire_stale`），`make_permanent` 改为委托，`records()` 每项带上 `description`。薄壳侧 `shell/desktop/tool_vault.py` 用**不接模型、不接沙箱**的轻量 manager 直接读写持久化文件（复用内核同一份格式、原子写与过期判定）；工作台的 `openCodeVault / setCodeToolPermanent / removeCodeTool` 把读写**派发到常驻 worker loop**，与运行中的 Core 同线程串行，杜绝"面板改了、Core 又用旧内存态覆盖"的竞态，结果经 `codeVaultUpdated` 回 GUI。面板因此**空闲时也能打开**（Core 是每任务临时的，不能依赖当前实例）；任务执行中只可查看，写操作置灰并提示"下次任务生效"。新增 `tests/test_tool_vault.py`（4 项，按文件路径加载、不依赖 Qt）与 3 项内核回归、2 项工作台冒烟。（一个灵动岛管多个专员）**：`WorkbenchRuntime` 持有唯一一条后台 asyncio 循环，下挂多个 `SpecialistRuntime`（销售 / 仓库 / 笔记 / 陪伴），每专员**独立 busy、挂起决策、权限挡位、未读、时间线**；QML 只连工作台的聚合 Property（`activeBusy / activePendingKind / activePermissionMode / …`）与统一信号 `specialistEvent(sid, type, payload)`。定位钉死：**灵动岛是前台/交换机，专员的大脑长在应用里**——不聚合工具、不做意图自动分发。`SpecialistListModel` 供切换条显示字形/状态点/未读角标，切换后旧行一并刷新（避免双高亮）。新增 `tests/test_desktop_workbench.py` 5 项隔离测试（忙隔离、挂起隔离、事件带 id、未读、收尾唯一 loop）。
@@ -16,6 +18,16 @@
 - **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py` 8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
 - **语言中立能力清单（manifest）序列化**：`ToolSpec.to_manifest_dict()` / `from_manifest_dict()` 与 `tools/manifest.py`（批量打包 + JSON 文件读写）。composite 工作流（steps）与 code 工具（code，需宿主沙箱）作为"数据即能力"可跨进程 / 跨语言完整移植并执行；native/openapi/mcp 的 handler 不可移植，只导出能力声明。内核不另造调用通道（避免做成简化版 MCP），跨语言实际调用统一走 MCP / OpenAPI。新增 `tests/test_manifest.py`（含移植后组合工具端到端执行验证）与讲义第 21 篇。
 - **工程文档**：`docs/deployment-scaling.md`（部署 / 水平扩展 / 多租户）、`docs/multilang-interop.md`（多语言接入设计与 conformance 愿景）。
+- **PyPI 发布就绪**：补全 classifiers / project URLs、PEP 561 `py.typed` 标记，sdist 改为显式白名单（只含库源码、测试与核心文档，排除 inbox 与过程稿）；新增 OIDC Trusted Publishing 工作流 `publish.yml`（推 `v*` tag 触发、免 API token）。
+
+### Changed
+
+- **CI 工程门禁**：GitHub Actions 新增 mypy 类型检查（`src/yai_core` 零错误，66 文件）与覆盖率门禁（`--cov-fail-under=90`，实测 92.58%、474 passed）；`checkout` / `setup-uv` 钉完整 commit SHA。
+- **Windows CI 转绿**：真机 Docker 沙箱用例改按 `docker info` 的 OSType 判定，OSType 非 linux / 无 daemon 时 skip，修复 windows-latest（Server 2025）默认 Windows 容器模式导致的失败。
+
+### Security
+
+- 新增 `SECURITY.md`（支持版本表、公网部署必须配置 `YAI_API_KEY`、Subprocess/Docker 沙箱边界、发现不等于授权、私密报告渠道）与 `.github/dependabot.yml`（pip + Actions 每周更新、open-pull-requests-limit 3）。
 
 ## [v0.7.0] - 2026-09-22
 

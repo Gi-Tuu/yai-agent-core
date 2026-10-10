@@ -1,13 +1,30 @@
 [project]
 name = "yai-agent-core"
-version = "0.7.0"
+version = "0.8.0"
 description = "YAI Agent Core — an embeddable, self-adaptive agent kernel for host applications"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Gi-Tuu" }]
 keywords = ["agent", "llm", "tool-calling", "mcp", "runtime", "embedded", "kernel"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Gi-Tuu/yai-agent-core"
+Repository = "https://github.com/Gi-Tuu/yai-agent-core"
+Issues = "https://github.com/Gi-Tuu/yai-agent-core/issues"
+Changelog = "https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # 真实模型接入（OpenAI 兼容：DeepSeek / 通义千问 / OpenAI 等）
@@ -42,6 +59,21 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/yai_core"]
+
+[tool.hatch.build.targets.sdist]
+# 显式白名单：sdist 只含库源码、测试与核心文档。hatchling 默认会打包工作区里
+# 未被 .gitignore 忽略的文件，会把 docs/inbox 等本地过程稿一并带上，故改为只 include：
+include = [
+    "src/yai_core",
+    "tests",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
+]
+# hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录：
+exclude = ["inbox"]
 
 [tool.ruff]
 line-length = 100

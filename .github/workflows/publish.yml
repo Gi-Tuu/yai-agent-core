@@ -1,0 +1,28 @@
+name: Publish to PyPI
+
+# 仅在推送 v* 标签时发布（语义清晰、避免误发）。
+# 采用 PyPI Trusted Publishing (OIDC)：无需在仓库或本地存放 PyPI API token。
+# 前置：PyPI 侧需预先配置 pending publisher（Owner=Gi-Tuu, Repo=yai-agent-core,
+# Workflow=publish.yml），见 SECURITY.md / 发布说明。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          enable-cache: true
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
