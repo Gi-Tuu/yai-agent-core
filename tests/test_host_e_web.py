@@ -119,13 +119,24 @@ class _BlockModel:
 def _start_server(model, crm=None, *, learning_path=None, enable_learning=True):
     crm = crm or _crm()
     # 每个测试服务用独立临时学习文件，绝不污染 examples 下的真实 route_learning.json。
+    # 用 TemporaryDirectory 并在 server shutdown 时清理，避免在 TEMP 根泄漏目录。
+    tmpdir = None
     if learning_path is None:
-        learning_path = Path(tempfile.mkdtemp(prefix="yai_learn_")) / "route_learning.json"
+        tmpdir = tempfile.TemporaryDirectory(prefix="yai_learn_")
+        learning_path = Path(tmpdir.name) / "route_learning.json"
     workbench = Workbench(
         model_factory=lambda: model, model_label="离线测试模型", crm=crm,
         learning_path=learning_path, enable_learning=enable_learning,
     )
     httpd = create_server(workbench, "127.0.0.1", 0)
+    if tmpdir is not None:
+        original_shutdown = httpd.shutdown
+
+        def shutdown_and_cleanup(*args, **kwargs):
+            original_shutdown(*args, **kwargs)
+            tmpdir.cleanup()
+
+        httpd.shutdown = shutdown_and_cleanup
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_port}"
