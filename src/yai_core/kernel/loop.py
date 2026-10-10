@@ -251,6 +251,9 @@ class AgentLoop:
             items = getter()
         except Exception:  # noqa: BLE001 - 可发现目录是增强，失败静默退化
             return None
+        if not isinstance(items, list):
+            # 返回 None / 非列表（表示无可发现项）同样退化为被动发现，不能崩溃。
+            return None
         registered = {s.name for s in self.registry.all()}
         catalog = [
             {"name": str(it.get("name")), "summary": str(it.get("summary", ""))}

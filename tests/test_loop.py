@@ -6,13 +6,24 @@ import pytest
 
 from yai_core import (
     AgentCore,
+    ChatMessage,
     ModelResponse,
     RouteDecision,
+    SandboxResult,
     Strategy,
     ToolCallRequest,
     build_spec,
 )
 from yai_core.channels.collect import CollectChannel
+from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
+from yai_core.memory import InMemoryStore
+from yai_core.policy import AllowlistPolicy
+from yai_core.tools import (
+    CREATE_CODE_TOOL,
+    REQUEST_CAPABILITY,
+    ToolExecutor,
+    ToolRegistry,
+)
 
 
 class ScriptedModel:
@@ -423,3 +434,641 @@ def test_clarify_empty_answer_aborts_gracefully() -> None:
     assert [e.type.value for e in result.events].count("done") == 1
     assert "已停止" in result.final_text
     assert model.calls == 0  # 空回答直接收尾，不调用模型
+
+
+# ======================================================================
+# 边界与防御路径补测：react 异常 / 迭代上限 / plan 解析 / 发现去重 /
+# 两层目录聚焦 / meta-tool 授权与降级。全部离线，不需要 API Key。
+# ======================================================================
+
+def get_weather(city: str) -> str:
+    """查询某城市天气。"""
+    return f"{city} 晴"
+
+
+def list_tasks() -> list:
+    """列出待办任务。"""
+    return ["写作业"]
+
+
+class RaisingModel:
+    """每次调用都抛异常的假模型。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        raise RuntimeError("模型服务不可用")
+
+
+def test_react_model_raises_emits_error_and_stops() -> None:
+    core = AgentCore(RaisingModel())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    errors = [e for e in result.events if e.type.value == "error"]
+    assert errors
+    assert "RuntimeError" in errors[0].data.get("error", "")
+    # 出错即停：只有一次模型调用，done 仍收尾。
+    assert core.model.calls == 1
+    assert result.events[-1].type.value == "done"
+
+
+def test_iteration_limit_finishes_with_existing_observations() -> None:
+    tool_resp = ModelResponse(
+        content="",
+        tool_calls=[ToolCallRequest(id="t", name="search_notes",
+                                    arguments={"keyword": "周报"})],
+    )
+    model = ScriptedModel(
+        [tool_resp] * 6 + [ModelResponse(content="基于已有结果给出答案。")]
+    )
+    core = AgentCore(model, max_iters=6)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert model.calls == 7  # 6 轮工具 + 1 轮上限收尾
+    assert result.final_text.startswith("基于已有结果")
+
+
+def test_plan_with_unparseable_steps_falls_back_to_task() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(content="好的，我这就处理。"),  # 规划轮：无编号 → steps=[task]
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="p", name="search_notes",
+                                            arguments={"keyword": "周报"})],
+            ),
+            ModelResponse(content="完成。"),
+        ]
+    )
+    core = AgentCore(model)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("先搜索笔记里的周报，然后汇报"))
+
+    plan = next(e for e in result.events if e.type.value == "plan_created")
+    assert plan.data["steps"] == ["先搜索笔记里的周报，然后汇报"]
+    assert result.final_text == "完成。"
+
+
+# ---------- Fake 发现源 / 沙箱 ----------
+
+class FakeDiscovery:
+    """脚本化发现源：可控制 discover 返回、抛错及 list_discoverable 行为。"""
+
+    def __init__(
+        self,
+        *,
+        specs=None,
+        discoverable=None,
+        discover_raises=None,
+        list_raises=None,
+    ) -> None:
+        self._specs = specs or []
+        self._discoverable = discoverable
+        self._discover_raises = discover_raises
+        self._list_raises = list_raises
+        self.calls: list[str] = []
+
+    async def discover(self, need, *, task=None, available=None):
+        self.calls.append(need)
+        if self._discover_raises is not None:
+            raise self._discover_raises
+        return self._specs
+
+    def list_discoverable(self):
+        if self._list_raises is not None:
+            raise self._list_raises
+        return self._discoverable
+
+
+class FakeSandbox:
+    """总是成功、原样回传入参的假沙箱（仅供创建/接线测试）。"""
+
+    async def execute(self, code, inputs, *, timeout=None):
+        return SandboxResult(ok=True, output=inputs, error=None)
+
+
+def test_discovery_dedups_registered_and_duplicate_candidates() -> None:
+    weather_spec = build_spec(get_weather)
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"缺天气",'
+                '"missing_capability":"天气查询能力"}'
+            ),
+            ModelResponse(content="我现在能查天气了。"),
+        ]
+    )
+    # 候选：search_notes（宿主已注册）、weather 重复两次。
+    discovery = FakeDiscovery(
+        specs=[build_spec(search_notes), weather_spec, weather_spec]
+    )
+    core = AgentCore(model, llm_router=True, discovery=discovery)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("查一下天气"))
+
+    discovered = next(e for e in result.events if e.type.value == "tool_discovered")
+    assert discovered.data["registered"] == [weather_spec.name]
+
+
+def test_discoverable_catalog_list_raises_degrades_silently() -> None:
+    model = ScriptedModel([ModelResponse(content="结果。")])
+    discovery = FakeDiscovery(list_raises=RuntimeError("目录服务挂了"))
+    core = AgentCore(model, discovery=discovery)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.events[-1].type.value == "done"
+
+
+# ---------- 两层目录：超预算时的工具聚焦 ----------
+
+class FocusRaiseThenAnswer(ScriptedModel):
+    """聚焦调用抛错，之后走父类脚本（验证聚焦失败回退全量）。"""
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("聚焦服务失败")
+        return self._responses[min(self.calls - 1, len(self._responses) - 1)]
+
+
+def test_focus_raises_falls_back_to_full_schema() -> None:
+    model = FocusRaiseThenAnswer([ModelResponse(content="最终答案。")])
+    core = AgentCore(model, full_schema_budget=1)
+    core.register_tools([build_spec(search_notes), build_spec(get_weather)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.final_text == "最终答案。"
+
+
+def test_focus_invalid_and_duplicate_names_skipped() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(content='["search_notes","ghost","search_notes"]'),  # 聚焦
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="c", name="search_notes",
+                                            arguments={"keyword": "周报"})],
+            ),
+            ModelResponse(content="找到周报。"),
+        ]
+    )
+    core = AgentCore(model, full_schema_budget=1)
+    core.register_tools([build_spec(search_notes), build_spec(get_weather)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.final_text.startswith("找到")
+
+
+def test_focus_returns_invalid_json_falls_back() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(content="我觉得是 [abc] 这样"),  # 聚焦：[abc] 非法 JSON
+            ModelResponse(content="最终答案。"),
+        ]
+    )
+    core = AgentCore(model, full_schema_budget=1)
+    core.register_tools([build_spec(search_notes), build_spec(get_weather)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.final_text == "最终答案。"
+
+
+def test_focused_schema_appends_newly_registered_tool() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(content='["search_notes"]'),  # 聚焦
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="r", name=REQUEST_CAPABILITY,
+                    arguments={"need": "任务清单能力"})],
+            ),
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="l", name="list_tasks",
+                                            arguments={})],
+            ),
+            ModelResponse(content="任务：写作业。"),
+        ]
+    )
+    discovery = FakeDiscovery(specs=[build_spec(list_tasks)])
+    core = AgentCore(model, full_schema_budget=1, discovery=discovery)
+    core.register_tools([build_spec(search_notes), build_spec(get_weather)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert "写作业" in result.final_text
+
+
+# ---------- meta-tool：request_capability 缺 need ----------
+
+def test_request_capability_missing_need_replies_guidance() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="r", name=REQUEST_CAPABILITY,
+                                            arguments={})],
+            ),
+            ModelResponse(content="我无法获得该能力。"),
+        ]
+    )
+    core = AgentCore(model, discovery=FakeDiscovery())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    # need 为空：在发缺口事件前就回灌，故无 capability_missing / tool_discovered。
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+    assert not [e for e in result.events if e.type.value == "tool_discovered"]
+    assert model.calls == 2
+
+
+# ---------- 直接构造 AgentLoop：覆盖经 Core 不可达的防御分支 ----------
+
+def _bare_loop(model, *, meta_tools=(), discovery=None, register=None):
+    registry = ToolRegistry()
+    policy = AllowlistPolicy(mode="allow_all")
+    channel = CollectChannel()
+    # 无沙箱、无 code_manager 的裸执行器。
+    executor = ToolExecutor(registry, policy, channel)
+    if register:
+        registry.register_many(register)
+    return AgentLoop(
+        model, registry, executor, channel, InMemoryStore(),
+        router=AdaptiveRouter(), discovery=discovery, meta_tools=meta_tools,
+    )
+
+
+async def _collect_events(agen) -> list:
+    out: list = []
+    async for ev in agen:
+        out.append(ev)
+    return out
+
+
+def test_request_capability_without_discovery_replies() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="r", name=REQUEST_CAPABILITY,
+                                            arguments={"need": "天气能力"})],
+            ),
+            ModelResponse(content="能力不足。"),
+        ]
+    )
+    loop = _bare_loop(
+        model, meta_tools={REQUEST_CAPABILITY}, register=[build_spec(search_notes)]
+    )
+
+    events = asyncio.run(_collect_events(loop.astream("搜索笔记里的周报")))
+
+    cap = [e for e in events if e.type.value == "capability_missing"]
+    assert cap and cap[0].data.get("phase") == "react"
+    assert not [e for e in events if e.type.value == "tool_discovered"]
+    assert model.calls == 2
+
+
+def test_create_code_tool_without_sandbox_replies() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c", name=CREATE_CODE_TOOL,
+                    arguments={"name": "mytool", "description": "d",
+                               "code": "out = 1"})],
+            ),
+            ModelResponse(content="无法创建。"),
+        ]
+    )
+    loop = _bare_loop(
+        model, meta_tools={CREATE_CODE_TOOL}, register=[build_spec(search_notes)]
+    )
+
+    events = asyncio.run(_collect_events(loop.astream("搜索笔记里的周报")))
+
+    assert not [e for e in events if e.type.value == "code_tool_created"]
+    assert model.calls == 2
+
+
+def test_unknown_meta_tool_defensive_reply() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="x", name="bogus_meta",
+                                            arguments={})],
+            ),
+            ModelResponse(content="好的。"),
+        ]
+    )
+    loop = _bare_loop(
+        model, meta_tools={"bogus_meta"}, register=[build_spec(search_notes)]
+    )
+
+    events = asyncio.run(_collect_events(loop.astream("搜索笔记里的周报")))
+
+    assert model.calls == 2
+    assert events[-1].type.value == "done"
+
+
+def test_discover_tools_none_returns_early() -> None:
+    loop = _bare_loop(ScriptedModel([]), register=[build_spec(search_notes)])
+
+    async def go() -> list:
+        out: list = []
+        async for ev in loop._discover_tools("天气", "查天气"):
+            out.append(ev)
+        return out
+
+    assert asyncio.run(go()) == []
+
+
+# ---------- create_code_tool：input_schema 兜底 / 创建校验 ----------
+
+def test_create_code_tool_non_dict_schema_uses_default() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c", name=CREATE_CODE_TOOL,
+                    arguments={"name": "score_tool", "description": "打分",
+                               "code": "out = {'s': 1}",
+                               "input_schema": "not-a-dict"})],
+            ),
+            ModelResponse(content="已创建，打分完成。"),
+        ]
+    )
+    core = AgentCore(model, sandbox=FakeSandbox())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("计算打分"))
+
+    created = next(e for e in result.events if e.type.value == "code_tool_created")
+    assert created.data["name"] == "score_tool"
+    spec = core.registry.get("score_tool")
+    assert spec.input_schema == {"type": "object", "properties": {}}
+    assert "已创建" in result.final_text
+
+
+def test_create_code_tool_missing_code_raises_valueerror() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c", name=CREATE_CODE_TOOL,
+                    arguments={"name": "bad_tool", "description": "desc",
+                               "code": ""})],
+            ),
+            ModelResponse(content="创建失败，改用现有工具。"),
+        ]
+    )
+    core = AgentCore(model, sandbox=FakeSandbox())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("计算打分"))
+
+    assert not [e for e in result.events if e.type.value == "code_tool_created"]
+    assert not core.registry.has("bad_tool")
+    assert model.calls == 2
+
+
+# ======================================================================
+# 第二轮：把剩余未覆盖分支补齐——可发现目录构建 / 发现源异常 / 聚焦回退 /
+# 长历史回放与真压缩 / 工具失败反思 / meta-tool 授权拒绝与空匹配。
+# ======================================================================
+
+class DiscoverOnly:
+    """只有 discover、没有 list_discoverable 方法的发现源。"""
+
+    async def discover(self, need, *, task=None, available=None):
+        return []
+
+
+def failing_lookup(keyword: str) -> str:
+    """总是失败的查询工具。"""
+    raise RuntimeError("数据库连接失败")
+
+
+def test_discoverable_catalog_built_when_list_returns_items() -> None:
+    discovery = FakeDiscovery(
+        discoverable=[
+            {"name": "get_weather", "summary": "查询天气"},
+            {"name": "search_notes", "summary": "已注册，应被过滤"},
+            {"name": "get_weather", "summary": "重复项"},
+        ]
+    )
+    model = ScriptedModel([ModelResponse(content="结果。")])
+    core = AgentCore(model, discovery=discovery)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.events[-1].type.value == "done"
+
+
+def test_discoverable_without_list_method_returns_none() -> None:
+    model = ScriptedModel([ModelResponse(content="结果。")])
+    core = AgentCore(model, discovery=DiscoverOnly())
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.events[-1].type.value == "done"
+
+
+def test_discovery_discover_raises_emits_error() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"缺",'
+                '"missing_capability":"天气能力"}'
+            ),
+            ModelResponse(content="暂时无法查天气。"),
+        ]
+    )
+    discovery = FakeDiscovery(discover_raises=RuntimeError("发现源宕机"))
+    core = AgentCore(model, llm_router=True, discovery=discovery)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("查一下天气"))
+
+    errors = [e for e in result.events if e.type.value == "error"]
+    assert errors and errors[0].data.get("stage") == "tool_discovery"
+
+
+def test_discovery_no_new_specs_returns_silently() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content='{"strategy":"react","tier":"standard","reason":"缺",'
+                '"missing_capability":"x能力"}'
+            ),
+            ModelResponse(content="好的。"),
+        ]
+    )
+    discovery = FakeDiscovery(specs=[build_spec(search_notes)])  # 全部已注册
+    core = AgentCore(model, llm_router=True, discovery=discovery)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("查一下天气"))
+
+    assert not [e for e in result.events if e.type.value == "tool_discovered"]
+
+
+def test_focus_no_brackets_falls_back() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(content="我不确定该用哪个工具"),  # 聚焦：无方括号
+            ModelResponse(content="最终答案。"),
+        ]
+    )
+    core = AgentCore(model, full_schema_budget=1)
+    core.register_tools([build_spec(search_notes), build_spec(get_weather)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert result.final_text == "最终答案。"
+
+
+async def _seed_long_history(memory) -> None:
+    for i in range(3):
+        await memory.append_history(
+            ChatMessage(role="user", content=f"第{i}轮问题" + "长" * 80)
+        )
+        await memory.append_history(
+            ChatMessage(role="assistant", content=f"第{i}轮回答" + "长" * 80)
+        )
+
+
+def test_long_history_replayed_and_compacted() -> None:
+    memory = InMemoryStore()
+    asyncio.run(_seed_long_history(memory))
+    policy = CompactionPolicy(
+        hard_max_chars=300, target_chars=150, keep_recent_rounds=1
+    )
+    model = ScriptedModel(
+        [
+            ModelResponse(content="早期对话的摘要。"),  # compact 摘要调用
+            ModelResponse(content="压缩后最终答复。"),  # react 主调用
+        ]
+    )
+    core = AgentCore(model, memory=memory, context_compaction=policy)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    compacted = [e for e in result.events if e.type.value == "context_compacted"]
+    assert compacted
+    assert result.final_text == "压缩后最终答复。"
+
+
+def test_failed_tool_appends_reflection() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="f", name="failing_lookup",
+                    arguments={"keyword": "周报"})],
+            ),
+            ModelResponse(content="数据库暂不可用，无法完成。"),
+        ]
+    )
+    core = AgentCore(model)
+    core.register_tools([build_spec(failing_lookup)])
+
+    result = asyncio.run(core.run("查询周报数据"))
+
+    assert model.calls == 2
+    assert "不可用" in result.final_text
+
+
+def test_request_capability_denied_replies() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="r", name=REQUEST_CAPABILITY,
+                    arguments={"need": "天气能力"})],
+            ),
+            ModelResponse(content="我无法获得该能力。"),
+        ]
+    )
+    core = AgentCore(
+        model, policy=AllowlistPolicy(mode="deny_all"),
+        discovery=FakeDiscovery(),
+    )
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    # 授权被拒：在发缺口事件前就回灌，故无 capability_missing。
+    assert not [e for e in result.events if e.type.value == "capability_missing"]
+    assert model.calls == 2
+
+
+def test_create_code_tool_denied_replies() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="c", name=CREATE_CODE_TOOL,
+                    arguments={"name": "t", "description": "d",
+                               "code": "out = 1"})],
+            ),
+            ModelResponse(content="无法创建，改用现有工具。"),
+        ]
+    )
+    core = AgentCore(
+        model, policy=AllowlistPolicy(mode="deny_all"),
+        sandbox=FakeSandbox(),
+    )
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("计算打分"))
+
+    assert not [e for e in result.events if e.type.value == "code_tool_created"]
+    assert model.calls == 2
+
+
+def test_request_capability_no_match_reply() -> None:
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="r", name=REQUEST_CAPABILITY,
+                    arguments={"need": "超能力"})],
+            ),
+            ModelResponse(content="宿主确实没有超能力。"),
+        ]
+    )
+    core = AgentCore(model, discovery=FakeDiscovery(specs=[]))
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    cap = [e for e in result.events if e.type.value == "capability_missing"]
+    assert cap and cap[0].data.get("phase") == "react"
+    assert not [e for e in result.events if e.type.value == "tool_discovered"]
+    assert model.calls == 2
