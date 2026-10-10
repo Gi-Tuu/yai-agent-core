@@ -71,5 +71,14 @@ jobs:
             dist/*.bundle
           generate_release_notes: true
 
+      # PyPI 发布只认 wheel / sdist；dist 里的 SHA256SUMS 与 .bundle 会被
+      # publish action 当作未知分发包格式而 fail-fast，故复制到干净子目录再发布。
+      - name: Stage clean package dir for PyPI
+        run: |
+          mkdir -p dist/pypi
+          cp dist/*.whl dist/*.tar.gz dist/pypi/
+
       - name: Publish to PyPI (Trusted Publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/pypi
