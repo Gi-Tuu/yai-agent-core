@@ -1,0 +1,36 @@
+name: CodeQL
+
+# 静态应用安全测试（SAST）：对 Python 源码做 CodeQL 安全扫描并上传结果到
+# 仓库 Security > Code scanning。OpenSSF Scorecard 的 SAST 检查识别 GitHub CodeQL。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # 每周一 06:00 UTC 定期全量扫描
+
+# 最小权限：只读代码 + 上传安全告警，不授予内容写权限
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: CodeQL analyze (python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+        with:
+          languages: python
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b # v3

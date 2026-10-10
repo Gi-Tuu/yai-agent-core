@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# 最小权限：测试流程只读代码，无需写仓库或签发 token
+permissions:
+  contents: read
+
 jobs:
   test:
     name: lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
