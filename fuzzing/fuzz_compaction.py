@@ -68,5 +68,5 @@ def TestOneInput(data: bytes) -> None:
 
 
 if __name__ == "__main__":
-    atheris.SetUp(sys.argv, TestOneInput)
+    atheris.Setup(sys.argv, TestOneInput)
     atheris.Fuzz()
