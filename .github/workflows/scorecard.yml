@@ -4,6 +4,7 @@ name: Scorecard supply-chain security
 # 结果以 SARIF 上传到 Code scanning，并公开发布到 api.securityscorecards.dev
 # （可在 README 加 Scorecard badge）。
 on:
+  workflow_dispatch: # 允许在签名 Release 创建后手动重跑
   branch_protection_rule:
   schedule:
     - cron: '27 7 * * 6' # 每周六 07:27 UTC 定期评分
