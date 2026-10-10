@@ -42,10 +42,36 @@ jobs:
         run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 
       - name: Ruff lint
-        run: uv run ruff check src tests examples scripts
+        run: uv run ruff check src tests examples scripts fuzzing
 
       - name: Type check (mypy)
         run: uv run mypy src/yai_core
 
       - name: Pytest with coverage gate
         run: uv run pytest --cov=src/yai_core --cov-report=term-missing --cov-fail-under=90
+
+  # 模糊测试：atheris 仅在 Linux x86_64 / CPython 3.12+ 提供 wheel，故单独一个 job。
+  # 该 job 不在分支保护 ruleset 的必需检查列表中（ruleset 只要求 test 矩阵与 CodeQL），
+  # 因此即使失败也不阻塞合并；但会在 PR 上可见，用于持续暴露纯函数在畸形输入下的问题。
+  fuzz:
+    name: fuzz (atheris / ubuntu py3.12)
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+      - name: Install project (fuzz extra)
+        run: uv sync --extra fuzz
+      - name: Run fuzz targets (bounded)
+        run: |
+          for target in fuzzing/fuzz_*.py; do
+            echo "===== $target ====="
+            uv run python "$target" -max_total_time=45 -print_final_stats=1
+          done
