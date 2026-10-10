@@ -27,6 +27,7 @@ AGENTS.md
 .coverage
 htmlcov/
 .preview/
+.repowise/
 
 # Editor / OS
 .idea/
