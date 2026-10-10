@@ -51,3 +51,26 @@ benchmark_out/
 # 本地 bge-m3 向量模型（约 560MB，不入库；下载说明见 models/README.md）
 models/*
 !models/README.md
+
+# ===== 本地工作过程稿（调研 / 方案 / 赛事过程，只提交核心内容，不入库）=====
+# 给 Codex / AI 协作者的本地交接目录（工作过程）
+inbox/
+
+# 开源增长方案（本地工作稿）
+/YAI开源增长方案*.md
+
+# docs 下的方案 / 分析 / 备战 / 宣传提示词过程稿
+/docs/YAI员工薄壳-落地方案.md
+/docs/YAI灵动岛多专员-落地方案.md
+/docs/YAI项目全景分析与发展规划.md
+/docs/产品化更新方案.md
+/docs/内部备战-主张证据与评委十问.md
+/docs/宣传视频-代码生成提示词.md
+/docs/工具管理永久保留-落地方案.md
+
+# 赛事过程材料（报名 / 邮件 / 录制 / 脚本，可能含私密信息，不入库）
+/docs/competitions/beijing/
+/docs/competitions/shanghai/录制清单.md
+/docs/competitions/shanghai/更新邮件*.md
+/docs/competitions/shanghai/视频脚本.md
+/docs/competitions/shanghai/邮件正文.md

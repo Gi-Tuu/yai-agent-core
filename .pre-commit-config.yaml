@@ -1,0 +1,21 @@
+# 本地 pre-commit 钩子：提交前自动做 lint / 类型检查 / 密钥扫描。
+# 安装（一次性）：uv pip install pre-commit && pre-commit install
+# 之后每次 git commit 会自动运行；也可手动 `pre-commit run --all-files`。
+# CI 不依赖本文件（CI 已单独运行 ruff / mypy / CodeQL）；这是给本地开发的保险。
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+        args: [--check]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.4.0
+    hooks:
+      - id: mypy
+        files: ^src/yai_core/
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
