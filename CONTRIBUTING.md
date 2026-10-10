@@ -1,5 +1,7 @@
 # 参与贡献 YAI Agent Core
 
+[English](CONTRIBUTING.en.md) · **简体中文**
+
 感谢你对 YAI Agent Core 的兴趣。本项目是一个**进程内嵌入式、自适应的 Agent 内核**：宿主软件只声明普通业务函数，Core 自动把函数变成工具、自适应选择执行策略并把全过程以事件流"喊"出来。在动手之前，请先读 [README.md](README.md) 的定位章节——我们不做又一个需要开发者自己拼装的 Agent 框架。
 
 本文档同时是维护者本人的标准操作手册：环境怎么装、代码往哪放、提交前必须过哪些检查。
@@ -14,7 +16,7 @@ git clone https://github.com/Gi-Tuu/yai-agent-core.git
 cd yai-agent-core
 uv venv
 uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi   # 一次装齐
-uv run pytest                                   # ① 全量 197 项离线测试，应全绿
+uv run pytest                                   # ① 全量离线测试（当前 517 项），应全绿
 uv run python scripts/smoke_test.py             # ② 同一内核冒烟跑通三个宿主
 uv run python examples/host_e_sales_crm/standalone_cli.py   # ③ 不带 AI 的原生 CRM 菜单（看"软件本来的样子"）
 ```
@@ -41,10 +43,10 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv pip install -e ".[mcp]"          # 仅在开发/运行 MCP Client 集成时需要
 uv pip install -e ".[openapi]"      # 仅在开发/运行 OpenAPI 发现时需要（httpx + pyyaml）
-# 一次装齐（全量 197 项测试）：uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+# 一次装齐（全量测试，当前 517 项）：uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 
 # 3. 验证：离线测试与冒烟，全程不需要 API Key（激活 venv 后可直接用 pytest；未激活用 uv run pytest）
-uv run pytest                       # 197 passed，离线（extras 组合与 CI 一致时无 skip）
+uv run pytest                       # 当前 517 passed / 8 skipped，离线（extras 组合与 CI 一致时无 skip）；数字随版本增长，以实跑为准
 uv run python scripts/smoke_test.py
 ```
 
@@ -59,10 +61,10 @@ cp .env.example .env              # Windows: copy .env.example .env
 ## 2. 架构红线（改动前必读）
 
 1. **内核本体零第三方硬依赖**。`pyproject.toml` 的 `dependencies` 必须保持为空；openai、fastapi、mcp 等只能出现在可选依赖（`llm` / `server` / `mcp`）里，并在对应模块内**懒加载**（`integrations/mcp/` 顶层禁止 import mcp，有 AST 测试守这条线）。
-2. **一切外部能力走 SPI 契约**（`src/yai_core/spi/`）：模型、通道、记忆、权限、发现五个插槽必须可替换，Core 只依赖 `Protocol`，不依赖具体实现。
+2. **一切外部能力走 SPI 契约**（`src/yai_core/spi/`）：模型、通道、记忆、权限、发现、沙箱、路由选择、嵌入八个插槽必须可替换，Core 只依赖 `Protocol`，不依赖具体实现。
 3. **事件流只有一条出口**：工具执行等过程事件由执行方收集、统一由 `AgentLoop` yield、`AgentCore.astream` 是唯一对外 emit 点，不允许出现第二条事件路径。
 4. **每个自适应决策必须可观测**：新增任何"Core 自己做决定"的分支，都要通过 `AgentEvent` 发出对应事件，不允许静默决策。
-5. **v0.1 不做**：MCP Server、Multi-Agent、自进化写工具、向量记忆、内置 UI、coding agent。相关讨论先进 Issue。
+5. **内核边界（明确不做）**：MCP Server、对等 Multi-Agent、内核内执行生成代码、向量长期记忆、内置 UI、coding agent；部分能力已由壳层或可选 extra 提供，准确、最新的边界以 [`docs/architecture.md`](docs/architecture.md) 第 7 节为准。相关讨论先进 Issue。
 
 ## 3. 代码规范
 
@@ -92,7 +94,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 | 支持一家新模型厂商 | 实现 `ModelProvider` 契约（OpenAI 兼容优先复用现有 provider） | `src/yai_core/llm/`、`spi/model.py` |
 | 增加一种工具来源（MCP/OpenAPI） | 产出统一 `ToolSpec` 注册进 `ToolRegistry`，执行侧不改；MCP 范式见 `integrations/mcp/` | `integrations/mcp/client.py`、`discovery/introspect.py` |
 | 增加一种"按需发现"来源 | 实现 `ToolDiscovery` 契约（`discover(need, *, task, available) -> list[ToolSpec]`），通过 `AgentCore(..., discovery=)` 注入；只交候选，注册/去重/权限归内核；最小实现见 `discovery/catalog.py` | `spi/discovery.py`、`discovery/catalog.py`、`tests/test_discovery_catalog.py` |
-| 增加一种执行策略 | 先在 `AdaptiveRouter` 加确定性规则并补测试，LLM 分类是 v0.2 的事 | `kernel/router.py` |
+| 增加一种执行策略 | 先在 `AdaptiveRouter` 加确定性规则并补测试（LLM 分类已落地，异常时回退这些规则） | `kernel/router.py` |
 | 换记忆/权限/输入输出 | 实现对应 SPI，通过 `AgentCore(..., memory=/policy=/channel=)` 注入 | `src/yai_core/spi/` |
 
 ## 6. 提交与 PR 流程

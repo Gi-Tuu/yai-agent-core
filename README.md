@@ -1,5 +1,7 @@
 # YAI Agent Core
 
+[English](README.en.md) · **简体中文**
+
 [![CI](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Gi-Tuu/yai-agent-core/badge)](https://scorecard.dev/viewer/?uri=github.com/Gi-Tuu/yai-agent-core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -198,7 +200,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 
 - **v0.1 – v0.3（已完成）**：函数内省、规则 / LLM 路由、Agent Loop、SPI 默认实现、MCP Client、SQLite 持久化、OpenAPI 发现、历史裁剪与限流、容器化部署
 - **v0.4 – v0.6（已完成）**：能力缺口感知与 ToolDiscovery 闭环、host_e CRM 零改造嵌入、权限三档、组合工具、双通道语义发现、执行中动态发现
-- **v0.7（已完成，本版）**：自校准路由 contextual bandit（离线 +16pp）、代码工具注册 / TTL / 授权闸、子进程教学沙箱、灵动岛员工薄壳
+- **v0.7（已完成）**：自校准路由 contextual bandit（离线 +16pp）、代码工具注册 / TTL / 授权闸、子进程教学沙箱、灵动岛员工薄壳
+- **v0.8（已完成，本版）**：上下文摘要压缩、MCP/OpenAPI 动态发现源与多源聚合、SQLite KV TTL、Docker 沙箱适配器、API Key 鉴权 / 限流 / 响应守卫、发布 PyPI、CI 安全加固（CodeQL、OpenSSF Scorecard、mypy、覆盖率门禁）
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
 ## 许可证

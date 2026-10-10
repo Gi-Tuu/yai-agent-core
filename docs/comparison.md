@@ -1,6 +1,8 @@
 # YAI Agent Core 与同类方案对比（诚实版）
 
-> 最后更新：2026-09-22。本文只写可验证事实：YAI 一侧以本仓库代码/配置为准，同类方案以其官方文档表述为准；不做贬低式比较，文末给出"什么场景该选谁"。
+[English](comparison.en.md) · **简体中文**
+
+> 最后更新：2026-10-10。本文只写可验证事实：YAI 一侧以本仓库代码/配置为准，同类方案以其官方文档表述为准；不做贬低式比较，文末给出"什么场景该选谁"。
 
 ## 1. 一句话定位
 
@@ -31,7 +33,7 @@
 | 权限控制 | 宿主提供 PermissionPolicy SPI；读写分级、写操作可人工授权 | 应用自行实现 | 应用自行实现 | 平台权限模型 | 平台模型 |
 | 部署要求 | 随宿主；另提供可选 FastAPI Battery 与 Docker 示例 | 应用自行部署 | 应用自行部署 | 需部署并运维平台 | 仅注册账号 |
 | 离线可测 | 全量测试离线（假模型/MockTransport/注入时钟），不依赖网络与 Key | 可测，需自行 mock | 可测，需自行 mock | 依赖平台运行 | 依赖平台 |
-| 成熟度 | 单人新项目，388 项测试、7 个示例宿主 | 成熟大生态 | 成熟社区 | 成熟平台（156K+ Star） | 商业产品 |
+| 成熟度 | 单人新项目，517 项测试、7 个示例宿主 | 成熟大生态 | 成熟社区 | 成熟平台（156K+ Star） | 商业产品 |
 
 ## 3. YAI 的差异化主张（对应"技术创新"评分）
 
@@ -52,7 +54,7 @@
 
 ## 5. 事实来源
 
-- YAI 事实：本仓库 `pyproject.toml`（dependencies/extras）、`src/yai_core/`、`README.md`、`ROADMAP.md`（2026-09-22 复核）。
+- YAI 事实：本仓库 `pyproject.toml`（dependencies/extras）、`src/yai_core/`、`README.md`、`ROADMAP.md`（2026-10-10 复核）。
 - LangChain / LangGraph：官方文档 https://docs.langchain.com/oss/python/concepts/products ；1.0 发布说明 https://www.langchain.com/blog/langchain-langgraph-1dot0
 - CrewAI / AutoGen：LangChain 官方框架综述（2026-06）https://www.langchain.com/resources/ai-agent-frameworks
 - Dify：官网 https://dify.ai/zh ；文档 https://docs.dify.ai/
