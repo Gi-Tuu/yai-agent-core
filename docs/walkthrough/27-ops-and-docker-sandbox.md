@@ -105,12 +105,28 @@ payload（code/inputs）走容器 **stdin**、envelope 走 stdout，不挂载代
 - 超时：`docker run` 客户端被杀不代表容器停了，按唯一 `--name` 执行 `docker rm -f` 兜底。
 - 没装 / 没启动 Docker：`FileNotFoundError` 或 stderr 提示，返回可读错误，不抛穿内核。
 
+### 4. 平台坑：真机用例只在 Linux 容器上跑
+
+这套加固（`--read-only`、`--cap-drop`、`--tmpfs` 等）和镜像 `python:3.12-slim`
+都是 **Linux 容器**特性。两种 Docker 环境要分清：
+
+- **GitHub `ubuntu-latest`**：Docker 是 Linux 容器（OSType=linux）→ 真机端到端**真正执行**。
+- **GitHub `windows-latest`**：Docker daemon 默认 **Windows 容器**（OSType=windows），
+  不支持 `--read-only`，`docker run` 直接 `exit=125`（"read-only mode is not
+  supported for Windows containers"）→ 真机用例必须 **skip**，而不是硬跑。
+- **本地 Docker Desktop**：可在托盘右键切到 "Linux containers"，启动后 OSType=linux，
+  真机即可跑；没启动则 skip。
+
+gate 用 `docker info --format {{.OSType}}` 精确读取，不靠猜平台。
+
 ## E. 测试口径
 
 - KV TTL：`FakeClock` 对两个 store 参数化对等 + v1→v2 迁移专项。
 - 守卫 / 鉴权：纯函数 + `TestClient` 端到端（无 key 401、正确 key 200、硬门槛公开）。
-- Docker：离线核对入口合法、argv 含全部加固 flags；真机用例用 `docker info` 判断，
-  无 Docker 自动 **skip**（不报错）。
+- Docker：离线核对入口合法、argv 含全部加固 flags；真机 gate 用
+  `docker info --format {{.OSType}}` 读取 daemon 容器类型，**只在 Linux 容器**
+  （OSType=linux）执行，Windows 容器或无 daemon 自动 **skip**（不报错）；
+  另用离线测试锁住 gate（windows→skip、linux→跑、不通→skip）。
 
 ## F. 自检
 
