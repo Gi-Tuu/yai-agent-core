@@ -1,5 +1,7 @@
 # YAI Agent Core 架构设计
 
+[English](architecture.en.md) · **简体中文**
+
 ## 1. 设计原则
 
 1. **Library-first（进程内库）**：`pip install` 后运行在宿主进程内，不独立起服务、不要求云端。
@@ -128,6 +130,9 @@ select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_r
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite、向量记忆 |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | 高危工具人工确认 |
 | ToolDiscovery | `discover(need, *, task, available) → list[ToolSpec]` | StaticCatalog（进程内目录） | 接 MCP/OpenAPI/插件市场动态发现 |
+| ToolSandbox | `execute(code, inputs, *, timeout=None) → SandboxResult` | 内核不提供（宿主实现；壳层/示例有 `SubprocessSandbox`、`DockerSandbox`） | 在隔离环境中执行生成代码 |
+| RouteSelector | 选策略 + 观察反馈（上下文 bandit） | 内置自校准 bandit | 自定义路由/学习策略 |
+| EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | 无（可选；本地 bge-m3 或 OpenAI 兼容云端） | 用自有嵌入器做语义工具发现 |
 
 ## 4. Adaptive Router 状态机
 
@@ -175,6 +180,13 @@ v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗�
 - MCP：工具互操作**协议**，不是运行时；YAI 是 MCP 的消费者（v0.2 Client）而非竞争者；
 - YAI：host-declares-capability、Python 进程内、模型/通道/存储全无关、自适应过程可观测。
 
-## 7. 明确不做（v0.1 红线）
+## 7. 明确不做（内核边界）
 
-MCP Server、Multi-Agent 编排、自进化写工具、向量长期记忆、内置 UI、coding agent 场景、队列/中间件、K8s。
+以下能力**不进入内核本体**（`src/yai_core/`），以保持零硬依赖与可嵌入性；部分能力已由壳层或可选 extra 提供，在括注中说明。
+
+- **MCP Server**：内核只做 MCP Client（连接外部 Server），自身不暴露为 Server。
+- **对等 Multi-Agent 编排**：不做角色对等的多智能体协商；层级式"子员工委派"已在壳层落地（`shell/employee/`：单一根对用户负责，子员工权限单调收窄、带预算、完成即销毁）。
+- **内核内执行生成代码**：组合工具与沙箱代码工具均已支持，但生成代码一律在宿主提供的 `ToolSandbox` 内执行（内核不内置执行器），并经授权闸与 TTL 生命周期管理。
+- **向量长期记忆**：内核记忆不绑定向量库；本地 bge-m3 嵌入仅作为可选 extra（`[local-embed]`）用于语义工具发现，不充当长期记忆。
+- **内置 UI**：内核不提供任何界面；灵动岛 / 浮窗位于壳层（`shell/desktop/`），经唯一嵌入点与内核通信。
+- **coding agent 场景、队列 / 中间件、K8s**：不做无人值守编码代理，不引入消息中间件，部署不依赖 K8s（水平扩展见 `docs/deployment-scaling.md`）。

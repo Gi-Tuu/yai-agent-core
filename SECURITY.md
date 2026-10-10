@@ -1,34 +1,40 @@
-# 安全策略
+# Security Policy
 
-## 支持版本
+**English** · [简体中文](SECURITY.zh-CN.md)
 
-| 版本 | 安全更新 |
+## Supported versions
+
+| Version | Security updates |
 | --- | --- |
+| 0.8.x | ✅ |
 | 0.7.x | ✅ |
 | < 0.7 | ❌ |
 
-## 部署安全默认（暴露到公网前务必阅读）
+## Secure deployment defaults (read before exposing to the internet)
 
-1. **必须配置 API Key 鉴权**：FastAPI 服务在未设置 `YAI_API_KEY`（或 `YAI_API_KEYS`）
-   时，鉴权处于**关闭状态**——这是为本地/评审环境提供的零配置体验。公网部署若不设置，
-   任何人都可调用你的接口并消耗模型额度。请通过安全渠道设置
-   `YAI_API_KEY=<随机长字符串>`，请求时携带 `Authorization: Bearer <key>`。
-2. **代码工具沙箱边界**：
-   - `SubprocessSandbox` 为演示级隔离（限制内置函数、CPU/内存、超时），
-     **不做网络隔离、不保证抵御蓄意逃逸**，只适合运行纯计算代码；
-   - 暴露到公网或处理不可信输入时，请使用 `DockerSandbox`（无网络、只读根文件系统、
-     drop ALL capabilities、内存/PID 限制），或用 gVisor / Firecracker 实现同一
-     `ToolSandbox` 契约。
-3. **发现不等于授权**：动态发现（MCP / OpenAPI）的工具注册后，执行仍统一经过
-   `PermissionPolicy`；高危操作（写入 / 网络 / shell）默认需要宿主显式批准。
-4. **密钥与数据**：`.env` 已在 `.gitignore`，请勿提交真实 API Key；SQLite 访问全部
-   使用参数化查询，不拼接 SQL。
+1. **You must configure API-key authentication.** When `YAI_API_KEY` (or `YAI_API_KEYS`) is not set,
+   the FastAPI service ships with authentication **disabled** — this is the zero-config experience for
+   local/review environments. On a public deployment without it, anyone can call your endpoint and spend
+   your model quota. Set `YAI_API_KEY=<a long random string>` through a secure channel and send
+   `Authorization: Bearer <key>` on requests.
+2. **Code-tool sandbox boundaries**:
+   - `SubprocessSandbox` is demo-grade isolation (restricted builtins, CPU/memory and timeout limits).
+     It does **not** isolate the network and does **not** claim to stop a determined escape; it is only
+     suitable for pure-computation code.
+   - When exposing to the internet or handling untrusted input, use `DockerSandbox` (no network,
+     read-only root filesystem, drops ALL capabilities, memory/PID limits), or implement the same
+     `ToolSandbox` contract with gVisor / Firecracker.
+3. **Discovery is not authorization.** Tools registered via dynamic discovery (MCP / OpenAPI) still
+   execute through the unified `PermissionPolicy`; risky operations (writes / network / shell) require
+   explicit host approval by default.
+4. **Secrets and data.** `.env` is in `.gitignore` — never commit real API keys. All SQLite access uses
+   parameterized queries; SQL is never string-concatenated.
 
-## 报告漏洞
+## Reporting a vulnerability
 
-若发现安全问题，请**不要**公开提 issue，可通过以下方式私密报告：
+If you discover a security issue, please **do not** open a public issue. Report it privately via:
 
-- GitHub：仓库 → Security → Report a vulnerability；
-- 邮箱：zixuan19252270581@gmail.com（请附复现步骤、影响范围与修复建议）。
+- GitHub: repository → Security → Report a vulnerability;
+- Email: zixuan19252270581@gmail.com (please include reproduction steps, impact, and a suggested fix).
 
-确认后我们会尽快回复，并在修复发布前保持细节不公开。
+After confirmation we will reply as soon as possible and keep details private until a fix is released.

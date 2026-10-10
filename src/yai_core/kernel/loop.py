@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Iterable
 
 from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
-from yai_core.kernel.router import AdaptiveRouter
+from yai_core.kernel.router import AdaptiveRouter, RouteDecision
 from yai_core.policy.authorize import authorize_tool_call
 from yai_core.spi import (
     Channel,
@@ -29,6 +29,7 @@ from yai_core.types import (
     AgentEvent,
     ChatMessage,
     EventType,
+    ModelResponse,
     Strategy,
     ToolCallRequest,
     ToolSpec,
@@ -122,27 +123,9 @@ class AgentLoop:
             },
         )
 
-        # 能力缺口感知：LLM 路由明确判定现有工具不足时，向宿主发事件，
-        # 宿主可据此引导安装插件/接入 MCP；规则路径、澄清、无工具部署形态不发。
-        if (
-            decision.missing_capability
-            and strategy != Strategy.CLARIFY
-            and len(self.registry) > 0
-        ):
-            yield AgentEvent(
-                EventType.CAPABILITY_MISSING,
-                {
-                    "task": task,
-                    "missing": decision.missing_capability,
-                    "available_tools": [s.name for s in self.registry.all()],
-                    "strategy": strategy.value,
-                },
-            )
-            # 配置了发现源时，把"缺口"闭环成"新工具"：发现 -> 注册 -> 本轮即可用。
-            # 注册发生在系统提示词构建之前，react/plan 本轮就能看到新工具。
-            if self.discovery is not None:
-                async for ev in self._discover_tools(decision.missing_capability, task):
-                    yield ev
+        # 能力缺口感知：发缺口事件；配置发现源时把缺口闭环成新工具（本轮即可用）。
+        async for ev in self._emit_capability_gap(decision, task):
+            yield ev
 
         if strategy == Strategy.CLARIFY and _clarify_depth >= self.max_clarify_rounds:
             # 澄清轮数达上限仍不明确：降级为直接回答（DIRECT，不调工具），由模型说明
@@ -160,30 +143,8 @@ class AgentLoop:
             )
 
         if strategy == Strategy.CLARIFY:
-            preview = task.strip()
-            if len(preview) > _CLARIFY_TASK_PREVIEW_CHARS:
-                preview = preview[:_CLARIFY_TASK_PREVIEW_CHARS] + "…"
-            question = _CLARIFY_QUESTION.format(task=preview)
-            yield AgentEvent(
-                EventType.CLARIFY_REQUESTED,
-                {"question": question, "round": _clarify_depth + 1},
-            )
-            answer = (await self.channel.ask(question) or "").strip()
-            if not answer:
-                # 空回答 / 超时 / 用户终止：体面收尾，不再递归。
-                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": _CLARIFY_ABORT_TEXT})
-                await self.memory.append_history(ChatMessage(role="user", content=task))
-                await self.memory.append_history(
-                    ChatMessage(role="assistant", content=_CLARIFY_ABORT_TEXT)
-                )
-                yield AgentEvent(
-                    EventType.DONE,
-                    {"strategy": Strategy.CLARIFY.value, "final_text": _CLARIFY_ABORT_TEXT},
-                )
-                return
-            # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的丢上下文乒乓。
-            merged = f"{task}\n补充信息：{answer}"
-            async for ev in self.astream(merged, _clarify_depth=_clarify_depth + 1):
+            # 反问补信息后累积重路由；空回答体面收尾，绝不无限反问。
+            async for ev in self._run_clarify(task, _clarify_depth):
                 yield ev
             return
 
@@ -217,6 +178,62 @@ class AgentLoop:
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
         yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
+
+    async def _emit_capability_gap(
+        self, decision: RouteDecision, task: str
+    ) -> AsyncIterator[AgentEvent]:
+        """LLM 判定现有工具不足时发缺口事件；配置发现源则闭环成新工具。
+
+        规则路径、澄清、无工具部署形态不发；发现注册发生在系统提示构建之前，
+        react/plan 本轮即可看到新工具。
+        """
+        if (
+            decision.missing_capability
+            and decision.strategy != Strategy.CLARIFY
+            and len(self.registry) > 0
+        ):
+            yield AgentEvent(
+                EventType.CAPABILITY_MISSING,
+                {
+                    "task": task,
+                    "missing": decision.missing_capability,
+                    "available_tools": [s.name for s in self.registry.all()],
+                    "strategy": decision.strategy.value,
+                },
+            )
+            if self.discovery is not None:
+                async for ev in self._discover_tools(decision.missing_capability, task):
+                    yield ev
+
+    async def _run_clarify(
+        self, task: str, depth: int
+    ) -> AsyncIterator[AgentEvent]:
+        """向用户反问并累积补充后重新路由；空回答体面收尾，绝不无限反问。"""
+        preview = task.strip()
+        if len(preview) > _CLARIFY_TASK_PREVIEW_CHARS:
+            preview = preview[:_CLARIFY_TASK_PREVIEW_CHARS] + "…"
+        question = _CLARIFY_QUESTION.format(task=preview)
+        yield AgentEvent(
+            EventType.CLARIFY_REQUESTED,
+            {"question": question, "round": depth + 1},
+        )
+        answer = (await self.channel.ask(question) or "").strip()
+        if not answer:
+            # 空回答 / 超时 / 用户终止：体面收尾，不再递归。
+            yield AgentEvent(EventType.MODEL_MESSAGE, {"text": _CLARIFY_ABORT_TEXT})
+            await self.memory.append_history(ChatMessage(role="user", content=task))
+            await self.memory.append_history(
+                ChatMessage(role="assistant", content=_CLARIFY_ABORT_TEXT)
+            )
+            yield AgentEvent(
+                EventType.DONE,
+                {"strategy": Strategy.CLARIFY.value, "final_text": _CLARIFY_ABORT_TEXT},
+            )
+            return
+        # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的乒乓。
+        merged = f"{task}\n补充信息：{answer}"
+        async for ev in self.astream(merged, _clarify_depth=depth + 1):
+            yield ev
 
     def _discoverable_catalog(self) -> list[dict[str, str]] | None:
         """从发现源取"可按需启用"能力的轻量目录，过滤已注册名后交给路由。
@@ -391,81 +408,120 @@ class AgentLoop:
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text})
                 return
 
-            ctx.add(
-                ChatMessage(
-                    role="assistant",
-                    content=resp.content,
-                    tool_calls=[
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.name, "arguments": json.dumps(
-                                tc.arguments, ensure_ascii=False
-                            )},
-                        }
-                        for tc in resp.tool_calls
-                    ],
-                )
-            )
+            self._append_assistant_tool_calls(ctx, resp)
             failed: list[str] = []
             newly_registered: list[str] = []
-            for call in resp.tool_calls:
-                if call.name in self.meta_tools:
-                    # 内核 meta-tool（请求发现/创建工具）由 loop 直接处理，
-                    # 可能在执行中动态注册新工具，不进普通执行器。
-                    async for ev in self._handle_meta_tool(call, ctx, task):
-                        yield ev
-                        if ev.type == EventType.TOOL_DISCOVERED:
-                            newly_registered.extend(ev.data.get("registered", []))
-                        elif ev.type == EventType.CODE_TOOL_CREATED:
-                            newly_registered.append(ev.data.get("name", ""))
-                    continue
-                tool_events, ok, result_text = await self.executor.execute(
-                    call.name, call.arguments
-                )
-                for tool_event in tool_events:
-                    yield tool_event
-                ctx.add(
-                    ChatMessage(
-                        role="tool",
-                        content=result_text,
-                        tool_call_id=call.id,
-                        name=call.name,
-                    )
-                )
-                if not ok:
-                    failed.append(f"{call.name}：{result_text}")
+            async for ev in self._execute_tool_calls(
+                resp.tool_calls, ctx, task, failed, newly_registered
+            ):
+                yield ev
 
             # 执行中发现的新工具：下一轮 function-calling 必须能看到其完整 schema，
             # 否则模型"发现了却调不到"。全量模式重算；聚焦模式把新名字并入聚焦集。
             if newly_registered and use_tools:
-                if focused_names is None:
-                    tools_schema = self.registry.llm_schemas()
-                else:
-                    for name in newly_registered:
-                        if name not in focused_names:
-                            focused_names.append(name)
-                    tools_schema = self.registry.schemas_for(focused_names)
-
-            if failed:
-                # 轻量反思（不额外调用模型）：把失败观察回灌成一条明确引导，
-                # 让模型下一轮自我修正——换工具、请求发现新能力，或如实报告能力缺口，
-                # 而不是重复失败调用。
-                ctx.add(
-                    ChatMessage(
-                        role="user",
-                        content=(
-                            "【系统反思提示】上一步工具调用未成功："
-                            + "；".join(failed)
-                            + "。请判断：若能用其他现有工具完成，就改用其他工具，"
-                            "不要重复同一失败调用；若宿主确实缺少所需能力，"
-                            "可调用 request_capability 请求发现新工具，"
-                            "否则请直接说明缺失了什么能力，并给出当前能给出的结论。"
-                        ),
-                    )
+                tools_schema = self._schema_after_registration(
+                    newly_registered, focused_names
                 )
 
-        # 达到迭代上限：要求模型基于已有观察收尾
+            if failed:
+                # 轻量反思（不额外调用模型）：失败观察回灌成明确引导，让模型自我修正。
+                self._append_failure_reflection(ctx, failed)
+
+        # 达到迭代上限：要求模型基于已有观察收尾。
+        async for ev in self._finish_at_iteration_limit(ctx):
+            yield ev
+
+    def _append_assistant_tool_calls(self, ctx: Context, resp: ModelResponse) -> None:
+        """把模型本轮的 tool_calls 作为 assistant 消息加入上下文（含 JSON 参数）。"""
+        ctx.add(
+            ChatMessage(
+                role="assistant",
+                content=resp.content,
+                tool_calls=[
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in resp.tool_calls
+                ],
+            )
+        )
+
+    async def _execute_tool_calls(
+        self,
+        calls: list[ToolCallRequest],
+        ctx: Context,
+        task: str,
+        failed: list[str],
+        newly_registered: list[str],
+    ) -> AsyncIterator[AgentEvent]:
+        """顺序执行本轮工具：meta-tool 由内核直接处理，普通工具走执行器。
+
+        失败描述与新注册工具名分别写入传入的两个列表，供调用方更新 schema、
+        回灌反思；工具结果消息统一加入上下文。
+        """
+        for call in calls:
+            if call.name in self.meta_tools:
+                # 内核 meta-tool（请求发现/创建工具）由 loop 直接处理，
+                # 可能在执行中动态注册新工具，不进普通执行器。
+                async for ev in self._handle_meta_tool(call, ctx, task):
+                    yield ev
+                    if ev.type == EventType.TOOL_DISCOVERED:
+                        newly_registered.extend(ev.data.get("registered", []))
+                    elif ev.type == EventType.CODE_TOOL_CREATED:
+                        newly_registered.append(ev.data.get("name", ""))
+                continue
+            tool_events, ok, result_text = await self.executor.execute(
+                call.name, call.arguments
+            )
+            for tool_event in tool_events:
+                yield tool_event
+            ctx.add(
+                ChatMessage(
+                    role="tool",
+                    content=result_text,
+                    tool_call_id=call.id,
+                    name=call.name,
+                )
+            )
+            if not ok:
+                failed.append(f"{call.name}：{result_text}")
+
+    def _schema_after_registration(
+        self, newly_registered: list[str], focused_names: list[str] | None
+    ) -> list[dict]:
+        """新工具注册后重算下一轮 function-calling 的完整 schema 集合。"""
+        if focused_names is None:
+            return self.registry.llm_schemas()
+        for name in newly_registered:
+            if name not in focused_names:
+                focused_names.append(name)
+        return self.registry.schemas_for(focused_names)
+
+    def _append_failure_reflection(self, ctx: Context, failed: list[str]) -> None:
+        """把失败观察回灌成明确引导，让模型下一轮自我修正而非重复失败调用。"""
+        ctx.add(
+            ChatMessage(
+                role="user",
+                content=(
+                    "【系统反思提示】上一步工具调用未成功："
+                    + "；".join(failed)
+                    + "。请判断：若能用其他现有工具完成，就改用其他工具，"
+                    "不要重复同一失败调用；若宿主确实缺少所需能力，"
+                    "可调用 request_capability 请求发现新工具，"
+                    "否则请直接说明缺失了什么能力，并给出当前能给出的结论。"
+                ),
+            )
+        )
+
+    async def _finish_at_iteration_limit(
+        self, ctx: Context
+    ) -> AsyncIterator[AgentEvent]:
+        """达到工具调用上限：要求模型基于已有观察直接收尾。"""
         ctx.add(
             ChatMessage(
                 role="user",
