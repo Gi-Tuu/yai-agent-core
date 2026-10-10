@@ -113,10 +113,10 @@
 
 - **Silver** 在 Passing 基础上新增：必须有**第二人**审查重要变更（`silver 级 code_review`：至少一个非作者审核者）、加密相关更严格、必须用能查常见漏洞的静态分析等。单人项目结构性卡在"多人审查"，**不建议为拿 Silver 找挂名审查**。
 - **Gold** 进一步要求：双人审查且至少一人外部、安全加固、完整重放/回滚、更严格测试覆盖等。
-- 建议：**先拿 Passing（现在即可）**，Silver/Gold 待真正出现外部贡献者后自然达成，不做流程表演。
+- 建议：**Passing 已于 2026-10-10 获得**；Silver/Gold 待真正出现外部贡献者后自然达成，不做流程表演。
 
 ## 七、申请后动作
 
 1. 获得 Passing Badge 后，把官方提供的徽章 Markdown/URL 放到 `README.md` 顶部徽章区；
 2. 在 `CHANGELOG.md` 记录"获得 OpenSSF Best Practices Passing Badge"；
-3. 此条同时改进 OpenSSF Scorecard 的 **CII-Best-Practices** 计分项（当前 0 分），下次 Scorecard 跑分将转为满分。
+3. 此条同时改进 OpenSSF Scorecard 的 **CII-Best-Practices** 计分项：获得 Passing 徽章后，2026-10-10 的 Scorecard 跑分（commit f052359）已由 0 分转为 **5 分**（Passing 档计 5 分，Silver/Gold 才对应更高分，并非满分）；同次跑分总分由 6.1 升至 **6.5**，**CI-Tests** 项也随已合并 PR 的 CI 全绿转为 10 分。
