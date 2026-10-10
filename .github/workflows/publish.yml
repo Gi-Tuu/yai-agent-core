@@ -1,9 +1,18 @@
 name: Publish to PyPI
 
-# 仅在推送 v* 标签时发布（语义清晰、避免误发）。
-# 采用 PyPI Trusted Publishing (OIDC)：无需在仓库或本地存放 PyPI API token。
-# 前置：PyPI 侧需预先配置 pending publisher（Owner=Gi-Tuu, Repo=yai-agent-core,
-# Workflow=publish.yml），见 SECURITY.md / 发布说明。
+# 仅在推送 v* 标签时发布。流程：
+#   构建(uv build) → SLSA 构建证明(attest-build-provenance) → 校验和 +
+#   cosign keyless 签名 → 创建带签名资产的 GitHub Release → 发布 PyPI(OIDC)。
+#
+# 为什么 Release 资产必须签名（OpenSSF Scorecard · Signed-Releases）：
+#   Scorecard 只对“GitHub Release 上、资产本身带签名或 provenance”计分；
+#   PyPI 的 attestation、Docker 的 provenance 都不算。因此每个 wheel/sdist 都：
+#     1) cosign sign-blob 产出同名 .sig/.crt（Sigstore keyless），随 Release 上传；
+#     2) attest-build-provenance 生成 SLSA 构建证明（绑定资产 SHA256）。
+#   另附 SHA256SUMS 及其签名，供使用者核对完整性与来源。
+#
+# 前置：PyPI 侧配置 Trusted Publishing 的 pending publisher
+#   （Owner=Gi-Tuu, Repo=yai-agent-core, Workflow=publish.yml），见 SECURITY.md。
 on:
   push:
     tags:
@@ -11,11 +20,15 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # 仅本任务需要提升权限：创建 Release、keyless 签名/证明、写 attestation。
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -25,5 +38,40 @@ jobs:
           enable-cache: true
       - name: Build sdist and wheel
         run: uv build
+
+      # 先出 provenance：subject 只覆盖构建产物（此时尚无签名/校验和文件）。
+      - name: Attest SLSA build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Checksums and keyless signatures
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- *.whl *.tar.gz > SHA256SUMS
+          for f in *.whl *.tar.gz SHA256SUMS; do
+            cosign sign-blob "$f" \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.crt" \
+              --yes
+          done
+          ls -la
+
+      - name: GitHub Release (upload signed artifacts)
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/*.sig
+            dist/*.crt
+          generate_release_notes: true
+
       - name: Publish to PyPI (Trusted Publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
