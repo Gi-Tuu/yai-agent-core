@@ -30,12 +30,20 @@ def _der_to_pem(der: bytes) -> bytes:
 
 
 def extract(bundle_path: Path) -> tuple[bytes, bytes]:
-    """读取 bundle，返回 (raw 签名字节, 证书 PEM 字节)。"""
+    """读取 bundle，返回 (raw 签名字节, 证书 PEM 字节)。
+
+    兼容两种证书布局：新版 cosign / sigstore-go 的
+    ``verificationMaterial.certificate.rawBytes``，与旧版的
+    ``verificationMaterial.x509CertificateChain.certificates[0].rawBytes``。
+    """
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
     signature = base64.b64decode(bundle["messageSignature"]["signature"])
-    certs = bundle["verificationMaterial"]["x509CertificateChain"]["certificates"]
-    cert_der = base64.b64decode(certs[0]["rawBytes"])
-    return signature, _der_to_pem(cert_der)
+    material = bundle["verificationMaterial"]
+    if "certificate" in material:
+        cert_b64 = material["certificate"]["rawBytes"]
+    else:
+        cert_b64 = material["x509CertificateChain"]["certificates"][0]["rawBytes"]
+    return signature, _der_to_pem(base64.b64decode(cert_b64))
 
 
 def main() -> None:
