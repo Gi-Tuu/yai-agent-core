@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 通过 **OpenSSF Best Practices 自评并获得 Passing（过境）徽章**（项目编号 [#15360](https://www.bestpractices.dev/projects/15360)，2026-10-10，Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足）；中英 README 顶部加入 Passing 徽章。
+
 ## [v0.8.0] - 2026-10-10
 
 ### Added

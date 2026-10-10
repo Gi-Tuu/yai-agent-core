@@ -9,7 +9,7 @@
 > 3. 系统按 77 条逐条列出，**按下表勾选 Met / Unmet / N/A**；标 `{Met URL}` 的条目需粘贴对应文件的 GitHub 网页 URL；
 > 4. 全部 MUST 为 Met（或 N/A）、SHOULD 为 Met 或 Unmet+理由、SUGGESTED 为 Met 或 Unmet，即可提交获得 **Passing Badge**，把徽章链接放进 README。
 >
-> **结论先行：本仓库当前即可申请 Passing。** 全部 MUST 已满足或合理 N/A；仅 1 条 SHOULD（英文文档）与若干 SUGGESTED（动态分析）标 Unmet，按下方话术填写即可，不阻塞拿徽章。
+> **结果：已于 2026-10-10 通过自评并获得 Passing（过境）徽章**（项目 [#15360](https://www.bestpractices.dev/projects/15360)），Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足；英文门面已补齐，`english` 条改为 Met；仅 2 条 SUGGESTED（专用动态分析 fuzzer/DAST）为 Unmet，不阻塞 Passing。
 
 状态图例：✅ Met · ⚠️ Unmet（需填理由） · ➖ N/A（需填理由）
 
@@ -30,7 +30,7 @@
 | documentation_interface | 描述外部接口的输入/输出（MUST，可 N/A） | ✅ | `docs/architecture.md`、SPI 契约、FastAPI 端点、walkthrough |
 | sites_https | 站点（网站/仓库/下载）支持 HTTPS/TLS（MUST） | ✅ | GitHub / Gitee / PyPI 均 HTTPS |
 | discussion | 可搜索、URL 可定位、新人可参与、无需专有软件的讨论机制（MUST） | ✅ | GitHub Issues / PR（Gitee 同步） |
-| english | 英文文档、接受英文反馈（SHOULD） | ⚠️ | **Unmet 理由**："项目当前以中文社区与赛事为主要受众，文档以中文为主；代码标识符、API、错误类型名均为英文。已规划英文 README（i18n），将在后续版本补齐。" |
+| english | 英文文档、接受英文反馈（SHOULD） | ✅ | **Met**：已提供 README.en.md、CONTRIBUTING.en.md、SECURITY.md、docs/architecture.en.md、docs/comparison.en.md，并接受英文 issue / code review；2026-10-10 随 Passing 自评（#15360）勾选 Met。 |
 | maintained | 项目处于维护状态（MUST） | ✅ | 持续提交（建库 2026-09-09，近一周仍有推送），ROADMAP 活跃 |
 
 ## 二、Change Control 变更控制
