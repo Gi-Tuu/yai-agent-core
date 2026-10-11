@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import os
+import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QObject, QPointF, QSettings, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -30,8 +32,10 @@ from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from shell.desktop.geometry import clamp_frame
 from shell.desktop.host import build_workbench, prepare_paths
 from shell.desktop.hotkey import YaiWindow, register_global_hotkey
+from shell.desktop.single_instance import SingleInstance
 from shell.desktop.specialist import PERMISSION_MODES
 
 #: QML 资源目录。
@@ -94,6 +98,51 @@ def hide_from_taskbar(window) -> None:
     user32.SetWindowLongW(hwnd, -20, exstyle | 0x00000080)
 
 
+class GeometryBridge(QObject):
+    """暴露给 QML 的展开体边缘钳制桥。
+
+    钳制算法在零 Qt 依赖的 :mod:`shell.desktop.geometry`（可离线测试），
+    QML 只负责取当前屏幕工作区几何与球锚点。
+    """
+
+    @Slot(int, int, int, int, int, int, int, int, result=QPointF)
+    def clampFrame(
+        self,
+        ball_x: int,
+        ball_y: int,
+        frame_w: int,
+        frame_h: int,
+        avail_x: int,
+        avail_y: int,
+        avail_w: int,
+        avail_h: int,
+    ) -> QPointF:
+        x, y = clamp_frame(
+            ball_x, ball_y, frame_w, frame_h,
+            avail_x, avail_y, avail_w, avail_h,
+        )
+        return QPointF(float(x), float(y))
+
+
+def configure_quick_backend(env: dict[str, str] | None = None) -> None:
+    """在 Windows 上固定 Qt Quick 软件场景图后端，修透明置顶窗的圆角黑角。
+
+    根因：Qt Quick 默认 RHI（Windows 上为 D3D11 / DirectComposition，d3d12 /
+    vulkan / opengl 后端同样）渲染 frameless + ``color: "transparent"`` 的置顶窗
+    时，圆角外的逐像素 alpha 在**跨进程 DWM 终合成**中丢失、被当成不透明黑块；
+    同进程的两个 Qt 窗走进程内合成所以正常（因此该问题只在真机、岛浮于其它进程
+    窗口之上时出现）。软件后端走分层窗口 ``UpdateLayeredWindow`` 路径，逐像素
+    alpha 跨进程合成正确。灵动岛 QML 仅用基础图元（无 ShaderEffect / MultiEffect
+    / 阴影模糊 / 粒子），CPU 光栅化性能够用。
+
+    必须在 ``QGuiApplication`` 创建前调用。排障时设 ``YAI_FORCE_RHI=1`` 可退回
+    默认 GPU（RHI）后端。非 Windows 不做任何改动。
+    """
+    env = os.environ if env is None else env
+    if sys.platform == "win32" and env.get("YAI_FORCE_RHI") != "1":
+        env["QT_QUICK_BACKEND"] = "software"
+
+
 def build_icon() -> QIcon:
     """代码生成波形图标，避免为壳引入图片资源。"""
     pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
@@ -153,8 +202,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--core-off", action="store_true", help="启动时停用 Core"
     )
+    parser.add_argument(
+        "--allow-multiple", action="store_true", help=argparse.SUPPRESS
+    )  # 调试用：跳过单实例守护，允许同时开多个
     args = parser.parse_args(argv)
     prepare_paths()
+    # 必须在 QApplication 创建前选定场景图后端（修 Windows 透明置顶窗圆角黑角）。
+    configure_quick_backend()
 
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -175,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
     # 中文缺字由 Qt 自动回退系统中文 sans，无需在 QML 里逐处指定。
     app.setFont(QFont("JetBrains Mono"))
 
+    # 单实例：已有岛在跑时，本次启动改为唤起它并退出，不重复建 Core/托盘/热键。
+    single = SingleInstance()
+    if not args.allow_multiple and not single.acquire():
+        return 0
+
     workbench = build_workbench(args.permission, live=args.live)
     if args.core_off:
         workbench.setCoreEnabled(False)
@@ -184,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
 
     engine = QQmlApplicationEngine()
     engine.addImportPath(str(QML_DIR))  # 载入 YaiTheme 单例模块
+    # 持有桥接对象引用：contextProperty 不替 Python 侧保活，临时对象会被
+    # GC 回收导致 QML 里 geom 为 null（须随 main 生命周期存活）。
+    geom_bridge = GeometryBridge()
     engine.rootContext().setContextProperty("workbench", workbench)
+    engine.rootContext().setContextProperty("geom", geom_bridge)
     engine.load(QUrl.fromLocalFile(str(QML_DIR / "main.qml")))
     if not engine.rootObjects():
         workbench.shutdown()
@@ -193,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     window = engine.rootObjects()[0]
     settings = QSettings("YAI", "Desktop")
     restore_window_position(window, settings)
+    # 记录球锚点：展开时窗口会为避开屏幕边缘而平移，持久化的始终是球位置，
+    # 不是展开后的面板左上角（否则下次启动球会错位）。
+    window.setProperty("ballX", window.x())
+    window.setProperty("ballY", window.y())
+    window.setProperty("ballPosKnown", True)
     hide_from_taskbar(window)
 
     # 位置落盘：拖动结束（x/y 变化停 400ms）自动保存，重启即恢复。
@@ -201,8 +269,13 @@ def main(argv: list[str] | None = None) -> int:
     save_timer.setSingleShot(True)
 
     def _save_position() -> None:
-        settings.setValue("window/x", window.x())
-        settings.setValue("window/y", window.y())
+        # 存球锚点而非当前窗口位置：面板展开时窗口为避开屏幕边缘发生了平移。
+        if window.property("ballPosKnown"):
+            settings.setValue("window/x", window.property("ballX"))
+            settings.setValue("window/y", window.property("ballY"))
+        else:
+            settings.setValue("window/x", window.x())
+            settings.setValue("window/y", window.y())
 
     save_timer.timeout.connect(_save_position)
     window.xChanged.connect(save_timer.start)
@@ -215,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         window.requestActivate()
         window.setProperty("shape", "panel")
 
+    # 第二个实例启动时，首个实例在这里被唤起（拉前台并展开）。
+    single.set_activator(_summon)
     unregister_hotkey = register_global_hotkey(app, window, _summon)
     tray = None if args.no_tray else install_tray(app, workbench, window)
 
@@ -224,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         _save_position()
         if tray is not None:
             tray.hide()
+        single.close()
         engine.deleteLater()  # 先拆界面，再收运行时，避免绑定读到已销毁对象
         workbench.shutdown()
 

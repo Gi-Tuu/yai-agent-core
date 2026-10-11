@@ -40,29 +40,6 @@ Item {
                (parts.length ? "（" + parts.join(" · ") + "）" : "");
     }
 
-    // 权限三挡：全审（黄，每次都问）/ 部审（琥珀，读放行、写询问）/ 免审（红，风险最高）。
-    // 点标题栏小 Pill 循环切换；经 channel.permission_mode 在"下一个任务"装配策略时生效。
-    readonly property var permLabels: ({
-        "manual": "全审",
-        "partial": "部审",
-        "auto": "免审"
-    })
-    readonly property var permOrder: ["manual", "partial", "auto"]
-    readonly property string permLabel:
-        panel.permLabels[workbench.activePermissionMode] || "部审"
-    readonly property color permTone: {
-        var mode = workbench.activePermissionMode;
-        if (mode === "manual") return Theme.warn;
-        if (mode === "auto") return Theme.bad;
-        return Theme.accent;
-    }
-
-    function cyclePermission() {
-        var modes = panel.permOrder;
-        var idx = modes.indexOf(workbench.activePermissionMode);
-        workbench.setPermissionMode(modes[(idx + 1) % modes.length]);
-    }
-
     // 用户主动点开面板时聚焦输入框，展开即可直接打字（由 main.qml 在动画后调用）。
     function focusInput() {
         inputField.forceActiveFocus();
@@ -103,7 +80,7 @@ Item {
         anchors.fill: parent
         spacing: 10
 
-        // ---------- 标题 ----------
+        // ---------- 标题（Core / 审批 / 工具 / 学习 / 退出 全部收进右侧齿轮）----------
         RowLayout {
             spacing: 6
             Text {
@@ -128,35 +105,20 @@ Item {
                 }
             }
             Item { Layout.fillWidth: true }
-            Pill {
-                label: workbench.activeCoreEnabled ? "Core 开" : "Core 关"
-                filled: workbench.activeCoreEnabled
-                tone: workbench.activeCoreEnabled ? Theme.ok : Theme.dim
-                onClicked: workbench.setCoreEnabled(!workbench.activeCoreEnabled)
+            IconButton {
+                objectName: "settingsGear"
+                glyph: "⋯"
+                glyphSize: 16
+                tone: Theme.dim
+                onClicked: settingsLayer.open()
             }
-            Pill {
-                label: panel.permLabel
-                tone: panel.permTone
-                onClicked: panel.cyclePermission()
+            IconButton {
+                objectName: "collapseBtn"
+                glyph: "×"
+                glyphSize: 15
+                tone: Theme.dim
+                onClicked: panel.collapseRequested()
             }
-            Pill {
-                label: "工具"
-                tone: workbench.codeVaultAvailable ? Theme.accent : Theme.dim
-                onClicked: {
-                    if (!workbench.codeVaultAvailable) return;
-                    vaultLayer.open();
-                }
-            }
-            Pill {
-                label: "学习"
-                tone: workbench.learningAvailable ? Theme.accent : Theme.dim
-                onClicked: {
-                    if (!workbench.learningAvailable) return;
-                    learningLayer.open();
-                }
-            }
-            Pill { label: "收"; tone: Theme.dim; onClicked: panel.collapseRequested() }
-            Pill { label: "退"; tone: Theme.dim; onClicked: workbench.requestQuit() }
         }
 
         // 整体以离线模式启动时，明确告知这是脚本，引导评委走"真实员工"入口
@@ -180,12 +142,15 @@ Item {
             }
         }
 
-        // ---------- 专员切换条 ----------
+        // ---------- 专员条：始终同一行；非活动收成左边小图标，活动的在本行原地展开 ----------
         Row {
+            objectName: "specialistBar"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 32
             spacing: 6
             Repeater {
                 model: workbench.specialistModel
-                delegate: SpecialistChip { }
+                delegate: SpecialistRow { }
             }
         }
 
@@ -455,6 +420,14 @@ Item {
         anchors.fill: parent
     }
 
+    // 标题栏齿轮下拉：Core / 审批 / 工具 / 学习 / 自动收回 / 退出
+    SettingsPopover {
+        id: settingsLayer
+        anchors.fill: parent
+        onOpenTools: vaultLayer.open()
+        onOpenLearning: learningLayer.open()
+    }
+
     // ---------- 对话气泡 ----------
     component SayBubble: Rectangle {
         property string text: ""
@@ -546,7 +519,11 @@ Item {
     }
 
     // ---------- 专员 chip ----------
-    component SpecialistChip: Rectangle {
+    // 专员手风琴行：非活动收成单行（glyph + 名 + 未读 + ›），
+    // 活动行高亮并向右展开出实时状态（待命 / 执行中 / 待处理）。
+    // 单行专员条：非活动收成 32px 小图标靠左排列，活动的在同一行原地展开名称+状态
+    component SpecialistRow: Rectangle {
+        objectName: "specRow_" + specialistId
         required property int index
         required property string specialistId
         required property string name
@@ -556,62 +533,128 @@ Item {
         required property int unread
         required property bool active
 
-        width: chipRow.implicitWidth + 20
-        height: 28
-        radius: 14
-        color: active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                      : "transparent"
+        readonly property string stateText:
+            pendingKind !== "" ? "待你处理" : (busy ? "执行中" : "待命")
+        readonly property color stateColor:
+            pendingKind !== "" ? Theme.warn : (busy ? Theme.accent : Theme.idleDot)
+
+        height: 32
+        radius: 9
+        clip: true
+        width: active ? Math.min(210, contentRow.implicitWidth + 18) : 32
+        Behavior on width {
+            NumberAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic }
+        }
+        color: active ? Theme.accentTint : (rowHover.hovered ? Theme.raised2 : Theme.raised)
         border.width: 1
         border.color: active ? Theme.accent : Theme.edge
         Behavior on color { ColorAnimation { duration: Theme.msFast } }
 
-        Row {
-            id: chipRow
-            anchors.centerIn: parent
-            spacing: 5
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: glyph
-                color: active ? Theme.accent : Theme.dim
-                font.pixelSize: 11
-                font.bold: true
-            }
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: name.replace("专员", "")
-                color: active ? Theme.text : Theme.dim
-                font.pixelSize: 11
-            }
+        RowLayout {
+            id: contentRow
+            anchors.fill: parent
+            spacing: 8
+
+            // 折叠态左右各一个弹性项，把 glyph 顶到正中；展开态隐藏、glyph 自然靠左
+            Item { visible: !active; Layout.fillWidth: true }
+
             Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: 7
-                height: 7
-                radius: 3.5
-                visible: busy || pendingKind !== ""
-                color: pendingKind !== "" ? Theme.warn : Theme.accent
-            }
-            Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: badgeText.implicitWidth + 10
-                height: 15
-                radius: 7.5
-                visible: unread > 0 && !active
-                color: Theme.warn
+                width: 22
+                height: 20
+                radius: 5
+                color: Theme.raised2
+                border.width: 1
+                border.color: Theme.edge
+                Layout.alignment: Qt.AlignVCenter
                 Text {
-                    id: badgeText
                     anchors.centerIn: parent
-                    text: unread
-                    color: Theme.accentInk
-                    font.pixelSize: 9
+                    text: glyph
+                    color: active ? Theme.accent : Theme.dim
+                    font.pixelSize: 11
                     font.bold: true
                 }
             }
+
+            Text {
+                visible: active
+                text: name.replace("专员", "")
+                color: Theme.text
+                font.pixelSize: 12
+                font.bold: true
+                Layout.alignment: Qt.AlignVCenter
+            }
+            Item { visible: active; Layout.fillWidth: true }
+
+            RowLayout {
+                visible: active
+                spacing: 6
+                Layout.alignment: Qt.AlignVCenter
+                Rectangle {
+                    width: 7
+                    height: 7
+                    radius: 3.5
+                    color: stateColor
+                    Layout.alignment: Qt.AlignVCenter
+                }
+                Text {
+                    text: stateText
+                    color: stateColor
+                    font.pixelSize: 11
+                    Layout.alignment: Qt.AlignVCenter
+                }
+            }
+
+            Item { visible: !active; Layout.fillWidth: true }
+        }
+
+        // 折叠态未读红点（展开切到该专员即清未读，故活动行不显示数字）
+        Rectangle {
+            width: 8
+            height: 8
+            radius: 4
+            x: parent.width - 9
+            y: 3
+            visible: unread > 0 && !active
+            color: Theme.warn
+            border.width: 1
+            border.color: Theme.shell
         }
 
         MouseArea {
+            id: rowHover
             anchors.fill: parent
+            hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: workbench.setActiveSpecialist(specialistId)
+        }
+    }
+
+    // ---------- 标题栏圆形图标按钮（设置 / 收起）----------
+    component IconButton: Rectangle {
+        id: ib
+        property string glyph: ""
+        property int glyphSize: 14
+        property color tone: Theme.dim
+        signal clicked
+
+        width: 26
+        height: 26
+        radius: 13
+        color: ibHover.containsMouse ? Theme.raised2 : "transparent"
+        border.width: 1
+        border.color: Theme.edge
+        Text {
+            anchors.centerIn: parent
+            text: glyph
+            color: tone
+            font.pixelSize: glyphSize
+        }
+        MouseArea {
+            id: ibHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: ib.clicked()
         }
     }
 

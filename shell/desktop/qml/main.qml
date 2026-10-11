@@ -21,6 +21,12 @@ YaiWindow {
     property string notice: ""
     property bool delegating: false
 
+    // 球锚点（屏幕坐标）：展开时窗口为避开屏幕边缘会整体平移，
+    // 锚点始终记录球的位置，收回时回到这里；持久化也只存锚点。
+    property int ballX: 0
+    property int ballY: 0
+    property bool ballPosKnown: false
+
     readonly property bool expanded: shape === "panel"
     readonly property bool onboardingOpen: shape === "ball" && !workbench.onboardingDone
     readonly property var pending: workbench
@@ -40,10 +46,43 @@ YaiWindow {
 
     Behavior on width { PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
     Behavior on height { PropertyAnimation { duration: Theme.msSlow; easing.type: Easing.OutCubic } }
+    // 展开避让边缘、收回回锚点时平滑滑动；系统拖动（startSystemMove）期间禁用，
+    // 否则窗口会"追"着指针做动画，手感发飘。
+    Behavior on x { enabled: !root.dragging; PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
+    Behavior on y { enabled: !root.dragging; PropertyAnimation { duration: Theme.msSlow; easing.type: Easing.OutCubic } }
+
+    // 系统拖动只在球/胶囊态发生，期间窗口位置即用户给球的新锚点。
+    onXChanged: if (root.dragging) { root.ballX = x; root.ballPosKnown = true; }
+    onYChanged: if (root.dragging) { root.ballY = y; }
+
+    // 形态切换时重新定位：展开把展开体夹进当前屏幕工作区（防边缘溢出），
+    // 收回回到球锚点。钳制算法唯一实现在 shell/desktop/geometry.py。
+    function repositionForShape() {
+        if (shape === "ball") {
+            x = ballX;
+            y = ballY;
+            return;
+        }
+        var tw = shape === "panel" ? Theme.panelW : Theme.capW;
+        var th = shape === "panel" ? Theme.panelH : Theme.capH;
+        var p = geom.clampFrame(ballX, ballY, tw, th,
+                    Screen.desktopAvailableX, Screen.desktopAvailableY,
+                    Screen.desktopAvailableWidth, Screen.desktopAvailableHeight);
+        x = p.x;
+        y = p.y;
+    }
+    onShapeChanged: root.repositionForShape()
 
     function collapse() {
         if (workbench.activePendingKind !== "") return;   // 有决策要用户看到，不收
-        if (root.typing) return;                         // 正在打字，不收
+        if (root.typing) return;                         // 正在打字，不收（窗口内计时用）
+        root.shape = "ball";
+    }
+
+    // 用户主动收（Esc / 收起键）：打字不再挡（草稿留在常驻面板里，切回还在），
+    // 但授权 / 澄清必须当面处理，仍不收。
+    function forceCollapse() {
+        if (workbench.activePendingKind !== "") return;
         root.shape = "ball";
     }
 
@@ -54,14 +93,18 @@ YaiWindow {
         onTriggered: if (root.hovering && root.shape === "ball") root.shape = "capsule"
     }
 
-    // 离开留一点宽限：指针跨子项时 hover 可能瞬时抖动，别立刻收
+    // 离开宽限：指针跨子项时 hover 可能瞬时抖动，别立刻收。
+    // 时长在 onHoveringChanged 里按"是否在打字"动态给：没打字短宽限，打字中放宽；
+    // 到点直接收球（离开路径不再被 typing 挡住——焦点会一直赖在输入框里，
+    // 否则点开面板看完、指针移出就永远不收回）。授权 / 澄清仍强制保留。
     Timer {
         id: leaveGrace
-        interval: 150
+        interval: 220
         onTriggered: {
             if (root.hovering || root.dragging) return;
-            if (root.shape === "capsule") root.shape = "ball";
-            else if (root.shape === "panel") root.collapse();
+            if (!workbench.autoCollapse) return;          // 用户关了自动收回
+            if (workbench.activePendingKind !== "") return;
+            root.shape = "ball";
         }
     }
 
@@ -73,6 +116,8 @@ YaiWindow {
         }
         dwell.stop();
         if (dragging) return;
+        if (!workbench.autoCollapse) return;              // 关闭自动收回：离开不计时
+        leaveGrace.interval = root.typing ? 1200 : 220;
         leaveGrace.restart();
     }
 
@@ -245,7 +290,7 @@ YaiWindow {
     Timer {
         id: collapseTimer
         interval: 1600
-        onTriggered: if (!root.hovering) root.collapse()
+        onTriggered: if (workbench.autoCollapse && !root.hovering) root.collapse()
     }
 
     // 用户主动点开面板：等展开动画落定再聚焦输入框，可直接打字。
@@ -569,6 +614,6 @@ YaiWindow {
 
     Shortcut {
         sequences: ["Escape"]
-        onActivated: root.collapse()
+        onActivated: root.forceCollapse()
     }
 }
