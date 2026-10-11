@@ -228,7 +228,7 @@ Rectangle {
             id: pillText
             anchors.centerIn: parent
             text: label
-            color: filled ? "#12141A" : tone
+            color: filled ? Theme.accentInk : tone
             font.pixelSize: 11
         }
         MouseArea {

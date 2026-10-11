@@ -405,7 +405,7 @@ YaiWindow {
                 text: root.capText
             }
 
-            // 状态点：空闲灰、执行中紫、待授权琥珀
+            // 状态点：空闲灰、执行中琥珀、待授权黄
             Rectangle {
                 visible: root.shape === "capsule"
                 anchors.right: parent.right
@@ -497,14 +497,14 @@ YaiWindow {
                 width: chipLabel.implicitWidth + 22
                 height: 24
                 radius: 12
-                color: "#223ECF8E"
+                color: Theme.accentTint
                 border.width: 1
-                border.color: Theme.ok
+                border.color: Theme.accent
                 opacity: 0
                 Text {
                     id: chipLabel
                     anchors.centerIn: parent
-                    color: Theme.ok
+                    color: Theme.accent
                     font.pixelSize: 11
                     text: "新能力已就位"
                 }
@@ -551,7 +551,7 @@ YaiWindow {
             width: toastText.implicitWidth + 24
             height: 26
             radius: 13
-            color: "#33F1666A"
+            color: Theme.badTint
             border.width: 1
             border.color: Theme.bad
             visible: root.notice !== ""

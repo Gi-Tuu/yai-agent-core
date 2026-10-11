@@ -16,7 +16,16 @@ import ctypes
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -27,6 +36,7 @@ from shell.desktop.specialist import PERMISSION_MODES
 
 #: QML 资源目录。
 QML_DIR = Path(__file__).resolve().parent / "qml"
+FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 
 #: 托盘图标边长。
 _ICON_SIZE = 32
@@ -154,6 +164,16 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     # Windows 原生控件样式不允许改 background，统一走 Basic 才能定制深色输入框
     QQuickStyle.setStyle("Basic")
+
+    # 注册随包 JetBrains Mono（终端工艺唯一等宽字体，离线可用）；
+    # 找不到文件时静默回退系统等宽字体，不阻断启动。
+    for _ttf in ("JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf"):
+        _font_path = FONTS_DIR / _ttf
+        if _font_path.exists():
+            QFontDatabase.addApplicationFont(str(_font_path))
+    # 全窗默认字体走 JetBrains Mono（终端工艺唯一等宽字体）；
+    # 中文缺字由 Qt 自动回退系统中文 sans，无需在 QML 里逐处指定。
+    app.setFont(QFont("JetBrains Mono"))
 
     workbench = build_workbench(args.permission, live=args.live)
     if args.core_off:

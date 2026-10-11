@@ -208,7 +208,7 @@ Rectangle {
             width: 14
             height: 14
             radius: 7
-            color: "#F4F6FB"
+            color: Theme.knob
             Behavior on x { NumberAnimation { duration: Theme.msFast; easing.type: Easing.OutCubic } }
         }
 
@@ -241,7 +241,7 @@ Rectangle {
             id: pillText
             anchors.centerIn: parent
             text: label
-            color: filled ? "#12141A" : tone
+            color: filled ? Theme.accentInk : tone
             font.pixelSize: 11
         }
         MouseArea {

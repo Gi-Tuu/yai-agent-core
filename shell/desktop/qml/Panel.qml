@@ -40,7 +40,7 @@ Item {
                (parts.length ? "（" + parts.join(" · ") + "）" : "");
     }
 
-    // 权限三挡：全审（琥珀，每次都问）/ 部审（紫，读放行、写询问）/ 免审（红，风险最高）。
+    // 权限三挡：全审（黄，每次都问）/ 部审（琥珀，读放行、写询问）/ 免审（红，风险最高）。
     // 点标题栏小 Pill 循环切换；经 channel.permission_mode 在"下一个任务"装配策略时生效。
     readonly property var permLabels: ({
         "manual": "全审",
@@ -165,7 +165,7 @@ Item {
             Layout.preferredHeight: visible ? 28 : 0
             visible: !workbench.launchLive
             radius: 8
-            color: "#22F5A524"
+            color: Theme.warnTint
             border.width: 1
             border.color: Theme.warn
             Text {
@@ -198,7 +198,7 @@ Item {
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.msNormal } }
             radius: 12
-            color: "#22F5A524"
+            color: Theme.warnTint
             border.width: 1
             border.color: Theme.warn
 
@@ -222,7 +222,7 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             text: workbench.activePendingKind === "ask" ? "?" : "⛨"
-                            color: "#12141A"
+                            color: Theme.accentInk
                             font.pixelSize: 13
                             font.bold: true
                         }
@@ -250,7 +250,7 @@ Item {
                         color: Theme.text
                         font.pixelSize: 12
                         font.family: workbench.activePendingKind === "confirm"
-                                     ? "Consolas, 'Courier New', monospace"
+                                     ? Theme.fontMono
                                      : Qt.application.font.family
                         wrapMode: Text.WordWrap
                     }
@@ -601,7 +601,7 @@ Item {
                     id: badgeText
                     anchors.centerIn: parent
                     text: unread
-                    color: "#12141A"
+                    color: Theme.accentInk
                     font.pixelSize: 9
                     font.bold: true
                 }
@@ -634,7 +634,7 @@ Item {
             id: pillText
             anchors.centerIn: parent
             text: label
-            color: filled ? "#12141A" : tone
+            color: filled ? Theme.accentInk : tone
             font.pixelSize: 11
             font.bold: active
         }
