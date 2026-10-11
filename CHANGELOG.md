@@ -10,6 +10,7 @@
 ### Added
 
 - **结构化长期记忆（opt-in）**：新增 `memory/vault.py` 的 `MemoryVault` 与 `remember` / `recall` 两个普通工具——模型可主动把事实 / 偏好 / 画像 / 事件 / 笔记存档，并在需要时按"词法相似度 + 重要度加权"召回；写入对高相似条目去重合并（标签并集、重要度取大），落盘为 JSON（原子写、损坏冷启动容忍）。由 `AgentCore(long_memory=True, memory_storage=...)` 开启，另提供 `long_memory_status()` / `forget_memory()` 后台方法；内核不内置向量长期记忆，更强语义召回经 Embedding SPI 由宿主提供。新增逐行讲义第 28 篇。
+- **端到端离线评测 harness**：新增零第三方硬依赖的内核包 `evaluation/`（`GoldenTask` 判分标准、`collect_trace` 从事件流还原轨迹、`score_task` 打分、`aggregate` micro 汇总），量化**完整 AgentCore** 的任务完成率、工具调用精确率 / 召回率、越权（调用禁调工具）与无支撑断言（答复凭证无成功工具结果出处）；配套 `scripts/eval_tasks.py`（业务宿主 + 5 条 golden cases，含高危工具"诱惑"）与 `scripts/eval_agent.py`（ScriptedModel 真跑 `astream` 的 runner，`--gate` 闸门、写 `benchmark_out/eval_agent.json`）。golden 基线应全通过，作为"改内核 / 改配置行为不退化"的回归保障；新增非门禁 CI `eval` job 与逐行讲义第 29 篇。口径诚实：`unsupported_claims` 是幻觉的必要不充分信号、不宣传成幻觉率，纯 direct 任务跳过出处核验。
 
 ## [v0.8.1] - 2026-10-11
 

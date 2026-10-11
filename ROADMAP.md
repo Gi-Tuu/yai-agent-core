@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-09。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
+> 最后更新：2026-10-11。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
 
 ## 愿景
 
@@ -68,6 +68,7 @@
 - **运维向（已落地）**：KV TTL（`MemoryStore.put` 可选 `ttl_seconds`，SQLite schema v1→v2 自动迁移、旧数据保留、过期边界时刻保留）；响应体大小守卫（final / 事件数 / 整体三级截断、头+尾保留、附 truncated 与 events_total 标记，不静默删改）；API Key 鉴权（`YAI_API_KEY` / `YAI_API_KEYS`，Bearer / X-API-Key、常量时间比较，硬门槛路径公开、未带 key 在花模型钱前返回 401）。
 
 - **结构化长期记忆（已落地，opt-in）**：在会被裁剪的对话历史之外，新增 `memory/vault.py` 的 `MemoryVault` 与 `remember` / `recall` 两个普通工具，模型可主动把事实 / 偏好 / 画像 / 事件 / 笔记存档、并在需要时召回。写入对高相似条目去重合并（标签并集、重要度取大、访问计数 +1）；召回按"词法相似度 ×（0.75 + 0.25·重要度/5）"排序、支持 kinds/tags 过滤与 top-k，命中刷新最近使用时间与计数；落盘为 JSON（原子写、损坏冷启动容忍）。`AgentCore(long_memory=True, memory_storage=...)` 开启，另提供 `long_memory_status()` / `forget_memory()`；内核不内置向量长期记忆，语义召回经 Embedding SPI。见讲义第 28 篇。
+- **端到端离线评测（已落地）**：新增零硬依赖内核包 `evaluation/`（`GoldenTask` / `collect_trace` / `score_task` / `aggregate`）与 `scripts/eval_agent.py`，用 ScriptedModel 真跑完整 AgentCore，量化任务完成率、工具调用精确率 / 召回率、越权与无支撑断言；`scripts/eval_tasks.py` 的 5 条 golden cases 作为回归基线（应全通过），非门禁 CI `eval` job 产出评分 JSON。把 ScriptedModel 换成真实模型即可量化真机多步完成表现。见讲义第 29 篇。
 
 ### v0.8 — Tool Discovery（发现工具，动态发现源）
 
