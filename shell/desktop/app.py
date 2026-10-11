@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, QUrl
@@ -95,33 +97,23 @@ def hide_from_taskbar(window) -> None:
     user32.SetWindowLongW(hwnd, -20, exstyle | 0x00000080)
 
 
-#: DWMWA_WINDOW_CORNER_PREFERENCE（Windows 11 圆角偏好属性）
-_DWMWA_WINDOW_CORNER_PREFERENCE = 33
-#: DWMWCP_DONOTROUND：系统不要给窗口本身圆角，圆角完全交给应用自绘
-_DWMWCP_DONOTROUND = 1
+def configure_quick_backend(env: dict[str, str] | None = None) -> None:
+    """在 Windows 上固定 Qt Quick 软件场景图后端，修透明置顶窗的圆角黑角。
 
+    根因：Qt Quick 默认 RHI（Windows 上为 D3D11 / DirectComposition，d3d12 /
+    vulkan / opengl 后端同样）渲染 frameless + ``color: "transparent"`` 的置顶窗
+    时，圆角外的逐像素 alpha 在**跨进程 DWM 终合成**中丢失、被当成不透明黑块；
+    同进程的两个 Qt 窗走进程内合成所以正常（因此该问题只在真机、岛浮于其它进程
+    窗口之上时出现）。软件后端走分层窗口 ``UpdateLayeredWindow`` 路径，逐像素
+    alpha 跨进程合成正确。灵动岛 QML 仅用基础图元（无 ShaderEffect / MultiEffect
+    / 阴影模糊 / 粒子），CPU 光栅化性能够用。
 
-def disable_dwm_rounding(window) -> None:
-    """关掉系统对顶层窗的自动圆角，消除面板四角的黑角。
-
-    灵动岛是 frameless 透明窗，圆角由 QML ``shell`` 自绘（窗口表面四角已是
-    per-pixel 透明，实测 alpha=0）。Windows 11 仍会按它自己的小圆角策略再裁
-    一次顶层窗，两层圆角错位时会在大圆角外侧垫出黑角。声明 ``DONOTROUND`` 后
-    圆角完全交给应用表面。低版本 Windows / 非 Windows 无此属性，静默跳过。
+    必须在 ``QGuiApplication`` 创建前调用。排障时设 ``YAI_FORCE_RHI=1`` 可退回
+    默认 GPU（RHI）后端。非 Windows 不做任何改动。
     """
-    if window is None or not hasattr(window, "winId"):
-        return
-    try:
-        dwmapi = ctypes.windll.dwmapi
-    except (AttributeError, OSError):
-        return
-    preference = ctypes.c_int(_DWMWCP_DONOTROUND)
-    dwmapi.DwmSetWindowAttribute(
-        int(window.winId()),
-        _DWMWA_WINDOW_CORNER_PREFERENCE,
-        ctypes.byref(preference),
-        ctypes.sizeof(preference),
-    )
+    env = os.environ if env is None else env
+    if sys.platform == "win32" and env.get("YAI_FORCE_RHI") != "1":
+        env["QT_QUICK_BACKEND"] = "software"
 
 
 def build_icon() -> QIcon:
@@ -188,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     )  # 调试用：跳过单实例守护，允许同时开多个
     args = parser.parse_args(argv)
     prepare_paths()
+    # 必须在 QApplication 创建前选定场景图后端（修 Windows 透明置顶窗圆角黑角）。
+    configure_quick_backend()
 
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -232,7 +226,6 @@ def main(argv: list[str] | None = None) -> int:
     settings = QSettings("YAI", "Desktop")
     restore_window_position(window, settings)
     hide_from_taskbar(window)
-    disable_dwm_rounding(window)  # 圆角交给 QML 自绘，避免 Win11 双层圆角垫黑角
 
     # 位置落盘：拖动结束（x/y 变化停 400ms）自动保存，重启即恢复。
     save_timer = QTimer()
