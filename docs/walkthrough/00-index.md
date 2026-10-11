@@ -76,6 +76,7 @@
 | `kernel/loop.py` | 主循环（心脏） | 发动机 |
 | `memory/inmemory.py` | 默认记忆 | 短期便签本 |
 | `memory/sqlite_store.py` | 持久化记忆（opt-in） | 带锁的笔记本 |
+| `memory/vault.py` | 结构化长期记忆：remember/recall 事实档案（opt-in） | 可主动翻的档案柜 |
 | `memory/retention.py` | 历史裁剪纯函数（条数/TTL，轮边界对齐） | 会碎纸的碎纸机 |
 | `policy/allowlist.py` | 默认权限 | 门禁 |
 | `channels/*.py` | 默认输入输出 | 显示屏/话筒 |
@@ -128,6 +129,7 @@
 - 25 · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
 - 26 · `discovery/remote_sources.py` + `aggregate.py`：远程动态发现源（MCP / OpenAPI 懒连接）与多源聚合去重
 - 27 · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
+- 28 · `memory/vault.py` + `core.py`：结构化长期记忆（remember/recall、去重合并、重要度加权，opt-in）
 
 ## 5. 自检（读完本篇应能回答）
 

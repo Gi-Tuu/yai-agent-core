@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **结构化长期记忆（opt-in）**：新增 `memory/vault.py` 的 `MemoryVault` 与 `remember` / `recall` 两个普通工具——模型可主动把事实 / 偏好 / 画像 / 事件 / 笔记存档，并在需要时按"词法相似度 + 重要度加权"召回；写入对高相似条目去重合并（标签并集、重要度取大），落盘为 JSON（原子写、损坏冷启动容忍）。由 `AgentCore(long_memory=True, memory_storage=...)` 开启，另提供 `long_memory_status()` / `forget_memory()` 后台方法；内核不内置向量长期记忆，更强语义召回经 Embedding SPI 由宿主提供。新增逐行讲义第 28 篇。
+
 ## [v0.8.1] - 2026-10-11
 
 > v0.8.0 之后的供应链安全、开源治理与工程加固版本；内核定位与 API 不变。
