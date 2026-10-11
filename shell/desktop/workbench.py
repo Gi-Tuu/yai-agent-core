@@ -115,6 +115,8 @@ class WorkbenchRuntime(QObject):
     codeVaultUpdated = Signal(str)
     #: 当前专员的路由学习状态刷新（payload = summary JSON 字符串）
     learningUpdated = Signal(str)
+    #: 全局界面偏好：指针离开后是否自动收回（与具体专员无关）
+    autoCollapseChanged = Signal()
 
     def __init__(
         self,
@@ -131,6 +133,10 @@ class WorkbenchRuntime(QObject):
         self._settings = QSettings("YAI", "Desktop")
         self._onboarding_done = bool(
             self._settings.value("onboarding/done", False, type=bool)
+        )
+        # 指针离开灵动岛后是否自动收回；默认开，关掉则只在手动/Esc 时收回。
+        self._auto_collapse = bool(
+            self._settings.value("ui/autoCollapse", True, type=bool)
         )
         self._specialists: dict[str, SpecialistRuntime] = {}
         self._order: list[str] = []
@@ -251,6 +257,9 @@ class WorkbenchRuntime(QObject):
     def _get_onboarding_done(self) -> bool:
         return self._onboarding_done
 
+    def _get_auto_collapse(self) -> bool:
+        return self._auto_collapse
+
     def _get_model(self) -> QObject:
         return self.model
 
@@ -274,6 +283,7 @@ class WorkbenchRuntime(QObject):
     specialistIds = Property(list, _get_ids, notify=stateChanged)
     launchLive = Property(bool, _get_launch_live, constant=True)
     onboardingDone = Property(bool, _get_onboarding_done, notify=stateChanged)
+    autoCollapse = Property(bool, _get_auto_collapse, notify=autoCollapseChanged)
 
     def _get_code_vault(self) -> str:
         return self._vault_json
@@ -340,6 +350,15 @@ class WorkbenchRuntime(QObject):
         self._onboarding_done = True
         self._settings.setValue("onboarding/done", True)
         self.stateChanged.emit()
+
+    @Slot(bool)
+    def setAutoCollapse(self, on: bool) -> None:
+        """设置指针离开后是否自动收回，并落盘（全局，不随专员切换变化）。"""
+        if bool(on) == self._auto_collapse:
+            return
+        self._auto_collapse = bool(on)
+        self._settings.setValue("ui/autoCollapse", self._auto_collapse)
+        self.autoCollapseChanged.emit()
 
     @Slot()
     def requestQuit(self) -> None:

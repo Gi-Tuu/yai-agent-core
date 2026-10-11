@@ -369,3 +369,35 @@ def test_retry_blocked_while_busy_or_without_history(qapp) -> None:
         assert workbench.retry() is False           # busy 中不允许重试
     finally:
         workbench.shutdown()
+
+
+def test_auto_collapse_preference_flips_and_persists(qapp) -> None:
+    """离开自动收回开关：property 翻转、QSettings 落盘、跨实例读回。"""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("YAI", "Desktop")
+    original = settings.value("ui/autoCollapse", True, type=bool)
+    try:
+        wb = _workbench(("a", lambda task, channel: _script([])))
+        try:
+            assert wb.property("autoCollapse") is True   # 默认开
+            wb.setAutoCollapse(False)
+            assert wb.property("autoCollapse") is False
+            assert settings.value("ui/autoCollapse", True, type=bool) is False
+            wb.setAutoCollapse(True)                    # 幂等：重复设同值不报错
+            assert wb.property("autoCollapse") is True
+        finally:
+            wb.shutdown()
+
+        # 新实例从落盘读回关闭态
+        settings.setValue("ui/autoCollapse", False)
+        settings.sync()
+        wb2 = _workbench(("a", lambda task, channel: _script([])))
+        try:
+            assert wb2.property("autoCollapse") is False
+        finally:
+            wb2.shutdown()
+    finally:
+        # 恢复真机原有偏好，避免测试污染用户设置
+        settings.setValue("ui/autoCollapse", original)
+        settings.sync()

@@ -75,7 +75,14 @@ YaiWindow {
 
     function collapse() {
         if (workbench.activePendingKind !== "") return;   // 有决策要用户看到，不收
-        if (root.typing) return;                         // 正在打字，不收
+        if (root.typing) return;                         // 正在打字，不收（窗口内计时用）
+        root.shape = "ball";
+    }
+
+    // 用户主动收（Esc / 收起键）：打字不再挡（草稿留在常驻面板里，切回还在），
+    // 但授权 / 澄清必须当面处理，仍不收。
+    function forceCollapse() {
+        if (workbench.activePendingKind !== "") return;
         root.shape = "ball";
     }
 
@@ -86,14 +93,18 @@ YaiWindow {
         onTriggered: if (root.hovering && root.shape === "ball") root.shape = "capsule"
     }
 
-    // 离开留一点宽限：指针跨子项时 hover 可能瞬时抖动，别立刻收
+    // 离开宽限：指针跨子项时 hover 可能瞬时抖动，别立刻收。
+    // 时长在 onHoveringChanged 里按"是否在打字"动态给：没打字短宽限，打字中放宽；
+    // 到点直接收球（离开路径不再被 typing 挡住——焦点会一直赖在输入框里，
+    // 否则点开面板看完、指针移出就永远不收回）。授权 / 澄清仍强制保留。
     Timer {
         id: leaveGrace
-        interval: 150
+        interval: 220
         onTriggered: {
             if (root.hovering || root.dragging) return;
-            if (root.shape === "capsule") root.shape = "ball";
-            else if (root.shape === "panel") root.collapse();
+            if (!workbench.autoCollapse) return;          // 用户关了自动收回
+            if (workbench.activePendingKind !== "") return;
+            root.shape = "ball";
         }
     }
 
@@ -105,6 +116,8 @@ YaiWindow {
         }
         dwell.stop();
         if (dragging) return;
+        if (!workbench.autoCollapse) return;              // 关闭自动收回：离开不计时
+        leaveGrace.interval = root.typing ? 1200 : 220;
         leaveGrace.restart();
     }
 
@@ -277,7 +290,7 @@ YaiWindow {
     Timer {
         id: collapseTimer
         interval: 1600
-        onTriggered: if (!root.hovering) root.collapse()
+        onTriggered: if (workbench.autoCollapse && !root.hovering) root.collapse()
     }
 
     // 用户主动点开面板：等展开动画落定再聚焦输入框，可直接打字。
@@ -601,6 +614,6 @@ YaiWindow {
 
     Shortcut {
         sequences: ["Escape"]
-        onActivated: root.collapse()
+        onActivated: root.forceCollapse()
     }
 }
