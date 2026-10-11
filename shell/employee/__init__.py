@@ -11,6 +11,7 @@ from shell.employee.delegate import (
 )
 from shell.employee.worker import (
     DEFAULT_WORKER_ITERS,
+    DEFAULT_WORKER_TIMEOUT,
     MAX_CONCURRENT,
     MAX_DEPTH,
     WorkerResult,
@@ -22,6 +23,7 @@ from shell.employee.worker import (
 __all__ = [
     "DELEGATE_TOOL",
     "DEFAULT_WORKER_ITERS",
+    "DEFAULT_WORKER_TIMEOUT",
     "MAX_CONCURRENT",
     "MAX_DEPTH",
     "WorkerResult",
