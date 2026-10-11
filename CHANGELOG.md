@@ -11,6 +11,7 @@
 
 - **结构化长期记忆（opt-in）**：新增 `memory/vault.py` 的 `MemoryVault` 与 `remember` / `recall` 两个普通工具——模型可主动把事实 / 偏好 / 画像 / 事件 / 笔记存档，并在需要时按"词法相似度 + 重要度加权"召回；写入对高相似条目去重合并（标签并集、重要度取大），落盘为 JSON（原子写、损坏冷启动容忍）。由 `AgentCore(long_memory=True, memory_storage=...)` 开启，另提供 `long_memory_status()` / `forget_memory()` 后台方法；内核不内置向量长期记忆，更强语义召回经 Embedding SPI 由宿主提供。新增逐行讲义第 28 篇。
 - **端到端离线评测 harness**：新增零第三方硬依赖的内核包 `evaluation/`（`GoldenTask` 判分标准、`collect_trace` 从事件流还原轨迹、`score_task` 打分、`aggregate` micro 汇总），量化**完整 AgentCore** 的任务完成率、工具调用精确率 / 召回率、越权（调用禁调工具）与无支撑断言（答复凭证无成功工具结果出处）；配套 `scripts/eval_tasks.py`（业务宿主 + 5 条 golden cases，含高危工具"诱惑"）与 `scripts/eval_agent.py`（ScriptedModel 真跑 `astream` 的 runner，`--gate` 闸门、写 `benchmark_out/eval_agent.json`）。golden 基线应全通过，作为"改内核 / 改配置行为不退化"的回归保障；新增非门禁 CI `eval` job 与逐行讲义第 29 篇。口径诚实：`unsupported_claims` 是幻觉的必要不充分信号、不宣传成幻觉率，纯 direct 任务跳过出处核验。
+- **远程发现源按 need 筛选**：`RemoteSourceDiscovery` 此前返回配置内全部工具，现对已构造 ToolSpec（无 keywords）做保守双通道收窄：词法用 name+description 的**双向**相关度（query→工具、工具→query 取大，修正单向对长 query 的稀释），按实测分布标定阈值 0.20、margin 0.08、top_k 8；宿主提供 embedder 时叠加语义 gate（跨概念高召回）。任一通道识别即收窄、两通道都不中**回退全量**（跌破阈值只导致不收窄、不漏召回），语义通道失败不致命；`filter_by_need=False` 保持全量。新增逐行讲义第 30 篇，`tests/test_remote_discovery.py` 由 5 扩到 11。真机 bge 端到端待补 ONNX 权重。
 
 ## [v0.8.1] - 2026-10-11
 
