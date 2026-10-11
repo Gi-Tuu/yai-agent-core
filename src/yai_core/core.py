@@ -15,7 +15,7 @@ from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
 from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
 from yai_core.learning import RouteOutcome, extract_route_outcome
-from yai_core.memory import InMemoryStore
+from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.policy import AllowlistPolicy
 from yai_core.spi import (
     Channel,
@@ -57,6 +57,8 @@ class AgentCore:
         composition: bool = False,
         sandbox: ToolSandbox | None = None,
         code_storage: Path | str | None = None,
+        long_memory: bool = False,
+        memory_storage: Path | str | None = None,
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
@@ -103,6 +105,11 @@ class AgentCore:
             self.code_manager = CodeToolManager(
                 self.registry, storage_path=code_storage
             )
+        # 结构化长期记忆：opt-in。vault 负责 remember/recall 的存储与词法检索，
+        # 内核不内置向量长期记忆（更强语义召回由宿主经 Embedding SPI 提供）。
+        self.memory_vault: MemoryVault | None = None
+        if long_memory:
+            self.memory_vault = MemoryVault(storage_path=memory_storage)
         self.executor = ToolExecutor(
             self.registry,
             self.policy,
@@ -115,6 +122,9 @@ class AgentCore:
         # 把宿主已注册的工具编排成新工具（只能引用已注册工具，每步仍走权限）。
         if composition:
             self.registry.register(build_composer_tool(self.registry))
+        # 长期记忆工具：普通 native 工具（非 meta），走 executor 统一权限闸。
+        if self.memory_vault is not None:
+            self.registry.register_many(build_memory_tools(self.memory_vault))
         # 执行中动态发现：只有配置了发现源，才注册 request_capability，
         # 避免给模型一个注定无法兑现的工具。它由 Agent Loop 直接拦截处理。
         if discovery is not None:
@@ -189,6 +199,20 @@ class AgentCore:
         if self.code_manager is None:
             return []
         return self.code_manager.expire_stale()
+
+    # ---------- 长期记忆（后台管理） ----------
+
+    def long_memory_status(self) -> dict:
+        """返回长期记忆 vault 状态（总数、各类型计数、最近条目）；未启用返回 enabled=False。"""
+        if self.memory_vault is None:
+            return {"enabled": False, "total": 0}
+        return {"enabled": True, **self.memory_vault.status()}
+
+    def forget_memory(self, note_id: str) -> bool:
+        """删除指定长期记忆；未启用或不存在返回 False。"""
+        if self.memory_vault is None:
+            return False
+        return self.memory_vault.forget(note_id)
 
     # ---------- 运行 ----------
 
