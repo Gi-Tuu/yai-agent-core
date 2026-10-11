@@ -88,7 +88,7 @@
 | `batteries/fastapi_server/ratelimit.py` | 评审期限流（每 IP 滑动窗口） | 门口的取号机 |
 | `batteries/fastapi_server/payload_guard.py` | 响应体大小守卫（三级截断、标记不静默） | 行李限重秤 |
 | `batteries/fastapi_server/auth.py` | API Key 鉴权（Bearer / X-API-Key，常量时间比较） | 门卫查证件 |
-| `discovery/remote_sources.py` | 远程发现源：MCP / OpenAPI bridge 懒连接、缓存常驻 | 外部供应商名录 |
+| `discovery/remote_sources.py` | 远程发现源：MCP / OpenAPI 懒连接、按 need 双通道收窄（空命中回退全量） | 外部供应商名录 |
 | `discovery/aggregate.py` | `CompositeDiscovery`：多个发现源串成一个、跨源去重 | 总台汇总窗口 |
 | `shell/desktop/docker_sandbox.py` | 生产级沙箱：一次性容器 OS 级隔离（无网/只读/限资源） | 加固的隔离车间 |
 | `evaluation/` | 端到端离线评测：完成率、工具精确/召回、越权、无支撑断言（golden 回归基线） | 考完打分的判卷人 |
@@ -132,6 +132,7 @@
 - 27 · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
 - 28 · `memory/vault.py` + `core.py`：结构化长期记忆（remember/recall、去重合并、重要度加权，opt-in）
 - 29 · `evaluation/` + `scripts/eval_*.py`：端到端评测（golden 回归基线：完成率 / 工具正确性 / 越权 / 无支撑断言，非门禁 CI）
+- 30 · `discovery/scoring.py` + `remote_sources.py`：远程源按 need 筛选（双向词法 + 可选语义，保守收窄、空命中回退全量）
 
 ## 5. 自检（读完本篇应能回答）
 

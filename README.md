@@ -104,7 +104,7 @@ uv run pytest                         # 全量测试，不需要 API Key
 | **能力自发现** | Python 函数 type hints + docstring 自动生成 JSON Schema；外部 **MCP** 工具经 MCP Client、**OpenAPI** REST 操作经规范解析，同构接入注册表 |
 | **自适应路由** | 任务路由到 `direct / react / plan / clarify`；LLM 分类异常自动回退规则，工具不足时发出 `capability_missing`，决策全程可审计 |
 | **自校准学习** | 上下文 bandit 从成败中学习路由，Thompson Sampling 选策略；离线 benchmark 末段 **89.6% vs 规则 73.3%（约 +16pp）** |
-| **按需发现闭环** | 缺口 → 向发现源要候选 → 注册 → **本轮即可调用**；支持词法 + 本地 bge-m3 / 云端 embedding 双通道语义召回 |
+| **按需发现闭环** | 缺口 → 向发现源要候选 → 注册 → **本轮即可调用**；词法 + 本地 bge-m3 / 云端 embedding 双通道召回，远程 MCP/OpenAPI 源也按缺口保守收窄（空命中回退全量） |
 | **长上下文压缩** | 超预算时把旧轮压成摘要、最近完整轮原样保留，模型失败回退硬裁剪——长对话不丢早期目标与事实 |
 | **结构化长期记忆** | `remember` / `recall` 主动把事实 / 偏好 / 画像存档并召回；高相似去重合并、重要度加权、落盘 JSON；不内置向量记忆，语义召回走 Embedding SPI |
 | **安全边界** | 权限三档（全部 / 部分 / 无需审批）；组合工具只编排已注册工具、不执行生成代码；代码生成仅定义 `ToolSandbox` 契约、沙箱由宿主提供 |

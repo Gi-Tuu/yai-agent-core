@@ -77,7 +77,7 @@
 
 - **远程发现源（已落地）**：`discovery/remote_sources.py` 的 `RemoteSourceDiscovery` 复用 MCP / OpenAPI bridge，懒连接一组外部源（首次 discover 才连接、单源失败跳过、连接常驻以保持 handler、缓存 specs），`mcp_discovery(configs)` / `openapi_discovery(configs)` 工厂构造；配置即白名单，注册去重与执行授权仍归内核 / PermissionPolicy。
 - **多源聚合（已落地）**：`discovery/aggregate.py` 的 `CompositeDiscovery` 把进程内 StaticCatalog 与远程源串成单个 discovery（内核只接受一个），跨源去重、把已返回工具名并入后续源的 available，并聚合 `list_discoverable` 声明。
-- 语义匹配（向量 / 嵌入检索）——**检索层已在 v0.7 落地**（`SemanticCatalog` + 第八 SPI，本地 bge-m3 / 云端双后端，见上）；后续把它接到远程发现源做 need 相关性筛选（当前远程源返回配置内全部工具，need 保留给语义层）。
+- **远程源按 need 筛选（已落地）**：`RemoteSourceDiscovery` 对已构造 ToolSpec 做保守双通道收窄——词法（name+description 双向重叠取大，零依赖，阈值 0.20 / margin 0.08 / top_k 8，按实测分布标定）始终可用，宿主再提供 embedder 时叠加语义 gate（跨概念高召回）；任一通道识别即收窄、两通道都不中回退全量，`filter_by_need=False` 关闭。底层检索（`SemanticCatalog` + 第八 SPI，本地 bge-m3 / 云端双后端）见上。
 - 每轮反思中按需再次发现（与 v0.7 反思循环联动）。
 - 宿主插件市场发现源（AMBRACE）待 v1.0 回流时接入。
 

@@ -21,6 +21,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yai_core.types import ToolSpec
 
 # 拉丁词/数字（NFKC + lower 之后），如 weather、q3、get_weather 归一后的 get weather。
 _LATIN_WORD = re.compile(r"[a-z0-9]+")
@@ -174,3 +178,100 @@ def lexical_score(
         keyword_hit=keyword_hit,
         token_sim=token_sim,
     )
+
+
+# --- 面向已构造 ToolSpec（远程 MCP/OpenAPI 工具）的相关性筛选 ----------------
+# 远程 ToolSpec 不登记关键词，只有 name + description，词法筛选只能靠它们与缺口的
+# token 重叠；阈值单独标定。核心安全口径是"保守收窄"：识别得出明确相关子集才
+# 收窄，一个达标都没有就回退全量，绝不在不确定时把可能相关的工具筛掉。
+# 双向词法（取 query→工具、工具→query 两方向较大者）实测：相关工具约 0.23~0.33，
+# 无关工具 ≤0.11。阈值定 0.20：过阈值且与最高分边际足够（margin）才收窄；一个达标
+# 都没有则回退全量。跌破阈值只会导致"不收窄、返回全量"，不会漏召回。
+DEFAULT_SPEC_NEED_THRESHOLD = 0.20
+DEFAULT_SPEC_MARGIN = 0.08
+DEFAULT_REMOTE_TOP_K = 8
+
+
+def spec_text(spec: ToolSpec) -> str:
+    """远程工具用于相关性匹配的轻量文本：工具名 + 描述。"""
+    return " ".join(part for part in (spec.name or "", spec.description or "") if part)
+
+
+def _directed(
+    a_unigrams: set[str],
+    a_bigrams: set[str],
+    b_unigrams: set[str],
+    b_bigrams: set[str],
+) -> float:
+    """``a`` 的 token 有多少出现在 ``b``（对 a 归一），bigram 权重高于 unigram。"""
+    uni = len(a_unigrams & b_unigrams) / len(a_unigrams) if a_unigrams else 0.0
+    if not a_bigrams:
+        return uni
+    bi = len(a_bigrams & b_bigrams) / len(a_bigrams)
+    return 0.4 * uni + 0.6 * bi
+
+
+def spec_relevance(
+    need: str,
+    task: str,
+    spec: ToolSpec,
+    *,
+    groups: tuple[tuple[str, ...], ...] = DEFAULT_SYNONYM_GROUPS,
+) -> float:
+    """缺口/任务与单个远程工具（name+description）的**双向**词法相关度（0~1）。
+
+    单方向（对 query 归一）在 query 是两句自然语言、工具描述很短时会被严重稀释
+    （实测相关工具仅约 0.17）。取 ``query→工具`` 与 ``工具→query`` 两方向的较大者：
+    后者回答"这个工具讲的是不是这件事"，工具描述短、领域词集中，覆盖率高且稳定，
+    因此对长短 query 都稳健，区分度（相关 vs 无关）明显。
+    """
+    q_unigrams, q_bigrams = tokenize(canonicalize(f"{need}\n{task}", groups))
+    c_unigrams, c_bigrams = tokenize(canonicalize(spec_text(spec), groups))
+    q_to_c = _directed(q_unigrams, q_bigrams, c_unigrams, c_bigrams)
+    c_to_q = _directed(c_unigrams, c_bigrams, q_unigrams, q_bigrams)
+    return round(max(q_to_c, c_to_q), 4)
+
+
+def filter_specs_by_need(
+    specs: list[ToolSpec],
+    need: str,
+    *,
+    task: str,
+    threshold: float = DEFAULT_SPEC_NEED_THRESHOLD,
+    top_k: int = DEFAULT_REMOTE_TOP_K,
+    margin: float = DEFAULT_SPEC_MARGIN,
+    groups: tuple[tuple[str, ...], ...] = DEFAULT_SYNONYM_GROUPS,
+) -> tuple[list[ToolSpec], bool, dict[str, float]]:
+    """保守地按缺口收窄一组已构造工具。
+
+    Args:
+        specs: 已去重的候选 ToolSpec。
+        need: 缺失能力的自然语言描述。
+        task: 触发缺口的原始任务文本。
+        threshold: 双向词法相关度门槛。
+        top_k: 收窄时最多保留的工具数。
+        margin: 只保留与最高分差距在 margin 内的领先者，防弱相关/噪声混入。
+        groups: 词法归一同义词组。
+
+    Returns:
+        ``(selected, narrowed, scores)``：
+        - 有工具过阈值：``narrowed=True``，保留"过阈值且与最高分同档(margin)"者，
+          按相关度降序取 top_k；
+        - 一个达标都没有：``narrowed=False``，原样返回全部（不因筛选漏召回）；
+        - ``scores`` 为每个工具的相关度，便于宿主观测与测试。
+    """
+    if not specs:
+        return [], False, {}
+    scored = [
+        (spec_relevance(need, task, spec, groups=groups), index, spec)
+        for index, spec in enumerate(specs)
+    ]
+    scores = {spec.name: score for score, _, spec in scored}
+    hits = [item for item in scored if item[0] >= threshold]
+    if not hits:
+        return list(specs), False, scores
+    hits.sort(key=lambda item: (-item[0], item[1]))
+    top_score = hits[0][0]
+    keep = [item for item in hits if item[0] >= top_score - margin]
+    selected = [spec for _, _, spec in keep[:top_k]]
+    return selected, True, scores
