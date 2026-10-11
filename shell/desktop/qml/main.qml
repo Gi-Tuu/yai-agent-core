@@ -9,6 +9,7 @@ import QtQuick.Controls
 import QtQuick.Window
 import YaiTheme
 import YaiWindow 1.0
+import "flowstate.js" as Flow
 
 YaiWindow {
     id: root
@@ -139,7 +140,7 @@ YaiWindow {
     // 所以每一行都写全同一组角色。步骤数组以 JSON 串存（读回来不是 JS 数组）。
     function blank() {
         return { "fKind": "", "fText": "", "fTone": Theme.text, "fWho": "agent",
-                 "fSteps": "[]", "fCount": 0, "fOpen": false };
+                 "fSteps": "[]", "fCount": 0, "fOpen": false, "fFlow": "[]" };
     }
 
     function addStep(model, text) {
@@ -191,10 +192,76 @@ YaiWindow {
         addSay(feeds[sid], text, Theme.text, "user");
     }
 
+    // ---------- 组合工具流程卡片（状态机见 flowstate.js）----------
+
+    function _flowRender(sid) {
+        var rec = activeFlows[sid];
+        if (!rec) return;
+        var row = blank();
+        row.fKind = "composite";
+        row.fText = rec.st.name;
+        row.fFlow = JSON.stringify(rec.st.nodes);
+        feeds[sid].set(rec.row, row);
+    }
+
+    function _openFlow(sid, name, steps) {
+        var st = Flow.startFlow(name, steps);
+        var row = blank();
+        row.fKind = "composite";
+        row.fText = name;
+        row.fFlow = JSON.stringify(st.nodes);
+        feeds[sid].append(row);
+        activeFlows[sid] = { "st": st, "row": feeds[sid].count - 1 };
+    }
+
+    // 推进组合流程并渲染卡片。返回 true 表示该事件已被流程消费（不再折叠进过程行）；
+    // done/error/cancelled 仅借它收尾，仍返回 false 以继续主逻辑（结论/提示/收起）。
+    function _advanceFlow(sid, type, d) {
+        var isCurrent = sid === workbench.activeSpecialistId;
+        if (type === "tool_composed") {
+            _openFlow(sid, String(d.tool || ""), d.steps || []);
+            if (isCurrent) {
+                root.capText = "组合出新工具";
+                chipFly.restart();
+            }
+            return true;
+        }
+        var rec = activeFlows[sid];
+        if (!rec) return false;
+        if (type === "tool_call") {
+            rec.st = Flow.markCall(rec.st, d.tool);
+            _flowRender(sid);
+            return true;
+        }
+        if (type === "tool_result") {
+            rec.st = Flow.markResult(rec.st, d.tool, d.ok);
+            var settled = rec.st.finished;
+            _flowRender(sid);
+            if (settled) delete activeFlows[sid];
+            return true;
+        }
+        if (type === "done") {
+            rec.st = Flow.finishFlow(rec.st, true);
+            _flowRender(sid);
+            delete activeFlows[sid];
+            return false;
+        }
+        if (type === "error" || type === "cancelled") {
+            rec.st = Flow.finishFlow(rec.st, false);
+            _flowRender(sid);
+            delete activeFlows[sid];
+            return false;
+        }
+        return false;
+    }
+
     function onSpecialistEvent(sid, type, payloadJson) {
         var d = {};
         try { d = payloadJson ? JSON.parse(payloadJson) : {}; } catch (e) { d = {}; }
         var model = feeds[sid];
+
+        // 组合工具流程：状态机先行推进并渲染卡片；被消费的事件不再折叠进过程行。
+        if (_advanceFlow(sid, type, d)) return;
 
         // 非当前专员：只提醒，不改当前画面
         if (sid !== workbench.activeSpecialistId) {
@@ -232,10 +299,6 @@ YaiWindow {
             var ok = d.ok !== false;
             addStep(model, (ok ? "完成 " : "失败 ") + (d.tool || "?") + " "
                              + String(d.preview || d.error || "").slice(0, 80));
-        } else if (type === "tool_composed") {
-            root.capText = "组合出新工具";
-            chipFly.restart();
-            addStep(model, "组合工具 " + (d.tool || "") + " · " + (d.steps || []).join("→"));
         } else if (type === "code_tool_created") {
             root.capText = "沙箱里造出新工具";
             chipFly.restart();
@@ -266,6 +329,8 @@ YaiWindow {
 
     // 每个专员一份独立对话（切走再切回不丢）
     property var feeds: ({})
+    // 组合工具执行态（按专员）：组合收尾或任务 done/error/cancel 即清。
+    property var activeFlows: ({})
 
     Component.onCompleted: {
         var ids = workbench.specialistIds;
