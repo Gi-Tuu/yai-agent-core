@@ -32,6 +32,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from shell.desktop.host import build_workbench, prepare_paths
 from shell.desktop.hotkey import YaiWindow, register_global_hotkey
+from shell.desktop.single_instance import SingleInstance
 from shell.desktop.specialist import PERMISSION_MODES
 
 #: QML 资源目录。
@@ -153,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--core-off", action="store_true", help="启动时停用 Core"
     )
+    parser.add_argument(
+        "--allow-multiple", action="store_true", help=argparse.SUPPRESS
+    )  # 调试用：跳过单实例守护，允许同时开多个
     args = parser.parse_args(argv)
     prepare_paths()
 
@@ -174,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     # 全窗默认字体走 JetBrains Mono（终端工艺唯一等宽字体）；
     # 中文缺字由 Qt 自动回退系统中文 sans，无需在 QML 里逐处指定。
     app.setFont(QFont("JetBrains Mono"))
+
+    # 单实例：已有岛在跑时，本次启动改为唤起它并退出，不重复建 Core/托盘/热键。
+    single = SingleInstance()
+    if not args.allow_multiple and not single.acquire():
+        return 0
 
     workbench = build_workbench(args.permission, live=args.live)
     if args.core_off:
@@ -215,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         window.requestActivate()
         window.setProperty("shape", "panel")
 
+    # 第二个实例启动时，首个实例在这里被唤起（拉前台并展开）。
+    single.set_activator(_summon)
     unregister_hotkey = register_global_hotkey(app, window, _summon)
     tray = None if args.no_tray else install_tray(app, workbench, window)
 
@@ -224,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         _save_position()
         if tray is not None:
             tray.hide()
+        single.close()
         engine.deleteLater()  # 先拆界面，再收运行时，避免绑定读到已销毁对象
         workbench.shutdown()
 
