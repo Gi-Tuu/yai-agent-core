@@ -81,6 +81,11 @@
 - 每轮反思中按需再次发现（与 v0.7 反思循环联动）。
 - 宿主插件市场发现源（AMBRACE）待 v1.0 回流时接入。
 
+### v0.9 — 动态重规划与成本选档（开发中）
+
+- **动态重规划 replan（已落地，PLAN 专属）**：新增 meta-tool `replan`，多步计划执行中因新结果发现原计划走不通（漏前置 / 顺序要调 / 前提不成立）时显式触发；进入 PLAN 分支幂等注册（空宿主 / direct / 简单 react 不注册），`_handle_replan` 保留已完成步骤、基于当前观察产出修正计划，发 `plan_revised`（序号 / 原因 / 步骤，解析不出回退原任务），回灌后按新计划继续。只重排内部计划、无外部副作用，不走授权闸，业务工具仍逐个授权；meta-tool schema 经 `_with_meta_schemas` 在聚焦裁剪下始终注入（同时修复 request_capability / create_code_tool 可见性）。见讲义第 31 篇。
+- **成本·延迟感知选档 tiering（已落地）**：新增零硬依赖 `kernel/tiering.py`，默认 standard（便宜快），仅在规划 / 工具失败纠偏 / 执行到第 3 轮仍未完成时才升 strong；选档是确定性规则、不额外调模型，档位相对上一轮变化才发 `tier_changed`（首轮声明起始档），DONE 新增 `standard_calls` / `strong_calls` / `model_calls` 成本汇总。`AgentCore(cost_aware=False)` 关闭、执行轮恒 standard、行为与旧版一致，宿主可自定义规则松紧。见讲义第 32 篇。
+
 ### v1.0 — 回流 AMBRACE
 
 - 作为开源 AI 陪伴项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核内嵌发布。

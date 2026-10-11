@@ -12,8 +12,10 @@ from yai_core.tools.manifest import (
 )
 from yai_core.tools.meta import (
     CREATE_CODE_TOOL,
+    REPLAN,
     REQUEST_CAPABILITY,
     build_create_code_tool,
+    build_replan_tool,
     build_request_capability_tool,
 )
 from yai_core.tools.registry import ToolRegistry
@@ -26,8 +28,10 @@ __all__ = [
     "build_composer_tool",
     "build_composite_spec",
     "build_create_code_tool",
+    "build_replan_tool",
     "build_request_capability_tool",
     "CREATE_CODE_TOOL",
+    "REPLAN",
     "REQUEST_CAPABILITY",
     "sanitize_schema",
     "EMPTY_OBJECT_SCHEMA",

@@ -106,6 +106,8 @@ uv run pytest                         # 全量测试，不需要 API Key
 | **自校准学习** | 上下文 bandit 从成败中学习路由，Thompson Sampling 选策略；离线 benchmark 末段 **89.6% vs 规则 73.3%（约 +16pp）** |
 | **按需发现闭环** | 缺口 → 向发现源要候选 → 注册 → **本轮即可调用**；词法 + 本地 bge-m3 / 云端 embedding 双通道召回，远程 MCP/OpenAPI 源也按缺口保守收窄（空命中回退全量） |
 | **长上下文压缩** | 超预算时把旧轮压成摘要、最近完整轮原样保留，模型失败回退硬裁剪——长对话不丢早期目标与事实 |
+| **动态重规划** | 多步计划执行中走不通时，模型调 `replan` 显式回到规划、保留已完成步骤产出修正计划（`plan_revised`）；仅 PLAN 注册、只重排内部计划无副作用、不走授权 |
+| **成本感知选档** | 默认走便宜快档 standard，仅规划 / 工具失败纠偏 / 后段卡住才升 strong；选档是确定性规则、不额外花钱，DONE 汇总各档调用数，`cost_aware=False` 可关 |
 | **结构化长期记忆** | `remember` / `recall` 主动把事实 / 偏好 / 画像存档并召回；高相似去重合并、重要度加权、落盘 JSON；不内置向量记忆，语义召回走 Embedding SPI |
 | **安全边界** | 权限三档（全部 / 部分 / 无需审批）；组合工具只编排已注册工具、不执行生成代码；代码生成仅定义 `ToolSandbox` 契约、沙箱由宿主提供 |
 | **全程可观测** | 每次策略选择、能力缺口、工具发现 / 组合 / 调用、权限确认都通过统一事件流对外发出 |
@@ -204,7 +206,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.1 – v0.3（已完成）**：函数内省、规则 / LLM 路由、Agent Loop、SPI 默认实现、MCP Client、SQLite 持久化、OpenAPI 发现、历史裁剪与限流、容器化部署
 - **v0.4 – v0.6（已完成）**：能力缺口感知与 ToolDiscovery 闭环、host_e CRM 零改造嵌入、权限三档、组合工具、双通道语义发现、执行中动态发现
 - **v0.7（已完成）**：自校准路由 contextual bandit（离线 +16pp）、代码工具注册 / TTL / 授权闸、子进程教学沙箱、灵动岛员工薄壳
-- **v0.8（已完成，本版）**：上下文摘要压缩、MCP/OpenAPI 动态发现源与多源聚合、SQLite KV TTL、Docker 沙箱适配器、API Key 鉴权 / 限流 / 响应守卫、发布 PyPI、CI 安全加固（CodeQL、OpenSSF Scorecard、mypy、覆盖率门禁）
+- **v0.8（已完成）**：上下文摘要压缩、MCP/OpenAPI 动态发现源与多源聚合、SQLite KV TTL、Docker 沙箱适配器、API Key 鉴权 / 限流 / 响应守卫、发布 PyPI、CI 安全加固（CodeQL、OpenSSF Scorecard、mypy、覆盖率门禁）
+- **v0.9（开发中）**：动态重规划 `replan`（计划走不通显式回到规划）、成本·延迟感知选档 `tiering`（standard/strong 自动换挡 + DONE 成本汇总）
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
 ## 许可证

@@ -31,13 +31,15 @@
   │ ④ Context 组装消息列表（含刚发现的工具）      【kernel/context.py】
   │    超预算时旧轮压成摘要、recent 完整保留（第 25 篇）【kernel/compaction.py】
   │
-  │ ⑤（plan 时）先让强模型拆步骤，再补一条"按计划执行"的 user 指令
+  │ ⑤（plan 时）强模型拆步骤，再补"按计划执行"指令；执行中计划走不通可
+  │     调 replan 显式重规划（第 31 篇）；每轮按成本·延迟自动选 standard/strong（第 32 篇）
   │
   │ ⑥ ReAct 循环                                 【kernel/loop.py】
   │    模型.achat(消息, 工具清单)                 【llm/openai_compat.py / 任何 SPI 模型】
   │      ├─ 模型不调工具 → 最终答案，结束
   │      ├─ 模型调 meta-tool（内核自己拦截，不进执行器）
   │      │     ├─ request_capability → 发现注册新工具（第 15 篇）
+  │      │     ├─ replan → 计划走不通时显式重规划（第 31 篇，仅 PLAN）
   │      │     ├─ compose_tool → 组合已有工具（第 16 篇）
   │      │     └─ create_code_tool → 注册代码工具（第 18 篇，需宿主沙箱）
   │      └─ 模型要调普通工具 → ToolExecutor.execute  【tools/executor.py】
@@ -67,7 +69,8 @@
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
 | `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
-| `tools/meta.py` | meta-tool：`request_capability`（发现）、`create_code_tool`（造代码工具） | 向内核自己提需求的按钮 |
+| `tools/meta.py` | meta-tool：`request_capability`（发现）、`replan`（重规划）、`create_code_tool`（造代码工具） | 向内核自己提需求的按钮 |
+| `kernel/tiering.py` | 成本·延迟感知选档（standard/strong，规划/失败/后段才升强档，零依赖） | 自动换挡器 |
 | `spi/sandbox.py` | 第六个插槽：代码工具沙箱（只定义契约，执行由宿主实现） | 高危车间的安全规程 |
 | `kernel/router.py` | 决定用哪种打法 | 作战参谋 |
 | `learning/` | 自校准路由：特征/反馈/上下文老虎机（从执行结果学习，opt-in） | 会复盘的作战参谋 |
@@ -133,6 +136,8 @@
 - 28 · `memory/vault.py` + `core.py`：结构化长期记忆（remember/recall、去重合并、重要度加权，opt-in）
 - 29 · `evaluation/` + `scripts/eval_*.py`：端到端评测（golden 回归基线：完成率 / 工具正确性 / 越权 / 无支撑断言，非门禁 CI）
 - 30 · `discovery/scoring.py` + `remote_sources.py`：远程源按 need 筛选（双向词法 + 可选语义，保守收窄、空命中回退全量）
+- 31 · `tools/meta.py` + `loop.py`：动态重规划 replan（计划走不通显式回到规划，仅 PLAN 注册、不走授权）
+- 32 · `kernel/tiering.py` + `core.py`：成本·延迟感知选档（standard/strong 自动换挡，DONE 成本汇总）
 
 ## 5. 自检（读完本篇应能回答）
 

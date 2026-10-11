@@ -117,6 +117,8 @@ For architecture in English see [`docs/architecture.en.md`](docs/architecture.en
 | **Self-calibrating learning** | A contextual bandit learns routing from success/failure and picks strategies via Thompson Sampling; offline benchmark reaches **89.6% vs 73.3% for rules (~+16pp)** in late rounds |
 | **On-demand discovery loop** | Gap → ask discovery sources for candidates → register → **callable within the same turn**; dual-channel recall (lexical + local bge-m3 / cloud embeddings), and remote MCP/OpenAPI sources are conservatively narrowed by the gap too (fall back to all on no hit) |
 | **Long-context compaction** | Over budget, old turns are summarized while recent turns stay intact; on model failure it falls back to hard truncation — long conversations keep early goals and facts |
+| **Dynamic re-planning** | When a multi-step plan turns out unworkable mid-execution, the model calls `replan` to explicitly return to planning, keeping completed steps and producing a revised plan (`plan_revised`); registered only for PLAN, it only rearranges the internal plan with no side effects and no approval gate |
+| **Cost-aware tiering** | Defaults to the cheap/fast `standard` tier and only escalates to `strong` for planning, failure-recovery, or being stuck in late rounds; tiering is deterministic and costs no extra call; DONE summarizes per-tier call counts; disable with `cost_aware=False` |
 | **Structured long-term memory** | `remember` / `recall` proactively store and retrieve facts / preferences / profiles; near-duplicate merge, importance weighting, JSON persistence; no built-in vector memory — semantic recall goes through the Embedding SPI |
 | **Safety boundaries** | Three permission tiers (approve-all / partial / no-approval); composed tools only orchestrate registered tools and never run generated code; code generation defines only the `ToolSandbox` contract — the sandbox is host-provided |
 | **Fully observable** | Every strategy choice, capability gap, tool discovery/composition/call, and permission confirmation is emitted through one unified event stream |
@@ -229,9 +231,11 @@ For optional environment variables (persistent memory, history trimming / TTL, r
   discovery
 - **v0.7 (done)**: contextual-bandit self-calibrating router (+16pp offline), code-tool
   registration/TTL/approval gate, subprocess teaching sandbox, the Dynamic Island employee shell
-- **v0.8 (current)**: context compaction; MCP/OpenAPI dynamic discovery sources with multi-source
+- **v0.8 (done)**: context compaction; MCP/OpenAPI dynamic discovery sources with multi-source
   aggregation; SQLite KV TTL; Docker sandbox adapter; API-key auth, rate limiting and response guards;
   published to PyPI; CI hardening (CodeQL, OpenSSF Scorecard, mypy, coverage gate)
+- **v0.9 (in progress)**: dynamic re-planning `replan` (explicitly return to planning when a plan
+  turns out unworkable) and cost/latency-aware tiering (automatic standard/strong shifting + DONE cost summary)
 - **v1.0 (planned)**: flow back in as the agent kernel of the AI Companion project
   [AMBRACE](https://github.com/Gi-Tuu/AMBRACE)
 

@@ -13,7 +13,7 @@ from typing import Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
-from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
+from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy, TierPolicy
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.policy import AllowlistPolicy
@@ -65,6 +65,7 @@ class AgentCore:
         learning: RouteSelector | None = None,
         on_feedback: FeedbackHook | None = None,
         context_compaction: bool | CompactionPolicy = False,
+        cost_aware: bool = True,
     ) -> None:
         self.model = model
         self.registry = ToolRegistry()
@@ -160,7 +161,10 @@ class AgentCore:
             meta_tools=meta_tools,
             # 上下文摘要压缩：opt-in，默认关闭；灵动岛真机开启。
             compaction_policy=comp_policy,
+            # 成本·延迟感知选档：默认开启（该花才花）；cost_aware=False 时恒 standard。
+            tier_policy=TierPolicy() if cost_aware else None,
         )
+        self.cost_aware = cost_aware
 
     # ---------- 接入 ----------
 
