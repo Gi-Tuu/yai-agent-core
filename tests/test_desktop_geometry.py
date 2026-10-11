@@ -7,7 +7,27 @@
 
 from __future__ import annotations
 
-from shell.desktop.geometry import MARGIN, clamp_frame
+import importlib.util
+from pathlib import Path
+
+# shell/desktop/__init__.py 会连带导入 PySide6，CI 精简矩阵没有 Qt；
+# geometry.py 本身零 Qt 依赖，故按文件路径直接加载（与 test_tool_vault.py 同模式），
+# 让边缘钳制纯函数在未装 [desktop] extra 的 CI 上也能真正运行。
+_ROOT = Path(__file__).resolve().parents[1]
+_GEOM_PATH = _ROOT / "shell" / "desktop" / "geometry.py"
+
+
+def _load_geometry():
+    spec = importlib.util.spec_from_file_location("yai_desktop_geometry", _GEOM_PATH)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_geom = _load_geometry()
+MARGIN = _geom.MARGIN
+clamp_frame = _geom.clamp_frame
 
 # 主屏工作区（逻辑像素，去除任务栏）。
 AVAIL = (0, 0, 1707, 1027)

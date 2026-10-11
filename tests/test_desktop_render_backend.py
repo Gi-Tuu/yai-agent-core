@@ -7,7 +7,11 @@ YAI_FORCE_RHI=1 时退回 GPU(RHI)，非 Windows 不改动。
 
 import sys
 
-import shell.desktop.app as appmod
+import pytest
+
+pytest.importorskip("PySide6.QtCore", reason="需要 PySide6（uv sync --extra desktop）")
+
+import shell.desktop.app as appmod  # noqa: E402
 
 
 def test_windows_selects_software_backend(monkeypatch):

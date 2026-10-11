@@ -42,7 +42,7 @@ jobs:
         run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
 
       - name: Ruff lint
-        run: uv run ruff check src tests examples scripts fuzzing
+        run: uv run ruff check src tests examples scripts fuzzing shell
 
       - name: Type check (mypy)
         run: uv run mypy src/yai_core

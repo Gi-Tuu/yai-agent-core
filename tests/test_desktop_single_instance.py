@@ -8,9 +8,12 @@ import time
 import uuid
 
 import pytest
-from PySide6.QtCore import QCoreApplication
-from PySide6.QtNetwork import QLocalServer
-from shell.desktop.single_instance import SingleInstance
+
+pytest.importorskip("PySide6.QtCore", reason="需要 PySide6（uv sync --extra desktop）")
+
+from PySide6.QtCore import QCoreApplication  # noqa: E402
+from PySide6.QtNetwork import QLocalServer  # noqa: E402
+from shell.desktop.single_instance import SingleInstance  # noqa: E402
 
 
 @pytest.fixture(scope="module")
