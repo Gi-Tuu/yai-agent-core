@@ -94,6 +94,35 @@ def hide_from_taskbar(window) -> None:
     user32.SetWindowLongW(hwnd, -20, exstyle | 0x00000080)
 
 
+#: DWMWA_WINDOW_CORNER_PREFERENCE（Windows 11 圆角偏好属性）
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+#: DWMWCP_DONOTROUND：系统不要给窗口本身圆角，圆角完全交给应用自绘
+_DWMWCP_DONOTROUND = 1
+
+
+def disable_dwm_rounding(window) -> None:
+    """关掉系统对顶层窗的自动圆角，消除面板四角的黑角。
+
+    灵动岛是 frameless 透明窗，圆角由 QML ``shell`` 自绘（窗口表面四角已是
+    per-pixel 透明，实测 alpha=0）。Windows 11 仍会按它自己的小圆角策略再裁
+    一次顶层窗，两层圆角错位时会在大圆角外侧垫出黑角。声明 ``DONOTROUND`` 后
+    圆角完全交给应用表面。低版本 Windows / 非 Windows 无此属性，静默跳过。
+    """
+    if window is None or not hasattr(window, "winId"):
+        return
+    try:
+        dwmapi = ctypes.windll.dwmapi
+    except (AttributeError, OSError):
+        return
+    preference = ctypes.c_int(_DWMWCP_DONOTROUND)
+    dwmapi.DwmSetWindowAttribute(
+        int(window.winId()),
+        _DWMWA_WINDOW_CORNER_PREFERENCE,
+        ctypes.byref(preference),
+        ctypes.sizeof(preference),
+    )
+
+
 def build_icon() -> QIcon:
     """代码生成波形图标，避免为壳引入图片资源。"""
     pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
@@ -194,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = QSettings("YAI", "Desktop")
     restore_window_position(window, settings)
     hide_from_taskbar(window)
+    disable_dwm_rounding(window)  # 圆角交给 QML 自绘，避免 Win11 双层圆角垫黑角
 
     # 位置落盘：拖动结束（x/y 变化停 400ms）自动保存，重启即恢复。
     save_timer = QTimer()
