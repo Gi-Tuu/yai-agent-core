@@ -92,6 +92,9 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# src 供 yai_core；"." 让未打包的顶层 shell/ 示例包（原生桌面壳等）可被测试导入，
+# 本地与 CI 一致，不依赖手动设置 PYTHONPATH。
+pythonpath = ["src", "."]
 
 [tool.mypy]
 python_version = "3.11"

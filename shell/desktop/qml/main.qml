@@ -21,6 +21,12 @@ YaiWindow {
     property string notice: ""
     property bool delegating: false
 
+    // 球锚点（屏幕坐标）：展开时窗口为避开屏幕边缘会整体平移，
+    // 锚点始终记录球的位置，收回时回到这里；持久化也只存锚点。
+    property int ballX: 0
+    property int ballY: 0
+    property bool ballPosKnown: false
+
     readonly property bool expanded: shape === "panel"
     readonly property bool onboardingOpen: shape === "ball" && !workbench.onboardingDone
     readonly property var pending: workbench
@@ -40,6 +46,32 @@ YaiWindow {
 
     Behavior on width { PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
     Behavior on height { PropertyAnimation { duration: Theme.msSlow; easing.type: Easing.OutCubic } }
+    // 展开避让边缘、收回回锚点时平滑滑动；系统拖动（startSystemMove）期间禁用，
+    // 否则窗口会"追"着指针做动画，手感发飘。
+    Behavior on x { enabled: !root.dragging; PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
+    Behavior on y { enabled: !root.dragging; PropertyAnimation { duration: Theme.msSlow; easing.type: Easing.OutCubic } }
+
+    // 系统拖动只在球/胶囊态发生，期间窗口位置即用户给球的新锚点。
+    onXChanged: if (root.dragging) { root.ballX = x; root.ballPosKnown = true; }
+    onYChanged: if (root.dragging) { root.ballY = y; }
+
+    // 形态切换时重新定位：展开把展开体夹进当前屏幕工作区（防边缘溢出），
+    // 收回回到球锚点。钳制算法唯一实现在 shell/desktop/geometry.py。
+    function repositionForShape() {
+        if (shape === "ball") {
+            x = ballX;
+            y = ballY;
+            return;
+        }
+        var tw = shape === "panel" ? Theme.panelW : Theme.capW;
+        var th = shape === "panel" ? Theme.panelH : Theme.capH;
+        var p = geom.clampFrame(ballX, ballY, tw, th,
+                    Screen.desktopAvailableX, Screen.desktopAvailableY,
+                    Screen.desktopAvailableWidth, Screen.desktopAvailableHeight);
+        x = p.x;
+        y = p.y;
+    }
+    onShapeChanged: root.repositionForShape()
 
     function collapse() {
         if (workbench.activePendingKind !== "") return;   // 有决策要用户看到，不收
