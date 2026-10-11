@@ -22,6 +22,7 @@ from shell.employee import (  # noqa: E402
 
 from yai_core import AgentCore, ModelResponse, build_spec  # noqa: E402
 from yai_core.llm.scripted import ScriptedModel  # noqa: E402
+from yai_core.types import ToolCallRequest  # noqa: E402
 
 
 def list_items() -> list[str]:
@@ -127,3 +128,122 @@ def test_unknown_tool_reported_denied() -> None:
     )
 
     assert "ghost_tool" in result.denied
+
+
+def test_worker_steps_recorded() -> None:
+    root = _root(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="list_items", arguments={})
+                ]
+            ),
+            ModelResponse(content="共 2 条"),
+        ]
+    )
+
+    result = asyncio.run(run_worker(root, goal="列出条目", tools=["list_items"]))
+    obs = result.to_observation()
+
+    assert result.ok
+    assert result.status == "done"
+    assert result.steps == ["list_items"]
+    assert obs["steps"] == ["list_items"]
+    assert obs["status"] == "done"
+
+
+def test_worker_timeout_marks_status() -> None:
+    async def slow_tool() -> str:
+        """故意长时间运行，用于触发墙钟超时。"""
+        await asyncio.sleep(5)
+        return "late"
+
+    root = AgentCore(
+        ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=[
+                        ToolCallRequest(id="c1", name="slow_tool", arguments={})
+                    ]
+                )
+            ]
+        )
+    )
+    root.register_tools([build_spec(slow_tool)])
+
+    result = asyncio.run(
+        run_worker(root, goal="调用慢工具并返回结果", tools=["slow_tool"], timeout=0.3)
+    )
+
+    assert result.status == "timeout"
+    assert not result.ok
+    # 内核在工具返回后才经执行器批量发出 tool_call；slow_tool 被超时取消、调用事件
+    # 未及 yield，因此 steps 不记录这次未完成的调用（诚实反映事件时序）。
+    assert result.steps == []
+
+
+def test_on_event_callback_receives_progress() -> None:
+    root = _root(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="list_items", arguments={})
+                ]
+            ),
+            ModelResponse(content="done"),
+        ]
+    )
+    seen: list[str] = []
+
+    asyncio.run(
+        run_worker(
+            root,
+            goal="列出条目",
+            tools=["list_items"],
+            on_event=lambda _goal, kind, _data: seen.append(kind),
+        )
+    )
+
+    assert "tool_call" in seen
+    assert "done" in seen
+
+
+def test_delegate_timeout_does_not_block_gather() -> None:
+    async def slow_tool() -> str:
+        """故意长时间运行。"""
+        await asyncio.sleep(5)
+        return "late"
+
+    class AlwaysSlow:
+        """每次都要求调用 slow_tool（两个子员工共享，并行触发超时）。"""
+
+        async def achat(self, messages, tools=None, *, tier: str = "standard"):
+            return ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c", name="slow_tool", arguments={})
+                ]
+            )
+
+    root = AgentCore(AlwaysSlow())
+    root.register_tools([build_spec(slow_tool)])
+    attach_delegate(root, depth=1)
+    delegate = root.registry.get("delegate")
+
+    loop = asyncio.new_event_loop()
+    start = loop.time()
+    out = loop.run_until_complete(
+        delegate.handler(
+            tasks=[
+                {"goal": "慢一", "tools": ["slow_tool"], "timeout": 0.3},
+                {"goal": "慢二", "tools": ["slow_tool"], "timeout": 0.3},
+            ]
+        )
+    )
+    elapsed = loop.time() - start
+    loop.close()
+
+    results = out["results"]
+    assert [r["status"] for r in results] == ["timeout", "timeout"]
+    assert all(not r["ok"] for r in results)
+    # 关键：两个慢任务都被墙钟上限截断，gather 没有无限等待。
+    assert elapsed < 3

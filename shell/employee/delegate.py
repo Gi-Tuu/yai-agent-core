@@ -11,6 +11,7 @@ import asyncio
 
 from shell.employee.worker import (
     DEFAULT_WORKER_ITERS,
+    DEFAULT_WORKER_TIMEOUT,
     MAX_CONCURRENT,
     run_worker,
 )
@@ -20,8 +21,12 @@ from yai_core.types import ToolSpec
 DELEGATE_TOOL = "delegate"
 
 
-def build_delegate_tool(root_core, *, depth: int = 1) -> ToolSpec:
-    """构造 delegate 工具：async handler 闭包绑定根 core 与当前深度。"""
+def build_delegate_tool(root_core, *, depth: int = 1, on_progress=None) -> ToolSpec:
+    """构造 delegate 工具：async handler 闭包绑定根 core、当前深度与可选进度回调。
+
+    ``on_progress(goal, type, data)`` 为可选旁路（可为 async）：子员工每产生一个事件
+    即回调，供灵动岛等上层实时显示"几个子员工在跑、跑到哪"；不传则无实时进度。
+    """
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
     async def _handler(tasks):  # noqa: ANN001 - 入参形状以 input_schema 为准
@@ -36,8 +41,12 @@ def build_delegate_tool(root_core, *, depth: int = 1) -> ToolSpec:
                     max_iters=item.get("max_iters") or DEFAULT_WORKER_ITERS,
                     depth=depth,
                     register_delegate=True,
+                    timeout=item.get("timeout") or DEFAULT_WORKER_TIMEOUT,
+                    on_event=on_progress,
                 )
 
+        # 单个子员工的超时/取消已在 run_worker 内用墙钟上限兜底，
+        # gather 不会因一个子任务卡死而无限等待。
         results = await asyncio.gather(
             *[_run_one(item) for item in normalized]
         )
@@ -68,6 +77,13 @@ def build_delegate_tool(root_core, *, depth: int = 1) -> ToolSpec:
                             "type": "integer",
                             "description": "该子员工的最大迭代次数（默认 3，越小越省）。",
                         },
+                        "timeout": {
+                            "type": "number",
+                            "description": (
+                                "该子员工的墙钟超时秒数（默认 60）；超时即取消并在"
+                                "结果里标 status=timeout，不影响其他并行子员工。"
+                            ),
+                        },
                     },
                     "required": ["goal"],
                 },
@@ -81,7 +97,9 @@ def build_delegate_tool(root_core, *, depth: int = 1) -> ToolSpec:
             "把一个复杂任务拆成若干彼此独立、目标明确的子任务，并行委派给子员工完成，"
             "再由你（根员工）汇总结果并对用户负责。子员工只能使用你授予的工具、不能"
             "直接联系用户、不能自行发现工具；一次最多并行 5 个、最多嵌套两层。有先后"
-            "依赖、或需要与用户确认的步骤不要委派，由你自己处理。"
+            "依赖、或需要与用户确认的步骤不要委派，由你自己处理。结果会给出每个子员工"
+            "的 status（done/timeout/error）、steps（实际调用）与 denied（缺失/失败工具）："
+            "若因缺工具未完成，你可补齐工具后再次委派，或就缺失能力向用户申请。"
         ),
         input_schema=schema,
         handler=_handler,
@@ -110,13 +128,16 @@ def _normalize_tasks(tasks) -> list[dict]:
                 "goal": goal,
                 "tools": list(tools) if tools else None,
                 "max_iters": item.get("max_iters"),
+                "timeout": item.get("timeout"),
             }
         )
     return normalized
 
 
-def attach_delegate(root_core, *, depth: int = 1) -> None:
+def attach_delegate(root_core, *, depth: int = 1, on_progress=None) -> None:
     """给根/子 core 注册 delegate 工具（已注册则跳过，避免重复）。"""
     if root_core.registry.has(DELEGATE_TOOL):
         return
-    root_core.registry.register(build_delegate_tool(root_core, depth=depth))
+    root_core.registry.register(
+        build_delegate_tool(root_core, depth=depth, on_progress=on_progress)
+    )

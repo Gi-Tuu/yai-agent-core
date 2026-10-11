@@ -11,11 +11,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from yai_core.channels import CollectChannel
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
+
+if TYPE_CHECKING:
+    from yai_core import AgentCore
 
 #: 最大委派深度：根(depth 0) → 子(depth 1) → 孙(depth 2)，孙不能再委派。
 MAX_DEPTH = 2
@@ -23,6 +29,8 @@ MAX_DEPTH = 2
 MAX_CONCURRENT = 5
 #: 子员工默认迭代预算（小于根的 6）。
 DEFAULT_WORKER_ITERS = 3
+#: 单个子员工的默认墙钟超时（秒）：超时即取消并回流，不拖垮整次并行委派。
+DEFAULT_WORKER_TIMEOUT = 60.0
 
 #: 未显式给工具时，按工具名前缀启发式挑"只读"工具作为最小默认授权。
 _READ_PREFIXES = (
@@ -40,13 +48,21 @@ class WorkerResult:
     final_text: str
     granted_tools: list[str]
     denied: list[str] = field(default_factory=list)
+    #: 子员工已实际发出调用事件的工具名（按顺序），让根/界面看到它"做了什么"。
+    #: 注意：内核在工具返回后才经执行器批量 yield tool_call，因此被墙钟超时取消、
+    #: 尚未返回的调用不会计入（此时 status=timeout 已表明该子员工未完成）。
+    steps: list[str] = field(default_factory=list)
+    #: 终态：done（正常完成）/ timeout（墙钟超时）/ error（运行错误）。
+    status: str = "done"
 
     def to_observation(self) -> dict:
         """转成喂给根模型的 tool observation（JSON 可序列化）。"""
         return {
             "goal": self.goal,
             "ok": self.ok,
+            "status": self.status,
             "granted_tools": self.granted_tools,
+            "steps": self.steps,
             "denied": self.denied,
             "result": self.final_text,
         }
@@ -72,21 +88,7 @@ def _type_value(event) -> str:
     return t.value if hasattr(t, "value") else str(t)
 
 
-def _failed_tools(events) -> list[str]:
-    """扫描 tool_result 中 ok=false 的工具名（沙箱/执行失败，作为信息回流）。"""
-    failed: list[str] = []
-    for ev in events:
-        data = getattr(ev, "data", {}) or {}
-        if _type_value(ev) == "tool_result" and data.get("ok") is False:
-            failed.append(str(data.get("tool", "?")))
-    return failed
-
-
-def _has_error(events) -> bool:
-    return any(_type_value(ev) == "error" for ev in events)
-
-
-def build_worker_core(
+def _assemble_worker(
     root_core,
     *,
     goal: str,
@@ -94,8 +96,11 @@ def build_worker_core(
     max_iters: int = DEFAULT_WORKER_ITERS,
     depth: int = 1,
     register_delegate: bool = False,
-):
-    """构建一个被收窄的子员工 core（只构建、不运行）。"""
+) -> tuple[AgentCore, list[str], list[str]]:
+    """构建被收窄的子员工 core（只构建、不运行）。
+
+    返回 ``(worker, granted_names, unknown)``：授予工具名与请求了但根不具备的工具名。
+    """
     from yai_core import AgentCore
 
     all_names = [s.name for s in root_core.registry.all()]
@@ -123,8 +128,12 @@ def build_worker_core(
         from shell.employee.delegate import attach_delegate
 
         attach_delegate(worker, depth=depth + 1)
-    worker._yai_unknown = unknown
-    worker._yai_granted = granted_names
+    return worker, granted_names, unknown
+
+
+def build_worker_core(root_core, **kwargs) -> AgentCore:
+    """构建一个被收窄的子员工 core（只构建、不运行），返回 worker 本身。"""
+    worker, _granted, _unknown = _assemble_worker(root_core, **kwargs)
     return worker
 
 
@@ -136,9 +145,17 @@ async def run_worker(
     max_iters: int = DEFAULT_WORKER_ITERS,
     depth: int = 1,
     register_delegate: bool = False,
+    timeout: float | None = DEFAULT_WORKER_TIMEOUT,
+    on_event=None,
 ) -> WorkerResult:
-    """构建并运行一个子员工，返回回流结果；完成即销毁（局部对象被回收）。"""
-    worker = build_worker_core(
+    """构建并运行一个子员工，返回回流结果；完成即销毁（局部对象被回收）。
+
+    - 流式事件驱动：实时提炼调用步骤，并通过可选 ``on_event(goal, type, data)``
+      把进度旁路给上层（如灵动岛）；回调可为 async，其异常不影响主任务。
+    - ``timeout`` 给单个子员工加墙钟上限，超时即取消、``status=timeout``，
+      避免一个子任务卡住拖垮整次并行委派。
+    """
+    worker, granted_names, unknown = _assemble_worker(
         root_core,
         goal=goal,
         tools=tools,
@@ -146,14 +163,51 @@ async def run_worker(
         depth=depth,
         register_delegate=register_delegate,
     )
-    result = await worker.run(goal)
-    final_text = result.final_text.strip()
-    failed = _failed_tools(result.events)
-    ok = bool(final_text) and not _has_error(result.events)
+    steps: list[str] = []
+    failed: list[str] = []
+    final_text = ""
+    status = "done"
+
+    async def _drive() -> None:
+        nonlocal final_text, status
+        async for ev in worker.astream(goal):
+            kind = _type_value(ev)
+            data = getattr(ev, "data", {}) or {}
+            if on_event is not None:
+                try:
+                    rv = on_event(goal, kind, data)
+                    if inspect.isawaitable(rv):
+                        await rv
+                except Exception:
+                    # 进度旁路失败不应影响子员工主流程。
+                    pass
+            if kind == "tool_call":
+                steps.append(str(data.get("tool", "?")))
+            elif kind == "tool_result" and data.get("ok") is False:
+                failed.append(str(data.get("tool", "?")))
+            elif kind == "model_message" and data.get("text"):
+                final_text = str(data["text"])  # 兜底，done 的 final_text 会覆盖
+            elif kind == "done" and data.get("final_text"):
+                final_text = str(data["final_text"])
+            elif kind == "error":
+                status = "error"
+
+    try:
+        if timeout is None:
+            await _drive()
+        else:
+            await asyncio.wait_for(_drive(), timeout=timeout)
+    except TimeoutError:
+        status = "timeout"
+
+    final_text = final_text.strip()
+    ok = bool(final_text) and status == "done"
     return WorkerResult(
         goal=goal,
         ok=ok,
         final_text=final_text,
-        granted_tools=worker._yai_granted,
-        denied=worker._yai_unknown + failed,
+        granted_tools=granted_names,
+        denied=unknown + failed,
+        steps=steps,
+        status=status,
     )
