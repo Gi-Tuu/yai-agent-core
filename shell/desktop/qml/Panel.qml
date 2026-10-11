@@ -106,12 +106,14 @@ Item {
             }
             Item { Layout.fillWidth: true }
             IconButton {
+                objectName: "settingsGear"
                 glyph: "⋯"
                 glyphSize: 16
                 tone: Theme.dim
                 onClicked: settingsLayer.open()
             }
             IconButton {
+                objectName: "collapseBtn"
                 glyph: "×"
                 glyphSize: 15
                 tone: Theme.dim
@@ -140,10 +142,12 @@ Item {
             }
         }
 
-        // ---------- 专员手风琴：活动行向右展开状态，其余收成单行 ----------
-        Column {
+        // ---------- 专员条：始终同一行；非活动收成左边小图标，活动的在本行原地展开 ----------
+        Row {
+            objectName: "specialistBar"
             Layout.fillWidth: true
-            spacing: 4
+            Layout.preferredHeight: 32
+            spacing: 6
             Repeater {
                 model: workbench.specialistModel
                 delegate: SpecialistRow { }
@@ -517,7 +521,9 @@ Item {
     // ---------- 专员 chip ----------
     // 专员手风琴行：非活动收成单行（glyph + 名 + 未读 + ›），
     // 活动行高亮并向右展开出实时状态（待命 / 执行中 / 待处理）。
+    // 单行专员条：非活动收成 32px 小图标靠左排列，活动的在同一行原地展开名称+状态
     component SpecialistRow: Rectangle {
+        objectName: "specRow_" + specialistId
         required property int index
         required property string specialistId
         required property string name
@@ -532,20 +538,25 @@ Item {
         readonly property color stateColor:
             pendingKind !== "" ? Theme.warn : (busy ? Theme.accent : Theme.idleDot)
 
-        width: parent ? parent.width : 0
-        height: active ? 36 : 30
+        height: 32
         radius: 9
-        color: active ? Theme.accentTint : Theme.raised
+        clip: true
+        width: active ? Math.min(210, contentRow.implicitWidth + 18) : 32
+        Behavior on width {
+            NumberAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic }
+        }
+        color: active ? Theme.accentTint : (rowHover.hovered ? Theme.raised2 : Theme.raised)
         border.width: 1
         border.color: active ? Theme.accent : Theme.edge
         Behavior on color { ColorAnimation { duration: Theme.msFast } }
-        Behavior on height { NumberAnimation { duration: Theme.msFast; easing.type: Easing.OutCubic } }
 
         RowLayout {
+            id: contentRow
             anchors.fill: parent
-            anchors.leftMargin: 10
-            anchors.rightMargin: 10
             spacing: 8
+
+            // 折叠态左右各一个弹性项，把 glyph 顶到正中；展开态隐藏、glyph 自然靠左
+            Item { visible: !active; Layout.fillWidth: true }
 
             Rectangle {
                 width: 22
@@ -554,6 +565,7 @@ Item {
                 color: Theme.raised2
                 border.width: 1
                 border.color: Theme.edge
+                Layout.alignment: Qt.AlignVCenter
                 Text {
                     anchors.centerIn: parent
                     text: glyph
@@ -562,69 +574,56 @@ Item {
                     font.bold: true
                 }
             }
+
             Text {
+                visible: active
                 text: name.replace("专员", "")
-                color: active ? Theme.text : Theme.dim
+                color: Theme.text
                 font.pixelSize: 12
-                font.bold: active
+                font.bold: true
+                Layout.alignment: Qt.AlignVCenter
             }
-            Item { Layout.fillWidth: true }
+            Item { visible: active; Layout.fillWidth: true }
 
-            // 活动行向右展开的状态区（非活动宽度 0 收起，clip 住未露出的文字）
-            Item {
-                height: 20
-                width: active ? detailCol.implicitWidth : 0
-                clip: true
-                Behavior on width {
-                    NumberAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic }
+            RowLayout {
+                visible: active
+                spacing: 6
+                Layout.alignment: Qt.AlignVCenter
+                Rectangle {
+                    width: 7
+                    height: 7
+                    radius: 3.5
+                    color: stateColor
+                    Layout.alignment: Qt.AlignVCenter
                 }
-                RowLayout {
-                    id: detailCol
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
-                    Rectangle {
-                        width: 7
-                        height: 7
-                        radius: 3.5
-                        color: stateColor
-                    }
-                    Text {
-                        text: stateText
-                        color: stateColor
-                        font.pixelSize: 11
-                    }
-                }
-            }
-
-            // 未读角标：收起态也要看得见哪个专员有事（活动行已清未读）
-            Rectangle {
-                width: badgeText.implicitWidth + 12
-                height: 16
-                radius: 8
-                visible: unread > 0 && !active
-                color: Theme.warn
                 Text {
-                    id: badgeText
-                    anchors.centerIn: parent
-                    text: unread
-                    color: Theme.accentInk
-                    font.pixelSize: 9
-                    font.bold: true
+                    text: stateText
+                    color: stateColor
+                    font.pixelSize: 11
+                    Layout.alignment: Qt.AlignVCenter
                 }
             }
 
-            // 折叠提示：非活动行尾一个 ›
-            Text {
-                visible: !active
-                text: "›"
-                color: Theme.mute
-                font.pixelSize: 14
-            }
+            Item { visible: !active; Layout.fillWidth: true }
+        }
+
+        // 折叠态未读红点（展开切到该专员即清未读，故活动行不显示数字）
+        Rectangle {
+            width: 8
+            height: 8
+            radius: 4
+            x: parent.width - 9
+            y: 3
+            visible: unread > 0 && !active
+            color: Theme.warn
+            border.width: 1
+            border.color: Theme.shell
         }
 
         MouseArea {
+            id: rowHover
             anchors.fill: parent
+            hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: workbench.setActiveSpecialist(specialistId)
         }
@@ -632,6 +631,7 @@ Item {
 
     // ---------- 标题栏圆形图标按钮（设置 / 收起）----------
     component IconButton: Rectangle {
+        id: ib
         property string glyph: ""
         property int glyphSize: 14
         property color tone: Theme.dim

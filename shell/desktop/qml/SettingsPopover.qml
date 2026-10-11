@@ -7,6 +7,7 @@ import YaiTheme
 
 Rectangle {
     id: menu
+    objectName: "settingsPopover"
 
     visible: false
     color: "transparent"
@@ -34,6 +35,7 @@ Rectangle {
 
     Rectangle {
         id: card
+        objectName: "settingsCard"
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 30
