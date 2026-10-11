@@ -287,7 +287,9 @@ Item {
                 required property var model
                 required property int index
                 width: feedView.width
-                height: model.fKind === "say" ? bubble.height : chain.implicitHeight
+                height: model.fKind === "say" ? bubble.height
+                        : (model.fKind === "composite" ? flowCard.height
+                                                       : chain.implicitHeight)
                 opacity: 0
 
                 SayBubble {
@@ -298,6 +300,16 @@ Item {
                     tone: row.model.fTone || Theme.text
                     fromUser: row.model.fWho === "user"
                     maxWidth: row.width
+                }
+
+                CompositeFlowCard {
+                    id: flowCard
+                    visible: row.model.fKind === "composite"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    flowName: row.model.fText || ""
+                    nodes: JSON.parse(row.model.fFlow || "[]")
                 }
 
                 ChainBlock {
@@ -515,6 +527,102 @@ Item {
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
             }
+        }
+    }
+
+    // ---------- 组合工具流程卡片 ----------
+    // 组合工具执行时，把多个内部工具的调用画成一条纵向迷你时间线：
+    // 圆点状态 wait 待执行 / run 进行中（脉动）/ done 成功 / fail 失败。
+    component CompositeFlowCard: Rectangle {
+        id: flow
+        property string flowName: ""
+        property var nodes: []
+        width: parent ? parent.width : 320
+        height: col.implicitHeight + 22
+        radius: 12
+        color: Theme.raised
+        border.width: 1
+        border.color: Theme.edge
+
+        Column {
+            id: col
+            x: 12; y: 11
+            width: flow.width - 24
+            spacing: 0
+
+            Row {
+                width: col.width
+                spacing: 6
+                Text { id: tag; text: "组合"; color: Theme.dim; font.pixelSize: 10;
+                        anchors.verticalCenter: cap.verticalCenter }
+                Text { id: cap; text: flow.flowName; color: Theme.accent;
+                        font.pixelSize: 11; font.bold: true;
+                        elide: Text.ElideRight; width: col.width - 44 }
+            }
+
+            Repeater {
+                model: flow.nodes
+                delegate: FlowNodeRow {
+                    required property var modelData
+                    required property int index
+                    node: modelData
+                    rowIndex: index
+                    rowWidth: flow.width - 24
+                    total: flow.nodes.length
+                }
+            }
+        }
+    }
+
+    component FlowNodeRow: Item {
+        id: row
+        property var node: ({})
+        property int rowIndex: 0
+        property int total: 1
+        property real rowWidth: 300
+        width: rowWidth
+        height: 26
+
+        readonly property color stateColor: node.s === "done" ? Theme.ok
+                : (node.s === "run" ? Theme.accent
+                   : (node.s === "fail" ? Theme.bad : Theme.dim))
+
+        // 竖向连接线：首节点只保留下半、末节点只保留上半、中间贯穿。
+        Rectangle {
+            x: 5; width: 2
+            y: row.rowIndex === 0 ? parent.height / 2 : 0
+            height: (row.rowIndex === row.total - 1 ? parent.height / 2 : parent.height)
+                    - (row.rowIndex === 0 ? parent.height / 2 : 0)
+            color: Theme.edge
+        }
+
+        Rectangle {
+            id: dot
+            x: 2; width: 8; height: 8; radius: 4
+            anchors.verticalCenter: parent.verticalCenter
+            color: row.stateColor
+            property real pulse: 1
+            opacity: row.node.s === "run" ? dot.pulse : 1
+            SequentialAnimation on pulse {
+                running: row.node.s === "run"
+                loops: Animation.Infinite
+                NumberAnimation { from: 1; to: 0.3; duration: 600;
+                                 easing.type: Easing.InOutQuad }
+                NumberAnimation { from: 0.3; to: 1; duration: 600;
+                                 easing.type: Easing.InOutQuad }
+            }
+        }
+
+        Text {
+            x: 20
+            anchors.verticalCenter: parent.verticalCenter
+            width: row.rowWidth - 20
+            text: row.node.n
+            color: row.stateColor
+            font.pixelSize: 11
+            font.family: Theme.fontMono
+            elide: Text.ElideRight
+            wrapMode: Text.NoWrap
         }
     }
 
