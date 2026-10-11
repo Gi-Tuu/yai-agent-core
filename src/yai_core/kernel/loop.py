@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Iterable
 from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
+from yai_core.kernel.tiering import STANDARD, STRONG, TierPolicy
 from yai_core.policy.authorize import authorize_tool_call
 from yai_core.spi import (
     Channel,
@@ -23,7 +24,12 @@ from yai_core.spi import (
     ToolDiscovery,
 )
 from yai_core.tools.executor import ToolExecutor
-from yai_core.tools.meta import CREATE_CODE_TOOL, REQUEST_CAPABILITY
+from yai_core.tools.meta import (
+    CREATE_CODE_TOOL,
+    REPLAN,
+    REQUEST_CAPABILITY,
+    build_replan_tool,
+)
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import (
     AgentEvent,
@@ -80,6 +86,7 @@ class AgentLoop:
         full_schema_budget: int = 24,
         meta_tools: Iterable[str] = (),
         compaction_policy: CompactionPolicy | None = None,
+        tier_policy: TierPolicy | None = None,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -106,6 +113,9 @@ class AgentLoop:
         self.meta_tools: set[str] = set(meta_tools)
         # 摘要压缩：默认 None（关闭，行为与旧版一致）；宿主显式传入后启用。
         self.compaction_policy = compaction_policy
+        # 成本·延迟感知选档：None（关闭）时执行轮恒走 standard（旧行为）；
+        # 传入 TierPolicy 后按"该花才花"在规划/失败/后段升 strong。
+        self.tier_policy = tier_policy
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
         decision = await self.router.aclassify(
@@ -155,8 +165,21 @@ class AgentLoop:
             ctx.add(msg)
         ctx.add(ChatMessage(role="user", content=task))
 
+        # 模型档位调用计数（成本证据）：贯穿规划 + 执行（含工具聚焦、迭代收尾、
+        # 重规划）；不含路由分类与上下文压缩调用，口径在讲义说明。
+        tier_counts: dict[str, int] = {STANDARD: 0, STRONG: 0}
+
         if strategy == Strategy.PLAN:
-            async for ev in self._make_plan(ctx, task, tier=decision.tier):
+            # replan meta-tool 只在多步计划执行中需要，进入 PLAN 时幂等注册，
+            # 让模型在计划走不通时显式触发重规划（空宿主 / direct / 简单 react 不注册）。
+            self._ensure_replan_tool()
+            async for ev in self._make_plan(
+                ctx,
+                task,
+                tier=decision.tier,
+                tier_policy=self.tier_policy,
+                tier_counts=tier_counts,
+            ):
                 yield ev
             # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
             # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
@@ -169,7 +192,12 @@ class AgentLoop:
 
         final_text = ""
         async for ev in self._react_cycle(
-            ctx, use_tools=strategy != Strategy.DIRECT, task=task
+            ctx,
+            use_tools=strategy != Strategy.DIRECT,
+            task=task,
+            strategy=strategy,
+            tier_policy=self.tier_policy,
+            tier_counts=tier_counts,
         ):
             yield ev
             if ev.type == EventType.MODEL_MESSAGE:
@@ -177,7 +205,16 @@ class AgentLoop:
 
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
-        yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
+        yield AgentEvent(
+            EventType.DONE,
+            {
+                "strategy": strategy.value,
+                "final_text": final_text,
+                "standard_calls": tier_counts[STANDARD],
+                "strong_calls": tier_counts[STRONG],
+                "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
+            },
+        )
 
     async def _emit_capability_gap(
         self, decision: RouteDecision, task: str
@@ -307,15 +344,26 @@ class AgentLoop:
         )
 
     async def _make_plan(
-        self, ctx: Context, task: str, *, tier: str = "strong"
+        self,
+        ctx: Context,
+        task: str,
+        *,
+        tier: str = STRONG,
+        tier_policy: TierPolicy | None = None,
+        tier_counts: dict[str, int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         prompt = (
             "把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
             "只输出步骤本身：\n" + task
         )
         ctx.add(ChatMessage(role="user", content=prompt))
-        # 档位由路由器建议（LLM 路由可给 standard/strong），规则路由的 plan 默认 strong。
-        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=tier)
+        # 档位：成本感知开启时由策略决定（规划默认 strong），否则沿用路由建议 tier。
+        plan_tier = (
+            tier_policy.for_planning().tier if tier_policy is not None else tier
+        )
+        if tier_counts is not None:
+            tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
+        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
@@ -324,7 +372,7 @@ class AgentLoop:
         yield AgentEvent(EventType.PLAN_CREATED, {"steps": steps})
 
     async def _focus_tool_schemas(
-        self, task: str
+        self, task: str, tier_counts: dict[str, int] | None = None
     ) -> tuple[list[dict], list[str] | None]:
         """两层工具目录的第二层：决定本轮注入哪些工具的完整 JSON Schema。
 
@@ -349,13 +397,15 @@ class AgentLoop:
             f"任务：{task}"
         )
         try:
+            if tier_counts is not None:
+                tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
             resp = await self.model.achat(
                 [
                     {"role": "system", "content": "你只输出 JSON 工具名数组。"},
                     {"role": "user", "content": prompt},
                 ],
                 tools=None,
-                tier="standard",
+                tier=STANDARD,
             )
             names = self._parse_tool_names(resp.content)
         except Exception:  # noqa: BLE001 - 聚焦是优化不是依赖，失败回退全量
@@ -369,7 +419,9 @@ class AgentLoop:
             chosen.append(name)
         if not chosen:
             return self.registry.llm_schemas(), None
-        return self.registry.schemas_for(chosen), chosen
+        # meta-tool（replan/request_capability/create_code_tool）始终注入，
+        # 聚焦裁剪只针对业务工具，避免计划走不通时看不到重规划入口。
+        return self._with_meta_schemas(self.registry.schemas_for(chosen)), chosen
 
     @staticmethod
     def _parse_tool_names(content: str) -> list[str]:
@@ -384,13 +436,28 @@ class AgentLoop:
         return [str(x).strip() for x in data if isinstance(x, str) and str(x).strip()]
 
     async def _react_cycle(
-        self, ctx: Context, *, use_tools: bool, task: str = ""
+        self,
+        ctx: Context,
+        *,
+        use_tools: bool,
+        task: str = "",
+        strategy: Strategy = Strategy.REACT,
+        tier_policy: TierPolicy | None = None,
+        tier_counts: dict[str, int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if use_tools:
-            tools_schema, focused_names = await self._focus_tool_schemas(task)
+            tools_schema, focused_names = await self._focus_tool_schemas(
+                task, tier_counts
+            )
         else:
             tools_schema, focused_names = None, None
-        for _ in range(self.max_iters):
+        # 跨轮状态：是否已发生工具失败（决定纠偏升档）、上一轮档位（仅变化时发事件）。
+        had_failure = False
+        last_tier: str | None = None
+        # 重规划次数（经 meta 调用链累加），用于 plan_revised 事件的修订序号。
+        replanned: list[int] = [0]
+
+        for iteration in range(self.max_iters):
             # 摘要压缩：超高水位时把旧轮压成摘要（最近完整轮保留），避免长对话
             # 硬裁剪丢失早期事实；压缩本身可观测，模型失败回退硬裁剪。
             if self.compaction_policy is not None:
@@ -399,8 +466,31 @@ class AgentLoop:
                 )
                 if compact_ev is not None:
                     yield compact_ev
+            # 成本·延迟感知选档：默认 standard 省钱，失败纠偏/后段卡住才升 strong；
+            # 关闭策略时恒 standard（旧行为）。档位相对上一轮变化时发事件，不啰嗦。
+            if tier_policy is not None:
+                tier_dec = tier_policy.select(
+                    strategy=strategy,
+                    iteration=iteration,
+                    had_failure=had_failure,
+                )
+                tier = tier_dec.tier
+                tier_reason = tier_dec.reason
+            else:
+                tier = STANDARD
+                tier_reason = "成本感知关闭，执行轮用标准档"
+            if tier != last_tier:
+                yield AgentEvent(
+                    EventType.TIER_CHANGED,
+                    {"tier": tier, "reason": tier_reason, "iteration": iteration},
+                )
+            last_tier = tier
+            if tier_counts is not None:
+                tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
-                resp = await self.model.achat(ctx.llm_messages(), tools=tools_schema)
+                resp = await self.model.achat(
+                    ctx.llm_messages(), tools=tools_schema, tier=tier
+                )
             except Exception as exc:  # noqa: BLE001
                 yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
                 return
@@ -408,14 +498,23 @@ class AgentLoop:
             if not resp.tool_calls:
                 text = resp.content.strip()
                 ctx.add(ChatMessage(role="assistant", content=text))
-                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text})
+                yield AgentEvent(
+                    EventType.MODEL_MESSAGE, {"text": text, "tier": tier}
+                )
                 return
 
             self._append_assistant_tool_calls(ctx, resp)
             failed: list[str] = []
             newly_registered: list[str] = []
             async for ev in self._execute_tool_calls(
-                resp.tool_calls, ctx, task, failed, newly_registered
+                resp.tool_calls,
+                ctx,
+                task,
+                failed,
+                newly_registered,
+                replanned,
+                tier_policy,
+                tier_counts,
             ):
                 yield ev
 
@@ -427,11 +526,13 @@ class AgentLoop:
                 )
 
             if failed:
-                # 轻量反思（不额外调用模型）：失败观察回灌成明确引导，让模型自我修正。
+                # 轻量反思（不额外调用模型）：失败观察回灌成明确引导，让模型自我修正；
+                # 同时置失败标记，下一轮选档据此升 strong。
+                had_failure = True
                 self._append_failure_reflection(ctx, failed)
 
         # 达到迭代上限：要求模型基于已有观察收尾。
-        async for ev in self._finish_at_iteration_limit(ctx):
+        async for ev in self._finish_at_iteration_limit(ctx, tier_counts):
             yield ev
 
     def _append_assistant_tool_calls(self, ctx: Context, resp: ModelResponse) -> None:
@@ -461,6 +562,9 @@ class AgentLoop:
         task: str,
         failed: list[str],
         newly_registered: list[str],
+        replanned: list[int],
+        tier_policy: TierPolicy | None,
+        tier_counts: dict[str, int] | None,
     ) -> AsyncIterator[AgentEvent]:
         """顺序执行本轮工具：meta-tool 由内核直接处理，普通工具走执行器。
 
@@ -469,9 +573,16 @@ class AgentLoop:
         """
         for call in calls:
             if call.name in self.meta_tools:
-                # 内核 meta-tool（请求发现/创建工具）由 loop 直接处理，
+                # 内核 meta-tool（请求发现/创建工具/重规划）由 loop 直接处理，
                 # 可能在执行中动态注册新工具，不进普通执行器。
-                async for ev in self._handle_meta_tool(call, ctx, task):
+                async for ev in self._handle_meta_tool(
+                    call,
+                    ctx,
+                    task,
+                    replanned,
+                    tier_policy,
+                    tier_counts,
+                ):
                     yield ev
                     if ev.type == EventType.TOOL_DISCOVERED:
                         newly_registered.extend(ev.data.get("registered", []))
@@ -503,7 +614,26 @@ class AgentLoop:
         for name in newly_registered:
             if name not in focused_names:
                 focused_names.append(name)
-        return self.registry.schemas_for(focused_names)
+        return self._with_meta_schemas(
+            self.registry.schemas_for(focused_names)
+        )
+
+    def _with_meta_schemas(self, schemas: list[dict]) -> list[dict]:
+        """把内核 meta-tool 的完整 schema 合并进注入集（聚焦裁剪不丢 meta）。"""
+        if not self.meta_tools:
+            return schemas
+        present = {s.get("function", {}).get("name") for s in schemas}
+        merged = list(schemas)
+        for spec in self.registry.all():
+            if spec.name in self.meta_tools and spec.name not in present:
+                merged.append(spec.llm_schema())
+        return merged
+
+    def _ensure_replan_tool(self) -> None:
+        """PLAN 策略下幂等注册 replan meta-tool（仅多步计划执行需要）。"""
+        if REPLAN not in self.meta_tools:
+            self.registry.register(build_replan_tool())
+            self.meta_tools.add(REPLAN)
 
     def _append_failure_reflection(self, ctx: Context, failed: list[str]) -> None:
         """把失败观察回灌成明确引导，让模型下一轮自我修正而非重复失败调用。"""
@@ -522,7 +652,7 @@ class AgentLoop:
         )
 
     async def _finish_at_iteration_limit(
-        self, ctx: Context
+        self, ctx: Context, tier_counts: dict[str, int] | None = None
     ) -> AsyncIterator[AgentEvent]:
         """达到工具调用上限：要求模型基于已有观察直接收尾。"""
         ctx.add(
@@ -531,14 +661,22 @@ class AgentLoop:
                 content="已达到工具调用上限，请基于已有结果直接给出最终答案。",
             )
         )
-        resp = await self.model.achat(ctx.llm_messages(), tools=None)
-        yield AgentEvent(EventType.MODEL_MESSAGE, {"text": resp.content.strip()})
+        if tier_counts is not None:
+            tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
+        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=STANDARD)
+        yield AgentEvent(
+            EventType.MODEL_MESSAGE,
+            {"text": resp.content.strip(), "tier": STANDARD},
+        )
 
     async def _handle_meta_tool(
         self,
         call: ToolCallRequest,
         ctx: Context,
         task: str,
+        replanned: list[int] | None = None,
+        tier_policy: TierPolicy | None = None,
+        tier_counts: dict[str, int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """分发内核 meta-tool；未知 meta-tool 优雅降级为工具结果错误。"""
         if call.name == REQUEST_CAPABILITY:
@@ -547,6 +685,12 @@ class AgentLoop:
             return
         if call.name == CREATE_CODE_TOOL:
             async for ev in self._handle_create_code_tool(call, ctx):
+                yield ev
+            return
+        if call.name == REPLAN:
+            async for ev in self._handle_replan(
+                call, ctx, task, replanned, tier_policy, tier_counts
+            ):
                 yield ev
             return
         # 理论上不可达（meta_tools 集合由内核控制），防御性回灌而非崩溃。
@@ -681,4 +825,68 @@ class AgentLoop:
             f"已创建代码工具 {spec.name}（默认 {manager.default_ttl // 3600} 小时有效，"
             "每次被调用都会刷新存活期；后台可将其设为永久保留）。请在下一轮直接调用它，"
             "首次执行仍会按权限策略确认，且代码在宿主隔离沙箱中运行。"
+        )
+
+    async def _handle_replan(
+        self,
+        call: ToolCallRequest,
+        ctx: Context,
+        task: str,
+        replanned: list[int] | None,
+        tier_policy: TierPolicy | None,
+        tier_counts: dict[str, int] | None,
+    ) -> AsyncIterator[AgentEvent]:
+        """执行中重规划：标注调整 -> 产出修正计划 -> 回灌继续（不走授权闸）。
+
+        replan 只重排内部计划、不产生外部副作用，因此不要求用户再授权；
+        内核保留已完成步骤、基于当前观察产出修正计划，并发 ``plan_revised`` 事件。
+        """
+        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        reason = (
+            str(arguments.get("reason", "")).strip()
+            or "执行中发现原计划需要调整"
+        )
+        revision = 1
+        if replanned is not None:
+            replanned[0] += 1
+            revision = replanned[0]
+        # 重规划属于复杂拆解：成本感知开启时由策略给档（默认 strong），否则 strong。
+        plan_tier = (
+            tier_policy.for_planning().tier if tier_policy is not None else STRONG
+        )
+        ctx.add(
+            ChatMessage(
+                role="user",
+                content=(
+                    "【系统重规划】原计划执行到此因“" + reason + "”需要调整。"
+                    "请保留已经拿到结果、无需重做的步骤，基于当前已获得的观察，"
+                    "重新输出 2-5 步编号计划（每行一个步骤，用 1. 2. 编号），"
+                    "不要重复已完成步骤；只输出步骤本身。"
+                ),
+            )
+        )
+        if tier_counts is not None:
+            tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
+        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=plan_tier)
+        steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
+        if not steps:
+            steps = [task]
+        plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+        ctx.add(ChatMessage(role="assistant", content=plan_text))
+        yield AgentEvent(
+            EventType.PLAN_REVISED,
+            {"revision": revision, "reason": reason, "steps": steps},
+        )
+        # 回灌 tool 结果：模型下一轮按新计划继续执行。
+        ctx.add(
+            ChatMessage(
+                role="tool",
+                content=(
+                    "计划已按当前观察修订（第 " + str(revision) + " 版）。"
+                    "请按新计划继续调用工具执行，不要重复已完成步骤，"
+                    "拿到全部结果后给出最终汇报。"
+                ),
+                tool_call_id=call.id,
+                name=call.name,
+            )
         )

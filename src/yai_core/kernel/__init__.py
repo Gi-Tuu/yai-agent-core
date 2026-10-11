@@ -4,6 +4,7 @@ from yai_core.kernel.compaction import CompactionPolicy
 from yai_core.kernel.context import Context
 from yai_core.kernel.loop import AgentLoop
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
+from yai_core.kernel.tiering import STANDARD, STRONG, TierDecision, TierPolicy
 
 __all__ = [
     "AdaptiveRouter",
@@ -11,4 +12,8 @@ __all__ = [
     "CompactionPolicy",
     "Context",
     "RouteDecision",
+    "TierPolicy",
+    "TierDecision",
+    "STANDARD",
+    "STRONG",
 ]

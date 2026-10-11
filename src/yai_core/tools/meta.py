@@ -15,6 +15,8 @@ from yai_core.types import ToolSpec
 REQUEST_CAPABILITY = "request_capability"
 #: 运行中创建代码工具的 meta-tool 名（仅在宿主提供沙箱时注册）。
 CREATE_CODE_TOOL = "create_code_tool"
+#: 执行中修订计划的 meta-tool 名（多步计划走不通时重规划）。
+REPLAN = "replan"
 
 
 def _unreachable(**_kwargs: object) -> dict:  # pragma: no cover - 由 loop 拦截
@@ -94,6 +96,39 @@ def build_create_code_tool() -> ToolSpec:
             "复用宿主能力的，一律改用 compose_tool，绝不要在代码里重写宿主已有的功能。"
             "沙箱默认无网络、无敏感文件、有超时，工具默认 48 小时后回收；"
             "不要创建危险或越权工具。"
+        ),
+        input_schema=schema,
+        handler=_unreachable,
+        source="native",
+    )
+
+
+def build_replan_tool() -> ToolSpec:
+    """构造 ``replan``：多步计划在执行中走不通时，显式触发重规划。
+
+    它只重排内部计划、不产生外部副作用，因此不走用户授权闸（避免执行已批准
+    的计划时、每次调整还要再点一次）；内核保留已完成步骤、基于当前观察产出
+    修正计划，并发 ``plan_revised`` 事件。
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": (
+                    "一句话说明原计划为什么要改，例如'第2步依赖的前置数据不存在'。"
+                ),
+            },
+        },
+        "required": [],
+    }
+    return ToolSpec(
+        name=REPLAN,
+        description=(
+            "仅当你正在执行一个【多步计划】、且因执行中拿到的新结果发现原计划走不通"
+            "（漏了前置步骤、步骤顺序要调整、某步的前提不成立）时调用；内核会保留已"
+            "完成的步骤、基于当前观察产出修正后的计划再继续执行。能用其他现有工具直接"
+            "完成、或本来就是单步任务的，不要调用（直接改用工具即可）。"
         ),
         input_schema=schema,
         handler=_unreachable,
