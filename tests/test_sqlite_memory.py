@@ -238,3 +238,70 @@ def test_loop_replays_persisted_history(tmp_path) -> None:
     assert "在吗" in contents
     assert r2.final_text == "第二轮答复"
     store.close()
+
+
+# ---------- D 组：历史裁剪的规模治理（COUNT/MIN 索引短路，不白拉全表） ----------
+
+
+def _patch_cut_counters(monkeypatch) -> dict:
+    """统计轮对齐纯函数 count_cut / ttl_cut 的调用次数。
+
+    这两个函数只在 ``_prune_locked`` 把全量历史 ``fetchall`` 回 Python 之后才会被
+    调用；因此它们"零调用"就等价于"本次 prune 在 COUNT/MIN 索引聚合处已短路、
+    没有把整段历史取回来"。spy 普通模块函数即可，不碰 immutable 的 sqlite3 C 类型。
+    """
+    from yai_core.memory import sqlite_store as mod
+
+    seen = {"count": 0, "ttl": 0}
+    orig_count, orig_ttl = mod.count_cut, mod.ttl_cut
+
+    def counting_count(roles, max_messages):
+        seen["count"] += 1
+        return orig_count(roles, max_messages)
+
+    def counting_ttl(roles, expired):
+        seen["ttl"] += 1
+        return orig_ttl(roles, expired)
+
+    monkeypatch.setattr(mod, "count_cut", counting_count)
+    monkeypatch.setattr(mod, "ttl_cut", counting_ttl)
+    return seen
+
+
+def test_prune_within_limits_short_circuits_before_fetching_rows(
+    tmp_path, monkeypatch
+) -> None:
+    store = SqliteStore(tmp_path / "short.db", max_messages=100, ttl_seconds=3600)
+    seen = _patch_cut_counters(monkeypatch)
+    for i in range(12):
+        run(store.append_history(ChatMessage(role="user", content=f"消息{i}")))
+    # 远未触达任何裁剪阈值：每次写入的 prune 都被 COUNT/MIN 索引聚合短路，
+    # 不取回全表、不进入任何轮对齐计算（旧实现每条写入都白拉一次全表三列）。
+    assert seen["count"] == 0
+    assert seen["ttl"] == 0
+    assert len(store.history()) == 12
+    store.close()
+
+
+def test_prune_fetches_rows_once_threshold_crossed(tmp_path, monkeypatch) -> None:
+    store = SqliteStore(tmp_path / "cross.db", max_messages=2)
+    seen = _patch_cut_counters(monkeypatch)
+    for i in range(6):
+        run(store.append_history(ChatMessage(role="user", content=f"消息{i}")))
+    # 一旦条数超限就必须取行做轮对齐（不能只靠 COUNT 裸删，否则会切散工具对）；
+    # 每条 user 自成一轮，对齐后稳定保留 2 条。
+    assert seen["count"] >= 1
+    assert len(store.history()) == 2
+    store.close()
+
+
+def test_prune_without_any_policy_is_a_noop(tmp_path, monkeypatch) -> None:
+    store = SqliteStore(tmp_path / "nopolicy.db")  # 条数 / TTL 两个策略都为 None（默认）
+    seen = _patch_cut_counters(monkeypatch)
+    for i in range(5):
+        run(store.append_history(ChatMessage(role="user", content=f"m{i}")))
+    # 默认不配任何保留策略时，prune 第一行即返回，连聚合 / 轮对齐都不发生，零误删。
+    assert seen["count"] == 0
+    assert seen["ttl"] == 0
+    assert len(store.history()) == 5
+    store.close()

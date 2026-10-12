@@ -239,8 +239,39 @@ class SqliteStore:
         调用方必须已持有 self._lock。统一走"取行 → Python 算轮对齐边界 → 按 id
         删前缀"，条数裁剪与 TTL 共用一条路径（裸 DELETE created_at 会绕过轮对齐，
         可能切散工具调用对）。TTL 判定全部过期时（k == 行数）整 scope 清空。
+
+        规模治理（长期运行的高频写入路径）：每次 append 都会调本方法，绝不能在
+        明明无需裁剪时也把整段历史 ``fetchall`` 回 Python。这里先用走 ``(scope,id)``
+        索引的 ``COUNT(*)`` / ``MIN(created_at)`` 聚合做快速闸门，只有"条数确超限"
+        或"最早一行确已过期"时才取全量行做轮对齐；聚合在 SQLite 引擎内完成，不构造
+        任何 Row。快速闸门只排除"必然不裁"的情况，宁可在边界附近多取一次行。
         """
         conn = self._require_conn_locked()
+        # 既未设条数上限也未设 TTL：必然无可裁剪，连聚合都省掉。
+        if self._max_messages is None and self._ttl_seconds is None:
+            return 0
+        agg = conn.execute(
+            "SELECT COUNT(*), MIN(created_at) FROM history WHERE scope = ?",
+            (self._scope,),
+        ).fetchone()
+        total = int(agg[0] or 0)
+        if total == 0:
+            return 0
+        cutoff_text: str | None = None
+        may_need_prune = False
+        if self._max_messages is not None and total > self._max_messages:
+            # 条数确超限才可能需要按轮对齐裁剪（count_cut 还可能因对不齐轮首而不裁）。
+            may_need_prune = True
+        if self._ttl_seconds is not None:
+            cutoff = self._clock() - timedelta(seconds=self._ttl_seconds)
+            cutoff_text = cutoff.strftime(_TS_FORMAT)
+            # 最早一行都未过期 → 全行未过期，TTL 必然不裁（MIN 走索引、不取行）。
+            earliest = agg[1]
+            if earliest is not None and earliest < cutoff_text:
+                may_need_prune = True
+        if not may_need_prune:
+            return 0
+        # 确有可能裁剪：才取全量 (id, role, created_at) 做轮对齐边界计算。
         rows = conn.execute(
             "SELECT id, role, created_at FROM history WHERE scope = ? ORDER BY id ASC",
             (self._scope,),
@@ -250,9 +281,7 @@ class SqliteStore:
         roles = [r["role"] for r in rows]
         k_count = count_cut(roles, self._max_messages)
         k_ttl = None
-        if self._ttl_seconds is not None:
-            cutoff = self._clock() - timedelta(seconds=self._ttl_seconds)
-            cutoff_text = cutoff.strftime(_TS_FORMAT)
+        if self._ttl_seconds is not None and cutoff_text is not None:
             # created_at 为 UTC 文本，同格式字符串比较即时间比较；严格 <，等于 cutoff 保留。
             expired = [r["created_at"] < cutoff_text for r in rows]
             k_ttl = ttl_cut(roles, expired)
