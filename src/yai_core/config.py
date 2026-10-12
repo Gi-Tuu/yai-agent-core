@@ -31,6 +31,7 @@ from yai_core.kernel import (
     Budget,
     CompactionPolicy,
 )
+from yai_core.metrics import MetricsRecorder
 from yai_core.spi import (
     Channel,
     EmbeddingProvider,
@@ -67,6 +68,8 @@ class CoreConfig:
     learning: RouteSelector | None = None
     on_diagnostic: DiagnosticSink | None = None
     on_feedback: Callable[..., None] | None = None
+    # 运行指标收集器（None=内核默认建一个零依赖 MetricsRecorder；可注入共享/自定义实现）。
+    metrics: MetricsRecorder | None = None
     # 路由 / 能力开关。
     auto_approve_tools: bool = True
     llm_router: bool | Literal["auto"] = False
@@ -117,6 +120,13 @@ class CoreConfig:
             getattr(self.memory_embedder, "embed_texts", None)
         ):
             raise ValueError("memory_embedder 必须实现 async embed_texts(texts) 方法")
+        if self.metrics is not None:
+            for method in ("on_run_start", "record_event", "on_run_finish", "snapshot"):
+                if not callable(getattr(self.metrics, method, None)):
+                    raise ValueError(
+                        "metrics 必须实现 on_run_start/record_event/on_run_finish/snapshot "
+                        "方法，或传 None 使用内核默认收集器"
+                    )
         return self
 
     def as_kwargs(self) -> dict[str, Any]:

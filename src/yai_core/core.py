@@ -27,6 +27,7 @@ from yai_core.kernel import (
 )
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
+from yai_core.metrics import MetricsRecorder
 from yai_core.policy import AllowlistPolicy
 from yai_core.spi import (
     Channel,
@@ -94,6 +95,7 @@ class AgentCore:
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
         budget: Budget | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         # 装配早期统一校验：非法取值（迭代次数 / 预算类型 / 压缩策略 / 超时等）
         # 在这里就抛出，而不是等到任务运行中途。
@@ -107,6 +109,7 @@ class AgentCore:
             learning=learning,
             on_diagnostic=on_diagnostic,
             on_feedback=on_feedback,
+            metrics=metrics,
             auto_approve_tools=auto_approve_tools,
             llm_router=llm_router,
             composition=composition,
@@ -229,6 +232,8 @@ class AgentCore:
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout
         self.budget = budget
+        # 运行指标收集器：默认零依赖收集（成本/健康可观测）；宿主可注入共享或自定义实现。
+        self.metrics = metrics or MetricsRecorder()
 
     # ---------- 装配辅助 ----------
 
@@ -315,6 +320,33 @@ class AgentCore:
             return False
         return self.memory_vault.forget(note_id)
 
+    # ---------- 运行指标（成本 / 健康可观测） ----------
+
+    def metrics_snapshot(self) -> dict:
+        """返回运行指标快照（runs / 工具 / 模型调用 / 事件计数 / 时延直方图）。"""
+        return self.metrics.snapshot()
+
+    def _metrics_start(self) -> None:
+        """指标旁路：run 开始打点，任何异常都不得反噬主流程。"""
+        try:
+            self.metrics.on_run_start()
+        except Exception:  # noqa: BLE001 - 与 diagnostics 旁路同口径
+            pass
+
+    def _metrics_event(self, event: AgentEvent) -> None:
+        """指标旁路：逐事件累计，任何异常都不得反噬主流程。"""
+        try:
+            self.metrics.record_event(event)
+        except Exception:  # noqa: BLE001 - 与 diagnostics 旁路同口径
+            pass
+
+    def _metrics_finish(self, exc: BaseException | None) -> None:
+        """指标旁路：run 结束结算（含取消 / 失败分类），异常不外抛。"""
+        try:
+            self.metrics.on_run_finish(exc)
+        except Exception:  # noqa: BLE001 - 与 diagnostics 旁路同口径
+            pass
+
     # ---------- 运行 ----------
 
     async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
@@ -334,16 +366,25 @@ class AgentCore:
             events: list[AgentEvent] = []
             strategy: Strategy | None = None
             completed = False
+            run_error: BaseException | None = None
+            # 指标旁路：run 开始打点；任何异常都不允许反噬主流程。
+            self._metrics_start()
             try:
                 async for event in self._loop.astream(task):
                     await self.channel.emit(event)
                     events.append(event)
+                    self._metrics_event(event)
                     data = event.data or {}
                     if "strategy" in data:
                         strategy = Strategy(data["strategy"])
                     yield event
                 completed = True
+            except BaseException as exc:
+                # 记录取消 / 失败后原样抛出（CancelledError/GeneratorExit 必须继续传播）。
+                run_error = exc
+                raise
             finally:
+                self._metrics_finish(run_error)
                 # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
                 # 避免把"用户中途终止"误当成负样本污染学习。
                 if completed:

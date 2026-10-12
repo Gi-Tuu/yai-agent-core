@@ -31,6 +31,7 @@ from yai_core.learning import ContextualBanditSelector
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
+from yai_core.metrics import MetricsRecorder
 from yai_core.spi import (
     EmbeddingProvider,
     SandboxResult,
@@ -79,6 +80,7 @@ __all__ = [
     "BudgetTracker",
     "Context",
     "ContextualBanditSelector",
+    "MetricsRecorder",
     "ToolRegistry",
     "ToolExecutor",
     "CodeToolManager",
