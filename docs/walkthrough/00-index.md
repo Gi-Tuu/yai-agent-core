@@ -45,7 +45,8 @@
   │      └─ 模型要调普通工具 → ToolExecutor.execute  【tools/executor.py】
   │             ├─ PermissionPolicy.check 权限   【policy/allowlist.py】
   │             ├─ 普通函数直接执行 / composite 逐步编排 / code 转交宿主沙箱
-  │             └─ 结果包成 tool 消息塞回 Context，继续循环
+  │             └─ 单结果先按 16000 字符有界收口（头+尾+省略标记，第 41 篇），
+  │                再包成 tool 消息塞回 Context，继续循环
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
   │    └─（可选）外侧订阅者 traced_astream 把同一条事件流转成一条 OTel trace（第 33 篇）【integrations/tracing/】
@@ -68,8 +69,8 @@
 | `discovery/scoring.py` | 词法相关度打分（规范化、中文 bigram、同义词，零依赖） | 字面匹配的标尺 |
 | `discovery/semantic.py` | 双通道语义发现 `SemanticCatalog`（词法 + embedding，标准库余弦） | 懂同义改写的检索员 |
 | `integrations/embedding/` | 真实嵌入后端：本地 bge-m3 ONNX / OpenAI 兼容云端（可选 extra） | 语义向量的发动机 |
-| `tools/registry.py` | 工具花名册 | 电话簿 |
-| `tools/executor.py` | 真正调用工具的地方（组合工具在此分流到逐步执行） | 总机 |
+| `tools/registry.py` | 工具花名册（喂模型的目录 / schema 按名确定性排序，第 41 篇） | 电话簿 |
+| `tools/executor.py` | 真正调用工具的地方（组合工具在此分流；单结果有界收口，第 41 篇） | 总机 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
 | `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
@@ -155,6 +156,7 @@
 - 38 · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
 - 39 · `examples/host_j_actual/` + `examples/five_beats.py`：第三方播种端到端（记账应用 Actual Budget；五拍标准线 唤醒→长尾→缺口→补能力/派子员工→授权→完成；发现补分类与委派只读两条离线链路；整数分与官方 CLI argv 锁定；网页壳 8240）
 - 40 · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
+- 41 · `tools/executor.py` + `tools/registry.py`：上下文轻量治理（三类工具结果回灌前统一按 16000 字符"头+尾"有界收口并打 `truncated` 标记；喂模型的工具目录 / schema 按名确定性排序以稳定提示缓存前缀；内部存储顺序不变）
 
 ## 5. 自检（读完本篇应能回答）
 
