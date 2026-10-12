@@ -366,6 +366,42 @@ def test_lex_index_lazily_built_and_invalidated_by_writes() -> None:
     assert vault._lex_index is None  # noqa: SLF001  删除后失效，下次召回重建。
 
 
+def _brute_force_duplicate(vault: MemoryVault, content: str):
+    """不使用倒排索引的重复检测参考：全表逐条打分，取 >= 合并阈值且最高者。"""
+    from yai_core.memory.vault import DEDUP_SIMILARITY
+
+    best = None
+    best_sim = 0.0
+    for note in vault._notes:  # noqa: SLF001
+        sim = token_similarity(content, note.candidate_text())
+        if sim >= DEDUP_SIMILARITY and sim > best_sim:
+            best, best_sim = note, sim
+    return best
+
+
+def test_find_duplicate_inverted_index_matches_brute_force() -> None:
+    """写入路径的重复检测复用倒排索引后，结果必须与全表扫描逐条一致。"""
+    vault = MemoryVault(clock=TickClock())
+    _seed_mixed_corpus(vault)
+    probes = [
+        "用户对芒果严重过敏，聚餐要避开芒果",          # 与芒果条完全一致
+        "明天下午三点开团队站会，记得同步进度",          # 与站会条完全一致
+        "用户养了一只叫团子的橘猫，今年三岁",
+        "部署上线前要跑一遍冒烟测试和回滚预案",
+        "the weather forecast calls for heavy rain tomorrow",
+        "quarterly budget report is due by end of month",
+        "芒果过敏，聚餐别上芒果",                        # 近改写，可能命中芒果条
+        "与上述内容完全无关的量子隧穿推导",              # 零公共 token，绝不能误合并
+        "!!!???",                                       # 切不出 token：回退全扫
+    ]
+    for content in probes:
+        indexed = vault._find_duplicate(content, [])  # noqa: SLF001
+        brute = _brute_force_duplicate(vault, content)
+        assert (indexed.id if indexed is not None else None) == (
+            brute.id if brute is not None else None
+        ), f"重复检测倒排与全扫在 {content!r} 上不一致"
+
+
 # ---------- 规模治理：可选 max_notes 容量上限（默认 None 不删数据） ----------
 
 
