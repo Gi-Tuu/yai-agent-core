@@ -14,6 +14,8 @@ import sys
 import types
 from typing import Any
 
+import pytest
+
 from yai_core import AgentCore, OpenAICompatProvider, build_spec
 
 # ---------- 假 openai SDK ----------
@@ -129,3 +131,119 @@ def test_plain_answer_sends_no_tools(monkeypatch) -> None:
     assert result.final_text.startswith("你好")
     # direct 策略不应下发 tools
     assert "tools" not in captured[0]
+
+
+# ---------- 协议层边界补测：不经过 AgentCore，直接驱动 provider.achat ----------
+
+
+class _FakeUsage:
+    def __init__(self, prompt: int, completion: int, total: int) -> None:
+        self.prompt_tokens = prompt
+        self.completion_tokens = completion
+        self.total_tokens = total
+
+
+class _OneShotCompletions:
+    """记录入参并只返回一个固定 completion 的假 completions。"""
+
+    def __init__(self, completion: Any) -> None:
+        self._completion = completion
+        self.kwargs: dict[str, Any] | None = None
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.kwargs = kwargs
+        return self._completion
+
+
+def _provider_with(
+    monkeypatch, *, message: _FakeMessage, usage: _FakeUsage | None = None, **provider_kwargs: Any
+) -> tuple[OpenAICompatProvider, _OneShotCompletions]:
+    """装假 openai、构造 provider，再塞入一次性假 client，返回 (provider, 入参记录器)。"""
+    _install_fake_openai(monkeypatch, [message], [])
+    provider = OpenAICompatProvider(
+        api_key="test-key", base_url="http://localhost:1234", **provider_kwargs
+    )
+    completion = types.SimpleNamespace(choices=[_FakeChoice(message)], usage=usage)
+    completions = _OneShotCompletions(completion)
+    provider.client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=completions))
+    return provider, completions
+
+
+def test_missing_openai_extra_raises_friendly_error(monkeypatch) -> None:
+    # sys.modules 里 openai=None 会让 `from openai import AsyncOpenAI` 抛 ImportError，
+    # provider 必须把它翻译成带安装指引的友好错误，而不是裸 ImportError。
+    monkeypatch.setitem(sys.modules, "openai", None)
+    with pytest.raises(ImportError, match="可选依赖"):
+        OpenAICompatProvider(api_key="test-key")
+
+
+class _CapturingAsyncOpenAI:
+    last_kwargs: dict[str, Any] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).last_kwargs = kwargs
+
+
+def _install_capturing_openai(monkeypatch) -> None:
+    fake_module = types.ModuleType("openai")
+    fake_module.AsyncOpenAI = _CapturingAsyncOpenAI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+
+
+def test_provider_forwards_retry_and_timeout(monkeypatch) -> None:
+    _install_capturing_openai(monkeypatch)
+    OpenAICompatProvider(api_key="k", max_retries=0, timeout=5.0)
+    assert _CapturingAsyncOpenAI.last_kwargs["max_retries"] == 0
+    assert _CapturingAsyncOpenAI.last_kwargs["timeout"] == 5.0
+
+
+def test_provider_omits_optional_client_kwargs_by_default(monkeypatch) -> None:
+    _install_capturing_openai(monkeypatch)
+    OpenAICompatProvider(api_key="k")
+    assert "max_retries" not in _CapturingAsyncOpenAI.last_kwargs
+    assert "timeout" not in _CapturingAsyncOpenAI.last_kwargs
+
+
+def test_malformed_tool_arguments_fallback_to_empty_dict(monkeypatch) -> None:
+    msg = _FakeMessage(None, [_FakeToolCall("c1", "do_it", "{不是合法 json")])
+    provider, _ = _provider_with(monkeypatch, message=msg)
+    resp = asyncio.run(
+        provider.achat([{"role": "user", "content": "x"}], tools=[{"type": "function"}])
+    )
+    assert resp.tool_calls[0].name == "do_it"
+    # 模型给出非法 JSON 时容错为空 dict，绝不让一次坏参数炸掉整轮。
+    assert resp.tool_calls[0].arguments == {}
+
+
+def test_usage_parsed_and_total_falls_back_to_sum(monkeypatch) -> None:
+    msg = _FakeMessage("完成", None)
+    # total_tokens=0：内核用 prompt+completion 兜底，不臆造但也不漏算。
+    provider, completions = _provider_with(
+        monkeypatch, message=msg, usage=_FakeUsage(10, 5, 0)
+    )
+    resp = asyncio.run(provider.achat([{"role": "user", "content": "x"}]))
+    assert resp.usage is not None
+    assert resp.usage.prompt_tokens == 10
+    assert resp.usage.completion_tokens == 5
+    assert resp.usage.total_tokens == 15
+    # 不传 tools 时不下发 tool_choice。
+    assert "tools" not in (completions.kwargs or {})
+
+
+def test_usage_prefers_reported_total(monkeypatch) -> None:
+    msg = _FakeMessage("完成", None)
+    provider, _ = _provider_with(monkeypatch, message=msg, usage=_FakeUsage(10, 5, 20))
+    resp = asyncio.run(provider.achat([{"role": "user", "content": "x"}]))
+    assert resp.usage is not None
+    assert resp.usage.total_tokens == 20
+
+
+def test_strong_tier_selects_strong_model(monkeypatch) -> None:
+    msg = _FakeMessage("强模型答复", None)
+    provider, completions = _provider_with(
+        monkeypatch, message=msg, model="std-model", strong_model="strong-model"
+    )
+    asyncio.run(provider.achat([{"role": "user", "content": "x"}], tier="strong"))
+    assert (completions.kwargs or {})["model"] == "strong-model"
+    asyncio.run(provider.achat([{"role": "user", "content": "x"}], tier="standard"))
+    assert (completions.kwargs or {})["model"] == "std-model"

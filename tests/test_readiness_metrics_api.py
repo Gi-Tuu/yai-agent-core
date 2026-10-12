@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from yai_core import AgentCore, ModelResponse, build_spec
 from yai_core.batteries.fastapi_server import create_app
+from yai_core.batteries.fastapi_server.readiness import _interpret, _run_one, run_probes
 
 
 class ScriptedModel:
@@ -116,6 +117,65 @@ def test_metrics_can_be_explicitly_public(monkeypatch) -> None:
     client = _client(monkeypatch)
     assert client.get("/metrics").status_code == 200  # Prometheus 匿名可抓
     assert client.get("/v1/tools").status_code == 401  # 业务路径仍受保护
+
+
+# ---------- readiness 纯函数边界：返回值归一化 / 异常隔离 / 空探针 ----------
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (None, {"status": "ok"}),
+        (True, {"status": "ok"}),
+        (False, {"status": "error", "detail": "probe returned False"}),
+        ("db down", {"status": "error", "detail": "db down"}),
+        ({"ok": True, "n": 2}, {"status": "ok", "n": 2}),
+        ({"ok": False, "reason": "r"}, {"status": "error", "reason": "r"}),
+        (123, {"status": "error", "detail": "unsupported probe result: int"}),
+    ],
+)
+def test_interpret_normalizes_probe_results(result, expected) -> None:
+    assert _interpret(result) == expected
+
+
+def test_run_one_isolates_probe_exception() -> None:
+    def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    name, outcome = asyncio.run(_run_one("broken", boom, timeout=1.0))
+    assert name == "broken"
+    # 探针抛异常只影响自身，被转成结构化失败而不是冒泡拖垮整个 /readyz。
+    assert outcome["status"] == "error"
+    assert "RuntimeError" in outcome["detail"]
+    assert "kaboom" in outcome["detail"]
+
+
+def test_run_one_accepts_async_probe() -> None:
+    async def healthy() -> dict:
+        return {"ok": True, "ready": True}
+
+    _, outcome = asyncio.run(_run_one("async_ok", healthy, timeout=1.0))
+    assert outcome == {"status": "ok", "ready": True}
+
+
+def test_run_probes_empty_is_ready() -> None:
+    # 宿主一个探针都没注册时，readiness 应判为就绪而非报错。
+    ready, checks = asyncio.run(run_probes({}))
+    assert ready is True
+    assert checks == {}
+
+
+def test_run_probes_aggregates_mixed_results() -> None:
+    def good() -> bool:
+        return True
+
+    def bad() -> bool:
+        return False
+
+    ready, checks = asyncio.run(run_probes({"good": good, "bad": bad}))
+    assert ready is False
+    assert checks["good"]["status"] == "ok"
+    assert checks["bad"]["status"] == "error"
 
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
