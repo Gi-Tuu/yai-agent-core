@@ -1,8 +1,14 @@
 # 部署、水平扩展与多租户指南
 
-> 事实基线：yai-agent-core **v0.7.0**，最后核实 **2026-09-29**（本地仓库实测）。
+> English: [deployment-scaling.en.md](deployment-scaling.en.md)
+
+> 事实基线：yai-agent-core **v0.8.1**，最后核实 **2026-10-12**（本地仓库实测）。
 > 单实例公网部署（Render / VPS + Caddy）见 [`docs/competitions/deployment.md`](competitions/deployment.md)；
 > 本文回答更进一步的三个问题：**内核为什么能水平扩展、多租户怎么隔离、生产形态怎么搭。**
+>
+> **一句话立场**：内核永远是"进程内、单租户"的 SQLite 式内核，**`tenant_id` 不会出现在任何
+> kernel 方法签名里**。多租户是宿主 / Battery 在**装配层**为每个租户构造并持有一套互不共享的
+> SPI 实例；需要中心化规模时，经 Storage / Memory SPI 把后端换成 C/S 数据库，而不是把内核改成 server。
 
 ---
 
@@ -47,20 +53,25 @@
 
 ## 3. 多租户隔离机制（内核已提供什么）
 
-### 3.1 scope 隔离（`SqliteStore`）
+### 3.1 scope 隔离（`SqliteStore`）——租户内的会话 / 专员边界
 
 `history` 与 `kv` 两张表都带 `scope` 列，所有读写按 `scope` 过滤，`clear()` 只清当前 scope：
 
-- **一个 SQLite 文件可承载多个 scope**（多个租户 / 会话），逻辑隔离、互不影响；
-- 但**一个 `SqliteStore` 实例在构造时固定一个 scope**——要服务多租户，就为每个 scope 建一个 store 实例（指向同一个 DB 文件，WAL 模式支持多连接并发）。
+- **一个 SQLite 文件可承载多个 scope**，逻辑隔离、互不影响；
+- 但**一个 `SqliteStore` 实例在构造时固定一个 scope**——要隔离多个会话，就为每个 scope 建一个 store 实例（指向同一个 DB 文件，WAL 模式支持多连接并发）。
 
 ```python
 from yai_core.memory import SqliteStore
 
-# 同一个 DB 文件、不同 scope：每个租户拿到自己的 store
-def store_for(tenant_id: str) -> SqliteStore:
-    return SqliteStore("data/yai.db", scope=tenant_id)
+# 同一信任主体（同一企业 / 同一用户）内部，用 scope 区分不同专员 / 会话：
+def store_for(tenant_db: str, specialist: str) -> SqliteStore:
+    return SqliteStore(tenant_db, scope=specialist)
 ```
+
+> ⚠️ **scope 是"租户内"边界，不是"跨企业"硬边界。** 不要用"一个 SQLite 文件 + 给每个企业
+> 拼一个 scope"去隔离互不信任的企业租户：那只是一层 `WHERE scope=?` 逻辑过滤，漏一条查询即跨
+> 企业泄漏，且一个文件只能配一个数据密钥（DEK），无法做到每企业独立密钥 / 独立备份 / 独立导出
+> / 注销即删。**跨不可信租户的硬隔离见 §3.4（SQLite-per-tenant + 每租户 DEK，或 Postgres RLS）。**
 
 ### 3.2 实例隔离（每租户独立 core）
 
@@ -69,8 +80,87 @@ def store_for(tenant_id: str) -> SqliteStore:
 
 ### 3.3 怎么选
 
-- 工具集相同、只需会话 / 记忆隔离 → **同库不同 scope**（最省资源）；
-- 不同租户工具集 / 权限档位 / 沙箱不同 → **独立 core 实例**。
+先分清你面对的是"**同一信任主体内的多会话**"还是"**互不信任的多个企业 / 组织**"：
+
+- 同一企业 / 同一用户内，只需区分专员 / 会话，工具集与密钥一致 → **同库不同 scope**（最省资源）；
+- 同一信任主体但工具集 / 权限档位 / 沙箱不同 → **独立 core 实例**（可共享同一 DB 文件）；
+- **跨企业 / 跨不可信组织**（例如一个后端同时服务 A、B 两家公司）→ **每租户独立存储单元 + 独立 DEK**，见 §3.4，不要用同库 scope 充当硬边界。
+
+### 3.4 跨不可信租户的硬隔离：SQLite-per-tenant + 每租户 DEK
+
+中小规模服务端最省心的硬隔离形态：**一个租户一个目录、一个 SQLite 文件、一个 vault、一把数据密钥**。
+内核本身不感知租户，全部在装配工厂里完成：
+
+```
+data/tenants/
+├── tenant-a/
+│   ├── state.db        # 该租户历史 / KV（scope 再在文件内分专员 / 会话）
+│   ├── vault.json      # 该租户长期记忆（用该租户 DEK 静态加密）
+│   └── (DEK 不落盘明文，由 KMS 信封加密保管)
+└── tenant-b/ ...        # 与 tenant-a 完全独立的文件与密钥
+```
+
+```python
+import os
+from yai_core import AgentCore
+from yai_core.memory import SqliteStore
+from yai_core.memory.vault import MemoryVault
+# StorageCipher 是第九个 SPI；[crypto] extra 自带 FernetStorageCipher
+# （generate_key() / from_env("YAI_VAULT_KEY")）。多租户时每租户一把 DEK。
+
+class TenantCoreFactory:
+    """每租户独立 store / vault / cipher / policy / budget；空闲可 LRU 换出。"""
+
+    def __init__(self, host, model, kms_client, root="data/tenants"):
+        self._host, self._model, self._kms, self._root = host, model, kms_client, root
+        self._live: dict[str, AgentCore] = {}
+
+    def get(self, tenant: str) -> AgentCore:
+        if tenant not in self._live:
+            d = os.path.join(self._root, tenant)
+            os.makedirs(d, exist_ok=True)
+            dek = self._kms.unwrap(tenant)          # KMS 信封解出该租户独立 DEK
+            cipher = make_cipher(dek)               # 实现 StorageCipher（如 Fernet）
+            memory = SqliteStore(os.path.join(d, "state.db"))   # 独立文件=硬边界
+            vault = MemoryVault(os.path.join(d, "vault.json"), cipher=cipher)
+            self._live[tenant] = AgentCore(
+                self._model, channel=self._host, memory=memory,
+                long_memory=vault, policy=policy_for(tenant),    # 每租户白名单 / 审批档
+            )
+        return self._live[tenant]
+
+    def evict_idle(self, max_live: int) -> None:
+        """空闲换出：停掉多余 core、释放连接，文件保留；下次 get() 冷重建即可。"""
+```
+
+要点：
+
+- **每租户一把 DEK**，主密钥（KEK）放在 KMS 做信封加密，绝不在租户间共用；注销某租户 = 删目录
+  + 让 KMS 销毁该 DEK，即得到一个干净的**数据驻留 / 导出 / 删除单元**。
+- **vault 召回与任务起始的主动记忆注入严格限定本租户 vault**，杜绝全局召回串租户。
+- 租户量大 / 需跨实例共享时，把"每租户文件"升级为 **PostgreSQL + 行级安全（RLS）**：实现一个
+  Memory / Storage SPI 适配器，连接上用每租户凭据或 `SET app.tenant` 强制 RLS 策略；限流 / 计量
+  可放 Redis。**内核不提供这些后端**（契约已就绪），见 §5.3。
+- 子员工并发闸 `DelegationSupervisor` 的信号量默认是"单 root 内全局"，多租户同进程时应**每租户
+  独立 supervisor**，否则 A 租户占满并发名额会拖累 B 租户；只有想限制整机总并发时才显式共享。
+
+### 3.5 每租户隔离矩阵（装配层逐项落实）
+
+| 维度 | 多租户做法 | 承载 / 契约 |
+|---|---|---|
+| 历史 / 上下文 | 每租户独立 `.db` 文件（硬边界）；大规模 Postgres + RLS | Memory / Storage SPI |
+| 长期记忆 vault | 每租户独立 vault，**召回严格限定本租户** | `MemoryVault` |
+| 数据密钥 | 每租户独立 DEK，KEK 在 KMS 信封加密，绝不共用 | `StorageCipher` SPI（第九契约，`[crypto]`） |
+| 权限档位 | 每租户一套工具白名单 / 审批档（全部 / 部分 / 无需审批） | Policy SPI |
+| 限流 / 预算 / 计量 | limiter key、Budget、metrics label 全部按 tenant | Battery（装配层） |
+| 模型 | 每租户注入自带 key 分账，或平台 key 按租户计量 | ModelProvider SPI |
+| 代码沙箱 | 每任务 / 每租户独立容器、网络隔离，不共享 | ToolSandbox SPI |
+| 工具 / MCP 目录 | 每租户可见工具集不同，未授权工具对模型不可见 | Discovery SPI / 独立 registry |
+| 身份（user/org → tenant） | **宿主 IdP 负责**，Battery 只留认证 hook；YAI 不做身份系统 | 宿主 |
+
+> **Prompt cache 的租户边界**：system 稳定前缀（不含任何租户数据，见第 41 篇目录确定性排序）可以
+> 跨租户共享命中以省成本；但历史、长期记忆、工具结果严格落在租户分区，**绝不把两个租户的内容
+> 拼进同一段缓存前缀或同一次调用**。
 
 ---
 
@@ -105,7 +195,10 @@ def store_for(tenant_id: str) -> SqliteStore:
 
 > 以下是**装配层**写法。内核保持不变；你在自己的应用里组合它们。
 
-### 5.1 进程内多租户 Core 工厂（L1）
+### 5.1 进程内多租户 Core 工厂（L1，同一信任主体内）
+
+> 适用于同一企业 / 用户内用 scope 区分专员 / 会话；**跨不可信企业的硬隔离（每租户独立文件 +
+> 独立 DEK + 空闲 LRU 换出）请用 §3.4 的 `TenantCoreFactory`，不要用本示例的"同库多 scope"。**
 
 ```python
 from yai_core import AgentCore
@@ -287,6 +380,9 @@ sum by (tier)     (increase(yai_agent_model_calls_total[1d]))  # 强档模型花
 - **每租户独立上游 Key**：隔离计费与配额的另一种方式，适合对成本敏感的部署。
 - **沙箱隔离**：代码工具创建（`create_code_tool`）必须**每租户一个独立 `ToolSandbox`（SPI）**，不可共享；权限三档（全部审批 / 部分审批 / 无需审批）与白名单按租户独立配置。
 - **工具可见性**：不同租户开放不同能力时，用独立 core / registry，从注册层保证"未授权工具对模型不可见"。
+- **静态加密与密钥**：跨企业租户应为每租户配置独立 vault 文件 + 独立 DEK（KEK 放 KMS 信封加密），见 §3.4 / §3.5；不配置 cipher 时 vault 为明文 JSON，仅适合端侧单用户或已自行加密磁盘的场景。
+- **长期记忆不串租户**：vault 召回与任务起始的主动记忆注入必须限定本租户 store / vault；子员工并发信号量每租户独立。
+- **Prompt cache 边界**：不含租户数据的 system 稳定前缀可跨租户共享命中；历史 / 记忆 / 工具结果严格分区，绝不跨租户拼接（见 §3.5）。
 - **网络面**：容器端口只绑回环 / 内网，公网统一经反向代理进入（现有 compose 已如此）。
 
 ---
