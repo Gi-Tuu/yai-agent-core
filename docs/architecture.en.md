@@ -144,6 +144,32 @@ The most recent keep_recent_rounds complete turns stay intact, so long conversat
 - Boundary: compaction only rearranges the current context and never rewrites persistent history in the
   MemoryStore; cross-request history trimming still goes through retention (§2.2).
 
+### 2.6 Concurrency model and multi-tenant isolation
+
+YAI is an in-process kernel running on a single-threaded asyncio event loop. Its concurrency contract is deliberately narrow and safe by default:
+
+- **One `AgentCore` instance = one serial session.** At most one task runs at a time within an instance: `astream`/`run` hold an instance-level `asyncio.Lock` for their whole duration. Concurrent calls queue up instead of letting two tasks interleave at `await` points and corrupt the shared context, memory, tool registry, or routing-learning state.
+- **For concurrency, use multiple instances.** Independent sessions (multiple tenants, specialists, or sub-employees) each construct their own `AgentCore`. Stateless model clients, discovery sources, and sandboxes may be shared singletons across cores, while stateful parts (`registry / memory / learning / code_tool_manager`) stay per-instance. Sub-employees (`shell/employee`) and each Dynamic Island specialist hold their own core this way and can still run in parallel (bounded by their own concurrency limits).
+- **Closing a stream early releases the lock.** When the async generator is `aclose()`d (or the host breaks/discards it), the `async with` block releases the instance lock automatically. Hosts should fully drain or explicitly close the event stream; otherwise the next task waits.
+- **Maintenance methods are synchronous.** `sweep_code_tools()` and memory retention run atomically on the event-loop thread (no `await` suspension), use snapshot iteration and atomic replacement for writes, and are meant to be called between tasks; they do not and should not share the task lock.
+
+This reduces horizontal scaling to a simple rule: **many sessions on one host = many instances in one process; across machines = multiple replicas sharing stateless model/discovery backends.** The kernel itself introduces no thread pools, queues, or distributed locks.
+
+### 2.7 Local diagnostic events (zero-dependency side channel)
+
+At moments when the kernel **silently falls back so the main flow keeps running, but operations/debugging still needs visibility**, it emits a `DiagnosticEvent` through a callback that is **synchronous, dependency-free, and never able to break the main flow**. It complements, rather than replaces, the other two observability channels:
+
+| Channel | Audience | Answers | Emitted by |
+|---|---|---|---|
+| `AgentEvent` (event stream) | Product / end user | What the agent is **deciding and doing** (routing, tool calls, discovery, authorization…) | Main kernel flow; always present, replayable |
+| `DiagnosticEvent` (this section) | Local ops / debugging | Where the kernel **quietly degraded an enhancement** (model timeout, classifier fallback, discovery failure, compaction fallback…) | Only when the host passes an `on_diagnostic` callback |
+| OpenTelemetry tracing (optional extra) | Distributed / cross-service | The **trace, latency, and attribution** of a request across processes | The host, subscribing to the event stream from the outside; the kernel initializes no exporter |
+
+- **Shape:** `DiagnosticEvent(kind, message, level, data)`, with `level ∈ debug/info/warning/error`. The current eight `kind`s are `model_error`, `model_timeout`, `model_fallback`, `router_llm_fallback`, `discovery_failed`, `discoverable_list_failed`, `compaction_fallback`, and `schema_focus_fallback`.
+- **Safety contract:** the callback is synchronous and should be fast and non-blocking (a log line or a metrics counter is enough). Any exception raised inside the callback is swallowed by the kernel: diagnostics are a side channel and must never take the agent down because "the logger crashed." The kernel does not depend on `logging` and turns no logging library into a hard dependency.
+- **Wiring:** pass it once via `AgentCore(model, on_diagnostic=fn)`. The kernel duck-types the same callback onto the internal `AdaptiveRouter` and `FallbackModelProvider` (both expose a writable `on_diagnostic` attribute; custom host-built components that lack it are unaffected). With no callback the kernel stays completely silent and behaves exactly as before.
+- **Deliberately excluded:** a sandbox failure surfaces as `tool_result(ok=False)` and a permission denial emits `permission_asked`; these are already user-visible business events, not silent fallbacks, so they are not re-emitted as diagnostics.
+
 ## 3. SPI contracts
 
 | Contract | Methods | Default implementation | When a host replaces it |

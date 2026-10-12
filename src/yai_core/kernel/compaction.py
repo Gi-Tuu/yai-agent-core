@@ -9,8 +9,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticLevel,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.kernel.context import Context
 from yai_core.types import AgentEvent, ChatMessage, EventType
 
@@ -66,9 +74,7 @@ def select_compaction_range(
     return (start, keep_from)
 
 
-def render_for_summary(
-    messages: list[ChatMessage], start: int, end: int
-) -> str:
+def render_for_summary(messages: list[ChatMessage], start: int, end: int) -> str:
     """把 ``[start, end)`` 的消息渲染成供摘要的纯文本（含工具结果，保留事实）。"""
     lines: list[str] = []
     for m in messages[start:end]:
@@ -90,12 +96,19 @@ def render_for_summary(
 
 
 async def compact_context(
-    ctx: Context, model: object, policy: CompactionPolicy
+    ctx: Context,
+    model: object,
+    policy: CompactionPolicy,
+    *,
+    timeout: float | None = None,
+    on_diagnostic: DiagnosticSink | None = None,
 ) -> AgentEvent | None:
     """超预算时把旧轮摘要压缩；返回 ``CONTEXT_COMPACTED`` 事件，否则返回 None。
 
     成功：旧轮 → 一条 system 摘要，recent 完整轮原样保留，结构对模型合法。
-    模型异常或返回空摘要：回退硬裁剪（``enforce_budget``），不抛错、不破坏结构。
+    模型异常、超时（``timeout`` 秒，None 则不设上限）或返回空摘要：回退硬裁剪
+    （``enforce_budget``），不抛错、不破坏结构；外层任务取消（CancelledError）
+    仍正常传播，不被这里的兜底吞掉。
     """
     rng = select_compaction_range(ctx.messages, policy)
     if rng is None:
@@ -104,8 +117,9 @@ async def compact_context(
     before_msgs = end - start
     before_chars = sum(len(m.content) for m in ctx.messages[start:end])
     history_text = render_for_summary(ctx.messages, start, end)
-    try:
-        resp = await model.achat(  # type: ignore[attr-defined]
+
+    async def _summarize() -> object:
+        return await model.achat(  # type: ignore[attr-defined]
             [
                 {"role": "system", "content": _SUMMARY_SYSTEM},
                 {"role": "user", "content": history_text},
@@ -113,11 +127,33 @@ async def compact_context(
             tools=None,
             tier="standard",
         )
+
+    try:
+        if timeout is None:
+            resp = await _summarize()
+        else:
+            resp = await asyncio.wait_for(_summarize(), timeout=timeout)
         summary = (getattr(resp, "content", "") or "").strip()
-    except Exception:  # noqa: BLE001 - 摘要是增强，失败回退硬裁剪
+    except Exception as exc:  # noqa: BLE001 - 摘要超时/失败都是增强失败，回退硬裁剪
+        emit(
+            on_diagnostic,
+            DiagnosticEvent(
+                kind=str(DiagnosticKind.COMPACTION_FALLBACK),
+                message=f"上下文摘要压缩失败（{type(exc).__name__}），已回退硬裁剪",
+                data={"error": f"{type(exc).__name__}: {exc}"},
+            ),
+        )
         ctx.enforce_budget()
         return None
     if not summary:
+        emit(
+            on_diagnostic,
+            DiagnosticEvent(
+                kind=str(DiagnosticKind.COMPACTION_FALLBACK),
+                message="摘要模型返回空摘要，已回退硬裁剪",
+                level=DiagnosticLevel.DEBUG,
+            ),
+        )
         ctx.enforce_budget()
         return None
 

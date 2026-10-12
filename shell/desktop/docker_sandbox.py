@@ -24,8 +24,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -67,18 +67,35 @@ class DockerSandbox:
     def _build_argv(self, name: str) -> list[str]:
         """构造 docker run 的完整 argv（含全部隔离开关）；抽成方法便于离线核对。"""
         return [
-            self._docker, "run", "--rm", "-i",
-            "--name", name,
-            "--network", "none",
+            self._docker,
+            "run",
+            "--rm",
+            "-i",
+            "--name",
+            name,
+            "--network",
+            "none",
             "--read-only",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
-            "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges",
-            "--memory", self._memory,
-            "--cpus", str(self._cpus),
-            "--pids-limit", str(self._pids),
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=16m",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--memory",
+            self._memory,
+            "--cpus",
+            str(self._cpus),
+            "--pids-limit",
+            str(self._pids),
             self._image,
-            "python", "-I", "-S", "-X", "utf8", "-c", _ENTRY_SOURCE,
+            "python",
+            "-I",
+            "-S",
+            "-X",
+            "utf8",
+            "-c",
+            _ENTRY_SOURCE,
         ]
 
     async def execute(
@@ -96,49 +113,71 @@ class DockerSandbox:
         )
         name = f"yai-sandbox-{uuid.uuid4().hex[:12]}"
         argv = self._build_argv(name)
-        loop = asyncio.get_running_loop()
         started = time.perf_counter()
 
-        def _run() -> subprocess.CompletedProcess:
-            return subprocess.run(
-                argv,
-                input=payload,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=effective,
-                check=False,
-            )
+        async def _force_remove() -> None:
+            # docker run 客户端被杀不代表容器已停：按唯一名称 best-effort 强制删除。
+            with contextlib.suppress(Exception):
+                remover = await asyncio.create_subprocess_exec(
+                    self._docker,
+                    "rm",
+                    "-f",
+                    name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(remover.wait(), timeout=5)
 
         try:
-            proc = await loop.run_in_executor(None, _run)
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         except FileNotFoundError:
             return SandboxResult(
                 ok=False,
                 error="Docker 不可用：未找到 docker 命令，请先安装并启动 Docker",
                 meta={"elapsed_ms": 0},
             )
-        except subprocess.TimeoutExpired:
-            # docker run 客户端被杀不代表容器已停：按唯一名称 best-effort 强制删除。
-            await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [self._docker, "rm", "-f", name],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                ),
-            )
+
+        def _elapsed_ms() -> int:
+            return int((time.perf_counter() - started) * 1000)
+
+        async def _reap_client() -> None:
+            # kill 后再 communicate 一次：排空并关闭客户端管道 transport，
+            # 避免 Windows Proactor 事件循环报 "unclosed transport"。
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.communicate(), timeout=5)
+
+        async def _communicate() -> tuple[bytes, bytes]:
+            assert proc.stdin is not None
+            return await proc.communicate(input=payload.encode("utf-8"))
+
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(_communicate(), timeout=effective)
+        except TimeoutError:
+            proc.kill()
+            await _force_remove()
+            await _reap_client()
             return SandboxResult(
                 ok=False,
                 error=f"容器执行超时（超过 {effective:g}s，容器已强制终止）",
-                meta={"elapsed_ms": int((time.perf_counter() - started) * 1000)},
+                meta={"elapsed_ms": _elapsed_ms()},
             )
+        except asyncio.CancelledError:
+            # 外层取消：杀 docker run 客户端并强制删容器，再把取消向上传播。
+            proc.kill()
+            await _force_remove()
+            await _reap_client()
+            raise
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        lines = (proc.stdout or "").strip().splitlines()
+        elapsed_ms = _elapsed_ms()
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace").strip()[-500:]
+        lines = stdout.strip().splitlines()
         if not lines:
-            stderr = (proc.stderr or "").strip()[-500:]
             hint = "（检查 Docker 是否启动、镜像是否已 pull）" if stderr else ""
             return SandboxResult(
                 ok=False,
@@ -160,6 +199,4 @@ class DockerSandbox:
             meta["stdout"] = envelope["stdout"]
         if envelope.get("ok"):
             return SandboxResult(ok=True, output=envelope.get("output"), meta=meta)
-        return SandboxResult(
-            ok=False, error=envelope.get("error", "未知沙箱错误"), meta=meta
-        )
+        return SandboxResult(ok=False, error=envelope.get("error", "未知沙箱错误"), meta=meta)

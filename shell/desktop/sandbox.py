@@ -29,8 +29,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -60,36 +60,56 @@ class SubprocessSandbox:
             ensure_ascii=False,
             default=str,
         )
-        # -I 隔离模式（忽略环境变量/PYTHONPATH/user site）；-S 不加载 site；
-        # -X utf8 强制 UTF-8，避免 Windows 默认代码页导致中文乱码。
         argv = [self._python, "-I", "-S", "-X", "utf8", str(_WORKER)]
-        loop = asyncio.get_running_loop()
         started = time.perf_counter()
-
-        def _run() -> subprocess.CompletedProcess:
-            return subprocess.run(
-                argv,
-                input=payload,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=effective,
-                check=False,
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            return SandboxResult(
+                ok=False,
+                error="未找到可用的 Python 解释器，无法启动沙箱子进程",
+                meta={"elapsed_ms": 0},
             )
 
+        async def _communicate() -> tuple[bytes, bytes]:
+            assert proc.stdin is not None
+            return await proc.communicate(input=payload.encode("utf-8"))
+
+        def _elapsed_ms() -> int:
+            return int((time.perf_counter() - started) * 1000)
+
+        async def _reap() -> None:
+            # kill 后再 communicate 一次：排空并关闭 stdin/stdout/stderr 管道
+            # transport，避免 Windows Proactor 事件循环报 "unclosed transport"。
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.communicate(), timeout=5)
+
         try:
-            proc = await loop.run_in_executor(None, _run)
-        except subprocess.TimeoutExpired:
+            stdout_b, stderr_b = await asyncio.wait_for(_communicate(), timeout=effective)
+        except TimeoutError:
+            proc.kill()
+            await _reap()
             return SandboxResult(
                 ok=False,
                 error=f"代码执行超时（超过 {effective:g}s，子进程已终止）",
-                meta={"elapsed_ms": int((time.perf_counter() - started) * 1000)},
+                meta={"elapsed_ms": _elapsed_ms()},
             )
+        except asyncio.CancelledError:
+            # 外层任务取消：立即杀掉 worker 子进程，再把取消向上传播，不留孤儿。
+            proc.kill()
+            await _reap()
+            raise
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        lines = (proc.stdout or "").strip().splitlines()
+        elapsed_ms = _elapsed_ms()
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace").strip()[-500:]
+        lines = stdout.strip().splitlines()
         if not lines:
-            stderr = (proc.stderr or "").strip()[-500:]
             return SandboxResult(
                 ok=False,
                 error=f"沙箱无输出（exit={proc.returncode}）：{stderr}",

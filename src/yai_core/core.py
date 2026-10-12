@@ -1,19 +1,27 @@
 """AgentCore 门面：宿主接入的唯一入口。
 
-    from yai_core import AgentCore
-    core = AgentCore.auto(my_app)          # 内省宿主能力，自动注册工具
-    result = await core.run("整理本周笔记")  # 自适应选策略/工具/模型
+from yai_core import AgentCore
+core = AgentCore.auto(my_app)          # 内省宿主能力，自动注册工具
+result = await core.run("整理本周笔记")  # 自适应选策略/工具/模型
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Literal
 
 from yai_core.channels import CollectChannel
+from yai_core.diagnostics import DiagnosticSink
 from yai_core.discovery import discover
-from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy, TierPolicy
+from yai_core.kernel import (
+    DEFAULT_MODEL_TIMEOUT,
+    AdaptiveRouter,
+    AgentLoop,
+    CompactionPolicy,
+    TierPolicy,
+)
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.policy import AllowlistPolicy
@@ -43,6 +51,14 @@ FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
 
 
 class AgentCore:
+    """进程内嵌入式自适应 Agent 内核的唯一门面。
+
+    并发模型：一个实例代表一条**串行会话**，实例内同一时刻只运行一个任务；
+    需要并发会话（多租户 / 多专员 / 多子员工）时，请为每条会话实例化独立的
+    ``AgentCore``（可共享无状态的模型 / 发现源 / 沙箱单例）。详见
+    :meth:`astream` 的并发契约说明。
+    """
+
     def __init__(
         self,
         model: ModelProvider,
@@ -66,7 +82,11 @@ class AgentCore:
         on_feedback: FeedbackHook | None = None,
         context_compaction: bool | CompactionPolicy = False,
         cost_aware: bool = True,
+        model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
+        on_diagnostic: DiagnosticSink | None = None,
     ) -> None:
+        # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
+        self._task_lock = asyncio.Lock()
         self.model = model
         self.registry = ToolRegistry()
         # 自校准路由学习器（第六个 SPI）：默认 None，行为与不接入学习完全一致。
@@ -88,9 +108,7 @@ class AgentCore:
             if llm_router is True:
                 route_model: ModelProvider | None = model
             elif llm_router == "auto":
-                route_model = (
-                    model if getattr(model, "yai_live_router", False) else None
-                )
+                route_model = model if getattr(model, "yai_live_router", False) else None
             elif llm_router is False:
                 route_model = None
             else:
@@ -103,9 +121,7 @@ class AgentCore:
         # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
         self.code_manager: CodeToolManager | None = None
         if sandbox is not None:
-            self.code_manager = CodeToolManager(
-                self.registry, storage_path=code_storage
-            )
+            self.code_manager = CodeToolManager(self.registry, storage_path=code_storage)
         # 结构化长期记忆：opt-in。vault 负责 remember/recall 的存储与词法检索，
         # 内核不内置向量长期记忆（更强语义召回由宿主经 Embedding SPI 提供）。
         self.memory_vault: MemoryVault | None = None
@@ -144,9 +160,7 @@ class AgentCore:
         elif context_compaction is False:
             comp_policy = None
         else:
-            raise ValueError(
-                "context_compaction 只接受 False、True 或 CompactionPolicy"
-            )
+            raise ValueError("context_compaction 只接受 False、True 或 CompactionPolicy")
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,
@@ -163,8 +177,13 @@ class AgentCore:
             compaction_policy=comp_policy,
             # 成本·延迟感知选档：默认开启（该花才花）；cost_aware=False 时恒 standard。
             tier_policy=TierPolicy() if cost_aware else None,
+            # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。
+            model_timeout=model_timeout,
+            # 本地诊断回调（旁路排障），并由 AgentLoop 鸭子接线给 router/model。
+            on_diagnostic=on_diagnostic,
         )
         self.cost_aware = cost_aware
+        self.model_timeout = model_timeout
 
     # ---------- 接入 ----------
 
@@ -221,26 +240,37 @@ class AgentCore:
     # ---------- 运行 ----------
 
     async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
+        """运行一个任务并流式产出事件。
+
+        并发契约：实例内任意时刻只运行一个任务。并发调用 ``astream`` /
+        :meth:`run` 会在实例锁上排队，而不会让两条任务在 await 点交错、互相
+        污染共享的上下文、记忆、工具注册表与路由学习态。要并发处理多条相互
+        独立的会话，请为每条会话实例化独立的 :class:`AgentCore`。
+
+        流式宿主若提前结束消费（``break`` 或丢弃迭代器），异步生成器被关闭时
+        会自动释放该锁；请正常耗尽或显式关闭事件流，否则后续任务会一直等待。
+        """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
-        events: list[AgentEvent] = []
-        strategy: Strategy | None = None
-        completed = False
-        try:
-            async for event in self._loop.astream(task):
-                await self.channel.emit(event)
-                events.append(event)
-                data = event.data or {}
-                if "strategy" in data:
-                    strategy = Strategy(data["strategy"])
-                yield event
-            completed = True
-        finally:
-            # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
-            # 避免把"用户中途终止"误当成负样本污染学习。
-            if completed:
-                chosen = strategy or self.router.classify(task, self.registry)
-                self._record_feedback(task, chosen, events)
+        async with self._task_lock:
+            events: list[AgentEvent] = []
+            strategy: Strategy | None = None
+            completed = False
+            try:
+                async for event in self._loop.astream(task):
+                    await self.channel.emit(event)
+                    events.append(event)
+                    data = event.data or {}
+                    if "strategy" in data:
+                        strategy = Strategy(data["strategy"])
+                    yield event
+                completed = True
+            finally:
+                # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
+                # 避免把"用户中途终止"误当成负样本污染学习。
+                if completed:
+                    chosen = strategy or self.router.classify(task, self.registry)
+                    self._record_feedback(task, chosen, events)
 
     async def run(self, task: str) -> RunResult:
         events: list[AgentEvent] = []
@@ -261,9 +291,7 @@ class AgentCore:
             final_text=final_text,
         )
 
-    def _record_feedback(
-        self, task: str, chosen: Strategy, events: list[AgentEvent]
-    ) -> None:
+    def _record_feedback(self, task: str, chosen: Strategy, events: list[AgentEvent]) -> None:
         """事后回灌：学习只发生在任务结束后，不影响当次稳定性。
 
         反馈不进当次事件流（事件流在收集完才算得出结果），通过 ``on_feedback``

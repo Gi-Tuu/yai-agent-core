@@ -141,6 +141,7 @@
 - 31 · `tools/meta.py` + `loop.py`：动态重规划 replan（计划走不通显式回到规划，仅 PLAN 注册、不走授权）
 - 32 · `kernel/tiering.py` + `core.py`：成本·延迟感知选档（standard/strong 自动换挡，DONE 成本汇总）
 - 33 · `integrations/tracing/otel.py`：结构化 tracing（外侧订阅事件流 → OpenTelemetry trace，root + 工具子 span，可选 `[otel]` extra，不改内核）
+- 34 · `core.py` + `kernel/loop.py` + `diagnostics.py`：生产加固三件套（实例级任务串行锁、模型硬超时与取消传播、零依赖本地诊断 SPI，含沙箱取消即 kill）
 
 ## 5. 自检（读完本篇应能回答）
 

@@ -13,6 +13,7 @@
 - 它**不监听端口、不持有全局单例、不启动后台线程**；只有调用 `await core.run(task)` / `core.astream(task)` 时才工作。
 - 每个实例自带**独立**的 `ToolRegistry`、`memory`、`policy`、`router`、`channel`、`executor`、`code_manager`。
 - 会话状态全部存放在**构造时注入的 memory** 里，内核自身不持有可变业务状态 → **内核无状态、可多实例**。
+- **一个实例内任务串行**：`astream`/`run` 全程持有实例级 `asyncio.Lock`，打到同一 core 的并发请求会排队，以免两条任务在 `await` 点交错、污染共享的上下文 / 记忆 / 路由学习态。要并发承载多条相互独立的会话，请按本文 L1 / L2 **多实例**装配，而不是往单个 core 上堆并发；无状态的模型 / 发现源 / 沙箱可跨实例共享。完整并发契约见 [`architecture.md` §2.6](architecture.md#26-并发模型与多租户隔离)。
 
 ```
                  ┌──────────────────────────────┐

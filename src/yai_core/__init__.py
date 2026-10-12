@@ -4,6 +4,12 @@
 """
 
 from yai_core.core import AgentCore
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticLevel,
+    DiagnosticSink,
+)
 from yai_core.discovery import (
     DiscoveredCandidate,
     SemanticCatalog,
@@ -44,6 +50,10 @@ __version__ = "0.8.1"
 
 __all__ = [
     "AgentCore",
+    "DiagnosticEvent",
+    "DiagnosticKind",
+    "DiagnosticLevel",
+    "DiagnosticSink",
     "AdaptiveRouter",
     "RouteDecision",
     "AgentLoop",

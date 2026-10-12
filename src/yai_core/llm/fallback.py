@@ -16,6 +16,12 @@ import asyncio
 import time
 from typing import Any
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.types import ModelResponse
 
 # 异常类名里包含这些关键字时视为可重试（覆盖 openai SDK 的 Timeout/Connection/RateLimit）。
@@ -70,6 +76,7 @@ class FallbackModelProvider:
         backoff: float = 0.6,
         cooldown: float = 45.0,
         per_call_timeout: float = 30.0,
+        on_diagnostic: DiagnosticSink | None = None,
     ) -> None:
         if not providers:
             raise ValueError("FallbackModelProvider 至少需要一个模型后端")
@@ -81,6 +88,9 @@ class FallbackModelProvider:
         # 每个模型的"短路到何时"时间戳；0 表示健康。
         self._unavailable_until: list[float] = [0.0] * len(self.providers)
         self._active_index = 0
+        # 本地诊断回调：某模型可重试失败、降级到下一后端时发一条 warning。
+        # AgentLoop 会把自己的回调鸭子注入到这里；宿主自建时也可显式传入。
+        self.on_diagnostic = on_diagnostic
 
     # ---------- 供日志/标签使用的属性 ----------
 
@@ -98,12 +108,14 @@ class FallbackModelProvider:
         out = []
         for i, p in enumerate(self.providers):
             until = self._unavailable_until[i]
-            out.append({
-                "model": getattr(p, "model", f"provider-{i}"),
-                "healthy": until <= now,
-                "retry_in": round(max(0.0, until - now), 1),
-                "active": i == self._active_index,
-            })
+            out.append(
+                {
+                    "model": getattr(p, "model", f"provider-{i}"),
+                    "healthy": until <= now,
+                    "retry_in": round(max(0.0, until - now), 1),
+                    "active": i == self._active_index,
+                }
+            )
         return out
 
     # ---------- 主入口 ----------
@@ -117,12 +129,8 @@ class FallbackModelProvider:
     ) -> ModelResponse:
         now = time.monotonic()
         # 健康模型优先；冷却中的模型排到后面（冷却结束后自然回到候选）。
-        order = [
-            i for i in range(len(self.providers))
-            if self._unavailable_until[i] <= now
-        ] + [
-            i for i in range(len(self.providers))
-            if self._unavailable_until[i] > now
+        order = [i for i in range(len(self.providers)) if self._unavailable_until[i] <= now] + [
+            i for i in range(len(self.providers)) if self._unavailable_until[i] > now
         ]
 
         last_exc: Exception | None = None
@@ -141,6 +149,21 @@ class FallbackModelProvider:
                     raise
                 # 可重试错误：标记该模型短路，继续尝试下一个。
                 self._unavailable_until[idx] = time.monotonic() + self.cooldown
+                emit(
+                    self.on_diagnostic,
+                    DiagnosticEvent(
+                        kind=str(DiagnosticKind.MODEL_FALLBACK),
+                        message=(
+                            f"模型 {getattr(provider, 'model', f'provider-{idx}')} "
+                            f"可重试失败（{type(exc).__name__}），降级到下一后端"
+                        ),
+                        data={
+                            "failed_model": getattr(provider, "model", f"provider-{idx}"),
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "cooldown": self.cooldown,
+                        },
+                    ),
+                )
                 continue
 
         # 所有模型都失败：抛出最后一个（通常是过载/超时），由上层决定如何兜底。

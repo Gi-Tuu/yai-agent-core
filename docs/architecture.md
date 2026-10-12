@@ -121,6 +121,32 @@ select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_r
 - 开关：`AgentCore(context_compaction=True)` 用默认 `CompactionPolicy`（hard 24000 / target 16000 / keep 2 轮），也可传自定义 policy；默认关闭，老宿主行为不变。灵动岛真机工厂已开启。
 - 边界：压缩只重排本次上下文、不改写 MemoryStore 中的持久历史；跨请求历史裁剪仍走 retention（见 2.2）。
 
+### 2.6 并发模型与多租户隔离
+
+YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契约刻意收窄、默认安全：
+
+- **一个 `AgentCore` 实例 = 一条串行会话**。实例内任意时刻只运行一个任务：`astream`/`run` 全程持有一把实例级 `asyncio.Lock`，并发调用会排队，而不会让两条任务在 `await` 点交错、互相污染共享的上下文、记忆、工具注册表与路由学习态。
+- **要并发，就多实例**。多租户、多专员、多子员工等相互独立的会话各自实例化独立的 `AgentCore`；无状态的模型客户端、发现源、沙箱可作为单例被多个 core 共享，而 `registry / memory / learning / code_tool_manager` 等有状态部件必须随实例各自独立。子员工（`shell/employee`）与灵动岛的每个专员正各自持有独立 core，因此彼此仍可并行（受各自并发上限约束）。
+- **流式提前关闭会释放锁**。异步生成器被 `aclose()`（或宿主 `break`/丢弃）时，`async with` 自动释放实例锁；宿主应正常耗尽或显式关闭事件流，否则下一个任务会一直等待。
+- **后台维护方法是同步的**。`sweep_code_tools()` 与记忆 retention 等同步方法在事件循环线程内原子执行（无 `await` 让出点），写入采用快照迭代与原子替换，建议在任务间隙调用，无需也不应与任务锁混用。
+
+这条契约把水平扩展简化为：**单机多会话 = 一进程多实例；跨机器 = 多副本 + 共享无状态的模型/发现后端**，内核自身不引入线程池、消息队列或分布式锁。
+
+### 2.7 本地诊断事件（Diagnostics，零依赖旁路）
+
+内核在"已静默兜底、主流程不失败、但运维排障必须看得见"的瞬间，会通过一个**同步、零依赖、永不反噬主流程**的回调发出 `DiagnosticEvent`。它与另外两套可观测手段分工明确，互不替代：
+
+| 通道 | 面向 | 回答什么 | 触发方 |
+|---|---|---|---|
+| `AgentEvent`（事件流） | 产品 / 终端用户 | Agent **正在做什么决策与动作**（路由、工具调用、发现、授权…） | 内核主流程，必经、可回放 |
+| `DiagnosticEvent`（本小节） | 本地运维 / 排障 | 内核**在哪些增强环节悄悄降级了**（模型超时、分类回退、发现失败、压缩回退…） | 仅当宿主传入 `on_diagnostic` 回调 |
+| OpenTelemetry tracing（可选 extra） | 分布式 / 跨服务 | 一次请求跨进程的**链路、耗时、归因** | 宿主在外侧订阅事件流，内核不初始化 exporter |
+
+- **数据结构**：`DiagnosticEvent(kind, message, level, data)`。`level ∈ debug/info/warning/error`；`kind` 当前覆盖 8 类：`model_error`、`model_timeout`、`model_fallback`、`router_llm_fallback`、`discovery_failed`、`discoverable_list_failed`、`compaction_fallback`、`schema_focus_fallback`。
+- **安全语义**：回调是同步的，宿主应让它快速、非阻塞（写一行日志、推一个监控计数即可）；回调内部抛出的任何异常都会被内核吞掉，诊断是旁路，绝不能因为"日志系统挂了"而拖垮 Agent 主流程。内核不依赖 `logging`，不把任何日志库变成硬依赖。
+- **接线方式**：`AgentCore(model, on_diagnostic=fn)` 一处传入，内核会把同一回调鸭子接线给内部的 `AdaptiveRouter` 与 `FallbackModelProvider`（它们暴露可写的 `on_diagnostic` 属性；宿主自建、不认识该属性的自定义组件不受影响）。不传回调时内核完全安静，行为与旧版本一致。
+- **刻意不纳入诊断的情况**：沙箱执行失败会冒泡成 `tool_result(ok=False)`、权限拒绝会发 `permission_asked`——这些本就是用户可见的业务事件，不属于"静默兜底"，因此不重复发诊断。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
