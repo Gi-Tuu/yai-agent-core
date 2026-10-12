@@ -230,7 +230,7 @@ def build_docx(md_path: Path, out_docx: Path) -> None:
     enable_update_fields(doc)
 
     # ---------------- 封面
-    for _ in range(5):
+    for _ in range(3):
         doc.add_paragraph()
     t = doc.add_paragraph(style="Title")
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -252,7 +252,7 @@ def build_docx(md_path: Path, out_docx: Path) -> None:
                 r.font.color.rgb = RGBColor.from_string("4A4A4A")
             quote_n += 1
         elif kind == "table":
-            for _ in range(3):
+            for _ in range(2):
                 doc.add_paragraph()
             add_cover_meta_table(doc, payload)
         elif kind == "p":
