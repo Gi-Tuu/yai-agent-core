@@ -9,7 +9,7 @@
 ## 设计原则（所有版本不变）
 
 1. **Library-first**：YAI 是被 import 的内核，不是需要单独部署的平台；内核本体 `dependencies = []`，第三方能力全部走可选 extra 懒加载。
-2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）、路由学习（RouteSelector）、文本嵌入（Embedding）八个契约宿主可替换。
+2. **一切外部能力走 SPI**：模型（Model）、通道（Channel）、记忆（Memory）、权限（Policy）、发现（Discovery）、沙箱（Sandbox）、路由学习（RouteSelector）、文本嵌入（Embedding）、存储加密（StorageCipher）九个契约宿主可替换。
 3. **事件流唯一出口**：每个自适应决策都必须发出 `AgentEvent`，禁止静默决策。
 4. **可离线测试**：全部测试不依赖网络与 API Key（假模型 / MockTransport / 注入时钟）。
 

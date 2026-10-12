@@ -143,6 +143,7 @@
 - 33 · `integrations/tracing/otel.py`：结构化 tracing（外侧订阅事件流 → OpenTelemetry trace，root + 工具子 span，可选 `[otel]` extra，不改内核）
 - 34 · `core.py` + `kernel/loop.py` + `diagnostics.py`：生产加固三件套（实例级任务串行锁、模型硬超时与取消传播、零依赖本地诊断 SPI，含沙箱取消即 kill）
 - 35 · `kernel/budget.py` + `spi/cipher.py` + `config.py` + `memory/sqlite_store.py`：生产加固 P1（任务级预算硬上限与熔断、vault 落盘静态加密 SPI + Fernet 电池、CoreConfig 集中校验与 from_config、SQLite 在线热备份/恢复）
+- 36 · `shell/employee/worker.py` + `delegate.py`：子员工预算兜底与跨层级共享并发闸（default_budget、budget_exceeded 回流、DelegationSupervisor 全局信号量、per-task 预算覆盖）
 
 ## 5. 自检（读完本篇应能回答）
 
