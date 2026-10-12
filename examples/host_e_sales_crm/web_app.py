@@ -49,6 +49,11 @@ from host_e_sales_crm.crm_app import (  # noqa: E402
     ORDER_CATEGORIES,
     SalesCrm,
 )
+from host_e_sales_crm.tool_service import (  # noqa: E402
+    ToolArgumentError,
+    ToolService,
+    UnknownToolError,
+)
 
 HERE = Path(__file__).resolve().parent
 WEB_DIR = HERE / "web"
@@ -80,6 +85,28 @@ class Workbench:
         )
         # 原生写操作与 Agent 写操作的互斥锁（避免两边同时改数据）。
         self._lock = threading.Lock()
+        # 跨进程工具服务：把宿主业务能力以同名 HTTP 工具开放给桌面灵动岛。
+        self.tool_service = ToolService(self.crm)
+
+    # ---- 跨进程 Agent 工具（供桌面灵动岛销售专员经 HTTP 调用）----
+    def agent_tool(self, name: str, arguments: dict | None = None):
+        """调用一个宿主白名单工具。读工具直接执行；写工具与原生写共用一把锁。
+
+        业务方法自身的校验错误（ValueError 等）转成结构化 ``ok:false``，
+        让调用方模型读到原因并自我纠正；未知工具 / 参数错误交由 HTTP 层判 404/400。
+        """
+        def _run():
+            try:
+                return self.tool_service.call(name, arguments)
+            except (UnknownToolError, ToolArgumentError):
+                raise
+            except (ValueError, KeyError, TypeError) as exc:
+                return {"ok": False, "error": str(exc)}
+
+        if self.tool_service.is_write(name):
+            with self._lock:
+                return _run()
+        return _run()
 
     # ---- 状态（AI 状态全部来自嵌入点）----
     def state(self) -> dict:
@@ -256,6 +283,10 @@ def make_handler(workbench: Workbench):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/agent/tools":
+                # 调试用：列出宿主对跨进程 Agent 开放的白名单工具。
+                self._send_json(200, {"tools": workbench.tool_service.describe()})
+                return
             if path == "/api/state":
                 self._send_json(200, workbench.state())
                 return
@@ -287,6 +318,25 @@ def make_handler(workbench: Workbench):
             payload = self._read_json()
             if payload is None:
                 self._send_json(400, {"error": "bad_json"})
+                return
+            if path == "/api/agent/tool":
+                # 跨进程 Agent（桌面灵动岛销售专员）统一工具入口。
+                name = str(payload.get("name", "")).strip()
+                arguments = payload.get("arguments", {})
+                if not isinstance(arguments, dict):
+                    self._send_json(400, {"error": "bad_arguments",
+                                          "detail": "arguments 必须是对象"})
+                    return
+                try:
+                    result = workbench.agent_tool(name, arguments)
+                except UnknownToolError:
+                    self._send_json(404, {"error": "unknown_tool",
+                                          "detail": f"未知工具 {name!r}（不在宿主白名单内）"})
+                    return
+                except ToolArgumentError as exc:
+                    self._send_json(400, {"error": "bad_arguments", "detail": str(exc)})
+                    return
+                self._send_json(200, {"ok": True, "result": result})
                 return
             if path == "/api/core":
                 on = bool(payload.get("enabled"))
@@ -403,10 +453,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=int(os.getenv("YAI_WEB_PORT", "8200")))
     parser.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
-    parser.add_argument(
-        "--core-off", action="store_true",
-        help="启动时关闭 Core（纯 CRM 形态），用于演示有无 Core 的对比",
+    # 默认形态：纯 CRM 业务系统（页面无 AI 界面），AI 由桌面灵动岛选"销售专员"
+    # 经 127.0.0.1 跨进程操控；想在网页里演示进程内嵌入时再加 --core-on。
+    core_group = parser.add_mutually_exclusive_group()
+    core_group.add_argument(
+        "--core-on", dest="core_on", action="store_true",
+        help="启动时启用进程内 Core（旧形态：页面内置 AI 抽屉）",
     )
+    core_group.add_argument(
+        "--core-off", dest="core_on", action="store_false",
+        help="（默认，兼容旧脚本）以纯 CRM 形态启动",
+    )
+    parser.set_defaults(core_on=False)
     parser.add_argument(
         "--permission", choices=PERMISSION_MODES, default="partial",
         help="初始权限挡位（默认 partial：读放行、写/新能力询问）",
@@ -419,18 +477,24 @@ def main(argv: list[str] | None = None) -> None:
         model_factory=lambda: model,
         model_label=backend,
         crm=SalesCrm(),
-        core_enabled=not args.core_off,
+        core_enabled=args.core_on,
         permission_mode=args.permission,
     )
     httpd = create_server(workbench, args.host, args.port)
     url = f"http://{args.host}:{httpd.server_port}"
     print("=" * 60)
-    print("host_e 销售 CRM · 网页工作台（业务系统 + 唯一嵌入点）")
+    print("host_e 销售 CRM · 网页工作台")
     print(f"  本地地址 : {url}")
     print(f"  模型后端 : {backend}")
-    print(f"  Core 状态: {'已启用（数字员工在线）' if not args.core_off else '已关闭（纯 CRM）'}")
-    print("  权限挡位 : " + workbench.bridge.permission_mode)
-    print("  页面右上角可一键开关 Core、切换权限挡位。Ctrl+C 停止。")
+    if args.core_on:
+        print("  形态     : 进程内嵌入 Core（页面内置 AI 抽屉，--core-on）")
+        print("  权限挡位 : " + workbench.bridge.permission_mode)
+        print("  页面右上角可一键开关 Core、切换权限挡位。Ctrl+C 停止。")
+    else:
+        print("  形态     : 纯 CRM 业务系统（页面无 AI 界面）")
+        print(f"  跨进程口 : POST {url}/api/agent/tool（灵动岛选销售专员经此操控）")
+        print("  AI 由桌面灵动岛选「销售专员」跨进程操作本页；本页保持软件本来的样子。")
+        print("  Ctrl+C 停止。")
     print("=" * 60)
     if not args.no_open:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

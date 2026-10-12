@@ -119,8 +119,13 @@ class DemoCompanion:
 
 
 #: 各专员的"读工具"白名单：部分审批挡下自动放行，写操作仍要授权。
+#: sales 与 host_e 跨进程 ToolService 的 READ_TOOLS 保持一致（真实 CRM 的十个读能力）。
 _READ_TOOLS = {
-    "sales": ("list_customers", "get_customer", "list_opportunities"),
+    "sales": (
+        "list_customers", "search_customers", "get_customer", "list_orders",
+        "sum_amount", "list_opportunities", "list_followups",
+        "customers_due_followup", "list_todos", "daily_brief",
+    ),
     "warehouse": ("list_products", "get_stock"),
     "notes": ("search_notes",),
     "companion": ("mood_trend",),
@@ -147,6 +152,7 @@ def _live_factory(
     with_sandbox: bool = False,
     storage_path=None,
     learning_path=None,
+    catalog_factory=None,
 ):
     """为一个小宿主生成"每任务一个真 Core"的事件流工厂。
 
@@ -155,6 +161,8 @@ def _live_factory(
     storage_path 给定时，代码工具跨任务落盘恢复（48h TTL、调用刷新）。
     learning_path 给定时，**跨任务共享**一个自校准路由选择器并在每次任务后
     落盘，让真机路由越用越准；None = 不启用学习，行为与原来完全一致。
+    catalog_factory 给定时，每个任务惰性调用一次得到按需能力目录（StaticCatalog），
+    用于跨进程宿主（如销售 CRM）暴露"天气/含税报价"这类默认不注册的能力。
     """
     # 每任务新建 Core，但路由学习必须在任务之间累积：选择器在闭包里共享，
     # 首个任务时才从磁盘恢复。同专员 busy 时拒绝第二个任务，访问天然串行。
@@ -182,6 +190,7 @@ def _live_factory(
 
         load_dotenv()
         model, _label = build_model()
+        catalog = catalog_factory() if catalog_factory is not None else None
         core = AgentCore.auto(
             host,
             model,
@@ -193,6 +202,7 @@ def _live_factory(
             code_storage=storage_path,
             learning=shared["selector"],
             context_compaction=True,
+            discovery=catalog,
         )
         from shell.employee import attach_delegate
 
@@ -220,6 +230,11 @@ def build_specs() -> list[SpecialistSpec]:
     wh_learning = _DESKTOP_DATA / "warehouse_route_learning.json"
     notes_learning = _DESKTOP_DATA / "notes_route_learning.json"
     companion_learning = _DESKTOP_DATA / "companion_route_learning.json"
+    # 销售专员跨进程操控 host_e 网页工作台（真实 CRM，127.0.0.1:8200）。
+    # 实例化不发起连接，只有真正调用工具时才访问；离线 demo 形态完全不受影响。
+    from shell.desktop.crm_client import HostECrmClient, build_crm_catalog
+
+    sales_host = HostECrmClient()
     return [
         SpecialistSpec(
             id="sales",
@@ -231,11 +246,12 @@ def build_specs() -> list[SpecialistSpec]:
                  "子员工": SCRIPT_DELEGATE},
             ),
             live_factory=_live_factory(
-                DemoSales(),
+                sales_host,
                 _READ_TOOLS["sales"],
                 with_sandbox=True,
                 storage_path=sales_storage,
                 learning_path=sales_learning,
+                catalog_factory=lambda: build_crm_catalog(sales_host),
             ),
             code_storage=sales_storage,
             learning_path=sales_learning,
