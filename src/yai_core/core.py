@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Literal
 
 from yai_core.channels import CollectChannel
+from yai_core.config import CoreConfig
 from yai_core.diagnostics import DiagnosticSink
 from yai_core.discovery import discover
 from yai_core.kernel import (
     DEFAULT_MODEL_TIMEOUT,
     AdaptiveRouter,
     AgentLoop,
+    Budget,
     CompactionPolicy,
     TierPolicy,
 )
@@ -31,6 +33,7 @@ from yai_core.spi import (
     ModelProvider,
     PermissionPolicy,
     RouteSelector,
+    StorageCipher,
     ToolDiscovery,
     ToolSandbox,
 )
@@ -75,6 +78,7 @@ class AgentCore:
         code_storage: Path | str | None = None,
         long_memory: bool = False,
         memory_storage: Path | str | None = None,
+        memory_cipher: StorageCipher | None = None,
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
@@ -84,7 +88,35 @@ class AgentCore:
         cost_aware: bool = True,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
+        budget: Budget | None = None,
     ) -> None:
+        # 装配早期统一校验：非法取值（迭代次数 / 预算类型 / 压缩策略 / 超时等）
+        # 在这里就抛出，而不是等到任务运行中途。
+        CoreConfig(
+            channel=channel,
+            memory=memory,
+            policy=policy,
+            router=router,
+            discovery=discovery,
+            sandbox=sandbox,
+            learning=learning,
+            on_diagnostic=on_diagnostic,
+            on_feedback=on_feedback,
+            auto_approve_tools=auto_approve_tools,
+            llm_router=llm_router,
+            composition=composition,
+            code_storage=code_storage,
+            long_memory=long_memory,
+            memory_storage=memory_storage,
+            memory_cipher=memory_cipher,
+            max_iters=max_iters,
+            max_clarify_rounds=max_clarify_rounds,
+            full_schema_budget=full_schema_budget,
+            context_compaction=context_compaction,
+            cost_aware=cost_aware,
+            model_timeout=model_timeout,
+            budget=budget,
+        ).validate()
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
         self.model = model
@@ -102,21 +134,9 @@ class AgentCore:
         # - True：总是 LLM 分类，失败回退规则；
         # - "auto"：仅当模型后端自报 yai_live_router 标记时才分类，
         #   离线脚本模型自动走规则，examples 与线上可统一传 "auto"。
-        if router is not None:
-            self.router = router
-        else:
-            if llm_router is True:
-                route_model: ModelProvider | None = model
-            elif llm_router == "auto":
-                route_model = model if getattr(model, "yai_live_router", False) else None
-            elif llm_router is False:
-                route_model = None
-            else:
-                raise ValueError('llm_router 只接受 True、False 或 "auto"')
-            self.router = AdaptiveRouter(model=route_model, selector=learning)
-        # 外部传入的 router 若支持 selector 属性，也挂上学习器（唯一前置点）。
-        if learning is not None and hasattr(self.router, "selector"):
-            self.router.selector = learning
+        self.router = self._resolve_router(
+            model, router=router, llm_router=llm_router, learning=learning
+        )
         # 代码工具能力：仅当宿主提供沙箱时启用。内核不内置执行器，
         # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
         self.code_manager: CodeToolManager | None = None
@@ -126,7 +146,11 @@ class AgentCore:
         # 内核不内置向量长期记忆（更强语义召回由宿主经 Embedding SPI 提供）。
         self.memory_vault: MemoryVault | None = None
         if long_memory:
-            self.memory_vault = MemoryVault(storage_path=memory_storage)
+            # memory_cipher 提供时对落盘记忆做静态加密（内存中仍为明文）；
+            # 不传则明文 JSON（默认），是否加密/密钥来源由宿主决定。
+            self.memory_vault = MemoryVault(
+                storage_path=memory_storage, cipher=memory_cipher
+            )
         self.executor = ToolExecutor(
             self.registry,
             self.policy,
@@ -181,11 +205,47 @@ class AgentCore:
             model_timeout=model_timeout,
             # 本地诊断回调（旁路排障），并由 AgentLoop 鸭子接线给 router/model。
             on_diagnostic=on_diagnostic,
+            # 任务级预算硬上限（模型/工具/token），None=不限制；防止失控烧钱。
+            budget=budget,
         )
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout
+        self.budget = budget
+
+    # ---------- 装配辅助 ----------
+
+    @staticmethod
+    def _resolve_router(
+        model: ModelProvider,
+        *,
+        router: AdaptiveRouter | None,
+        llm_router: bool | Literal["auto"],
+        learning: RouteSelector | None,
+    ) -> AdaptiveRouter:
+        """决定路由实例：显式传入优先；否则按 llm_router 开关构造，并挂学习器。"""
+        if router is not None:
+            resolved = router
+        else:
+            if llm_router is True:
+                route_model: ModelProvider | None = model
+            elif llm_router == "auto":
+                route_model = model if getattr(model, "yai_live_router", False) else None
+            elif llm_router is False:
+                route_model = None
+            else:
+                raise ValueError('llm_router 只接受 True、False 或 "auto"')
+            resolved = AdaptiveRouter(model=route_model, selector=learning)
+        # 外部传入的 router 若支持 selector 属性，也挂上学习器（唯一前置点）。
+        if learning is not None and hasattr(resolved, "selector"):
+            resolved.selector = learning
+        return resolved
 
     # ---------- 接入 ----------
+
+    @classmethod
+    def from_config(cls, model: ModelProvider, config: CoreConfig) -> AgentCore:
+        """用一份 :class:`CoreConfig` + 一个模型实例构造 core（配置可在多处复用）。"""
+        return cls(model, **config.validate().as_kwargs())
 
     @classmethod
     def auto(cls, host: object, model: ModelProvider, **kwargs: object) -> AgentCore:

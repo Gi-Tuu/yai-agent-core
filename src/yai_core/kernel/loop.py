@@ -20,6 +20,7 @@ from yai_core.diagnostics import (
     DiagnosticSink,
     emit,
 )
+from yai_core.kernel.budget import Budget, BudgetExceeded, BudgetTracker
 from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
@@ -75,6 +76,16 @@ _CLARIFY_TASK_PREVIEW_CHARS = 80
 _CLARIFY_ABORT_TEXT = (
     "任务信息不足，已停止。请换个说法重新描述你想做什么，例如“统计华东区硬件订单的销售额”。"
 )
+# 预算熔断后的固定诚实收尾文案：不再发起任何模型/工具调用，直接给用户可执行的下一步。
+_BUDGET_SCOPE_LABELS = {
+    "model_calls": "模型调用次数",
+    "tool_calls": "工具执行次数",
+    "tokens": "Token 用量",
+}
+_BUDGET_STOP_TEXT = (
+    "已达到本次任务设定的{label}预算上限，为避免继续消耗已主动停止，未执行新的调用。"
+    "可在宿主侧调高对应预算后重试，或把任务拆成更小的步骤分别执行。"
+)
 
 
 #: 单次模型调用的默认硬超时（秒）：防止模型 / 网络永久挂起把任务拖死。
@@ -102,6 +113,7 @@ class AgentLoop:
         tier_policy: TierPolicy | None = None,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
+        budget: Budget | None = None,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -142,6 +154,11 @@ class AgentLoop:
             self.router.on_diagnostic = on_diagnostic
         if hasattr(self.model, "on_diagnostic"):
             self.model.on_diagnostic = on_diagnostic
+        # 任务级预算规格（模型/工具/token 硬上限）；None=不限制。
+        # 真正的计数器在每次 astream 顶层任务开始时新建（_active_budget），
+        # 澄清递归共享同一计数器，任务结束即废弃。
+        self.budget = budget
+        self._active_budget: BudgetTracker | None = None
 
     def _diag(
         self,
@@ -166,15 +183,26 @@ class AgentLoop:
           它属于 BaseException、不会被这里或上层的 ``except Exception`` 吞掉，
           因而能干净传播、真正中断任务。
         """
+        tracker = self._active_budget
+        if tracker is not None:
+            # 调用前先过预算硬墙：已达模型调用上限则本次不再发起（熔断）。
+            tracker.before_model_call()
         if self.model_timeout is None:
-            return await self.model.achat(messages, tools=tools, tier=tier)
-        try:
-            return await asyncio.wait_for(
-                self.model.achat(messages, tools=tools, tier=tier),
-                timeout=self.model_timeout,
-            )
-        except TimeoutError:
-            raise TimeoutError(f"模型调用超过 {self.model_timeout:g}s 硬超时上限，已终止") from None
+            resp = await self.model.achat(messages, tools=tools, tier=tier)
+        else:
+            try:
+                resp = await asyncio.wait_for(
+                    self.model.achat(messages, tools=tools, tier=tier),
+                    timeout=self.model_timeout,
+                )
+            except TimeoutError:
+                raise TimeoutError(
+                    f"模型调用超过 {self.model_timeout:g}s 硬超时上限，已终止"
+                ) from None
+        if tracker is not None:
+            # 成功返回后计数并累计 token；若因此越过 token 上限会在此熔断。
+            tracker.record_model_call(resp)
+        return resp
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
         """任务执行的统一入口：路由一次，按策略分发，最后落记忆并发 DONE。
@@ -188,6 +216,10 @@ class AgentLoop:
         ``_clarify_depth`` 只由澄清递归自增，外部调用恒为 0；达上限仍不明确时
         降级为 DIRECT（信息不全不硬调工具），绝不无限反问。
         """
+        # 任务级预算：仅顶层（depth==0）新建计数器；澄清递归复用同一个，
+        # 防止靠"多反问几轮"重置预算。loop 实例串行复用，无并发竞争。
+        if _clarify_depth == 0:
+            self._active_budget = self.budget.start() if self.budget is not None else None
         decision = await self.router.aclassify(
             task, self.registry, discoverable=self._discoverable_catalog()
         )
@@ -273,6 +305,22 @@ class AgentLoop:
                 yield ev
                 if ev.type == EventType.MODEL_MESSAGE:
                     final_text = ev.data.get("text", final_text)
+        except BudgetExceeded as exc:
+            # 预算硬墙：规划/聚焦/执行/收尾任一处触发都在此统一熔断，
+            # 不再发起新的模型或工具调用，用固定诚实文案收尾并发可审计事件。
+            label = _BUDGET_SCOPE_LABELS.get(exc.scope, exc.scope)
+            stop_text = _BUDGET_STOP_TEXT.format(label=label)
+            final_text = stop_text
+            yield AgentEvent(EventType.MODEL_MESSAGE, {"text": stop_text})
+            yield AgentEvent(
+                EventType.BUDGET_EXCEEDED,
+                {
+                    "scope": exc.scope,
+                    "limit": exc.limit,
+                    "used": exc.used,
+                    "budget": self._budget_snapshot(),
+                },
+            )
         except Exception as exc:  # noqa: BLE001 - 模型超时/失败体面收尾，不穿透到宿主
             # 规划 / 收尾 / 重规划等未被局部捕获的模型异常（含硬超时）在此兜底：
             # 发 ERROR 事件后仍照常落 DONE，宿主拿到有界结果而不是裸异常。
@@ -298,16 +346,25 @@ class AgentLoop:
 
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
-        yield AgentEvent(
-            EventType.DONE,
-            {
-                "strategy": strategy.value,
-                "final_text": final_text,
-                "standard_calls": tier_counts[STANDARD],
-                "strong_calls": tier_counts[STRONG],
-                "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
-            },
-        )
+        done_data: dict[str, object] = {
+            "strategy": strategy.value,
+            "final_text": final_text,
+            "standard_calls": tier_counts[STANDARD],
+            "strong_calls": tier_counts[STRONG],
+            "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
+        }
+        # 配置了预算就把用量快照随 DONE 流出（成本可观测）；触发熔断时标明原因。
+        if self._active_budget is not None:
+            done_data["budget"] = self._budget_snapshot()
+            if self._active_budget.exceeded is not None:
+                done_data["reason"] = "budget_exceeded"
+        yield AgentEvent(EventType.DONE, done_data)
+
+    def _budget_snapshot(self) -> dict[str, object]:
+        """当前任务预算用量快照；未启用预算时返回空字典（调用方先判空）。"""
+        if self._active_budget is None:
+            return {}
+        return self._active_budget.snapshot()
 
     async def _emit_capability_gap(
         self, decision: RouteDecision, task: str
@@ -515,6 +572,9 @@ class AgentLoop:
                 tier=STANDARD,
             )
             names = self._parse_tool_names(resp.content)
+        except BudgetExceeded:
+            # 预算熔断不是"聚焦失败"，必须继续向上冒泡到统一熔断点，不得回退全量。
+            raise
         except Exception as exc:  # noqa: BLE001 - 聚焦是优化不是依赖，失败回退全量
             self._diag(
                 DiagnosticKind.SCHEMA_FOCUS_FALLBACK,
@@ -613,6 +673,9 @@ class AgentLoop:
                 tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
                 resp = await self._model_chat(ctx.llm_messages(), tools_schema, tier=tier)
+            except BudgetExceeded:
+                # 预算熔断冒泡到 astream 统一收尾，不能被下面的"模型失败体面 return"吞掉。
+                raise
             except Exception as exc:  # noqa: BLE001
                 is_timeout = isinstance(exc, TimeoutError)
                 self._diag(
@@ -720,7 +783,13 @@ class AgentLoop:
                     elif ev.type == EventType.CODE_TOOL_CREATED:
                         newly_registered.append(ev.data.get("name", ""))
                 continue
+            # 业务工具执行前过预算硬墙（meta-tool 编排不计入工具次数）；
+            # 超限直接冒泡到 astream 统一熔断，该工具不会被执行、不产生副作用。
+            if self._active_budget is not None:
+                self._active_budget.before_tool_call()
             tool_events, ok, result_text = await self.executor.execute(call.name, call.arguments)
+            if self._active_budget is not None:
+                self._active_budget.record_tool_call()
             for tool_event in tool_events:
                 yield tool_event
             ctx.add(

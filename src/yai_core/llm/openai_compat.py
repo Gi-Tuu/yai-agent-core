@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from yai_core.types import ModelResponse, ToolCallRequest
+from yai_core.types import ModelResponse, TokenUsage, ToolCallRequest
 
 
 class OpenAICompatProvider:
@@ -71,4 +71,22 @@ class OpenAICompatProvider:
                 args = {}
             tool_calls.append(ToolCallRequest(id=tc.id, name=tc.function.name, arguments=args))
 
-        return ModelResponse(content=msg.content or "", tool_calls=tool_calls, raw=completion)
+        # 透传真实 token 用量（任务级 token 预算据此累计）；后端不返回 usage 时留 None，
+        # 内核不臆造数字，此时 token 上限不生效、改用次数上限兜底。
+        usage: TokenUsage | None = None
+        raw_usage = getattr(completion, "usage", None)
+        if raw_usage is not None:
+            prompt = int(getattr(raw_usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(raw_usage, "completion_tokens", 0) or 0)
+            total = int(getattr(raw_usage, "total_tokens", 0) or 0) or (
+                prompt + completion_tokens
+            )
+            usage = TokenUsage(
+                prompt_tokens=prompt,
+                completion_tokens=completion_tokens,
+                total_tokens=total,
+            )
+
+        return ModelResponse(
+            content=msg.content or "", tool_calls=tool_calls, raw=completion, usage=usage
+        )

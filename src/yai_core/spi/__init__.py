@@ -1,6 +1,7 @@
 """SPI（Service Provider Interface）：宿主可替换、Core 提供默认实现的契约层。"""
 
 from yai_core.spi.channel import Channel
+from yai_core.spi.cipher import StorageCipher
 from yai_core.spi.discovery import ToolDiscovery
 from yai_core.spi.embedding import EmbeddingProvider
 from yai_core.spi.learning import RouteSelector
@@ -11,6 +12,7 @@ from yai_core.spi.sandbox import SandboxResult, ToolSandbox
 
 __all__ = [
     "Channel",
+    "StorageCipher",
     "EmbeddingProvider",
     "MemoryStore",
     "ModelProvider",

@@ -19,6 +19,11 @@ scorer 注入，内核无需改动。
 
 持久化（可选）：传入 ``storage_path`` 后用标准库 JSON 原子落盘，跨会话 /
 重启保留，文件损坏冷启动容忍；不传则纯内存（向后兼容）。
+
+静态加密（可选）：再传入实现 :class:`~yai_core.spi.cipher.StorageCipher` 契约的
+``cipher`` 后，落盘内容会被整体加密（内存中仍是明文，仅保护"静态存储"）。**不传
+cipher 时为明文 JSON**——内核不内置加密算法、不引入加密库（零硬依赖），是否加密、
+用什么密钥由宿主决定；真实 Fernet 实现见可选 ``[crypto]`` extra。
 """
 
 from __future__ import annotations
@@ -30,10 +35,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from yai_core.discovery.scoring import token_similarity
 from yai_core.types import ToolSpec
+
+if TYPE_CHECKING:
+    from yai_core.spi.cipher import StorageCipher
 
 #: 持久化文件格式版本；未来不兼容变更时升版并做迁移 / 守卫。
 STORAGE_VERSION = 1
@@ -140,10 +148,13 @@ class MemoryVault:
         storage_path: Path | str | None = None,
         clock: Callable[[], datetime] | None = None,
         dedup_similarity: float = DEDUP_SIMILARITY,
+        cipher: StorageCipher | None = None,
     ) -> None:
         self._storage = Path(storage_path) if storage_path is not None else None
         self._clock = clock or _utc_now
         self._dedup = dedup_similarity
+        # 静态存储加密器；None=明文 JSON 落盘（默认，向后兼容）。
+        self._cipher = cipher
         self._notes: list[MemoryNote] = []
         if self._storage is not None:
             # 启动恢复（见 _load），随后 _save 重写，只留合法条目。
@@ -310,12 +321,18 @@ class MemoryVault:
             return  # 未配置持久化文件：纯内存模式，无磁盘可恢复。
         data: Any = {}
         try:
-            raw = storage.read_text(encoding="utf-8")
+            if self._cipher is not None:
+                # 加密落盘：读字节 -> 解密 -> UTF-8 明文 JSON。
+                raw = self._cipher.decrypt(storage.read_bytes()).decode("utf-8")
+            else:
+                raw = storage.read_text(encoding="utf-8")
             data = json.loads(raw) if raw.strip() else {}
         except FileNotFoundError:
             data = {}
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             # 文件损坏不致命：当作空库，随后 _save 正常覆盖。
+            data = {}
+        except Exception:  # noqa: BLE001 - 解密失败（篡改/密钥不符）同样按损坏冷启动。
             data = {}
         rows = data.get("notes") if isinstance(data, dict) else None
         if isinstance(rows, list):
@@ -373,11 +390,14 @@ class MemoryVault:
             for note in self._notes
         ]
         payload = {"version": STORAGE_VERSION, "notes": rows}
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
         self._storage.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._storage.with_name(self._storage.name + ".tmp")
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        if self._cipher is not None:
+            # 加密落盘：UTF-8 明文 JSON -> 加密字节；磁盘上不出现明文记忆。
+            tmp.write_bytes(self._cipher.encrypt(text.encode("utf-8")))
+        else:
+            tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, self._storage)  # 同卷原子替换（Windows 也成立）。
 
 

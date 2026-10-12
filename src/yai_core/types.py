@@ -40,6 +40,7 @@ class EventType(StrEnum):
     CONTEXT_COMPACTED = "context_compacted"
     PLAN_REVISED = "plan_revised"
     TIER_CHANGED = "tier_changed"
+    BUDGET_EXCEEDED = "budget_exceeded"
     ERROR = "error"
     DONE = "done"
 
@@ -187,12 +188,27 @@ class ToolCallRequest:
 
 
 @dataclass
+class TokenUsage:
+    """单次模型调用的 token 用量（OpenAI 兼容口径）。
+
+    由模型后端在 :class:`ModelResponse` 中可选返回；拿不到用量的后端留 None，
+    内核的 token 预算据此"能算才算"，绝不臆造数字。
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class ModelResponse:
     """ModelProvider 的统一返回，屏蔽各家 SDK 差异。"""
 
     content: str = ""
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     raw: Any = None
+    # 本次调用的 token 用量；后端不提供时为 None（token 预算此时不累计）。
+    usage: TokenUsage | None = None
 
 
 @dataclass
