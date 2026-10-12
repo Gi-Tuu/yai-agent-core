@@ -48,3 +48,31 @@ def test_desktop_sandbox_blocks_import() -> None:
     )
     assert not result.ok
     assert "ImportError" in result.error or "import" in result.error.lower()
+
+
+def test_desktop_sandbox_blocks_dunder_reflection() -> None:
+    """AST 闸门拒绝下划线属性：().__class__.__bases__ 在语法阶段被拦。"""
+    mod = _load_sandbox()
+    sb = mod.SubprocessSandbox()
+    result = asyncio.run(
+        sb.execute("def run(inputs):\n    return ().__class__.__bases__", {})
+    )
+    assert not result.ok
+    assert "属性" in result.error or "__class__" in result.error
+
+
+def test_desktop_sandbox_blocks_traceback_frame_escape() -> None:
+    """回归 M1：异常帧遍历逃逸（e.__traceback__.tb_frame.f_globals）必须被拦。"""
+    mod = _load_sandbox()
+    sb = mod.SubprocessSandbox()
+    code = (
+        "def run(inputs):\n"
+        "    try:\n"
+        "        raise RuntimeError('x')\n"
+        "    except Exception as e:\n"
+        "        f = e.__traceback__.tb_frame\n"
+        "        return f.f_globals.get('__name__')\n"
+    )
+    result = asyncio.run(sb.execute(code, {}))
+    assert not result.ok
+    assert "属性" in result.error or "__traceback__" in result.error
