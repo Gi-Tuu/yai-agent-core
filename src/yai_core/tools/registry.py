@@ -39,10 +39,20 @@ class ToolRegistry:
         return name in self._tools
 
     def all(self) -> list[ToolSpec]:
+        """内部存储视图：保持注册顺序（注册 / 注销 / 执行逻辑用，不做排序）。"""
         return list(self._tools.values())
 
+    def _ordered(self) -> list[ToolSpec]:
+        """喂给模型的枚举视图：按 name 确定性排序。
+
+        内部存储仍保持注册顺序（``all()`` 不变）；仅让系统提示目录与
+        function-calling schema 的字节序列稳定，避免宿主注册顺序波动无谓
+        击穿提示缓存的稳定前缀（工具集真正变化时重建一次缓存是合理的）。
+        """
+        return sorted(self._tools.values(), key=lambda spec: spec.name)
+
     def llm_schemas(self) -> list[dict]:
-        return [spec.llm_schema() for spec in self._tools.values()]
+        return [spec.llm_schema() for spec in self._ordered()]
 
     def catalog(self) -> list[dict[str, str]]:
         """轻量工具目录：只含 name + 一句话摘要。
@@ -53,7 +63,7 @@ class ToolRegistry:
         """
         return [
             {"name": s.name, "summary": _one_line(s.description)}
-            for s in self._tools.values()
+            for s in self._ordered()
         ]
 
     def schemas_for(self, names: Iterable[str]) -> list[dict[str, Any]]:
@@ -64,7 +74,7 @@ class ToolRegistry:
         """给系统提示词用的工具清单文本（完整描述）。"""
         if not self._tools:
             return "（当前宿主没有提供任何工具）"
-        return "\n".join(f"- {s.name}: {s.description}" for s in self._tools.values())
+        return "\n".join(f"- {s.name}: {s.description}" for s in self._ordered())
 
     def catalog_text(self) -> str:
         """给系统提示词用的**轻量**工具目录：name + 一句话摘要。

@@ -89,6 +89,9 @@ class CoreConfig:
     max_clarify_rounds: int = 2
     full_schema_budget: int = 24
     context_compaction: bool | CompactionPolicy = False
+    # 单个工具结果回灌进上下文前的字符上界（None=关闭）；默认值与
+    # yai_core.tools.executor.DEFAULT_TOOL_RESULT_CHARS 对齐（16000）。
+    tool_result_char_limit: int | None = 16_000
     # 成本 / 韧性。
     cost_aware: bool = True
     model_timeout: float | None = DEFAULT_MODEL_TIMEOUT
@@ -102,6 +105,10 @@ class CoreConfig:
             raise ValueError("max_clarify_rounds 必须是 >=0 的整数")
         if not _is_nonneg_int(self.full_schema_budget):
             raise ValueError("full_schema_budget 必须是 >=0 的整数")
+        if self.tool_result_char_limit is not None and not _is_positive_int(
+            self.tool_result_char_limit
+        ):
+            raise ValueError("tool_result_char_limit 必须是正整数或 None")
         if self.llm_router not in (True, False, "auto"):
             raise ValueError('llm_router 只接受 True、False 或 "auto"')
         if not isinstance(self.context_compaction, (bool, CompactionPolicy)):

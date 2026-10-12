@@ -63,3 +63,28 @@ def test_schemas_for_unknown_name_raises() -> None:
     reg.register(_spec("a", "甲"))
     with pytest.raises(KeyError):
         reg.schemas_for(["a", "ghost"])
+
+
+def test_model_facing_enums_sorted_regardless_of_registration_order() -> None:
+    """喂给模型的目录 / schema / 描述文本按 name 确定性排序（C1）。"""
+    reg = ToolRegistry()
+    registered = ["zeta", "alpha", "mid", "Beta"]
+    for name in registered:
+        reg.register(_spec(name, f"{name} 工具"))
+
+    catalog_names = [it["name"] for it in reg.catalog()]
+    assert catalog_names == sorted(catalog_names)
+
+    schema_names = [s["function"]["name"] for s in reg.llm_schemas()]
+    assert schema_names == sorted(schema_names)
+
+    describe_names = [ln[2:].split(":", 1)[0] for ln in reg.describe().splitlines()]
+    assert describe_names == sorted(describe_names)
+
+    catalog_text_names = [
+        ln[2:].split(":", 1)[0] for ln in reg.catalog_text().splitlines()
+    ]
+    assert catalog_text_names == catalog_names
+
+    # 内部存储视图 all() 仍保持注册顺序，排序只影响喂给模型的枚举。
+    assert [s.name for s in reg.all()] == registered

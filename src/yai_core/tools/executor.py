@@ -14,6 +14,44 @@ from yai_core.types import AgentEvent, EventType, ToolSpec
 #: 代码工具在沙箱里的最长执行秒数（默认值，可由宿主覆盖）。
 DEFAULT_CODE_TIMEOUT = 10.0
 
+#: 单个工具结果回灌进对话上下文的默认字符上界，与 OpenAPI 集成的 max_result_chars 对齐。
+#: 作用在"工具结果 → 模型上下文"这一层，比 Context 总量事后整轮裁剪更精准；
+#: None 表示关闭（宿主自行负责结果上界）。
+DEFAULT_TOOL_RESULT_CHARS = 16_000
+
+
+def bound_tool_result(
+    text: str, limit: int | None
+) -> tuple[str, bool, int]:
+    """把单个工具结果限制在 ``limit`` 字符内；返回 ``(text, truncated, original_chars)``。
+
+    - ``limit=None`` 或未超限时原样返回，``truncated=False``；
+    - 超限时保留"头 + 尾"，中间插入显式省略标记，让模型明确知道结果被截断
+      （与 payload_guard 的有界裁剪理念一致，绝不静默删改）；
+    - 保证返回文本长度严格不超过 ``limit``。
+    """
+    original_chars = len(text)
+    if limit is None or original_chars <= limit:
+        return text, False, original_chars
+
+    head_budget = int(limit * 0.7)
+    tail_budget = limit - head_budget
+    head = text[:head_budget]
+    tail = text[original_chars - tail_budget :]
+
+    def _join(head_part: str) -> str:
+        omitted = original_chars - len(head_part) - tail_budget
+        marker = f"\n…[工具结果过长，已省略 {omitted} 字符，以下为结尾部分]…\n"
+        return head_part + marker + tail
+
+    bounded = _join(head)
+    # marker 长度随 omitted 位数变化，必要时从头部再收紧，确保严格不越上界。
+    while len(bounded) > limit and head_budget > 0:
+        head_budget -= 1
+        head = text[:head_budget]
+        bounded = _join(head)
+    return bounded, True, original_chars
+
 
 class ToolExecutor:
     """Tool Bus：权限检查 -> 执行（同步/异步 handler 均可）-> 结构化结果。
@@ -31,13 +69,23 @@ class ToolExecutor:
         sandbox: ToolSandbox | None = None,
         code_manager: CodeToolManager | None = None,
         code_timeout: float = DEFAULT_CODE_TIMEOUT,
+        result_char_limit: int | None = DEFAULT_TOOL_RESULT_CHARS,
     ) -> None:
+        if result_char_limit is not None and (
+            isinstance(result_char_limit, bool) or result_char_limit <= 0
+        ):
+            raise ValueError("result_char_limit 必须是正整数或 None")
         self.registry = registry
         self.policy = policy
         self.channel = channel
         self.sandbox = sandbox
         self.code_manager = code_manager
         self.code_timeout = code_timeout
+        # 单个工具结果回灌上下文前的统一上界（None=关闭）。
+        self.result_char_limit = result_char_limit
+
+    def _bound(self, text: str) -> tuple[str, bool, int]:
+        return bound_tool_result(text, self.result_char_limit)
 
     async def execute(
         self, name: str, arguments: dict[str, Any]
@@ -76,8 +124,18 @@ class ToolExecutor:
             )
             return events, False, f"工具 {name} 执行出错: {type(exc).__name__}: {exc}"
 
+        text, truncated, result_chars = self._bound(text)
         events.append(
-            AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": True, "preview": text[:200]})
+            AgentEvent(
+                EventType.TOOL_RESULT,
+                {
+                    "tool": name,
+                    "ok": True,
+                    "preview": text[:200],
+                    "truncated": truncated,
+                    "result_chars": result_chars,
+                },
+            )
         )
         return events, True, text
 
@@ -135,9 +193,17 @@ class ToolExecutor:
             return events, False, f"工具 {spec.name} 沙箱执行失败: {sb.error}"
 
         text = json.dumps(sb.output, ensure_ascii=False, default=str)
+        text, truncated, result_chars = self._bound(text)
         events.append(
             AgentEvent(
-                EventType.TOOL_RESULT, {"tool": spec.name, "ok": True, "preview": text[:200]}
+                EventType.TOOL_RESULT,
+                {
+                    "tool": spec.name,
+                    "ok": True,
+                    "preview": text[:200],
+                    "truncated": truncated,
+                    "result_chars": result_chars,
+                },
             )
         )
         return events, True, text
@@ -199,9 +265,17 @@ class ToolExecutor:
 
         final = {"steps": step_results}
         text = json.dumps(final, ensure_ascii=False, default=str)
+        text, truncated, result_chars = self._bound(text)
         events.append(
             AgentEvent(
-                EventType.TOOL_RESULT, {"tool": spec.name, "ok": True, "preview": text[:200]}
+                EventType.TOOL_RESULT,
+                {
+                    "tool": spec.name,
+                    "ok": True,
+                    "preview": text[:200],
+                    "truncated": truncated,
+                    "result_chars": result_chars,
+                },
             )
         )
         return events, True, text
