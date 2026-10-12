@@ -204,9 +204,10 @@ approval card on first call (discovery ≠ authorization).</p>
 | 4 | `host_f_discovery` | Capability gap → discovery → usable this turn (static / semantic) |
 | 5 | `host_g_sandbox` | Teaching sandbox: build and run a code tool on the spot |
 | 6 | `host_e_sales_crm` | Flagship: a standalone CRM that embeds Core with one switch (terminal + web, port 8200) |
-| 7 | `host_i_mealie` | Adapting a real, high-star third-party open-source project (Mealie) |
+| 7 | `host_i_mealie` | Adapting a real third-party open-source project over REST (Mealie) |
+| 8 | `host_j_actual` | Third-party seeding "five-beat" line in the Actual Budget ledger app (discover a missing tool / delegate sub-employees; web on 8240) |
 
-> Directory names keep their historical letters (a/c/d/e/f/g/i) and are not reordered by learning
+> Directory names keep their historical letters (a/c/d/e/f/g/i/j) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
 
 ## Online HTTP API

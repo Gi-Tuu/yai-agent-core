@@ -1,9 +1,10 @@
 # host_i —— 嵌入真实开源食谱应用 Mealie
 
-> 这是 YAI "零改造嵌入真实 Web 应用" 的最强证据：
-> **Mealie**（Python/FastAPI，MIT，~8k stars）是一个有完整 Web UI 的
+> 这是 YAI "零改造嵌入真实 Web 应用" 的证据：
+> **Mealie**（Python/FastAPI，AGPL-3.0）是一个有完整 Web UI 的
 > 个人食谱与餐规划应用，我们没改它一行源码，
 > 只通过它的 REST API 包了一层，Core 就用自然语言把它调起来了。
+> （Mealie 自身许可证以其官方仓库为准；本示例代码随 YAI 以 MIT 发布。）
 
 ## 这个宿主证明什么
 

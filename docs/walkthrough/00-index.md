@@ -103,6 +103,7 @@
 | `metrics.py` | 零依赖运行指标收集器：runs/工具/模型档位/事件计数 + 时延直方图 + Prometheus 文本（第 38 篇） | 店铺的每日流水账 |
 | `batteries/fastapi_server/readiness.py` | 就绪探针：并发执行、超时/异常隔离，失败只摘流量不重启（第 38 篇） | 开门营业前的逐项点检表 |
 | `integrations/metrics/otel_meter.py` | OTel 指标桥接：observable 仪器采集时从快照拉值（可选 `[otel]` extra，第 38 篇） | 把流水账自动誊抄到总部报表系统 |
+| `examples/five_beats.py` | 第三方播种五拍标准线：把事件流归纳为 唤醒/长尾/缺口/补能力·派子员工/授权/完成 并断言顺序（第 39 篇） | 一次成功接管的验收工序卡 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
 
@@ -152,6 +153,7 @@
 - 36 · `shell/employee/worker.py` + `delegate.py`：子员工预算兜底与跨层级共享并发闸（default_budget、budget_exceeded 回流、DelegationSupervisor 全局信号量、per-task 预算覆盖）
 - 37 · `memory/vault.py` + `kernel/loop.py` + `config.py` + `core.py`：长期记忆语义召回与任务起始主动召回（异步 arecall 词法 OR 语义、embedder 注入与向量懒缓存、失败降级纯词法、loop 任务开始自动注入 system 记忆并发 memories_recalled 事件）
 - 38 · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
+- 39 · `examples/host_j_actual/` + `examples/five_beats.py`：第三方播种端到端（记账应用 Actual Budget；五拍标准线 唤醒→长尾→缺口→补能力/派子员工→授权→完成；发现补分类与委派只读两条离线链路；整数分与官方 CLI argv 锁定；网页壳 8240）
 
 ## 5. 自检（读完本篇应能回答）
 

@@ -9,6 +9,10 @@
 
 ### Added
 
+- **第三方播种端到端（S3）：host_j 记账宿主 + 五拍标准线**：
+  - **`examples/host_j_actual/`**：把内核嵌进真实开源记账应用 [Actual Budget](https://actualbudget.org/)（官方主力是 Node 包 `@actual-app/cli`、金额一律整数分 cents、无朴素 REST），不改其源码，只把能力包成领域工具。`backend.py` 定义领域原语并提供离线 `FakeActualBackend`（2 账户 / 8 笔交易 / 3 笔未分类 / 娱乐预算超支）与 `CliActualBackend`（官方 CLI 子进程，runner 可注入、口令只走环境变量不进 argv、跨账户逐账户拉取后本地聚合、非零退出 / 坏 JSON 体面抛错）；`capabilities.py` 分三层工具（默认只读 / 需授权写入 / 按需发现的 `suggest_category`）；`demo_agent.py` 用脚本模型装配两条链路；`run.py`（`--delegate` 切换）与标准库零依赖网页壳 `web_app.py` + `web/index.html`（端口 8240，左原生记账 / 右嵌入 Core 对照）。
+  - **五拍标准线 `examples/five_beats.py`**：把一次成功的自适应接管压成可观测、可断言的节拍——唤醒（`STRATEGY_SELECTED`）→ 长尾任务（≥2 个不同 `TOOL_CALL`）→ 缺口（`CAPABILITY_MISSING`）→ 补能力 / 派子员工（`TOOL_DISCOVERED` 或 `delegate`）→ 授权（`PERMISSION_ASKED`）→ 完成（`DONE`），供各宿主测试复用。
+  - **两条链路离线跑通**：发现链路（缺口 → 现场发现 `suggest_category` → 新工具与写操作两次授权 → 3 笔未分类清零 → 点出娱乐预算超支）与委派链路（根一次 `delegate` 派两个白名单收窄到单一只读工具的子员工，并行执行、结果只回流根、完成即销毁）；授权被拒时诚实停止、账本零副作用。新增 `tests/test_host_j_actual.py`（17 例，含 CLI argv 锁定、两条五拍断言、`run_worker` 直驱验证子员工成功），全离线、不联网、不需要 Node 或 API Key；逐行讲义第 39 篇。内核本体零改动、零新增硬依赖。
 - **运行指标与就绪探针（metrics / readiness，零依赖 + 可选 OTel）**：
   - **零依赖 `MetricsRecorder`**：新增 `metrics.py`，在 `astream` 唯一出口旁路 tap（开始 / 逐事件 / `finally` 结算），统计 runs（started/completed/failed/cancelled，取消类与真实异常分开）、按策略计数、工具调用 total/errors、模型档位 standard/strong（DONE 一次性结算）、各类事件计数，以及 run 墙钟时延直方图（`monotonic` 测时、`+Inf` 桶=总数）；一把 `threading.Lock` 兼容跨线程采集，`snapshot()` 深拷贝隔离，脏数据容错。`render_prometheus()` 手拼合规 exposition（histogram `_bucket/_sum/_count`），不装客户端即可被 Prometheus 抓。指标回调任何异常自吞、绝不反噬主流程；`CoreConfig.metrics` 可注入自定义收集器并做四方法鸭子校验。
   - **`/readyz` 与 `/metrics` 端点**：新增 `batteries/fastapi_server/readiness.py`——探针为普通同步/async 函数（None/True=ok、False/str=失败、dict 取 `ok`、异常=error），`asyncio.gather` 并发、`wait_for` 超时（默认 5s）、异常逐探针隔离，任一失败 `/readyz` 返回 503（编排据此摘流量、不重启）；默认探针只报告工具数与记忆后端、不调模型不联网，宿主可经 `readiness_probes=` 追加 DB/模型探活。`GET /metrics` 默认 Prometheus 文本、`?format=json` 结构化快照；配了 `YAI_API_KEY` 时 `/metrics` 默认鉴权、`YAI_METRICS_PUBLIC=1` 可显式公开，`/health` 与 `/readyz` 恒公开；GET 探针路径不受限流影响。
