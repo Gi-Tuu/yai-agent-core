@@ -11,6 +11,9 @@ name: Publish to PyPI
 #        并从 bundle 导出传统 .sig（签名）/.pem（证书），供 Scorecard 与传统工具识别；
 #     2) attest-build-provenance 生成 SLSA 构建证明（绑定资产 SHA256）。
 #   另附 SHA256SUMS 及其签名，供使用者核对完整性与来源。
+#   此外，GitHub 自动生成的连字符源码包 yai-agent-core-<ver>.tar.gz/.zip 也单独下载并用
+#   cosign 签成同名 .sigstore（含证书 + Rekor）随 Release 上传，满足 Signed-Releases 对
+#   auto source archives 的同名签名件要求（wheel/sdist 的下划线名与 auto 包连字符名不同，不能互相替代）。
 #
 # 前置：PyPI 侧配置 Trusted Publishing 的 pending publisher
 #   （Owner=Gi-Tuu, Repo=yai-agent-core, Workflow=publish.yml），见 SECURITY.md。
@@ -73,6 +76,26 @@ jobs:
               --sig "$base.sig" --pem "$base.pem"
           done
 
+      # GitHub 还会为每个 release 自动生成两个源码包，文件名是连字符的
+      # yai-agent-core-<ver>.tar.gz / .zip（与 uv build 的下划线 sdist 不同）。
+      # Scorecard Signed-Releases 正是按这两个 auto assets 找同名签名件；缺签名时该检查仅给低分。
+      # tag 推送后 archive URL 立即可用：下载后用 cosign keyless 产完整 .sigstore
+      # （bundle 内含签名证书与 Rekor 透明日志），文件名与 auto asset 精确同名 + .sigstore，
+      # 只上传签名件、不重复上传源码包本体（auto asset 由 GitHub 提供）。
+      - name: Sign GitHub auto source archives
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/github-archives
+          cd dist/github-archives
+          base="yai-agent-core-${TAG#v}"
+          curl -fsSL -o "$base.tar.gz" "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          curl -fsSL -o "$base.zip"      "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.zip"
+          for f in "$base.tar.gz" "$base.zip"; do
+            cosign sign-blob "$f" --bundle "$f.sigstore" --yes
+          done
+
       - name: GitHub Release (upload signed artifacts)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -83,6 +106,7 @@ jobs:
             dist/*.bundle
             dist/*.sig
             dist/*.pem
+            dist/github-archives/*.sigstore
           generate_release_notes: true
 
       # PyPI 发布只认 wheel / sdist；dist 里的 SHA256SUMS 与 .bundle 会被

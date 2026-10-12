@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+（暂无；v0.9.0 之后的改动在此累积。）
+
+## [v0.9.0] - 2026-10-12
+
 ### Added
 
 - **第三方播种端到端（S3）：host_j 记账宿主 + 五拍标准线**：
@@ -40,6 +44,19 @@
   - **子员工默认挂硬预算**：`shell/employee/worker.py` 新增 `default_budget(max_iters)`（模型调用 `max_iters+2`、工具调用 `max_iters*4`、token 不硬限），`_assemble_worker` / `run_worker` 新增 `budget` 形参（None 时自动推导），每个子员工在构造 `AgentCore` 时即带上独立预算；触发预算硬墙时 `WorkerResult.status="budget_exceeded"`、`ok=False`，已产出文本与预算快照随结果回流，根可据此缩小任务或放宽预算重派，熔断不作为异常穿透、不拖垮并行 gather。
   - **跨层级共享全局并发闸**：新增 `delegate.DelegationSupervisor(max_concurrent)`（持单一 `asyncio.Semaphore`），`attach_delegate` / `build_delegate_tool` 新增 `supervisor` 形参并返回该闸，沿根→子→孙原样透传，把"根并行 5、每个子又并行 5"的理论超额收敛为全局同时存活 ≤5；delegate schema 每个 task 新增可选 `max_model_calls` / `max_tool_calls`（容错非法值，未覆盖维度用默认推导补齐），`_normalize_tasks` 透传。
   - 新增逐行讲义第 36 篇；`tests/test_shell_employee.py` 新增默认预算推导、DONE 预算快照、budget_exceeded 熔断、跨层级并发峰值（共享时 peak=2、旧行为会得 4）、取消传播共 5 组离线用例，全离线、不依赖 API Key。
+- **上下文轻量化（降本 / 缓存友好，#39 / #40）**：
+  - **工具结果统一有界收口 + 目录确定性排序**：普通 / 代码 / 组合三类工具的成功结果统一在执行器出口按字符上限收口（默认 `tool_result_char_limit=16000`，超出保留头部 70% + 尾部 30%），`TOOL_RESULT` 事件附带 `truncated` / `result_chars`；喂给模型的工具目录改为按工具名确定性排序（`all()` / `schemas_for()` 的原始注册顺序不变），让无状态、无时间戳的 system 前缀在多次调用间字节稳定，利于 prompt cache 命中与可复现。新增逐行讲义第 41 篇与架构 §2.10（中英）。
+  - **摘要压缩可注入专用小模型 + 上下文窗口水位工厂**：`AgentCore(compaction_model=...)` 让历史摘要走独立的便宜小模型（缺省回退主模型），主链路仍用主模型，长会话压缩成本显著下降（不为低温参数扩展 `achat` SPI）；新增 `CompactionPolicy.from_context_window(chars, *, keep_recent_rounds=2, hard_ratio=0.6, target_ratio=0.4)`，按模型上下文窗口字符口径一键推算硬触发 / 目标水位，不引入 tokenizer。新增逐行讲义第 42 篇、架构 §2.5（中英）与 `tests/test_context_compaction.py`（22 点）。
+- **长期运行记忆规模治理（#38）**：`MemoryVault` 检索改词法倒排索引并支持可选 `max_notes` 容量上限，抑制长期部署下记忆无限增长导致的召回劣化；SQLite 历史裁剪 `prune` 改为先 `COUNT` / `MIN(时间戳)` 索引聚合短路，未达阈值不取回整表，降低大规模历史下的裁剪开销。新增逐行讲义第 40 篇。
+
+### Changed
+
+- **多租户 / 水平扩展部署指南增强并首次英文化（#41）**：`docs/deployment-scaling.md` 把 scope 明确为"租户内会话 / 专员边界"，新增跨不可信企业的硬隔离形态（SQLite-per-tenant 目录 + 每租户独立 DEK / KMS 信封加密 + `TenantCoreFactory` + 空闲 LRU 换出 + Postgres RLS 升级路线）、九维每租户隔离矩阵与 prompt cache 跨租户边界；立场写死"`tenant_id` 不进 kernel 签名、多租户是装配层责任、内核零改动"。新增全文对照英文版 `docs/deployment-scaling.en.md`，顶部双向互链，基线升 v0.9.0。
+- **测试覆盖**：补齐 `llm/openai_compat.py` 与 readiness 探针的边界分支至 100%（#37）；全量行覆盖率约 96%。
+
+### Security
+
+- **修复 Signed-Releases 对 GitHub 自动源码包的签名覆盖**：发布工作流此前只签 `uv build` 产出的下划线名 sdist / wheel，而 GitHub Release 自动生成的连字符源码包 `yai-agent-core-<ver>.tar.gz` / `.zip` 缺少同名签名件，OpenSSF Scorecard Signed-Releases 因此仅给低分。现新增发版步骤：下载这两个 auto archives，用 cosign keyless 签成精确同名的 `.sigstore`（bundle 内含签名证书与 Rekor 透明日志），随同一 Release 上传。
 
 ## [v0.8.1] - 2026-10-11
 
