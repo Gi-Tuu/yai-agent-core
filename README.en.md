@@ -64,8 +64,11 @@ that runs inside your software's process**:
 kernel itself has zero third-party hard dependencies:
 
 ```bash
-pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"
+pip install yai-agent-core
 ```
+
+> To track unreleased commits on `main`, install from source instead:
+> `pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"`
 
 ```python
 import asyncio
@@ -121,16 +124,17 @@ For architecture in English see [`docs/architecture.en.md`](docs/architecture.en
 | **Cost-aware tiering** | Defaults to the cheap/fast `standard` tier and only escalates to `strong` for planning, failure-recovery, or being stuck in late rounds; tiering is deterministic and costs no extra call; DONE summarizes per-tier call counts; disable with `cost_aware=False` |
 | **Structured long-term memory** | `remember` / `recall` proactively store and retrieve facts / preferences / profiles; near-duplicate merge, importance weighting, JSON persistence; no built-in vector memory — semantic recall goes through the Embedding SPI |
 | **Safety boundaries** | Three permission tiers (approve-all / partial / no-approval); composed tools only orchestrate registered tools and never run generated code; code generation defines only the `ToolSandbox` contract — the sandbox is host-provided |
+| **Sub-employee delegation** | The root employee can hand narrowed subtasks to short-lived sub-employees: tool allowlist ⊆ root, monotonically narrower permissions, an isolated small context, per-task budget and a global concurrency gate (≤5 in parallel, ≤2 levels deep); results flow back only to the root and the sub-employee is destroyed when done. The Dynamic Island switches between several mutually isolated specialists |
 | **Fully observable** | Every strategy choice, capability gap, tool discovery/composition/call, and permission confirmation is emitted through one unified event stream |
 | **Structured tracing** | The optional `[otel]` extra subscribes to the event stream from the outside and turns a run into one OpenTelemetry trace: a root span with a child span per tool (ok/error/duration) and adaptive decisions as span events; it never touches the kernel and never initializes an exporter — wiring Jaeger / Tempo / OTLP is the host's decision |
 | **End-to-end evaluation** | A built-in offline eval harness runs the full Core with a ScriptedModel, quantifying completion rate, tool precision/recall, overreach and unsupported claims; golden regression baseline + non-blocking CI |
 
 <details>
-<summary>Show: the eight swappable SPI contracts</summary>
+<summary>Show: the nine swappable SPI contracts</summary>
 
-`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding`
-— the host can replace any of them; Core provides zero-config defaults. The kernel itself always has zero
-third-party hard dependencies.
+`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher`
+— the host can replace any of them; Core provides zero-config defaults (`StorageCipher` is the optional
+at-rest encryption slot). The kernel itself always has zero third-party hard dependencies.
 
 </details>
 
@@ -236,8 +240,12 @@ For optional environment variables (persistent memory, history trimming / TTL, r
 - **v0.8 (done)**: context compaction; MCP/OpenAPI dynamic discovery sources with multi-source
   aggregation; SQLite KV TTL; Docker sandbox adapter; API-key auth, rate limiting and response guards;
   published to PyPI; CI hardening (CodeQL, OpenSSF Scorecard, mypy, coverage gate)
-- **v0.9 (in progress)**: dynamic re-planning `replan` (explicitly return to planning when a plan
-  turns out unworkable) and cost/latency-aware tiering (automatic standard/strong shifting + DONE cost summary)
+- **v0.9 (in progress, already on main)**: dynamic re-planning `replan` and cost/latency-aware `tiering`
+  (automatic standard/strong shifting + DONE cost summary); semantic recall of long-term memory with
+  proactive recall at task start, and the 9th SPI `StorageCipher` for at-rest encryption; structured
+  OpenTelemetry tracing, metrics/readiness and a task-level budget circuit breaker; sub-employee budget
+  and a global concurrency gate; and the third-party seeding five-beat line (`host_j` embeds into the
+  real bookkeeping app Actual Budget with zero source changes)
 - **v1.0 (planned)**: flow back in as the agent kernel of the AI Companion project
   [AMBRACE](https://github.com/Gi-Tuu/AMBRACE)
 
