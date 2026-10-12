@@ -14,7 +14,7 @@ from typing import Any
 
 try:
     from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover - 仅在缺少可选依赖时触发
     raise ImportError(
@@ -30,6 +30,11 @@ from yai_core.batteries.fastapi_server.ratelimit import (
     RateLimitConfig,
     SlidingWindowLimiter,
     client_ip,
+)
+from yai_core.batteries.fastapi_server.readiness import (
+    DEFAULT_PROBE_TIMEOUT,
+    default_probes,
+    run_probes,
 )
 
 # 限流只拦这一条 POST：三个 GET 端点（health / verification / tools）是
@@ -49,10 +54,24 @@ def create_app(
     auth: ApiKeyAuth | None = None,
     rate_limit: RateLimitConfig | None = None,
     guard: ResponseGuardConfig | None = None,
+    readiness_probes: dict | None = None,
+    readiness_timeout: float = DEFAULT_PROBE_TIMEOUT,
 ) -> FastAPI:
     app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
+
+    # 就绪探针：默认只做廉价本地状态报告（不调模型、不发网络请求），宿主可追加
+    # DB ping / 模型探活等；同名探针以宿主注册的为准。
+    probes = {**default_probes(core), **(readiness_probes or {})}
+    # /metrics 默认在配置了 API Key 时一并保护；YAI_METRICS_PUBLIC=1 可显式公开。
+    # /health 与 /readyz 恒公开（探针高频抓取，绝不能被鉴权 / 限流误伤）。
+    _metrics_public = os.getenv("YAI_METRICS_PUBLIC", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
     # 评审期限流（opt-out via env）：None -> 从环境变量读默认策略；
     # enabled=False 时不注册中间件，零开销、零行为变化。
@@ -67,25 +86,31 @@ def create_app(
     # API Key 就能被无限速在线爆破。因此这里**先注册鉴权（内层），再注册限流
     # （外层）**。
 
+    # 配置了 Key 时，/metrics 默认也要鉴权（除非显式 YAI_METRICS_PUBLIC=1）。
+    metrics_protected = auth_cfg.enabled and not _metrics_public
+
     # 1) 鉴权（内层，opt-in）：未配置 Key 时不注册中间件，零开销、行为不变。
     if auth_cfg.enabled:
 
         @app.middleware("http")
         async def _auth_middleware(request, call_next):
-            if auth_cfg.should_protect(request.url.path):
-                if not auth_cfg.check_header(
-                    request.headers.get("authorization"),
-                    request.headers.get("x-api-key"),
-                ):
-                    # 未授权在中间件层直接 401：不进 core，不花模型钱。
-                    return JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "unauthorized",
-                            "detail": "缺少或无效的 API Key（Authorization: Bearer <key>）",
-                        },
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+            path = request.url.path
+            need_auth = auth_cfg.should_protect(path) or (
+                path == "/metrics" and metrics_protected
+            )
+            if need_auth and not auth_cfg.check_header(
+                request.headers.get("authorization"),
+                request.headers.get("x-api-key"),
+            ):
+                # 未授权在中间件层直接 401：不进 core，不花模型钱。
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "unauthorized",
+                        "detail": "缺少或无效的 API Key（Authorization: Bearer <key>）",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             return await call_next(request)
 
     # 2) 限流（外层）：最后注册 => 最外层。所有 POST /v1/agent/run（含未授权
@@ -121,6 +146,25 @@ def create_app(
     @app.get("/.well-known/xagent-verification.json")
     async def verification() -> dict:
         return {"schemaVersion": 1, "slug": slug, "commit": commit}
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """就绪探针：任一探针失败 / 超时即 503（编排系统据此摘流量，不重启）。"""
+        ready, checks = await run_probes(probes, timeout=readiness_timeout)
+        return JSONResponse(
+            {"status": "ready" if ready else "not_ready", "checks": checks},
+            status_code=200 if ready else 503,
+        )
+
+    @app.get("/metrics")
+    async def metrics(format: str | None = None):
+        """运行指标：默认 Prometheus 文本；?format=json 返回结构化快照。"""
+        if format == "json":
+            return JSONResponse(core.metrics_snapshot())
+        return PlainTextResponse(
+            core.metrics.render_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.get("/v1/tools")
     async def list_tools() -> list[dict]:

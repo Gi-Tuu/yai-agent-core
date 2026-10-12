@@ -49,6 +49,9 @@
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
   │    └─（可选）外侧订阅者 traced_astream 把同一条事件流转成一条 OTel trace（第 33 篇）【integrations/tracing/】
+  │    └─ 旁路 MetricsRecorder 在唯一出口累计 runs/工具/模型档位/时延（第 38 篇）【metrics.py】
+  │         └─ GET /metrics 吐 Prometheus 文本；（可选）OTel meter 采集时 pull【integrations/metrics/】
+  │         └─ GET /readyz 就绪探针（失败只摘流量不重启）【batteries/fastapi_server/readiness.py】
   │ ⑧ 历史写进 Memory（InMemoryStore / SqliteStore）【memory/】
   │ ⑨（可选）任务结束后从事件流抽成败，回灌 learning 学习器  【learning/】
   └ 返回 RunResult（策略 + 事件列表 + 最终文本）
@@ -97,6 +100,9 @@
 | `shell/desktop/docker_sandbox.py` | 生产级沙箱：一次性容器 OS 级隔离（无网/只读/限资源） | 加固的隔离车间 |
 | `evaluation/` | 端到端离线评测：完成率、工具精确/召回、越权、无支撑断言（golden 回归基线） | 考完打分的判卷人 |
 | `integrations/tracing/otel.py` | 结构化 tracing：外侧订阅事件流转成一条 OpenTelemetry trace（可选 `[otel]` extra，不改内核） | 给整场手术录像并标注每一刀 |
+| `metrics.py` | 零依赖运行指标收集器：runs/工具/模型档位/事件计数 + 时延直方图 + Prometheus 文本（第 38 篇） | 店铺的每日流水账 |
+| `batteries/fastapi_server/readiness.py` | 就绪探针：并发执行、超时/异常隔离，失败只摘流量不重启（第 38 篇） | 开门营业前的逐项点检表 |
+| `integrations/metrics/otel_meter.py` | OTel 指标桥接：observable 仪器采集时从快照拉值（可选 `[otel]` extra，第 38 篇） | 把流水账自动誊抄到总部报表系统 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
 
@@ -145,6 +151,7 @@
 - 35 · `kernel/budget.py` + `spi/cipher.py` + `config.py` + `memory/sqlite_store.py`：生产加固 P1（任务级预算硬上限与熔断、vault 落盘静态加密 SPI + Fernet 电池、CoreConfig 集中校验与 from_config、SQLite 在线热备份/恢复）
 - 36 · `shell/employee/worker.py` + `delegate.py`：子员工预算兜底与跨层级共享并发闸（default_budget、budget_exceeded 回流、DelegationSupervisor 全局信号量、per-task 预算覆盖）
 - 37 · `memory/vault.py` + `kernel/loop.py` + `config.py` + `core.py`：长期记忆语义召回与任务起始主动召回（异步 arecall 词法 OR 语义、embedder 注入与向量懒缓存、失败降级纯词法、loop 任务开始自动注入 system 记忆并发 memories_recalled 事件）
+- 38 · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
 
 ## 5. 自检（读完本篇应能回答）
 
