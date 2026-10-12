@@ -257,9 +257,10 @@
   <div class="box">
     <b>安全边界（教学级沙箱）：</b>
     代码工具以 <code>python -I -S</code> 干净解释器 + 内置白名单在一次性子进程中执行，
-    模型代码 <b>无法 import（无网络）、无法 open（无文件）、无法反射逃逸</b>，并有超时杀死；
-    进程崩溃 / 死循环不影响内核。生产环境跑不可信代码时，应把同一 ToolSandbox 协议换成
-    容器 / gVisor / 微 VM，内核与 Agent 主循环无需改动。
+    exec 前再经 <b>AST 静态校验</b>拒绝 import 与下划线反射属性（异常帧遍历 / __subclasses__ 等），
+    open 等内置已被白名单移除，并有超时杀死；进程崩溃 / 死循环不影响内核。
+    白名单 + AST 属于纵深防御、并非操作系统级边界，生产环境跑不可信代码时，应把同一
+    ToolSandbox 协议换成容器（如仓库自带的 DockerSandbox）/ gVisor / 微 VM，内核与 Agent 主循环无需改动。
   </div>
 </footer>
 

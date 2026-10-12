@@ -61,31 +61,13 @@ def create_app(
     guard_config = guard if guard is not None else ResponseGuardConfig.from_env()
     # API Key 鉴权（opt-in via env）：未配置 Key 时关闭、全公开，本地/评审零门槛。
     auth_cfg = auth if auth is not None else ApiKeyAuth.from_env()
-    if config.enabled:
-        limiter = SlidingWindowLimiter(config)
+    # 中间件注册顺序很关键：Starlette / FastAPI 里**后注册的中间件处在更外层**
+    # （请求先经过它）。必须让限流位于最外层，使鉴权失败的请求也计入限流——
+    # 否则未带 / 错误 Key 的请求在鉴权层直接 401、从不进入 limiter.check()，
+    # API Key 就能被无限速在线爆破。因此这里**先注册鉴权（内层），再注册限流
+    # （外层）**。
 
-        @app.middleware("http")
-        async def _rate_limit_middleware(request, call_next):
-            if request.method == _LIMITED_METHOD and request.url.path in _LIMITED_PATHS:
-                key = client_ip(
-                    request.headers.get("x-forwarded-for"),
-                    request.client.host if request.client else None,
-                )
-                allowed, retry_after = limiter.check(key)
-                if not allowed:
-                    # 被限请求在中间件层直接返回：不进 core.run，一分模型钱都不花。
-                    return JSONResponse(
-                        status_code=429,
-                        content={
-                            "error": "rate_limited",
-                            "detail": "请求过于频繁，请稍后重试",
-                            "retry_after": retry_after,
-                        },
-                        headers={"Retry-After": str(retry_after)},
-                    )
-            return await call_next(request)
-
-    # API Key 鉴权（opt-in）：未配置 Key 时不注册中间件，零开销、行为不变。
+    # 1) 鉴权（内层，opt-in）：未配置 Key 时不注册中间件，零开销、行为不变。
     if auth_cfg.enabled:
 
         @app.middleware("http")
@@ -103,6 +85,32 @@ def create_app(
                             "detail": "缺少或无效的 API Key（Authorization: Bearer <key>）",
                         },
                         headers={"WWW-Authenticate": "Bearer"},
+                    )
+            return await call_next(request)
+
+    # 2) 限流（外层）：最后注册 => 最外层。所有 POST /v1/agent/run（含未授权
+    #    请求）都先计数，超限直接 429，连鉴权与 core 都不再进入。
+    if config.enabled:
+        limiter = SlidingWindowLimiter(config)
+
+        @app.middleware("http")
+        async def _rate_limit_middleware(request, call_next):
+            if request.method == _LIMITED_METHOD and request.url.path in _LIMITED_PATHS:
+                key = client_ip(
+                    request.headers.get("x-forwarded-for"),
+                    request.client.host if request.client else None,
+                )
+                allowed, retry_after = limiter.check(key)
+                if not allowed:
+                    # 被限请求在最外层直接返回：不进鉴权 / core，一分模型钱都不花。
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "rate_limited",
+                            "detail": "请求过于频繁，请稍后重试",
+                            "retry_after": retry_after,
+                        },
+                        headers={"Retry-After": str(retry_after)},
                     )
             return await call_next(request)
 

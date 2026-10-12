@@ -14,15 +14,19 @@
 隔离手段（教学级，不是容器）：
 - 运行在一次性独立子进程里，崩溃 / 死循环不影响内核，超时由父进程杀死；
 - ``-I -S`` 启动：忽略 PYTHONPATH、环境变量、user site 与 site-packages；
+- **AST 静态闸门**：exec 前先解析模型代码，拒绝任何 import 与下划线开头的
+  属性访问（``__traceback__`` / ``__subclasses__`` / ``__globals__`` 等），
+  在语法阶段截断异常帧遍历 / 子类枚举等已知反射逃逸；
 - 内置白名单：没有 ``__import__`` / ``open`` / ``eval`` / ``exec`` /
-  ``compile`` / ``getattr`` / ``__build_class__`` 等，模型代码无法导入
-  os/socket、无法读写文件、无法定义类、无法做内省逃逸；
+  ``compile`` / ``getattr`` / ``__build_class__`` 等，模型代码无法直接导入
+  os/socket、无法读写文件、无法定义类；
 - 模型代码里的 ``print`` 被捕获到一个**有上界**的缓冲，超量丢弃，不撑爆内存；
 - 最终结果 JSON 有字节上限，超限直接判失败；
 - Unix 下额外用 ``resource`` 限制地址空间（内存）与 CPU 秒数。
 
 **诚实的安全边界（务必读）**：
-- 仅靠 Python 内置白名单**无法 100% 防住蓄意的沙箱逃逸**；
+- 白名单 + AST 闸门显著抬高了逃逸门槛，但二者都**不是操作系统级安全边界**，
+  无法 100% 防住蓄意的、针对 Python 运行时本身的逃逸；
 - 本实现**不做网络隔离**：白名单里没有 socket，常规代码无法联网，但这不是
   操作系统级的网络命名空间，不能视为网络安全边界；
 - **Windows 没有标准库等价的内存 / CPU rlimit**：Windows 上内存不硬限，
@@ -34,6 +38,7 @@
 
 from __future__ import annotations
 
+import ast
 import builtins
 import contextlib
 import io
@@ -73,6 +78,40 @@ _SAFE_BUILTINS: dict[str, object] = {
 # math 是纯计算标准库（无 IO），预导入后直接给，模型仍拿不到 import 能力。
 _SAFE_BUILTINS["math"] = math
 _SAFE_BUILTINS["__name__"] = "__yai_sandbox__"
+
+
+class _SafetyError(Exception):
+    """模型代码命中静态安全规则（import 或下划线内部属性访问）。"""
+
+
+class _SafetyChecker(ast.NodeVisitor):
+    """exec 前的 AST 静态闸门（内置白名单之外的第二层纵深防御）。
+
+    - 拒绝任何 ``import`` / ``from ... import ...``：沙箱不提供模块加载；
+    - 拒绝所有下划线开头的属性访问（``.__traceback__`` / ``.__subclasses__`` /
+      ``.__globals__`` / ``.__builtins__`` / ``.f_globals`` / ``.f_back`` 等）：
+      异常帧遍历、子类枚举、函数全局字典等已知反射逃逸全都依赖下划线属性。
+
+    白名单内置已移除 ``__import__`` / ``getattr``，AST 层再把这些手法在语法
+    阶段截断，显著抬高逃逸门槛；但它仍不是 OS 级安全边界（见模块 docstring）。
+    """
+
+    def visit_Import(self, node: ast.Import) -> None:
+        raise _SafetyError("沙箱不允许使用 import 导入模块")
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        raise _SafetyError("沙箱不允许使用 from ... import ... 导入模块")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr.startswith("_"):
+            raise _SafetyError(f"沙箱不允许访问内部属性 .{node.attr}")
+        self.generic_visit(node)
+
+
+def _static_check(code: str) -> None:
+    """解析模型代码并做静态安全校验；语法错误 / 命中规则都抛异常交主流程回灌。"""
+    tree = ast.parse(code, filename="<code-tool>")
+    _SafetyChecker().visit(tree)
 
 
 class _CappedStream(io.StringIO):
@@ -140,6 +179,8 @@ def main() -> None:
     safe_globals: dict[str, object] = {"__builtins__": dict(_SAFE_BUILTINS)}
     try:
         with contextlib.redirect_stdout(captured):
+            # 第一道闸门：AST 静态校验，先于 compile/exec 拒绝 import 与反射属性。
+            _static_check(code)
             # compile/exec 是 worker 自己（可信）在用，执行环境仍是受限 globals。
             exec(compile(code, "<code-tool>", "exec"), safe_globals)  # noqa: S102
             run = safe_globals.get("run")

@@ -44,6 +44,12 @@ class DockerSandbox:
     def __init__(
         self,
         *,
+        # 默认跟随官方 3.12-slim 补丁 tag（docker run 动态拉取，能持续拿到安全更新）。
+        # 供应链加固 / 完全可复现部署时，应把它 pin 到多架构 manifest list 摘要：
+        #   image="python:3.12-slim@sha256:<digest>"
+        # digest 用 `docker manifest inspect python:3.12-slim` 取最外层
+        # Docker-Content-Digest（跨 amd64/arm64），并定期人工更新。构建期镜像
+        # 已在仓库 Dockerfile 中 pin 摘要。
         image: str = "python:3.12-slim",
         timeout: float = 10.0,
         memory: str = "256m",

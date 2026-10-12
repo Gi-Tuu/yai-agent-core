@@ -313,18 +313,24 @@ core.sweep_code_tools()                  # -> ["过期工具名", ...]，回收
    用 `asyncio.run_in_executor` 包成异步，死循环/崩溃不影响内核；
 2. **干净解释器**：以 `python -I -S -X utf8` 启动——`-I` 忽略 `PYTHONPATH`、环境变量、
    user site，`-S` 不加载 site-packages，`-X utf8` 防 Windows 中文乱码；
-3. **内置白名单**：worker 把模型代码的 `__builtins__` 换成白名单，没有 `__import__`、
-   `open`、`eval`、`exec`、`compile`、`getattr`、`__build_class__`，于是模型代码
-   `import os` 报 `ImportError: __import__ not found`、`open(...)` 报 `NameError`，
-   无法连网、无法读写文件、无法定义类或反射逃逸；
+3. **AST 静态闸门 + 内置白名单（双层）**：exec 前 worker 先用标准库 `ast` 解析模型代码，
+   拒绝任何 `import` / `from ... import ...` 以及所有下划线开头的属性访问
+   （`__traceback__` / `__subclasses__` / `__globals__` / `f_globals` / `f_back` 等），
+   在语法阶段截断异常帧遍历、子类枚举等已知反射逃逸；通过后再用替换过的 `__builtins__`
+   白名单执行——没有 `__import__`、`open`、`eval`、`exec`、`compile`、`getattr`、
+   `__build_class__`。于是 `import os` 在 AST 阶段就被拒、`open(...)` 报 `NameError`，
+   模型代码无法连网、无法读写文件、无法定义类；
 4. **超时**：`subprocess.run(..., timeout=)` 到时杀进程，返回 `ok=False`；
 5. **协议干净**：模型代码的 `print` 被 `redirect_stdout` 捕获进结果的 `meta.stdout`，
    最终只往真实 stdout 打一行 JSON envelope。
 
-> **诚实的边界**：仅靠 Python 内置白名单无法 100% 防住**蓄意**逃逸（历史上有通过异常链、
-> 子类化绕过的手法）。这个示例是"教学级"：能挡住模型常规越界、跨平台、零依赖，用来讲清
-> SPI 契约。生产环境跑不可信代码，应把**同一个 `ToolSandbox` 协议**换成容器 / gVisor /
-> 微 VM（Firecracker）——内核与 Agent 主循环一行都不用改。这正是"机制在内核、策略在宿主"
+> **诚实的边界**：白名单 + AST 闸门显著抬高了逃逸门槛，但二者都不是操作系统级安全边界，
+> 无法 100% 防住**蓄意**的、针对 Python 运行时本身的逃逸（历史上异常链、子类化、帧遍历
+> 都曾被用来绕过纯 Python 沙箱）。这个示例是"教学级"：能挡住模型常规越界、跨平台、零依赖，
+> 用来讲清 SPI 契约。产品层已自带 `shell/desktop/docker_sandbox.py` 的 `DockerSandbox`
+> （一次性容器、禁网 / 只读根文件系统 / drop capabilities / no-new-privileges / pids 上限）
+> 作为生产默认；更高隔离需求可把**同一个 `ToolSandbox` 协议**换成 gVisor / 微 VM（Firecracker）
+> ——内核与 Agent 主循环一行都不用改。这正是"机制在内核、策略在宿主"
 > 的价值。
 
 命令行版：

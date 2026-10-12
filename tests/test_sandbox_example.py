@@ -82,6 +82,31 @@ def test_sandbox_blocks_reflection() -> None:
     assert not r.ok and "getattr" in r.error
 
 
+def test_sandbox_blocks_dunder_attribute() -> None:
+    """AST 闸门拒绝下划线属性：().__class__.__subclasses__ 在语法阶段被拦。"""
+    sb = SubprocessSandbox()
+    r = asyncio.run(
+        sb.execute("def run(inputs):\n    return ().__class__.__bases__", {})
+    )
+    assert not r.ok
+    assert "属性" in r.error or "__class__" in r.error
+
+
+def test_sandbox_blocks_traceback_frame_escape() -> None:
+    """回归 M1：异常帧遍历逃逸（e.__traceback__.tb_frame.f_globals）必须被拦。"""
+    code = (
+        "def run(inputs):\n"
+        "    try:\n"
+        "        raise RuntimeError('x')\n"
+        "    except Exception as e:\n"
+        "        f = e.__traceback__.tb_frame\n"
+        "        return f.f_globals.get('__name__')\n"
+    )
+    r = asyncio.run(SubprocessSandbox().execute(code, {}))
+    assert not r.ok
+    assert "属性" in r.error or "__traceback__" in r.error
+
+
 def test_sandbox_reports_missing_run() -> None:
     sb = SubprocessSandbox()
     r = asyncio.run(sb.execute("x = 1", {}))
