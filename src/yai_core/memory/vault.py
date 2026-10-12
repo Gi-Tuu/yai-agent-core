@@ -27,7 +27,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from yai_core.discovery.scoring import token_similarity
+from yai_core.discovery.scoring import (
+    DEFAULT_SYNONYM_GROUPS,
+    canonicalize,
+    token_similarity,
+    tokenize,
+)
 from yai_core.discovery.semantic import cosine_similarity
 from yai_core.spi.cipher import StorageCipher
 from yai_core.spi.embedding import EmbeddingProvider
@@ -35,6 +40,18 @@ from yai_core.types import ToolSpec
 
 #: 落盘格式版本，后续结构演进时据此迁移。
 STORAGE_VERSION = 1
+
+
+def _index_tokens(text: str) -> set[str]:
+    """把文本归一后切成供倒排索引使用的 token 集合（unigram ∪ bigram）。
+
+    必须与 :func:`token_similarity` 内部走完全相同的 ``canonicalize → tokenize``
+    归一（含同义词组），这样"query 与某条 note 没有任何公共 token"才严格等价于
+    ``token_similarity == 0``，倒排预筛才不会漏掉任何本该命中的记忆。CJK bigram
+    （两字）与 unigram（拉丁词 / CJK 单字）token 空间天然不相交，可安全放进同一字典。
+    """
+    unigrams, bigrams = tokenize(canonicalize(text, DEFAULT_SYNONYM_GROUPS))
+    return unigrams | bigrams
 
 #: remember 支持的记忆类型。
 VALID_KINDS = ("fact", "preference", "profile", "episode", "note")
@@ -133,6 +150,10 @@ class MemoryVault:
         cipher: 可选的落盘静态加密（第九 SPI）；None 时明文 JSON。
         embedder: 可选文本嵌入器（第八 SPI）；None 时 :meth:`arecall` 退化为纯词法。
         clock: 时间源（测试可注入固定时钟）。
+        max_notes: 可选容量上限（正整数）；None（默认）表示不限制、绝不主动删除
+            记忆。配置后若条数超限，按"重要度低 → 最久未用 → 最旧"淘汰到上限，
+            给长期运行的数字员工一个有界存储安全阀。importance=5 只是最后才被
+            淘汰、不设硬豁免，以保证容量一定能收敛。
     """
 
     def __init__(
@@ -142,17 +163,31 @@ class MemoryVault:
         cipher: StorageCipher | None = None,
         embedder: EmbeddingProvider | None = None,
         clock: Any = _default_clock,
+        max_notes: int | None = None,
     ) -> None:
+        if max_notes is not None and (
+            isinstance(max_notes, bool) or not isinstance(max_notes, int) or max_notes <= 0
+        ):
+            raise ValueError("max_notes 必须是正整数，或为 None（不限制）")
         self.storage_path = Path(storage_path) if storage_path is not None else None
         self._cipher = cipher
         self._embedder = embedder
         self._clock = clock
+        self._max_notes = max_notes
         self._notes: list[MemoryNote] = []
         # note_id -> 向量的懒缓存：新增 / 合并后该 id 缺失，下次 arecall 批量补算。
         self._vectors: dict[str, Sequence[float]] = {}
+        # 词法倒排索引（token -> note_id 集合），懒构建：任何写入后置 None，
+        # 下次召回时重建。None 也表示"尚未构建"。
+        self._lex_index: dict[str, set[str]] | None = None
+        # 因 max_notes 容量上限被淘汰的累计条数（含启动收敛），便于宿主观测。
+        self._evicted_count = 0
         # 最近一次语义通道降级原因（None 表示未降级），便于宿主观测与测试。
         self.semantic_last_error: str | None = None
         self._load()
+        # 宿主可能在运行一段时间后才调小上限：打开存量库时也收敛到容量内。
+        if self._max_notes is not None and self._enforce_cap() > 0:
+            self._save()
 
     # ---------- 写入 ----------
 
@@ -184,6 +219,7 @@ class MemoryVault:
             duplicate.last_used_at = self._clock()
             # 合并可能改变正文标签 / 重要度，旧向量失效，下次语义召回时重算。
             self._vectors.pop(duplicate.id, None)
+            self._lex_index = None  # 合并改变了该 note 的文本/标签，倒排失效。
             merged = duplicate
             did_merge = True
         else:
@@ -196,9 +232,11 @@ class MemoryVault:
                 last_used_at=self._clock(),
             )
             self._notes.append(note)
+            self._lex_index = None  # 新增 note，倒排待重建。
             merged = note
             did_merge = False
 
+        self._enforce_cap()  # 配置了容量上限时在落盘前收敛（默认 None 立即返回）。
         self._save()
         return merged, did_merge
 
@@ -208,6 +246,7 @@ class MemoryVault:
             if note.id == note_id:
                 del self._notes[index]
                 self._vectors.pop(note_id, None)
+                self._lex_index = None
                 self._save()
                 return True
         return False
@@ -309,10 +348,14 @@ class MemoryVault:
             "by_kind": by_kind,
             "semantic_enabled": self._embedder is not None,
             "semantic_last_error": self.semantic_last_error,
+            "capacity": {
+                "max_notes": self._max_notes,
+                "evicted": self._evicted_count,
+            },
             "recent": recent,
         }
 
-    # ---------- 内部：筛选 / 排序 / 向量 ----------
+    # ---------- 内部：筛选 / 排序 / 索引 / 容量 ----------
 
     @staticmethod
     def _matches_filters(
@@ -326,6 +369,42 @@ class MemoryVault:
             return False
         return True
 
+    def _ensure_lex_index(self) -> dict[str, set[str]]:
+        """懒构建（或重建）词法倒排索引：canonical token -> 含该 token 的 note_id 集合。
+
+        任何写入都把 ``_lex_index`` 置 None，因此这里只在"写后第一次召回"付一次
+        O(n) 建索引成本，之后每次召回只扫候选并集，不再对全部记忆逐条算相似度。
+        """
+        if self._lex_index is None:
+            index: dict[str, set[str]] = {}
+            for note in self._notes:
+                for token in _index_tokens(note.candidate_text()):
+                    index.setdefault(token, set()).add(note.id)
+            self._lex_index = index
+        return self._lex_index
+
+    def _enforce_cap(self) -> int:
+        """把记忆条数收敛到 ``max_notes`` 以内，返回本轮淘汰条数；未配置上限返回 0。
+
+        淘汰键（全部升序、越靠前越先删）：重要度低 → 最久未用 → 最旧 → id。
+        importance=5 不设硬豁免（仅排在最后），确保无论标记分布如何容量都能收敛；
+        被淘汰记忆的缓存向量同步清除。调用方负责随后 ``_save()`` 落盘。
+        """
+        if self._max_notes is None or len(self._notes) <= self._max_notes:
+            return 0
+        ordered = sorted(
+            self._notes,
+            key=lambda n: (n.importance, n.last_used_at, n.created_at, n.id),
+        )
+        drop_count = len(self._notes) - self._max_notes
+        victim_ids = {n.id for n in ordered[:drop_count]}
+        self._notes = [n for n in self._notes if n.id not in victim_ids]
+        for victim_id in victim_ids:
+            self._vectors.pop(victim_id, None)
+        self._lex_index = None
+        self._evicted_count += drop_count
+        return drop_count
+
     def _rank_lexical(
         self,
         query: str,
@@ -333,9 +412,27 @@ class MemoryVault:
         kinds: list[str] | None,
         tags: list[str] | None,
     ) -> list[tuple[MemoryNote, float]]:
-        """词法通道：返回通过 kinds/tags 过滤且词法相关度 > 0 的 (note, sim)。"""
+        """词法通道：返回通过 kinds/tags 过滤且词法相关度 > 0 的 (note, sim)。
+
+        规模治理：先用倒排索引取"与 query 至少有一个公共 token"的候选并集，再只对
+        候选逐条算 :func:`token_similarity`。由于公共 token 交集为空当且仅当
+        ``token_similarity == 0``，被倒排跳过的记忆原本也会被 ``sim > 0`` 丢弃，
+        因此结果与全表扫描逐字节一致，只是把 O(n) 全量打分降为 O(候选数)。query
+        切不出任何 token（如纯标点）时回退全扫，保持与历史行为完全一致。
+        """
+        index = self._ensure_lex_index()
+        query_tokens = _index_tokens(query)
+        candidate_ids: set[str] | None = None
+        if query_tokens:
+            candidate_ids = set()
+            for token in query_tokens:
+                posting = index.get(token)
+                if posting:
+                    candidate_ids |= posting
         ranked: list[tuple[MemoryNote, float]] = []
-        for note in self._notes:
+        for note in self._notes:  # 保持原遍历顺序，稳定排序的 tie-break 不变。
+            if candidate_ids is not None and note.id not in candidate_ids:
+                continue
             if not self._matches_filters(note, kinds, tags):
                 continue
             sim = token_similarity(query, note.candidate_text())

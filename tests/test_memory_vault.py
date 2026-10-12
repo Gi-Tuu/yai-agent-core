@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from yai_core.discovery.scoring import token_similarity
 from yai_core.memory.vault import MemoryVault
 
 
@@ -289,3 +290,172 @@ def test_merge_invalidates_cached_vector() -> None:
 def test_status_reports_semantic_flag() -> None:
     assert MemoryVault().status()["semantic_enabled"] is False
     assert MemoryVault(embedder=MemoryFakeEmbedder()).status()["semantic_enabled"] is True
+
+
+# ---------- 规模治理：词法倒排索引（与全表扫描逐字节等价） ----------
+
+
+def _seed_mixed_corpus(vault: MemoryVault) -> None:
+    """灌入一批中英混合、含同义词与无关项的确定性语料。"""
+    vault.remember("用户对芒果严重过敏，聚餐要避开芒果", kind="fact", tags=["饮食"], importance=5)
+    vault.remember("明天下午三点开团队站会，记得同步进度", kind="episode", tags=["会议"])
+    vault.remember("偏好深色界面，代码字体用 JetBrains Mono", kind="preference", tags=["界面"])
+    vault.remember("the weather forecast calls for heavy rain tomorrow", kind="note")
+    vault.remember("quarterly budget report is due by end of month", kind="note")
+    vault.remember("用户养了一只叫团子的橘猫，今年三岁", kind="fact", tags=["宠物"])
+    vault.remember("部署上线前要跑一遍冒烟测试和回滚预案", kind="note", tags=["运维"])
+    vault.remember("她出门总记得带伞，因为常忘看天气预报", kind="episode")
+
+
+def _brute_force_lexical(vault: MemoryVault, query: str, *, kinds=None, tags=None):
+    """不使用倒排索引的参考实现：对全部记忆逐条算 token_similarity（再过 filter）。"""
+    hits = {}
+    for note in vault._notes:  # noqa: SLF001
+        if not MemoryVault._matches_filters(note, kinds, tags):  # noqa: SLF001
+            continue
+        sim = token_similarity(query, note.candidate_text())
+        if sim > 0:
+            hits[note.id] = sim
+    return hits
+
+
+def test_inverted_index_matches_brute_force_across_queries() -> None:
+    vault = MemoryVault(clock=TickClock())
+    _seed_mixed_corpus(vault)
+    queries = [
+        "芒果过敏吃什么",                       # 中文 + 同义词归一
+        "明天天气怎么样，会下雨吗",            # "天气/雨" 命中天气条与带伞条（canonicalize）
+        "站会几点开",                           # 会议条
+        "weather forecast rain",               # 英文词命中
+        "季度预算报告什么时候交",              # 中文问英文条：无字面交集，应都不命中
+        "!!!???",                               # 切不出 token：倒排回退全扫，结果为空
+        "与上述内容完全无关的量子隧穿推导",     # 无命中
+    ]
+    for query in queries:
+        indexed = {note.id: sim for note, sim in vault._rank_lexical(  # noqa: SLF001
+            query, kinds=None, tags=None
+        )}
+        brute = _brute_force_lexical(vault, query)
+        assert indexed == brute, f"倒排与全扫在 query={query!r} 上不一致"
+
+
+def test_inverted_index_respects_kinds_tags_filters() -> None:
+    vault = MemoryVault(clock=TickClock())
+    _seed_mixed_corpus(vault)
+    for query, kinds, tags in [
+        ("芒果过敏", ["fact"], None),
+        ("天气", None, ["运维"]),
+        ("站会", ["episode"], None),
+    ]:
+        indexed = {note.id: sim for note, sim in vault._rank_lexical(  # noqa: SLF001
+            query, kinds=kinds, tags=tags
+        )}
+        brute = _brute_force_lexical(vault, query, kinds=kinds, tags=tags)
+        assert indexed == brute
+
+
+def test_lex_index_lazily_built_and_invalidated_by_writes() -> None:
+    vault = MemoryVault(clock=TickClock())
+    vault.remember("用户对芒果严重过敏", kind="fact")
+    assert vault._lex_index is None  # noqa: SLF001  写入后懒失效，尚未构建。
+    vault.recall("芒果过敏")
+    assert vault._lex_index is not None  # noqa: SLF001  召回触发构建。
+    note_id = next(iter(vault._lex_index.get("芒果", set())))  # noqa: SLF001
+    assert note_id  # 倒排链确实挂到了对应 note。
+    vault.forget(note_id)
+    assert vault._lex_index is None  # noqa: SLF001  删除后失效，下次召回重建。
+
+
+# ---------- 规模治理：可选 max_notes 容量上限（默认 None 不删数据） ----------
+
+
+def test_max_notes_evicts_low_importance_then_oldest() -> None:
+    vault = MemoryVault(clock=TickClock(), max_notes=3)
+    vault.remember("第一条低优先的闲聊", importance=1)
+    vault.remember("第二条普通记录", importance=3)
+    vault.remember("第三条普通记录", importance=3)
+    vault.remember("第四条普通记录", importance=3)
+    vault.remember("第五条最重要的事实", importance=5)
+    status = vault.status()
+    assert status["total"] == 3
+    assert status["capacity"] == {"max_notes": 3, "evicted": 2}
+    kept = {n.content for n in vault._notes}  # noqa: SLF001
+    # 重要度最低 + 同重要度里最旧的两条先淘汰，高重要度与较新的保留。
+    assert "第五条最重要的事实" in kept
+    assert "第一条低优先的闲聊" not in kept
+    assert "第二条普通记录" not in kept
+    assert "第三条普通记录" in kept and "第四条普通记录" in kept
+
+
+def test_max_notes_recently_used_survives_over_idle_note() -> None:
+    clock = TickClock()
+    vault = MemoryVault(clock=clock, max_notes=3)
+    vault.remember("最旧但稍后会被重新翻看的记录", importance=3)
+    vault.remember("中间一条一直没人碰的记录", importance=3)
+    vault.remember("较新的记录", importance=3)
+    # 重新使用最旧那条：last_used_at 刷新到当前（k=1 只触碰它，query 足够独特）。
+    touched = vault.recall("最旧但稍后会被重新翻看的记录", k=1)
+    assert touched and "最旧" in touched[0]["content"]
+    vault.remember("第四条新记录把容量顶到超限", importance=3)
+    kept = {n.content for n in vault._notes}  # noqa: SLF001
+    # 同重要度下"最久未用"先删：一直闲置的中间条被淘汰，最近用过的最旧条留下。
+    assert "中间一条一直没人碰的记录" not in kept
+    assert "最旧但稍后会被重新翻看的记录" in kept
+    assert "较新的记录" in kept
+    assert "第四条新记录把容量顶到超限" in kept
+
+
+# 30 个用字与主题都明显不同的短语，避免模板句高度重叠被 0.92 去重误合并。
+_DISTINCT_PHRASES = [
+    "芒果过敏要避开甜品", "团队站会改到周四", "偏好深色代码界面",
+    "明天有暴雨记得关窗", "季度预算报告待审批", "橘猫团子今年三岁",
+    "上线前先跑冒烟测试", "她出门总带着折叠伞", "吉他爬格子每天二十分钟",
+    "马拉松配速降到六分", "手冲咖啡水温九十二度", "书架按出版社重新分类",
+    "航班提前二十四小时值机", "牙套每月复诊一次", "阳台多肉每周浇透",
+    "周末和棋友复盘残局", "钢琴中央 C 键走音了", "简历投了三家初创公司",
+    "房租每月一号自动转账", "护照有效期不足半年", "冷冻室积霜需要化冻",
+    "晨起做十分钟猫式拉伸", "照片每周备份到移动硬盘", "新眼镜配防蓝光镜片",
+    "无人签收的包裹已拒收", "聚餐定在巷口火锅店", "胎压不足就近补气",
+    "签证要准备银行流水", "路由器每周重启一次", "洗衣液快用完记得补货",
+]
+
+
+def test_max_notes_default_none_never_evicts() -> None:
+    vault = MemoryVault(clock=TickClock())  # 默认不限制。
+    for phrase in _DISTINCT_PHRASES:
+        vault.remember(phrase)
+    status = vault.status()
+    assert status["total"] == len(_DISTINCT_PHRASES)
+    assert status["capacity"] == {"max_notes": None, "evicted": 0}
+
+
+def test_max_notes_converges_existing_store_on_reload(tmp_path) -> None:
+    path = tmp_path / "vault.json"
+    first = MemoryVault(storage_path=path, clock=TickClock())  # 先不设上限写 5 条。
+    for phrase in _DISTINCT_PHRASES[:5]:
+        first.remember(phrase)
+    assert first.status()["total"] == 5
+    # 宿主后来把上限调到 2 重开：启动即收敛并落盘。
+    second = MemoryVault(storage_path=path, max_notes=2)
+    assert second.status()["total"] == 2
+    assert second.status()["capacity"]["evicted"] == 3
+    # 收敛结果确实已写进文件：再用一个无上限 vault 打开，看到的就是 2 条。
+    third = MemoryVault(storage_path=path)
+    assert third.status()["total"] == 2
+
+
+def test_max_notes_merge_does_not_evict_at_capacity() -> None:
+    vault = MemoryVault(clock=TickClock(), max_notes=2)
+    vault.remember("用户对芒果严重过敏", importance=3)
+    vault.remember("另一条独立的事实记录", importance=3)
+    # 与第一条高度重复 → 合并不增条数，容量已满也不应误删任何记忆。
+    _, merged = vault.remember("用户对芒果严重过敏", tags=["新增标签"], importance=4)
+    assert merged is True
+    assert vault.status()["total"] == 2
+    assert vault.status()["capacity"]["evicted"] == 0
+
+
+@pytest.mark.parametrize("bad", [0, -3, True, "20"])
+def test_invalid_max_notes_raises(bad) -> None:
+    with pytest.raises(ValueError):
+        MemoryVault(max_notes=bad)  # type: ignore[arg-type]

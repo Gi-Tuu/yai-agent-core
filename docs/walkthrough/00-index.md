@@ -154,6 +154,7 @@
 - 37 · `memory/vault.py` + `kernel/loop.py` + `config.py` + `core.py`：长期记忆语义召回与任务起始主动召回（异步 arecall 词法 OR 语义、embedder 注入与向量懒缓存、失败降级纯词法、loop 任务开始自动注入 system 记忆并发 memories_recalled 事件）
 - 38 · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
 - 39 · `examples/host_j_actual/` + `examples/five_beats.py`：第三方播种端到端（记账应用 Actual Budget；五拍标准线 唤醒→长尾→缺口→补能力/派子员工→授权→完成；发现补分类与委派只读两条离线链路；整数分与官方 CLI argv 锁定；网页壳 8240）
+- 40 · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
 
 ## 5. 自检（读完本篇应能回答）
 
