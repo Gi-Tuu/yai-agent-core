@@ -5,6 +5,8 @@
 
 import asyncio
 
+import pytest
+
 from yai_core import AgentCore, ModelResponse
 from yai_core.kernel import CompactionPolicy
 from yai_core.kernel.compaction import (
@@ -243,3 +245,72 @@ def test_loop_emits_context_compacted_for_long_history() -> None:
     assert EventType.CONTEXT_COMPACTED in types
     assert types[-1] == EventType.DONE
     assert result.final_text == "这是最终答复"
+
+
+def test_loop_compaction_uses_dedicated_compaction_model() -> None:
+    """C2：注入 compaction_model 后，摘要走专用小模型，主模型只做最终答复。"""
+
+    async def scenario():
+        memory = InMemoryStore()
+        for i in range(3):
+            await memory.append_history(
+                ChatMessage(role="user", content=f"旧任务{i} " + "U" * 80)
+            )
+            await memory.append_history(
+                ChatMessage(role="assistant", content=f"旧答复{i} " + "A" * 80)
+            )
+        summary_model = ScriptedModel([ModelResponse(content="专用模型摘要QWE")])
+        main_model = ScriptedModel([ModelResponse(content="主模型最终答复")])
+        policy = CompactionPolicy(hard_max_chars=300, keep_recent_rounds=1)
+        core = AgentCore(
+            main_model,
+            memory=memory,
+            context_compaction=policy,
+            compaction_model=summary_model,
+        )
+        result = await core.run("你好")
+        return result, main_model, summary_model
+
+    result, main_model, summary_model = asyncio.run(scenario())
+    types = [e.type for e in result.events]
+    assert EventType.CONTEXT_COMPACTED in types
+    assert result.final_text == "主模型最终答复"
+    # 压缩恰好调用一次专用模型；主模型只被调一次（最终答复），没被借去做摘要。
+    assert summary_model.calls == 1
+    assert main_model.calls == 1
+
+
+# ---------- CompactionPolicy.from_context_window：按比例水位工厂（C3） ----------
+
+
+def test_from_context_window_default_ratios_match_defaults() -> None:
+    # 40000 字符工作区 × 0.6 / 0.4 恰好等于无参默认 24000 / 16000（换算锚点）。
+    assert CompactionPolicy.from_context_window(40_000) == CompactionPolicy()
+
+
+def test_from_context_window_custom_ratios_and_rounds() -> None:
+    p = CompactionPolicy.from_context_window(
+        100_000, keep_recent_rounds=3, hard_ratio=0.5, target_ratio=0.25
+    )
+    assert p.hard_max_chars == 50_000
+    assert p.target_chars == 25_000
+    assert p.keep_recent_rounds == 3
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"chars": 0},
+        {"chars": -1},
+        {"chars": True},
+        {"chars": 100_000, "hard_ratio": 0.4, "target_ratio": 0.5},  # 高低倒挂
+        {"chars": 100_000, "hard_ratio": 0.5, "target_ratio": 0.5},  # 高低相等
+        {"chars": 100_000, "hard_ratio": 1.2, "target_ratio": 0.4},  # 高水位 >1
+        {"chars": 100_000, "target_ratio": 0.0},  # 低水位 0
+        {"chars": 100_000, "keep_recent_rounds": 0},
+        {"chars": 1},  # 窗口过小，按比例取整后高/低水位为 0
+    ],
+)
+def test_from_context_window_rejects_invalid(kwargs) -> None:
+    with pytest.raises(ValueError):
+        CompactionPolicy.from_context_window(**kwargs)

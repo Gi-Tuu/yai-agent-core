@@ -119,6 +119,8 @@ select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_r
 - 三段式窗口：system（index 0）永留 / 旧轮压成一条摘要 / 最近完整轮全保留；`replace_range` 强制 `start≥1`、两端对齐 user 轮首，消息结构对模型永远合法。
 - 摘像是增强不是依赖：模型异常、超时、空摘要一律退回已验证的硬裁剪 `enforce_budget()`。
 - 开关：`AgentCore(context_compaction=True)` 用默认 `CompactionPolicy`（hard 24000 / target 16000 / keep 2 轮），也可传自定义 policy；默认关闭，老宿主行为不变。灵动岛真机工厂已开启。
+- 摘要可走专用小模型（省钱）：`AgentCore(compaction_model=小模型)` 后，压缩这一次额外调用改走它、主模型专心做任务；不传（`None`）则完全回归主模型。摘要模型是对象参数、不进 `CoreConfig`，且压缩调用与路由分类一样不计入任务预算。
+- 水位便捷构造：`CompactionPolicy.from_context_window(chars, *, hard_ratio=0.6, target_ratio=0.4)` 按"会话字符工作区"比例推算高/低水位，`from_context_window(40000)` 恰等于默认 24000/16000；坚持字符口径、不引入 tokenizer，非法比例 / 过小窗口在装配期抛错。
 - 边界：压缩只重排本次上下文、不改写 MemoryStore 中的持久历史；跨请求历史裁剪仍走 retention（见 2.2）。
 
 ### 2.6 并发模型与多租户隔离

@@ -116,6 +116,7 @@ class AgentLoop:
         full_schema_budget: int = 24,
         meta_tools: Iterable[str] = (),
         compaction_policy: CompactionPolicy | None = None,
+        compaction_model: ModelProvider | None = None,
         tier_policy: TierPolicy | None = None,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
@@ -132,6 +133,8 @@ class AgentLoop:
         # 它们注册进目录让模型可见，但不进 ToolExecutor 的普通 handler 执行路径。
         # compaction_policy：上下文摘要压缩策略；None（默认）= 关闭、只走硬裁剪，
         # 非 None 时在 react 每轮模型调用前检查高水位，把旧轮压成摘要并发事件。
+        # compaction_model：摘要专用模型；None（默认）时压缩也走主模型，宿主可
+        # 注入更便宜的小模型专门做摘要以省钱（预算计数本就不含压缩调用）。
     ) -> None:
         self.model = model
         self.registry = registry
@@ -148,6 +151,8 @@ class AgentLoop:
         self.meta_tools: set[str] = set(meta_tools)
         # 摘要压缩：默认 None（关闭，行为与旧版一致）；宿主显式传入后启用。
         self.compaction_policy = compaction_policy
+        # 摘要专用模型：None 时压缩走主模型；传入小模型则摘要改走它（省钱）。
+        self.compaction_model = compaction_model
         # 成本·延迟感知选档：None（关闭）时执行轮恒走 standard（旧行为）；
         # 传入 TierPolicy 后按"该花才花"在规划/失败/后段升 strong。
         self.tier_policy = tier_policy
@@ -162,6 +167,10 @@ class AgentLoop:
             self.router.on_diagnostic = on_diagnostic
         if hasattr(self.model, "on_diagnostic"):
             self.model.on_diagnostic = on_diagnostic
+        if self.compaction_model is not None and hasattr(
+            self.compaction_model, "on_diagnostic"
+        ):
+            self.compaction_model.on_diagnostic = on_diagnostic
         # 任务级预算规格（模型/工具/token 硬上限）；None=不限制。
         # 真正的计数器在每次 astream 顶层任务开始时新建（_active_budget），
         # 澄清递归共享同一计数器，任务结束即废弃。
@@ -712,7 +721,7 @@ class AgentLoop:
             if self.compaction_policy is not None:
                 compact_ev = await compact_context(
                     ctx,
-                    self.model,
+                    self.compaction_model or self.model,
                     self.compaction_policy,
                     timeout=self.model_timeout,
                     on_diagnostic=self._on_diagnostic,

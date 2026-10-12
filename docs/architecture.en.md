@@ -141,6 +141,14 @@ The most recent keep_recent_rounds complete turns stay intact, so long conversat
 - Switch: `AgentCore(context_compaction=True)` uses the default `CompactionPolicy` (hard 24000 / target
   16000 / keep 2 turns), or pass a custom policy; off by default so legacy host behavior is unchanged. The
   Dynamic Island live factory enables it.
+- Summarization can use a dedicated cheap model (cost saving): with `AgentCore(compaction_model=small)`,
+  the extra summarization call is routed to that model while the primary model focuses on the task; passing
+  `None` (default) falls back to the primary model. The compaction model is an object argument, is not part
+  of `CoreConfig`, and—like route classification—its calls are not counted against the task budget.
+- Watermark convenience constructor: `CompactionPolicy.from_context_window(chars, *, hard_ratio=0.6,
+  target_ratio=0.4)` derives the high/low watermarks as proportions of the per-session character workspace,
+  and `from_context_window(40000)` equals the default 24000/16000. It stays character-based (no tokenizer);
+  invalid ratios or an undersized window raise at construction time.
 - Boundary: compaction only rearranges the current context and never rewrites persistent history in the
   MemoryStore; cross-request history trimming still goes through retention (§2.2).
 
