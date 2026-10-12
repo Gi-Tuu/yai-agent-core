@@ -324,3 +324,55 @@ class SqliteStore:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    # ---------- 在线备份 / 恢复（运维，非 MemoryStore 契约） ----------
+
+    def backup_to(self, dest: str | Path) -> Path:
+        """在线一致快照：把当前库热备份到 ``dest`` 文件，无需停服、不阻塞读太久。
+
+        使用标准库 :meth:`sqlite3.Connection.backup`（页级在线拷贝），在实例锁内
+        执行以获得与某一时刻一致的快照；对文件库和 ``:memory:`` 库都适用。目标若
+        已存在（含残留 -wal/-shm）会被干净替换，避免把旧库的表带进新快照。
+        """
+        target = Path(dest).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _reset_db_files(target)
+        with self._lock:
+            src = self._require_conn_locked()
+            out = sqlite3.connect(str(target))
+            try:
+                src.backup(out)
+            finally:
+                out.close()
+        return target
+
+    @classmethod
+    def restore_to(cls, backup: str | Path, dest: str | Path) -> Path:
+        """把一份备份恢复为 ``dest`` 数据库文件（离线恢复，返回 dest 路径）。
+
+        典型恢复流程：停服 → ``restore_to(备份, 正式库路径)`` → 用该路径重新构造
+        :class:`SqliteStore`。备份不是有效 SQLite 文件时会抛
+        :class:`sqlite3.DatabaseError`，让调用方明确知道备份不可用而非静默起空库。
+        """
+        source = Path(backup).expanduser()
+        target = Path(dest).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _reset_db_files(target)
+        src = sqlite3.connect(str(source))
+        try:
+            out = sqlite3.connect(str(target))
+            try:
+                src.backup(out)
+            finally:
+                out.close()
+        finally:
+            src.close()
+        return target
+
+
+def _reset_db_files(path: Path) -> None:
+    """删除目标数据库及其 WAL/SHM 侧车文件，保证备份/恢复落到干净目标。"""
+    for suffix in ("", "-wal", "-shm"):
+        sidecar = path.with_name(path.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()

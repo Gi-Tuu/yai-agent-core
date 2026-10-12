@@ -49,6 +49,8 @@ otel = [
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp>=1.20",
 ]
+# 落盘静态加密：Fernet（AES-128-CBC + HMAC）保护长期记忆文件，仅 integrations.crypto 需要
+crypto = ["cryptography>=42"]
 # Fuzzing：atheris 仅在 Linux x86_64 + CPython 3.12/3.13/3.14 提供 wheel（marker 限定，
 # 其它平台 uv sync 不会尝试安装）；CI 的 fuzz job 使用，详见 fuzzing/README.md
 fuzz = [
