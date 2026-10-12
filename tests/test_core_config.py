@@ -33,8 +33,10 @@ def test_defaults_validate_and_kwargs_cover_keys() -> None:
         "memory_embedder",
         "auto_memory_recall",
         "auto_recall_k",
+        "tool_result_char_limit",
     ):
         assert key in kwargs
+    assert kwargs["tool_result_char_limit"] == 16_000
     assert kwargs["auto_memory_recall"] is False
     assert kwargs["auto_recall_k"] == 3
 
@@ -54,6 +56,9 @@ def test_defaults_validate_and_kwargs_cover_keys() -> None:
         ("model_timeout", -2.5),
         ("auto_recall_k", 0),
         ("auto_recall_k", True),  # bool 不算条数
+        ("tool_result_char_limit", 0),
+        ("tool_result_char_limit", -1),
+        ("tool_result_char_limit", True),  # bool 不算上界
     ],
 )
 def test_invalid_values_rejected(field: str, value: object) -> None:
@@ -66,6 +71,7 @@ def test_valid_budget_and_compaction_policy_pass() -> None:
     CoreConfig(budget=Budget(max_model_calls=3)).validate()
     CoreConfig(context_compaction=CompactionPolicy()).validate()
     CoreConfig(llm_router="auto").validate()
+    CoreConfig(tool_result_char_limit=None).validate()
 
 
 def test_agent_core_rejects_bad_kwargs_early() -> None:

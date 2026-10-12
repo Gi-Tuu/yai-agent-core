@@ -166,6 +166,13 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **词法 OR 语义双通道召回**：`MemoryVault.arecall(query, *, k, kinds, tags)` 是异步入口。词法通道沿用 token 相关度；当宿主经 `AgentCore(memory_embedder=...)` 注入第八个 SPI `EmbeddingProvider` 时，语义通道把 query 与记忆内容编码后做余弦相似度（复用 `discovery/semantic.py` 的标准库实现，阈值 0.45）。两通道按记忆 id 取**并集**、融合分取 `max(词法, 语义)` 再叠重要度加权，跨语言 / 换说法（中文记忆 vs 英文 query）也能召回。同步 `recall` 保留为纯词法、行为不变；`recall` 工具 handler 改异步并统一走 `arecall`。记忆向量按需懒批量计算并按 id 缓存，`remember` 合并 / `forget` 删除即令旧向量失效；embedder 抛错或返回数量不符时**降级纯词法**并记录 `semantic_last_error`（`status()` 暴露 `semantic_enabled` / `semantic_last_error`），召回不因向量服务故障而失败。
 - **任务起始主动召回**：`AgentCore(auto_memory_recall=True, auto_recall_k=3)` 时，loop 在历史之后、user 任务之前自动用任务文本调一次召回，命中则作为一条 `system` 消息注入（文案明确"若与用户本次明确指令冲突，以本次指令为准"，避免陈旧画像压过当前指令），并发 `memories_recalled` 事件（条数 + 每条 id/kind/摘要）。信息不足的 clarify 反问路径不召回；召回回调任何异常只发本地诊断、绝不阻断主任务。loop 只依赖一个 `async (task) → list[dict]` 回调（Core 用 `functools.partial(vault.arecall, k=...)` 注入），不反向依赖 vault / embedder。`CoreConfig.validate()` 在构造期拒绝"开召回但未开长期记忆""k 非正整数""embedder 非 async `embed_texts`"三类非法组合。
 
+### 2.10 工具结果有界收口与工具目录确定性排序（上下文轻量治理）
+
+在 §2.5 的整轮压缩之外，再补齐两处"喂给模型的字节"的轻量化；均内核零硬依赖、全部离线可测，且默认不改变小结果行为：
+
+- **单个工具结果统一有界收口（C4）**：`ToolExecutor` 对原生函数、代码工具（沙箱输出）、组合工具（`{"steps":[...]}`）三类成功结果，在 `json.dumps` 之后、写回对话上下文之前，统一经纯函数 `bound_tool_result(text, limit)` 收口：默认上限 **16000 字符**（与 OpenAPI 集成的 `max_result_chars` 对齐），超限保留**头 70% + 尾 30%**，中间插入显式省略标记（写明省略字符数），并以收紧循环保证结果严格不越上界，绝不静默截断。`AgentCore(tool_result_char_limit=...)` 可覆盖，传 `None` 关闭；`CoreConfig.validate()` 在装配期拒绝非正整数与 bool。`TOOL_RESULT` 成功事件新增 `truncated` 与 `result_chars`（收口前原始字符数），事件 `preview` 仍只取前 200 字；未超限的小结果逐字不变。它位于"工具结果 → 上下文"最靠近源头的一层，与 §2.5（整轮 24000 字符压缩）和在线 API 的响应体守卫 `payload_guard`（HTTP 出口 256KB）构成三道互不替代的上界。
+- **工具目录确定性排序（C1）**：`ToolRegistry` 喂给模型的 `catalog()` / `catalog_text()` / `describe()` / `llm_schemas()` 一律经内部 `_ordered()` 按工具名排序；内部存储视图 `all()` 仍保持注册顺序，按需取完整 schema 的 `schemas_for(names)` 仍遵循调用方给定顺序。这样系统提示里的工具清单字节只在工具集**真正变化**（增删 / 改名）时才改变，避免宿主注册顺序的偶然波动无谓击穿提示缓存的稳定前缀，也让快照测试确定。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |

@@ -50,6 +50,7 @@ from yai_core.tools import (
     build_request_capability_tool,
 )
 from yai_core.tools.code_tools import CodeToolManager
+from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
 from yai_core.types import AgentEvent, RunResult, Strategy, ToolSpec
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
@@ -88,6 +89,7 @@ class AgentCore:
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
+        tool_result_char_limit: int | None = DEFAULT_TOOL_RESULT_CHARS,
         learning: RouteSelector | None = None,
         on_feedback: FeedbackHook | None = None,
         context_compaction: bool | CompactionPolicy = False,
@@ -123,6 +125,7 @@ class AgentCore:
             max_iters=max_iters,
             max_clarify_rounds=max_clarify_rounds,
             full_schema_budget=full_schema_budget,
+            tool_result_char_limit=tool_result_char_limit,
             context_compaction=context_compaction,
             cost_aware=cost_aware,
             model_timeout=model_timeout,
@@ -170,6 +173,7 @@ class AgentCore:
             self.channel,
             sandbox=sandbox,
             code_manager=self.code_manager,
+            result_char_limit=tool_result_char_limit,
         )
         meta_tools: set[str] = set()
         # 组合工具能力：显式开启后注册 compose_tool meta-tool，模型可在运行时
