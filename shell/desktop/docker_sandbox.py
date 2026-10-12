@@ -157,7 +157,7 @@ class DockerSandbox:
 
         try:
             stdout_b, stderr_b = await asyncio.wait_for(_communicate(), timeout=effective)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await _force_remove()
             await _reap_client()
