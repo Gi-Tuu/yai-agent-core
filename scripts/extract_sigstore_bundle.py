@@ -1,14 +1,16 @@
-"""从 sigstore ``.bundle`` (JSON) 提取传统 cosign 分离产物 ``.sig`` 与 ``.pem``。
+"""从 sigstore keyless 签名束（``.sigstore`` / ``.bundle``，同构 JSON）提取传统
+cosign 分离产物 ``.sig`` 与 ``.pem``。
 
 OpenSSF Scorecard 的 Signed-Releases 检查只识别以 ``.asc`` / ``.minisig`` /
 ``.sig`` / ``.sign`` / ``.sigstore`` / ``.sigstore.json`` 结尾的发布资产，
-不识别新版 cosign 默认生成的 ``.bundle``。本脚本在保留完整 ``.bundle``
-（含签名、证书链与透明日志，可独立验证）的同时，导出其中**真实**的
-签名字节（``.sig``）与签名证书（``.pem``），供 Scorecard 与传统工具验证。
+不识别新版 cosign 默认的 ``.bundle``。发布工作流因此统一产出 ``.sigstore``
+（含签名、证书链与 Rekor 透明日志，可 ``cosign verify-blob --bundle`` 独立验证）；
+本脚本再从该 bundle 导出其中**真实**的签名字节（``.sig``）与签名证书（``.pem``），
+供只认裸签名/证书的旧式工具验证。
 
 用法::
 
-    python scripts/extract_sigstore_bundle.py FILE.bundle --sig FILE.sig --pem FILE.pem
+    python scripts/extract_sigstore_bundle.py FILE.sigstore --sig FILE.sig --pem FILE.pem
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ def extract(bundle_path: Path) -> tuple[bytes, bytes]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("bundle", type=Path, help="sigstore .bundle 路径")
+    ap.add_argument("bundle", type=Path, help="sigstore 签名束路径（.sigstore 或 .bundle）")
     ap.add_argument("--sig", type=Path, required=True, help="输出 .sig 路径")
     ap.add_argument("--pem", type=Path, required=True, help="输出 .pem 证书路径")
     args = ap.parse_args()
