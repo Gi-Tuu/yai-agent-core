@@ -38,6 +38,13 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # 锁文件一致性门禁：pyproject 改动（含任意 optional extra）若未同步 uv.lock 即失败。
+      # uv lock 为 universal lock，默认解析全部 extras，可一并覆盖 otel/crypto 等可选
+      # 依赖的漏锁。仅在单个 Linux 矩阵跑一次，该步骤属于本 test 门禁 job，失败会阻塞合并。
+      - name: Verify uv.lock is up to date
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: uv lock --check
+
       - name: Install project (dev + llm + server + mcp + openapi + otel extras)
         run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel
 
