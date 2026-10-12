@@ -154,9 +154,11 @@ class SalesCrm:
         if not self._persist:
             return
         data = data or self._data
-        assert self._path is not None
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
+        path = self._path
+        if path is None:
+            return  # 未配置持久化路径：内存模式，不落盘。
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 

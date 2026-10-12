@@ -144,7 +144,9 @@ class FallbackModelProvider:
                 continue
 
         # 所有模型都失败：抛出最后一个（通常是过载/超时），由上层决定如何兜底。
-        assert last_exc is not None
+        if last_exc is None:
+            # 不应发生：循环结束却无异常；显式 raise（python -O 会剥离 assert）
+            raise RuntimeError("所有尝试均失败，但未捕获到具体异常")
         raise last_exc
 
     async def _attempt(
@@ -173,5 +175,7 @@ class FallbackModelProvider:
                     raise
             if attempt < self.retries:
                 await asyncio.sleep(self.backoff * (attempt + 1))
-        assert last_exc is not None
+        if last_exc is None:
+            # 不应发生：循环结束却无异常；显式 raise（python -O 会剥离 assert）
+            raise RuntimeError("所有尝试均失败，但未捕获到具体异常")
         raise last_exc

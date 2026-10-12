@@ -230,10 +230,12 @@ class CodeToolManager:
 
     def _load(self) -> None:
         """启动时从磁盘恢复未过期代码工具；文件缺失 / 损坏一律冷启动容忍。"""
-        assert self._storage is not None
+        storage = self._storage
+        if storage is None:
+            return  # 未配置持久化文件：纯内存模式，无磁盘可恢复。
         data: Any = {}
         try:
-            text = self._storage.read_text(encoding="utf-8")
+            text = storage.read_text(encoding="utf-8")
             data = json.loads(text) if text.strip() else {}
         except FileNotFoundError:
             data = {}
