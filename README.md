@@ -111,6 +111,7 @@ uv run pytest                         # 全量测试，不需要 API Key
 | **结构化长期记忆** | `remember` / `recall` 主动把事实 / 偏好 / 画像存档并召回；高相似去重合并、重要度加权、落盘 JSON；不内置向量记忆，语义召回走 Embedding SPI |
 | **安全边界** | 权限三档（全部 / 部分 / 无需审批）；组合工具只编排已注册工具、不执行生成代码；代码生成仅定义 `ToolSandbox` 契约、沙箱由宿主提供 |
 | **全程可观测** | 每次策略选择、能力缺口、工具发现 / 组合 / 调用、权限确认都通过统一事件流对外发出 |
+| **结构化 tracing** | 可选 `[otel]` extra 在**外侧订阅**事件流，把一次 run 转成一条 OpenTelemetry trace：root span 串起每个工具的子 span（成功 / 失败 / 耗时），自适应决策落为 span event；不改内核、不初始化 exporter，是否接 Jaeger / Tempo / OTLP 由宿主决定 |
 | **端到端评测** | 内核自带离线 eval harness：ScriptedModel 真跑完整 Core，量化完成率、工具精确 / 召回、越权与无支撑断言；golden 回归基线 + 非门禁 CI |
 
 <details>

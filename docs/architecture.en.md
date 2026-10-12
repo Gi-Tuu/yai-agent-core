@@ -35,7 +35,7 @@ SPI contract ring (replaceable + default implementations)
   MemoryStore (in-memory → SQLite → vector) / PermissionPolicy (auto/ask/deny)
   ToolDiscovery (StaticCatalog in-process catalog → MCP/OpenAPI/plugin marketplace)
         ▲
-Integrations (optional, lazy): MCP Client (integrations/mcp/, [mcp] extra)
+Integrations (optional, lazy): MCP Client (integrations/mcp/, [mcp] extra), OpenTelemetry tracing (integrations/tracing/, [otel] extra, subscribes to the event stream from outside without touching the kernel)
 Batteries (optional): FastAPI Server, SQLite Memory
 ```
 

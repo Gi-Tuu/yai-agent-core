@@ -30,7 +30,7 @@ SPI 契约环（可替换 + 默认实现）
   MemoryStore(内存→SQLite→向量) / PermissionPolicy(auto/ask/deny)
   ToolDiscovery(StaticCatalog 进程内目录 → MCP/OpenAPI/插件市场)
         ▲
-Integrations（可选，懒加载）：MCP Client（integrations/mcp/，[mcp] extra）
+Integrations（可选，懒加载）：MCP Client（integrations/mcp/，[mcp] extra）、OpenTelemetry tracing（integrations/tracing/，[otel] extra，在外侧订阅事件流、不改 kernel）
 Batteries（可选）：FastAPI Server、SQLite Memory
 ```
 

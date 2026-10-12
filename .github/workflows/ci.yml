@@ -38,8 +38,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install project (dev + llm + server + mcp + openapi extras)
-        run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+      - name: Install project (dev + llm + server + mcp + openapi + otel extras)
+        run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel
 
       - name: Ruff lint
         run: uv run ruff check src tests examples scripts fuzzing shell
