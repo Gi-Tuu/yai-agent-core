@@ -479,9 +479,28 @@ class MemoryVault:
         note.last_used_at = now
 
     def _find_duplicate(self, content: str, tags: list[str]) -> MemoryNote | None:
+        """在既有记忆中找高度重复、应合并的那一条（>= DEDUP_SIMILARITY 取最高）。
+
+        与 :meth:`_rank_lexical` 同口径复用词法倒排索引：先取"与 content 至少有一个
+        公共 token"的候选并集，再只对候选逐条算 :func:`token_similarity`。公共 token
+        交集为空当且仅当 ``token_similarity == 0``，而合并阈值 ``DEDUP_SIMILARITY``
+        远高于 0，候选之外的记忆本就不可能命中，故结果与全表扫描逐字节一致，只是把
+        写入路径的 O(n) 全量打分降为 O(候选数)。content 切不出 token 时回退全扫。
+        """
         best: MemoryNote | None = None
         best_sim = 0.0
+        index = self._ensure_lex_index()
+        content_tokens = _index_tokens(content)
+        candidate_ids: set[str] | None = None
+        if content_tokens:
+            candidate_ids = set()
+            for token in content_tokens:
+                posting = index.get(token)
+                if posting:
+                    candidate_ids |= posting
         for note in self._notes:
+            if candidate_ids is not None and note.id not in candidate_ids:
+                continue
             sim = token_similarity(content, note.candidate_text())
             if sim >= DEDUP_SIMILARITY and sim > best_sim:
                 best = note
