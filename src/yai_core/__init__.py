@@ -3,6 +3,7 @@
 宿主软件只声明能力，Core 自动发现、自适应规划与执行。
 """
 
+from yai_core.config import CoreConfig
 from yai_core.core import AgentCore
 from yai_core.diagnostics import (
     DiagnosticEvent,
@@ -17,12 +18,26 @@ from yai_core.discovery import (
     build_spec,
     discover,
 )
-from yai_core.kernel import AdaptiveRouter, AgentLoop, Context, RouteDecision
+from yai_core.kernel import (
+    AdaptiveRouter,
+    AgentLoop,
+    Budget,
+    BudgetExceeded,
+    BudgetTracker,
+    Context,
+    RouteDecision,
+)
 from yai_core.learning import ContextualBanditSelector
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
-from yai_core.spi import EmbeddingProvider, SandboxResult, ToolDiscovery, ToolSandbox
+from yai_core.spi import (
+    EmbeddingProvider,
+    SandboxResult,
+    StorageCipher,
+    ToolDiscovery,
+    ToolSandbox,
+)
 from yai_core.tools import (
     CREATE_CODE_TOOL,
     REQUEST_CAPABILITY,
@@ -42,6 +57,7 @@ from yai_core.types import (
     ModelResponse,
     RunResult,
     Strategy,
+    TokenUsage,
     ToolCallRequest,
     ToolSpec,
 )
@@ -50,6 +66,7 @@ __version__ = "0.8.1"
 
 __all__ = [
     "AgentCore",
+    "CoreConfig",
     "DiagnosticEvent",
     "DiagnosticKind",
     "DiagnosticLevel",
@@ -57,6 +74,9 @@ __all__ = [
     "AdaptiveRouter",
     "RouteDecision",
     "AgentLoop",
+    "Budget",
+    "BudgetExceeded",
+    "BudgetTracker",
     "Context",
     "ContextualBanditSelector",
     "ToolRegistry",
@@ -81,12 +101,14 @@ __all__ = [
     "ToolDiscovery",
     "ToolSandbox",
     "SandboxResult",
+    "StorageCipher",
     "AgentEvent",
     "ChatMessage",
     "EventType",
     "ModelResponse",
     "RunResult",
     "Strategy",
+    "TokenUsage",
     "ToolCallRequest",
     "ToolSpec",
     "__version__",
