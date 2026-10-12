@@ -179,6 +179,13 @@ On top of P0 (concurrency contract / hard timeout / diagnostics), P1 addresses f
 - **Centralized `CoreConfig` (prevent misconfiguration, enable reuse):** the zero-dependency `config.py` dataclass gathers every model-independent `AgentCore` option with defaults identical to the kwargs; `validate()` rejects bad values at construction time (non-positive counts, `bool` masquerading as an int, wrong types for `llm_router` / `context_compaction` / `budget` / `model_timeout`). `AgentCore.from_config(model, config)` lets multiple specialists / sub-employees share one budget-and-switch profile. The public kwargs signature and default behavior are unchanged.
 - **Online SQLite hot backup and restore:** `SqliteStore.backup_to(dest)` takes a page-consistent snapshot inside the instance lock using the stdlib `Connection.backup`, with no downtime, for both file and `:memory:` stores; `restore_to(backup, dest)` restores offline and raises `sqlite3.DatabaseError` on a corrupt backup instead of silently opening an empty database. Crash recovery is guaranteed by WAL plus atomic writes (reopening the same path after close loses no data).
 
+### 2.9 Semantic memory recall and proactive recall at task start (opt-in)
+
+On top of the structured long-term memory (`MemoryVault`, §2.2), two enhancements ship **disabled by default and with zero hard kernel dependencies**:
+
+- **Lexical OR semantic dual-channel recall:** `MemoryVault.arecall(query, *, k, kinds, tags)` is the async entry point. The lexical channel keeps token relevance; when the host injects the 8th SPI `EmbeddingProvider` via `AgentCore(memory_embedder=...)`, the semantic channel encodes the query and memory contents and scores cosine similarity (reusing the stdlib implementation in `discovery/semantic.py`, threshold 0.45). The two channels form a **union** keyed by memory id, the fused score is `max(lexical, semantic)` followed by the importance boost, so cross-language / paraphrased queries (a Chinese memory vs. an English query) are still recalled. The synchronous `recall` stays purely lexical with unchanged behavior; the `recall` tool handler becomes async and routes through `arecall`. Memory vectors are lazily batch-computed and cached by id; a `remember` merge or `forget` invalidates stale vectors; if the embedder raises or returns a mismatched count it **falls back to lexical recall** and records `semantic_last_error` (`status()` exposes `semantic_enabled` / `semantic_last_error`), so recall never fails because the embedding service is down.
+- **Proactive recall at task start:** with `AgentCore(auto_memory_recall=True, auto_recall_k=3)`, before the user task the loop automatically recalls with the task text, injects hits as a single `system` message (worded so that an explicit instruction in the current turn always overrides stale memories), and emits a `memories_recalled` event (count plus each item's id/kind/summary). The clarify path (under-specified task) does not recall; any error in the recall callback only emits a local diagnostic and never blocks the task. The loop depends only on an `async (task) → list[dict]` callback (Core injects `functools.partial(vault.arecall, k=...)`) and never imports the vault or embedder. `CoreConfig.validate()` rejects at construction time: proactive recall without long-term memory, a non-positive `k`, and a non-async `embed_texts` embedder.
+
 ## 3. SPI contracts
 
 | Contract | Methods | Default implementation | When a host replaces it |
@@ -190,7 +197,7 @@ On top of P0 (concurrency contract / hard timeout / diagnostics), P1 addresses f
 | ToolDiscovery | `discover(need, *, task, available) → list[ToolSpec]` | StaticCatalog (in-process catalog) | Dynamic discovery from MCP/OpenAPI/marketplaces |
 | ToolSandbox | `execute(code, inputs, *, timeout=None) → SandboxResult` | none in the kernel (host-provided; `SubprocessSandbox`/`DockerSandbox` in the shell/examples) | Running generated code in isolation |
 | RouteSelector | route selection + observe feedback (contextual bandit) | the built-in self-calibrating bandit | A custom routing/learning policy |
-| EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | none (optional; local bge-m3 or OpenAI-compatible cloud) | Semantic tool discovery with your own embedder |
+| EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | none (optional; local bge-m3 or OpenAI-compatible cloud) | Semantic tool discovery; semantic long-term memory recall (`memory_embedder`) |
 | StorageCipher | `encrypt / decrypt(bytes) → bytes` | none (optional; `FernetStorageCipher` in the `[crypto]` extra) | At-rest encryption for the long-term memory vault (KMS / OS keychain / national ciphers) |
 
 ## 4. Adaptive Router state machine
@@ -260,8 +267,12 @@ embeddability; some are already provided by the shell layer or optional extras, 
 - **Executing generated code inside the kernel**: composed tools and sandbox code tools are supported, but
   generated code always runs inside a host-provided `ToolSandbox` (the kernel ships no executor), governed
   by an approval gate and TTL lifecycle.
-- **Vector long-term memory**: kernel memory is not bound to a vector store; local bge-m3 embeddings are
-  only an optional extra (`[local-embed]`) for semantic tool discovery, not long-term memory.
+- **No bundled vector database / vector index**: kernel memory is not bound to any vector store or ANN
+  index. Semantic long-term memory recall (§2.9) reuses the optional `EmbeddingProvider` (local bge-m3 via
+  the `[local-embed]` extra, or an OpenAI-compatible cloud) to encode memory contents on demand with lazy
+  caching and compare cosine similarity; it targets a single host's structured memory (a small top-k by
+  default) and introduces no resident vector database. Hosts that need large-scale vector retrieval can
+  implement their own `MemoryStore` / recall callback.
 - **Built-in UI**: the kernel provides no interface; the Dynamic Island / floating window lives in the
   shell layer (`shell/desktop/`) and talks to the kernel through the single embedding point.
 - **Coding-agent scenarios, queues/middleware, K8s**: no unattended coding agent, no message middleware,

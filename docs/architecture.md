@@ -156,6 +156,13 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **集中配置 `CoreConfig`（防错配、易复用）**：`config.py` 的零依赖 dataclass 收敛 `AgentCore` 全部与模型无关的可选项，默认值与 kwargs 一致；`validate()` 在构造早期拒绝非法取值（次数非正、bool 冒充整数、`llm_router` / `context_compaction` / `budget` / `model_timeout` 类型错误）。`AgentCore.from_config(model, config)` 让多专员 / 多子员工复用同一份预算与开关；公共 kwargs 签名与默认行为不变。
 - **SQLite 在线热备份与恢复（防停服备份 / 数据损坏）**：`SqliteStore.backup_to(dest)` 用标准库 `Connection.backup` 在实例锁内做页级一致快照，无需停服，文件库与 `:memory:` 均可；`restore_to(backup, dest)` 离线恢复，备份损坏时直接抛 `sqlite3.DatabaseError` 而非静默起空库。崩溃恢复由 WAL 与原子写保证（close 后同路径重开数据不丢）。
 
+### 2.9 长期记忆语义召回与任务起始主动召回（opt-in）
+
+结构化长期记忆（§2.2 的 `MemoryVault`）在词法召回之外，新增两条**默认关闭、内核零硬依赖**的增强：
+
+- **词法 OR 语义双通道召回**：`MemoryVault.arecall(query, *, k, kinds, tags)` 是异步入口。词法通道沿用 token 相关度；当宿主经 `AgentCore(memory_embedder=...)` 注入第八个 SPI `EmbeddingProvider` 时，语义通道把 query 与记忆内容编码后做余弦相似度（复用 `discovery/semantic.py` 的标准库实现，阈值 0.45）。两通道按记忆 id 取**并集**、融合分取 `max(词法, 语义)` 再叠重要度加权，跨语言 / 换说法（中文记忆 vs 英文 query）也能召回。同步 `recall` 保留为纯词法、行为不变；`recall` 工具 handler 改异步并统一走 `arecall`。记忆向量按需懒批量计算并按 id 缓存，`remember` 合并 / `forget` 删除即令旧向量失效；embedder 抛错或返回数量不符时**降级纯词法**并记录 `semantic_last_error`（`status()` 暴露 `semantic_enabled` / `semantic_last_error`），召回不因向量服务故障而失败。
+- **任务起始主动召回**：`AgentCore(auto_memory_recall=True, auto_recall_k=3)` 时，loop 在历史之后、user 任务之前自动用任务文本调一次召回，命中则作为一条 `system` 消息注入（文案明确"若与用户本次明确指令冲突，以本次指令为准"，避免陈旧画像压过当前指令），并发 `memories_recalled` 事件（条数 + 每条 id/kind/摘要）。信息不足的 clarify 反问路径不召回；召回回调任何异常只发本地诊断、绝不阻断主任务。loop 只依赖一个 `async (task) → list[dict]` 回调（Core 用 `functools.partial(vault.arecall, k=...)` 注入），不反向依赖 vault / embedder。`CoreConfig.validate()` 在构造期拒绝"开召回但未开长期记忆""k 非正整数""embedder 非 async `embed_texts`"三类非法组合。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
@@ -167,7 +174,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 | ToolDiscovery | `discover(need, *, task, available) → list[ToolSpec]` | StaticCatalog（进程内目录） | 接 MCP/OpenAPI/插件市场动态发现 |
 | ToolSandbox | `execute(code, inputs, *, timeout=None) → SandboxResult` | 内核不提供（宿主实现；壳层/示例有 `SubprocessSandbox`、`DockerSandbox`） | 在隔离环境中执行生成代码 |
 | RouteSelector | 选策略 + 观察反馈（上下文 bandit） | 内置自校准 bandit | 自定义路由/学习策略 |
-| EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | 无（可选；本地 bge-m3 或 OpenAI 兼容云端） | 用自有嵌入器做语义工具发现 |
+| EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | 无（可选；本地 bge-m3 或 OpenAI 兼容云端） | 语义工具发现；长期记忆语义召回（`memory_embedder`） |
 | StorageCipher | `encrypt / decrypt(bytes) → bytes` | 无（可选；`[crypto]` extra 提供 FernetStorageCipher） | 长期记忆 vault 落盘静态加密（KMS / 密钥链 / 国密） |
 
 ## 4. Adaptive Router 状态机
@@ -223,6 +230,6 @@ v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗�
 - **MCP Server**：内核只做 MCP Client（连接外部 Server），自身不暴露为 Server。
 - **对等 Multi-Agent 编排**：不做角色对等的多智能体协商；层级式"子员工委派"已在壳层落地（`shell/employee/`：单一根对用户负责，子员工权限单调收窄、带预算、完成即销毁）。
 - **内核内执行生成代码**：组合工具与沙箱代码工具均已支持，但生成代码一律在宿主提供的 `ToolSandbox` 内执行（内核不内置执行器），并经授权闸与 TTL 生命周期管理。
-- **向量长期记忆**：内核记忆不绑定向量库；本地 bge-m3 嵌入仅作为可选 extra（`[local-embed]`）用于语义工具发现，不充当长期记忆。
+- **不内置向量数据库 / 向量索引**：内核记忆不绑定任何向量库或 ANN 索引。长期记忆的语义召回（§2.9）复用可选的 `EmbeddingProvider`（本地 bge-m3 经 `[local-embed]` extra，或 OpenAI 兼容云端）对记忆内容**即时 / 懒缓存编码**后做余弦比对，规模面向单宿主的结构化记忆（默认 top-k 少量条目），不引入常驻向量数据库；需要大规模向量检索的宿主可自行实现 `MemoryStore` / 召回回调接入。
 - **内置 UI**：内核不提供任何界面；灵动岛 / 浮窗位于壳层（`shell/desktop/`），经唯一嵌入点与内核通信。
 - **coding agent 场景、队列 / 中间件、K8s**：不做无人值守编码代理，不引入消息中间件，部署不依赖 K8s（水平扩展见 `docs/deployment-scaling.md`）。
