@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 
 from yai_core.diagnostics import (
     DiagnosticEvent,
@@ -93,6 +93,12 @@ _BUDGET_STOP_TEXT = (
 #: 因为超时在 loop 层用 asyncio.wait_for 统一兜底，而不是依赖各模型实现。
 DEFAULT_MODEL_TIMEOUT = 60.0
 
+#: 任务起始主动召回默认注入的长期记忆条数：只放最相关的少数几条，避免挤占上下文。
+DEFAULT_AUTO_RECALL_K = 3
+
+#: 注入上下文的单条主动召回记忆正文字符上限（事件与提示都做收敛，防止刷屏）。
+_AUTO_RECALL_PREVIEW_CHARS = 120
+
 
 class AgentLoop:
     def __init__(
@@ -114,6 +120,8 @@ class AgentLoop:
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
         budget: Budget | None = None,
+        auto_recall: Callable[[str], Awaitable[list[dict[str, object]]]] | None = None,
+        auto_recall_k: int = DEFAULT_AUTO_RECALL_K,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -159,6 +167,12 @@ class AgentLoop:
         # 澄清递归共享同一计数器，任务结束即废弃。
         self.budget = budget
         self._active_budget: BudgetTracker | None = None
+        # 任务起始主动召回钩子：None（默认）= 关闭，行为与不接长期记忆一致。
+        # 传入一个 async (task) -> list[记忆dict] 的回调（由 Core 用 vault.arecall
+        # 绑定 k 后注入），任务开始、进入规划/执行前先把相关长期记忆塞进上下文，
+        # 模型无需"先想到调 recall"就能用上用户画像与历史。
+        self._auto_recall = auto_recall
+        self._auto_recall_k = auto_recall_k
 
     def _diag(
         self,
@@ -172,6 +186,57 @@ class AgentLoop:
         emit(
             self._on_diagnostic,
             DiagnosticEvent(kind=str(kind), message=message, level=level, data=data),
+        )
+
+    async def _inject_auto_recall(
+        self, ctx: Context, task: str
+    ) -> AsyncIterator[AgentEvent]:
+        """任务开始时主动召回相关长期记忆并注入上下文；未配置或无命中则静默跳过。
+
+        记忆是增强而非必需：召回回调任何异常都降级为"不注入"，只发一条本地诊断，
+        绝不让记忆子系统故障阻断任务。命中时发 MEMORIES_RECALLED 事件（可观测、
+        不静默决策），并把条目作为一条 system 消息放到历史之后、user 任务之前。
+        """
+        if self._auto_recall is None:
+            return
+        try:
+            hits = await self._auto_recall(task)
+        except Exception as exc:  # noqa: BLE001 - 记忆增强失败不阻断主任务
+            self._diag("auto_recall_failed", f"任务起始主动召回失败: {exc}")
+            return
+        if not isinstance(hits, list) or not hits:
+            return
+        lines: list[str] = []
+        event_items: list[dict[str, object]] = []
+        for hit in hits[: self._auto_recall_k]:
+            if not isinstance(hit, dict):
+                continue
+            content = str(hit.get("content", "")).strip()
+            if not content:
+                continue
+            kind = str(hit.get("kind", "note"))
+            lines.append(f"- （{kind}）{content}")
+            event_items.append(
+                {
+                    "id": hit.get("id", ""),
+                    "kind": kind,
+                    "content": content[:_AUTO_RECALL_PREVIEW_CHARS],
+                }
+            )
+        if not lines:
+            return
+        ctx.add(
+            ChatMessage(
+                role="system",
+                content=(
+                    "以下是与当前任务相关的长期记忆，供你参考；若与用户本次的"
+                    "明确指令冲突，以用户本次指令为准：\n" + "\n".join(lines)
+                ),
+            )
+        )
+        yield AgentEvent(
+            EventType.MEMORIES_RECALLED,
+            {"count": len(event_items), "items": event_items},
         )
 
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
@@ -265,6 +330,10 @@ class AgentLoop:
         ctx = Context(_SYSTEM_TEMPLATE.format(tools=self.registry.catalog_text()))
         for msg in self.memory.history():
             ctx.add(msg)
+        # 任务起始主动召回：把与本任务相关的长期记忆作为一条 system 上下文注入，
+        # 位于历史之后、user 任务之前。clarify 路径已在上方提前 return，不做召回。
+        async for recall_event in self._inject_auto_recall(ctx, task):
+            yield recall_event
         ctx.add(ChatMessage(role="user", content=task))
 
         # 模型档位调用计数（成本证据）：贯穿规划 + 执行（含工具聚焦、迭代收尾、

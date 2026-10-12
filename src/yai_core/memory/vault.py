@@ -1,164 +1,158 @@
-"""结构化长期记忆（Memory Vault）：让 Agent 能主动"记住"与"回忆"。
+"""结构化长期记忆：remember / recall 两件套，JSON 原子落盘，可选语义召回。
 
-此前内核的记忆只有"线性对话历史 + 简单 KV"（见 ``memory/inmemory.py``）：
-模型没有标准入口把跨会话仍有用的稳定信息沉淀下来，也无法在需要时主动回忆
-用户偏好、事实、画像或未决事项。本模块补齐这块，且不破坏内核零硬依赖红线：
+设计原则（与内核其它部分一致）：
 
-- :class:`MemoryNote`：一条结构化长期记忆（content + kind + tags + importance
-  + 时间与访问计数）；
-- :class:`MemoryVault`：管理记忆条目的写入、去重合并、词法检索、状态与
-  （可选）JSON 持久化；
-- :func:`build_memory_tools`：``remember`` / ``recall`` 两个 native 工具，
-  模型在运行中主动"记一条 / 查一下"，走 :class:`ToolExecutor` 统一权限闸，
-  和宿主业务工具完全同构。
+- **零第三方硬依赖**：默认只用标准库做词法相关度检索，JSON 原子落盘；
+- **语义是增强、不是必需**：宿主经第八个 SPI（``EmbeddingProvider``）注入嵌入器后，
+  召回在词法通道之外并行开一条语义通道（余弦相似度），擅长"同义改写、跨语言、
+  概括描述"——词法一个字都对不上、语义上却相关的记忆也能被找回；
+- **embedder 缺失或抛错时自动降级纯词法**：记录在 ``semantic_last_error``，
+  绝不让"记忆增强"反过来拖垮主流程；
+- **同步 / 异步双轨**：:meth:`MemoryVault.recall` 保持同步、纯词法（向后兼容，
+  宿主在非 async 上下文也能直接查）；:meth:`MemoryVault.arecall` 是异步入口，
+  词法 + 可选语义。注册给模型的 ``recall`` 工具与"任务起始主动召回"都走 ``arecall``。
 
-检索默认复用 ``discovery/scoring.py`` 的纯标准库词法相关度（零依赖、永远
-可用、可离线测试）。**内核不内置向量长期记忆**（ROADMAP 明确不做）：更强的
-语义召回由宿主经 :class:`EmbeddingProvider` 提供，未来可作为 vault 的可选
-scorer 注入，内核无需改动。
-
-持久化（可选）：传入 ``storage_path`` 后用标准库 JSON 原子落盘，跨会话 /
-重启保留，文件损坏冷启动容忍；不传则纯内存（向后兼容）。
-
-静态加密（可选）：再传入实现 :class:`~yai_core.spi.cipher.StorageCipher` 契约的
-``cipher`` 后，落盘内容会被整体加密（内存中仍是明文，仅保护"静态存储"）。**不传
-cipher 时为明文 JSON**——内核不内置加密算法、不引入加密库（零硬依赖），是否加密、
-用什么密钥由宿主决定；真实 Fernet 实现见可选 ``[crypto]`` extra。
+记忆条目是带类型 / 标签 / 重要度的结构化笔记（事实、偏好、画像、经历、备注），
+而不是把整段对话塞进向量库——长期记忆应当是被提炼过、可被检索的"用户模型"。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from yai_core.discovery.scoring import token_similarity
+from yai_core.discovery.semantic import cosine_similarity
+from yai_core.spi.cipher import StorageCipher
+from yai_core.spi.embedding import EmbeddingProvider
 from yai_core.types import ToolSpec
 
-if TYPE_CHECKING:
-    from yai_core.spi.cipher import StorageCipher
-
-#: 持久化文件格式版本；未来不兼容变更时升版并做迁移 / 守卫。
+#: 落盘格式版本，后续结构演进时据此迁移。
 STORAGE_VERSION = 1
 
-#: 合法记忆类型。
+#: remember 支持的记忆类型。
 VALID_KINDS = ("fact", "preference", "profile", "episode", "note")
-DEFAULT_KIND = "note"
 
-#: kind 的中文检索标签：让中文 query（"用户偏好"）能匹配英文 kind 条目。
-_KIND_LABELS: dict[str, str] = {
-    "fact": "事实",
-    "preference": "偏好 喜好 喜欢",
-    "profile": "画像 个人信息 资料",
-    "episode": "事件 经历",
-    "note": "笔记 备注",
-}
-
-DEFAULT_IMPORTANCE = 3
+#: recall 默认返回条数。
 DEFAULT_RECALL_K = 5
-#: 判定"同一条记忆"的词法相似度阈值；越严越不容易误合并。
+
+#: 语义召回门槛，口径与 discovery.semantic.DEFAULT_SCORE_THRESHOLD 一致
+#: （本地 bge-m3 实测：完全无关 query 余弦约 0.30~0.32，语义相关约 0.48~0.52）。
+#: 记忆返回的是 top-k 多条而非"只选一个"，因此不设工具发现里的 margin 判定。
+SEMANTIC_RECALL_THRESHOLD = 0.45
+
+#: 重复记忆判定阈值：新增与既有记忆相关度达到该值视为同一条，走合并而非新增。
 DEDUP_SIMILARITY = 0.92
 
 
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _clean_tags(tags: Any) -> list[str]:
-    """把 tags 归一为去重后的字符串列表；字符串按单个标签处理。"""
-    if not tags:
-        return []
-    if isinstance(tags, str):
-        tags = [tags]
-    out: list[str] = []
-    for tag in tags:
-        if tag is None:
-            continue
-        text = str(tag).strip()
-        if text and text not in out:
-            out.append(text)
-    return out
-
-
-def _clean_kind_set(kinds: Any) -> set[str]:
-    """把 kinds 过滤为合法 kind 集合；非法值忽略。"""
-    if not kinds:
-        return set()
-    if isinstance(kinds, str):
-        kinds = [kinds]
-    return {
-        str(k).strip()
-        for k in kinds
-        if str(k).strip() in VALID_KINDS
-    }
-
-
-def _clamp_importance(value: Any) -> int:
-    """重要度夹到 1-5；非法值回退默认。"""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = DEFAULT_IMPORTANCE
-    return min(5, max(1, number))
-
-
-@dataclass
 class MemoryNote:
     """一条结构化长期记忆。"""
 
-    id: str
-    content: str
-    kind: str = DEFAULT_KIND
-    tags: list[str] = field(default_factory=list)
-    importance: int = DEFAULT_IMPORTANCE
-    created_at: datetime = field(default_factory=_utc_now)
-    last_used_at: datetime = field(default_factory=_utc_now)
-    access_count: int = 0
+    def __init__(
+        self,
+        content: str,
+        *,
+        kind: str = "note",
+        tags: list[str] | None = None,
+        importance: int = 3,
+        note_id: str | None = None,
+        created_at: datetime | None = None,
+        last_used_at: datetime | None = None,
+        access_count: int = 0,
+    ) -> None:
+        now = datetime.now(UTC)
+        self.id = note_id or uuid.uuid4().hex[:12]
+        self.content = content
+        self.kind = kind
+        self.tags = tags or []
+        self.importance = importance
+        self.created_at = created_at or now
+        self.last_used_at = last_used_at or now
+        self.access_count = access_count
 
     def candidate_text(self) -> str:
-        """供词法检索的候选文本：正文 + 标签 + kind 中文标签。"""
-        return " ".join(
-            part
-            for part in (
-                self.content,
-                " ".join(self.tags),
-                _KIND_LABELS.get(self.kind, ""),
-            )
-            if part
+        """供检索 / 嵌入使用的文本：正文 + 标签 + 类型的中文提示。"""
+        kind_label = {
+            "fact": "事实",
+            "preference": "偏好",
+            "profile": "画像",
+            "episode": "经历",
+            "note": "备注",
+        }.get(self.kind, "备注")
+        parts = [self.content]
+        if self.tags:
+            parts.append(" ".join(self.tags))
+        parts.append(kind_label)
+        return " ".join(parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "content": self.content,
+            "kind": self.kind,
+            "tags": list(self.tags),
+            "importance": self.importance,
+            "created_at": self.created_at.isoformat(),
+            "last_used_at": self.last_used_at.isoformat(),
+            "access_count": self.access_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MemoryNote:
+        return cls(
+            content=data["content"],
+            note_id=data.get("id"),
+            kind=data.get("kind", "note"),
+            tags=list(data.get("tags", [])),
+            importance=int(data.get("importance", 3)),
+            created_at=(
+                datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+            ),
+            last_used_at=(
+                datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None
+            ),
+            access_count=int(data.get("access_count", 0)),
         )
 
 
-#: 运行中"主动记一条"的工具名。
-REMEMBER_TOOL = "remember"
-#: 运行中"主动回忆"的工具名。
-RECALL_TOOL = "recall"
+def _default_clock() -> datetime:
+    return datetime.now(UTC)
 
 
 class MemoryVault:
-    """管理结构化长期记忆的写入、去重、检索、状态与（可选）持久化。"""
+    """结构化长期记忆的存储与检索。
+
+    Args:
+        storage_path: 落盘 JSON 路径；None 时纯内存（不落盘）。
+        cipher: 可选的落盘静态加密（第九 SPI）；None 时明文 JSON。
+        embedder: 可选文本嵌入器（第八 SPI）；None 时 :meth:`arecall` 退化为纯词法。
+        clock: 时间源（测试可注入固定时钟）。
+    """
 
     def __init__(
         self,
         *,
         storage_path: Path | str | None = None,
-        clock: Callable[[], datetime] | None = None,
-        dedup_similarity: float = DEDUP_SIMILARITY,
         cipher: StorageCipher | None = None,
+        embedder: EmbeddingProvider | None = None,
+        clock: Any = _default_clock,
     ) -> None:
-        self._storage = Path(storage_path) if storage_path is not None else None
-        self._clock = clock or _utc_now
-        self._dedup = dedup_similarity
-        # 静态存储加密器；None=明文 JSON 落盘（默认，向后兼容）。
+        self.storage_path = Path(storage_path) if storage_path is not None else None
         self._cipher = cipher
+        self._embedder = embedder
+        self._clock = clock
         self._notes: list[MemoryNote] = []
-        if self._storage is not None:
-            # 启动恢复（见 _load），随后 _save 重写，只留合法条目。
-            self._load()
+        # note_id -> 向量的懒缓存：新增 / 合并后该 id 缺失，下次 arecall 批量补算。
+        self._vectors: dict[str, Sequence[float]] = {}
+        # 最近一次语义通道降级原因（None 表示未降级），便于宿主观测与测试。
+        self.semantic_last_error: str | None = None
+        self._load()
 
     # ---------- 写入 ----------
 
@@ -166,346 +160,375 @@ class MemoryVault:
         self,
         content: str,
         *,
-        kind: str = DEFAULT_KIND,
-        tags: Any = None,
-        importance: Any = DEFAULT_IMPORTANCE,
+        kind: str = "note",
+        tags: list[str] | None = None,
+        importance: int = 3,
     ) -> tuple[MemoryNote, bool]:
-        """沉淀一条长期记忆，返回 ``(条目, 是否为合并已有)``。
+        """写入一条记忆；与既有记忆高度重复时合并（标签并集、重要度取高）。
 
-        - content 为空抛 ValueError；
-        - kind 非法时降级为默认 note；
-        - 与已有条目高度相似时不重复保存，而是合并 tags、取更高 importance、
-          刷新使用时间（``merged=True``）。
+        返回 ``(note, merged)``，``merged=True`` 表示命中并合并了既有记忆。
         """
         text = (content or "").strip()
         if not text:
-            raise ValueError("remember 需要非空 content")
-        if kind not in VALID_KINDS:
-            kind = DEFAULT_KIND
-        clean_tags = _clean_tags(tags)
-        level = _clamp_importance(importance)
-        now = self._clock()
+            raise ValueError("记忆内容不能为空")
+        norm_kind = kind if kind in VALID_KINDS else "note"
+        norm_tags = self._normalize_tags(tags)
+        norm_importance = self._normalize_importance(importance)
 
-        existing = self._find_duplicate(text)
-        if existing is not None:
-            existing.tags = sorted(set(existing.tags) | set(clean_tags))
-            existing.importance = max(existing.importance, level)
-            existing.last_used_at = now
-            existing.access_count += 1
-            self._save()
-            return existing, True
+        duplicate = self._find_duplicate(text, norm_tags)
+        if duplicate is not None:
+            merged_tags = list(dict.fromkeys([*duplicate.tags, *norm_tags]))
+            duplicate.tags = merged_tags
+            duplicate.importance = max(duplicate.importance, norm_importance)
+            duplicate.access_count += 1
+            duplicate.last_used_at = self._clock()
+            # 合并可能改变正文标签 / 重要度，旧向量失效，下次语义召回时重算。
+            self._vectors.pop(duplicate.id, None)
+            merged = duplicate
+            did_merge = True
+        else:
+            note = MemoryNote(
+                text,
+                kind=norm_kind,
+                tags=norm_tags,
+                importance=norm_importance,
+                created_at=self._clock(),
+                last_used_at=self._clock(),
+            )
+            self._notes.append(note)
+            merged = note
+            did_merge = False
 
-        note = MemoryNote(
-            id=self._new_id(),
-            content=text,
-            kind=kind,
-            tags=clean_tags,
-            importance=level,
-            created_at=now,
-            last_used_at=now,
-        )
-        self._notes.append(note)
         self._save()
-        return note, False
+        return merged, did_merge
 
-    def _find_duplicate(self, content: str) -> MemoryNote | None:
-        """返回与 content 相似度达阈值的最佳已有条目；没有则 None。"""
-        best: MemoryNote | None = None
-        best_score = self._dedup
-        for note in self._notes:
-            score = token_similarity(content, note.candidate_text())
-            if score >= best_score:
-                best, best_score = note, score
-        return best
+    def forget(self, note_id: str) -> bool:
+        """删除一条记忆；不存在返回 False。"""
+        for index, note in enumerate(self._notes):
+            if note.id == note_id:
+                del self._notes[index]
+                self._vectors.pop(note_id, None)
+                self._save()
+                return True
+        return False
 
-    # ---------- 检索 ----------
+    # ---------- 检索（同步：纯词法，向后兼容） ----------
 
     def recall(
         self,
         query: str,
         *,
         k: int = DEFAULT_RECALL_K,
-        kinds: Any = None,
-        tags: Any = None,
+        kinds: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """按 query 回忆相关长期记忆，返回 top-k 条目字典；命中即刷新使用时间。
-
-        排序以词法相关度为主，重要度给温和加成；相关度为 0 的条目不返回，
-        避免塞进无关内容。kinds / tags 做过滤。
-        """
-        text = (query or "").strip()
-        if not text or not self._notes:
-            return []
-        limit = max(1, int(k))
-        kind_set = _clean_kind_set(kinds)
-        tag_set = set(_clean_tags(tags))
+        """按词法相关度检索 top-k 记忆（同步、零依赖、不需要 embedder）。"""
         now = self._clock()
-
-        scored: list[tuple[float, MemoryNote, float]] = []
-        for note in self._notes:
-            if kind_set and note.kind not in kind_set:
-                continue
-            if tag_set and not (tag_set & set(note.tags)):
-                continue
-            sim = token_similarity(text, note.candidate_text())
-            if sim <= 0:
-                continue
-            # 重要度只做温和加成（0.75~1.0），不改变"相关度为主"的排序方向。
-            score = sim * (0.75 + 0.25 * (note.importance / 5))
-            scored.append((score, note, sim))
-
-        # 同分时重要度高、创建晚的在前。
-        scored.sort(
-            key=lambda item: (item[0], item[1].importance, item[1].created_at),
-            reverse=True,
-        )
-        hits = scored[:limit]
-        results: list[dict[str, Any]] = []
-        for _score, note, sim in hits:
-            note.last_used_at = now
-            note.access_count += 1
-            results.append(self._note_dict(note, sim))
-        if hits:
+        rows: list[tuple[MemoryNote, float, float]] = []
+        for note, sim in self._rank_lexical(query, kinds=kinds, tags=tags):
+            # 重要度只做温和加成，避免高重要度但不相关的记忆霸榜。
+            score = sim * (0.75 + 0.25 * (note.importance / 5.0))
+            rows.append((note, score, sim))
+        rows.sort(key=lambda item: item[1], reverse=True)
+        top = rows[:k]
+        for note, _, _ in top:
+            self._touch(note, now)
+        if top:
             self._save()
-        return results
+        return [self._note_dict(note, round(relevance, 3)) for note, _, relevance in top]
 
-    # ---------- 删除 / 状态 ----------
+    # ---------- 检索（异步：词法 + 可选语义） ----------
 
-    def forget(self, note_id: str) -> bool:
-        """立即删除指定 id 的记忆；不存在返回 False。"""
-        for index, note in enumerate(self._notes):
-            if note.id == note_id:
-                del self._notes[index]
-                self._save()
-                return True
-        return False
+    async def arecall(
+        self,
+        query: str,
+        *,
+        k: int = DEFAULT_RECALL_K,
+        kinds: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """词法与语义双通道召回；未配置 embedder 时与同步 :meth:`recall` 完全等价。
+
+        两条通道是"独立召回 gate"而非加权平均：词法命中（精确专有名词）**或**
+        语义余弦过阈值（同义改写 / 跨语言 / 概括描述）任一成立即召回，最终按
+        ``max(词法, 语义)`` 再叠重要度温和加成排序。embedder 任何失败都降级纯词法。
+        """
+        # 未配置嵌入器：直接复用同步词法路径，保证零行为差异。
+        if self._embedder is None:
+            return self.recall(query, k=k, kinds=kinds, tags=tags)
+
+        now = self._clock()
+        lex_by_id = {
+            note.id: sim for note, sim in self._rank_lexical(query, kinds=kinds, tags=tags)
+        }
+        sem_by_id: dict[str, float] = {}
+        if await self._ensure_vectors():
+            query_vector = await self._embed_query(query)
+            if query_vector is not None:
+                for note in self._notes:
+                    if not self._matches_filters(note, kinds, tags):
+                        continue
+                    vector = self._vectors.get(note.id)
+                    if vector is None:
+                        continue
+                    sem = cosine_similarity(query_vector, vector)
+                    if sem >= SEMANTIC_RECALL_THRESHOLD:
+                        sem_by_id[note.id] = sem
+
+        matched_ids = set(lex_by_id) | set(sem_by_id)
+        if not matched_ids:
+            return []
+        rows: list[tuple[MemoryNote, float, float]] = []
+        for note in self._notes:
+            if note.id not in matched_ids:
+                continue
+            lex = lex_by_id.get(note.id, 0.0)
+            sem = sem_by_id.get(note.id, 0.0)
+            relevance = lex if lex >= sem else sem
+            score = relevance * (0.75 + 0.25 * (note.importance / 5.0))
+            rows.append((note, score, relevance))
+        rows.sort(key=lambda item: item[1], reverse=True)
+        top = rows[:k]
+        for note, _, _ in top:
+            self._touch(note, now)
+        if top:
+            self._save()
+        return [self._note_dict(note, round(relevance, 3)) for note, _, relevance in top]
+
+    # ---------- 状态 ----------
 
     def status(self) -> dict[str, Any]:
-        """返回总数、各类型计数与最近使用条目（供后台 / UI）。"""
         by_kind = {kind: 0 for kind in VALID_KINDS}
         for note in self._notes:
-            by_kind[note.kind] = by_kind.get(note.kind, 0) + 1
-        recent = sorted(self._notes, key=lambda n: n.last_used_at, reverse=True)[:5]
+            by_kind[note.kind] += 1
+        recent = [self._note_dict(note) for note in sorted(
+            self._notes, key=lambda n: n.last_used_at, reverse=True
+        )[:10]]
         return {
             "total": len(self._notes),
             "by_kind": by_kind,
-            "recent": [self._note_dict(note) for n in recent],
+            "semantic_enabled": self._embedder is not None,
+            "semantic_last_error": self.semantic_last_error,
+            "recent": recent,
         }
 
-    # ---------- 工具序列化 ----------
+    # ---------- 内部：筛选 / 排序 / 向量 ----------
 
     @staticmethod
-    def _note_dict(note: MemoryNote, sim: float | None = None) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "id": note.id,
-            "content": note.content,
-            "kind": note.kind,
-            "tags": list(note.tags),
-            "importance": note.importance,
-            "created_at": note.created_at.isoformat(),
-        }
-        if sim is not None:
-            data["score"] = round(float(sim), 4)
+    def _matches_filters(
+        note: MemoryNote,
+        kinds: list[str] | None,
+        tags: list[str] | None,
+    ) -> bool:
+        if kinds and note.kind not in kinds:
+            return False
+        if tags and not set(tags).intersection(note.tags):
+            return False
+        return True
+
+    def _rank_lexical(
+        self,
+        query: str,
+        *,
+        kinds: list[str] | None,
+        tags: list[str] | None,
+    ) -> list[tuple[MemoryNote, float]]:
+        """词法通道：返回通过 kinds/tags 过滤且词法相关度 > 0 的 (note, sim)。"""
+        ranked: list[tuple[MemoryNote, float]] = []
+        for note in self._notes:
+            if not self._matches_filters(note, kinds, tags):
+                continue
+            sim = token_similarity(query, note.candidate_text())
+            if sim > 0:
+                ranked.append((note, sim))
+        return ranked
+
+    async def _ensure_vectors(self) -> bool:
+        """为尚无向量的记忆批量嵌入并缓存；embedder 失败返回 False（调用方降级词法）。"""
+        if self._embedder is None:
+            return False
+        missing = [note for note in self._notes if note.id not in self._vectors]
+        if not missing:
+            return True
+        try:
+            vectors = await self._embedder.embed_texts([n.candidate_text() for n in missing])
+        except Exception as exc:  # noqa: BLE001 - 语义是增强，失败降级词法
+            self.semantic_last_error = f"{type(exc).__name__}: {exc}"
+            return False
+        if not isinstance(vectors, (list, tuple)) or len(vectors) != len(missing):
+            self.semantic_last_error = "embedder 返回的向量数量与记忆数不一致"
+            return False
+        for note, vector in zip(missing, vectors, strict=True):
+            self._vectors[note.id] = vector
+        self.semantic_last_error = None
+        return True
+
+    async def _embed_query(self, query: str) -> Sequence[float] | None:
+        """嵌入查询文本；失败返回 None（调用方降级纯词法）。"""
+        if self._embedder is None:
+            return None
+        try:
+            vectors = await self._embedder.embed_texts([query])
+        except Exception as exc:  # noqa: BLE001 - 降级词法
+            self.semantic_last_error = f"{type(exc).__name__}: {exc}"
+            return None
+        if isinstance(vectors, (list, tuple)) and len(vectors) == 1:
+            return vectors[0]
+        self.semantic_last_error = "embedder 未返回单个查询向量"
+        return None
+
+    def _touch(self, note: MemoryNote, now: datetime) -> None:
+        note.access_count += 1
+        note.last_used_at = now
+
+    def _find_duplicate(self, content: str, tags: list[str]) -> MemoryNote | None:
+        best: MemoryNote | None = None
+        best_sim = 0.0
+        for note in self._notes:
+            sim = token_similarity(content, note.candidate_text())
+            if sim >= DEDUP_SIMILARITY and sim > best_sim:
+                best = note
+                best_sim = sim
+        return best
+
+    @staticmethod
+    def _normalize_tags(tags: list[str] | None) -> list[str]:
+        if not tags:
+            return []
+        cleaned = [str(t).strip() for t in tags if t is not None and str(t).strip()]
+        return list(dict.fromkeys(cleaned))
+
+    @staticmethod
+    def _normalize_importance(value: Any) -> int:
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            return 3
+        return max(1, min(5, num))
+
+    @staticmethod
+    def _note_dict(note: MemoryNote, score: float | None = None) -> dict[str, Any]:
+        data = note.to_dict()
+        if score is not None:
+            data["score"] = score
         return data
 
-    def _new_id(self) -> str:
-        """短随机 + 计数的记忆 id，避免同毫秒碰撞；纯标准库。"""
-        return f"mem_{len(self._notes):04d}_{uuid.uuid4().hex[:6]}"
-
-    # ---------- 持久化（标准库 JSON，可选） ----------
+    # ---------- 内部：持久化（原子写 + 可选透明加密） ----------
 
     def _load(self) -> None:
-        """启动从磁盘恢复；文件缺失 / 损坏一律冷启动容忍。"""
-        storage = self._storage
-        if storage is None:
-            return  # 未配置持久化文件：纯内存模式，无磁盘可恢复。
-        data: Any = {}
+        if self.storage_path is None or not self.storage_path.exists():
+            return
         try:
+            raw = self.storage_path.read_bytes()
             if self._cipher is not None:
-                # 加密落盘：读字节 -> 解密 -> UTF-8 明文 JSON。
-                raw = self._cipher.decrypt(storage.read_bytes()).decode("utf-8")
-            else:
-                raw = storage.read_text(encoding="utf-8")
-            data = json.loads(raw) if raw.strip() else {}
-        except FileNotFoundError:
-            data = {}
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            # 文件损坏不致命：当作空库，随后 _save 正常覆盖。
-            data = {}
-        except Exception:  # noqa: BLE001 - 解密失败（篡改/密钥不符）同样按损坏冷启动。
-            data = {}
-        rows = data.get("notes") if isinstance(data, dict) else None
-        if isinstance(rows, list):
-            for row in rows:
-                note = self._restore_note(row)
-                if note is not None:
-                    self._notes.append(note)
-        # 启动即重写：非法 / 脏数据不落盘。
-        self._save()
-
-    def _restore_note(self, row: Any) -> MemoryNote | None:
-        """恢复单条落盘记录；字段不全、kind 非法、时间非法一律跳过。"""
-        if not isinstance(row, dict):
-            return None
-        note_id = str(row.get("id", "")).strip()
-        content = str(row.get("content", "")).strip()
-        kind = str(row.get("kind", DEFAULT_KIND))
-        if not note_id or not content or kind not in VALID_KINDS:
-            return None
-        try:
-            created = datetime.fromisoformat(str(row["created_at"]))
-            last_used = datetime.fromisoformat(str(row["last_used_at"]))
-        except (KeyError, ValueError, TypeError):
-            return None
-        try:
-            access = max(0, int(row.get("access_count", 0)))
-        except (TypeError, ValueError):
-            access = 0
-        return MemoryNote(
-            id=note_id,
-            content=content,
-            kind=kind,
-            tags=_clean_tags(row.get("tags")),
-            importance=_clamp_importance(row.get("importance", DEFAULT_IMPORTANCE)),
-            created_at=created,
-            last_used_at=last_used,
-            access_count=access,
-        )
+                raw = self._cipher.decrypt(raw)
+            payload = json.loads(raw.decode("utf-8"))
+            notes = payload.get("notes", []) if isinstance(payload, dict) else []
+            self._notes = [MemoryNote.from_dict(item) for item in notes]
+        except Exception:
+            # 损坏 / 解密失败 / 旧格式：冷启动为空，避免一次坏文件导致永久不可用。
+            self._notes = []
 
     def _save(self) -> None:
-        """把当前记忆原子写回；未配置存储则什么都不做。"""
-        if self._storage is None:
+        if self.storage_path is None:
             return
-        rows = [
-            {
-                "id": note.id,
-                "content": note.content,
-                "kind": note.kind,
-                "tags": list(note.tags),
-                "importance": note.importance,
-                "created_at": note.created_at.isoformat(),
-                "last_used_at": note.last_used_at.isoformat(),
-                "access_count": note.access_count,
-            }
-            for note in self._notes
-        ]
-        payload = {"version": STORAGE_VERSION, "notes": rows}
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
-        self._storage.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._storage.with_name(self._storage.name + ".tmp")
+        payload = {
+            "version": STORAGE_VERSION,
+            "saved_at": self._clock().isoformat(),
+            "notes": [note.to_dict() for note in self._notes],
+        }
+        raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         if self._cipher is not None:
-            # 加密落盘：UTF-8 明文 JSON -> 加密字节；磁盘上不出现明文记忆。
-            tmp.write_bytes(self._cipher.encrypt(text.encode("utf-8")))
-        else:
-            tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, self._storage)  # 同卷原子替换（Windows 也成立）。
+            raw = self._cipher.encrypt(raw)
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._atomic_write(raw)
+
+    def _atomic_write(self, raw: bytes) -> None:
+        assert self.storage_path is not None
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.storage_path.parent), prefix=".memory-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw)
+            os.replace(tmp_name, self.storage_path)
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except OSError:
+                    pass
 
 
 def build_memory_tools(vault: MemoryVault) -> list[ToolSpec]:
-    """构造 ``remember`` / ``recall`` 两个 native 工具，handler 闭包访问 vault。"""
-    remember_schema = {
-        "type": "object",
-        "properties": {
-            "content": {
-                "type": "string",
-                "description": (
-                    "要长期记住的内容，写成语义完整的一句话，例如'用户对芒果过敏'。"
-                ),
-            },
-            "kind": {
-                "type": "string",
-                "enum": list(VALID_KINDS),
-                "description": (
-                    "fact 事实 / preference 偏好 / profile 画像 / episode 事件 / note 一般。"
-                ),
-            },
-            "tags": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "便于检索的标签，例如 ['饮食','过敏']。",
-            },
-            "importance": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 5,
-                "description": "重要度 1-5，默认 3；越稳定、越关键的信息越高。",
-            },
-        },
-        "required": ["content"],
-    }
-    recall_schema = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "要回忆的内容，自然语言描述，例如'用户有什么饮食禁忌'。",
-            },
-            "k": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 20,
-                "description": "返回条数，默认 5。",
-            },
-            "kinds": {
-                "type": "array",
-                "items": {"type": "string", "enum": list(VALID_KINDS)},
-                "description": "只在指定类型内回忆。",
-            },
-            "tags": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "只回忆带任一指定标签的条目。",
-            },
-        },
-        "required": ["query"],
-    }
+    """构造 remember / recall 两个长期记忆工具，交给内核注册为普通工具。"""
 
-    def _remember_handler(content: str, **kwargs: Any) -> dict[str, Any]:
+    def _remember_handler(
+        content: str,
+        kind: str = "note",
+        tags: list[str] | None = None,
+        importance: int = 3,
+    ) -> dict[str, Any]:
         note, merged = vault.remember(
-            content,
-            kind=kwargs.get("kind", DEFAULT_KIND),
-            tags=kwargs.get("tags"),
-            importance=kwargs.get("importance", DEFAULT_IMPORTANCE),
+            content, kind=kind, tags=tags, importance=importance
         )
         return {
             "id": note.id,
-            "content": note.content,
+            "merged": merged,
             "kind": note.kind,
-            "tags": list(note.tags),
+            "tags": note.tags,
             "importance": note.importance,
-            "already_existed": merged,
         }
 
-    def _recall_handler(query: str, **kwargs: Any) -> dict[str, Any]:
-        memories = vault.recall(
-            query,
-            k=kwargs.get("k", DEFAULT_RECALL_K),
-            kinds=kwargs.get("kinds"),
-            tags=kwargs.get("tags"),
-        )
-        return {"query": query, "count": len(memories), "memories": memories}
+    async def _recall_handler(
+        query: str,
+        k: int = DEFAULT_RECALL_K,
+        kinds: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        # 走异步双通道：配置 embedder 时词法 + 语义，否则等价纯词法。
+        return await vault.arecall(query, k=k, kinds=kinds, tags=tags)
 
-    return [
-        ToolSpec(
-            name=REMEMBER_TOOL,
-            description=(
-                "把跨会话仍有用的稳定信息（用户偏好 / 事实 / 画像 / 长期事项）主动"
-                "记下来，之后随时可 recall。只记真正稳定、未来会复用的信息，不要记录"
-                "一次性的临时细节；高度相似的内容会自动合并而非重复保存。"
-            ),
-            input_schema=remember_schema,
-            handler=_remember_handler,
-            source="native",
+    remember_spec = ToolSpec(
+        name="remember",
+        description=(
+            "把一条值得长期保留的用户信息写入结构化长期记忆。"
+            "kind 取值：fact(事实)、preference(偏好)、profile(画像)、episode(经历)、note(备注)；"
+            "tags 为便于检索的关键词标签；importance 为 1-5 的重要度。"
         ),
-        ToolSpec(
-            name=RECALL_TOOL,
-            description=(
-                "回答前需要过往背景时，按当前问题回忆相关长期记忆（用户偏好、历史事实、"
-                "未决事项）。拿不准是否提过就先 recall，再据此回答；没有相关记忆时返回"
-                "空列表，此时不要编造。"
-            ),
-            input_schema=recall_schema,
-            handler=_recall_handler,
-            source="native",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "要记住的具体内容（一句话）"},
+                "kind": {"type": "string", "enum": list(VALID_KINDS), "default": "note"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "importance": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+            },
+            "required": ["content"],
+        },
+        handler=_remember_handler,
+    )
+
+    recall_spec = ToolSpec(
+        name="recall",
+        description=(
+            "按语义 / 关键词相关度检索长期记忆，返回最相关的若干条；"
+            "可按 kind 与 tag 过滤。回答涉及用户偏好、历史、画像、过往事实时先检索。"
         ),
-    ]
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "检索 query（自然语言）"},
+                "k": {"type": "integer", "minimum": 1, "maximum": 20, "default": DEFAULT_RECALL_K},
+                "kinds": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(VALID_KINDS)},
+                },
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["query"],
+        },
+        handler=_recall_handler,
+    )
+
+    return [remember_spec, recall_spec]
