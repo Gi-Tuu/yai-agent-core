@@ -118,6 +118,17 @@ class AgentLoop:
         self.tier_policy = tier_policy
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
+        """任务执行的统一入口：路由一次，按策略分发，最后落记忆并发 DONE。
+
+        流程为 ``aclassify`` 得到策略（来源/理由/档位随事件流出，可审计）→
+        能力缺口事件与按需发现 → clarify 反问（累积补充后递归重路由，轮数封顶）、
+        或 direct/react/plan 执行 → react 与 plan 共用 :meth:`_react_cycle`，
+        plan 先经 :meth:`_make_plan` 生成步骤 → 把本轮 user/assistant 写入记忆，
+        发带标准/强档调用计数的 DONE。
+
+        ``_clarify_depth`` 只由澄清递归自增，外部调用恒为 0；达上限仍不明确时
+        降级为 DIRECT（信息不全不硬调工具），绝不无限反问。
+        """
         decision = await self.router.aclassify(
             task, self.registry, discoverable=self._discoverable_catalog()
         )
@@ -352,6 +363,12 @@ class AgentLoop:
         tier_policy: TierPolicy | None = None,
         tier_counts: dict[str, int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        """PLAN 策略的规划步：让模型把任务拆成 2-5 个编号步骤并写入上下文。
+
+        正则提取步骤；一个都提取不到时退化为单步（任务本身），保证下游总有可
+        执行计划。规划调用按成本感知策略给档（默认 strong、关闭时沿用路由档），
+        并计入 ``tier_counts``，随后发 ``plan_created`` 事件。
+        """
         prompt = (
             "把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
             "只输出步骤本身：\n" + task
@@ -445,6 +462,15 @@ class AgentLoop:
         tier_policy: TierPolicy | None = None,
         tier_counts: dict[str, int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        """核心 ReAct 循环：模型调用 ↔ 工具执行，直到模型不再调工具或触达迭代上限。
+
+        每轮先做上下文压缩（若启用）与成本感知选档（档位相对上轮变化才发事件），
+        再调用模型；模型不再发起工具调用即产出最终消息并结束。否则顺序执行本轮
+        工具——内核 meta-tool 直接处理、普通工具走 :class:`ToolExecutor`——把失败
+        观察回灌促其自我修正，并把执行中新注册工具的完整 schema 并入下一轮
+        （"发现了就能调到"）。达到 ``max_iters`` 后要求模型基于已有观察收尾。
+        ``use_tools=False``（DIRECT）时不注入任何工具。
+        """
         if use_tools:
             tools_schema, focused_names = await self._focus_tool_schemas(
                 task, tier_counts

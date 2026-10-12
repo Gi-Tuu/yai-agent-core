@@ -109,6 +109,155 @@ def _path_allowed(path: str, config: OpenApiSpecConfig) -> bool:
     return True
 
 
+def _collect_parameters(
+    shared_parameters: list[Any], operation: dict
+) -> tuple[dict[str, Any], list[str], list[str], list[str]]:
+    """合并 pathItem 级与 operation 级 parameters，拆成 (properties, required, path, query)。
+
+    header / cookie 参数不暴露给模型（v0.2 边界）；path 参数按 OpenAPI 规定恒为 required。
+    """
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    path_params: list[str] = []
+    query_params: list[str] = []
+    for parameter in [*shared_parameters, *(operation.get("parameters") or [])]:
+        if not isinstance(parameter, dict):
+            continue
+        where = parameter.get("in")
+        if where not in {"path", "query"}:
+            continue
+        name, sub_schema, is_required = _parameter_property(parameter)
+        properties[name] = sub_schema
+        if where == "path":
+            path_params.append(name)
+            if name not in required:
+                required.append(name)  # OpenAPI 规定 path 参数恒为 required
+        else:
+            query_params.append(name)
+            if is_required and name not in required:
+                required.append(name)
+    return properties, required, path_params, query_params
+
+
+def _resolve_request_body(
+    operation: dict, properties: dict[str, Any], required: list[str], notes: list[str]
+) -> tuple[tuple[str, ...], bool, bool]:
+    """解析 requestBody 的 JSON schema 并并入入参，返回 (body_fields, body_wrapped, body_required)。
+
+    object 类型由 :func:`_merge_body` 拍平；其他类型包成单个 ``body`` 字段。
+    """
+    body_fields: tuple[str, ...] = ()
+    body_wrapped = False
+    body_required = False
+    request_body = operation.get("requestBody")
+    if isinstance(request_body, dict):
+        content = request_body.get("content") or {}
+        json_entry = content.get("application/json")
+        if json_entry and isinstance(json_entry.get("schema"), dict):
+            body_fields, body_wrapped = _merge_body(
+                properties, required, json_entry["schema"], notes
+            )
+            body_required = bool(request_body.get("required", False))
+            if body_required and body_wrapped and "body" not in required:
+                required.append("body")
+    return body_fields, body_wrapped, body_required
+
+
+def _plan_one_operation(
+    method_l: str,
+    path: str,
+    operation: dict,
+    spec: dict,
+    shared_parameters: list[Any],
+    config: OpenApiSpecConfig,
+    used_names: set[str],
+    notes: list[str],
+) -> OperationPlan:
+    """把单个 HTTP operation 翻译成一个 :class:`OperationPlan`（参数 / body / 命名 / schema）。"""
+    properties, required, path_params, query_params = _collect_parameters(
+        shared_parameters, operation
+    )
+    body_fields, body_wrapped, body_required = _resolve_request_body(
+        operation, properties, required, notes
+    )
+
+    operation_id = operation.get("operationId")
+    raw_name = (
+        _clean_operation_id(operation_id)
+        if operation_id
+        else _synthetic_name(method_l, path)
+    )
+    name = _dedupe_name(raw_name, used_names, notes)
+    if config.prefix:
+        name = f"{config.prefix}_{name}"
+
+    summary = (operation.get("summary") or "").strip()
+    description = (operation.get("description") or "").strip()
+    tail = f"{summary} {description}".strip()
+    tool_description = f"[{method_l.upper()} {path}] {tail}".strip()[:1000]
+
+    input_schema = sanitize_schema(
+        {"type": "object", "properties": properties, "required": required}
+    )
+    if not properties:
+        input_schema = dict(EMPTY_OBJECT_SCHEMA)
+
+    return OperationPlan(
+        name=name,
+        description=tool_description,
+        input_schema=input_schema,
+        method=method_l.upper(),
+        path_template=path,
+        path_params=tuple(path_params),
+        query_params=tuple(query_params),
+        body_fields=body_fields,
+        body_wrapped=body_wrapped,
+        body_required=body_required,
+        # operation 级 security 缺省回退全局 security。
+        security=operation.get("security", spec.get("security")) or [],
+    )
+
+
+def _plans_for_path(
+    path: str,
+    path_item: Any,
+    spec: dict,
+    config: OpenApiSpecConfig,
+    used_names: set[str],
+    notes: list[str],
+) -> list[OperationPlan]:
+    """处理单个 pathItem：校验 / 过滤后，对每个 HTTP method 产出一个计划。"""
+    if not isinstance(path_item, dict):
+        return []
+    if "$ref" in path_item:
+        notes.append(f"路径级 $ref 不展开，跳过：{path}")
+        return []
+    if not _path_allowed(path, config):
+        return []
+
+    plans: list[OperationPlan] = []
+    shared_parameters = path_item.get("parameters") or []
+    for method, operation in path_item.items():
+        method_l = method.lower()
+        if method_l not in _HTTP_METHODS or not isinstance(operation, dict):
+            continue
+        if config.read_only and method_l not in _READ_ONLY_METHODS:
+            continue
+        plans.append(
+            _plan_one_operation(
+                method_l,
+                path,
+                operation,
+                spec,
+                shared_parameters,
+                config,
+                used_names,
+                notes,
+            )
+        )
+    return plans
+
+
 def plan_operations(
     spec: dict, config: OpenApiSpecConfig
 ) -> tuple[list[OperationPlan], list[str]]:
@@ -116,99 +265,9 @@ def plan_operations(
     notes: list[str] = []
     plans: list[OperationPlan] = []
     used_names: set[str] = set()
-    paths = spec.get("paths") or {}
 
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-        if "$ref" in path_item:
-            notes.append(f"路径级 $ref 不展开，跳过：{path}")
-            continue
-        if not _path_allowed(path, config):
-            continue
-        shared_parameters = path_item.get("parameters") or []
-        for method, operation in path_item.items():
-            method_l = method.lower()
-            if method_l not in _HTTP_METHODS or not isinstance(operation, dict):
-                continue
-            if config.read_only and method_l not in _READ_ONLY_METHODS:
-                continue
-
-            properties: dict[str, Any] = {}
-            required: list[str] = []
-            path_params: list[str] = []
-            query_params: list[str] = []
-
-            # pathItem 级与 operation 级 parameters 合并（后者优先语义由后写覆盖体现）。
-            for parameter in [*shared_parameters, *(operation.get("parameters") or [])]:
-                if not isinstance(parameter, dict):
-                    continue
-                where = parameter.get("in")
-                if where not in {"path", "query"}:
-                    continue  # header / cookie 参数不暴露给模型（v0.2 边界）
-                name, sub_schema, is_required = _parameter_property(parameter)
-                properties[name] = sub_schema
-                if where == "path":
-                    path_params.append(name)
-                    if name not in required:
-                        required.append(name)  # OpenAPI 规定 path 参数恒为 required
-                else:
-                    query_params.append(name)
-                    if is_required and name not in required:
-                        required.append(name)
-
-            body_fields: tuple[str, ...] = ()
-            body_wrapped = False
-            body_required = False
-            request_body = operation.get("requestBody")
-            if isinstance(request_body, dict):
-                content = request_body.get("content") or {}
-                json_entry = content.get("application/json")
-                if json_entry and isinstance(json_entry.get("schema"), dict):
-                    body_fields, body_wrapped = _merge_body(
-                        properties, required, json_entry["schema"], notes
-                    )
-                    body_required = bool(request_body.get("required", False))
-                    if body_required and body_wrapped and "body" not in required:
-                        required.append("body")
-
-            operation_id = operation.get("operationId")
-            raw_name = (
-                _clean_operation_id(operation_id)
-                if operation_id
-                else _synthetic_name(method_l, path)
-            )
-            name = _dedupe_name(raw_name, used_names, notes)
-            if config.prefix:
-                name = f"{config.prefix}_{name}"
-
-            summary = (operation.get("summary") or "").strip()
-            description = (operation.get("description") or "").strip()
-            tail = f"{summary} {description}".strip()
-            tool_description = f"[{method.upper()} {path}] {tail}".strip()[:1000]
-
-            input_schema = sanitize_schema(
-                {"type": "object", "properties": properties, "required": required}
-            )
-            if not properties:
-                input_schema = dict(EMPTY_OBJECT_SCHEMA)
-
-            plans.append(
-                OperationPlan(
-                    name=name,
-                    description=tool_description,
-                    input_schema=input_schema,
-                    method=method.upper(),
-                    path_template=path,
-                    path_params=tuple(path_params),
-                    query_params=tuple(query_params),
-                    body_fields=body_fields,
-                    body_wrapped=body_wrapped,
-                    body_required=body_required,
-                    # operation 级 security 缺省回退全局 security。
-                    security=operation.get("security", spec.get("security")) or [],
-                )
-            )
+    for path, path_item in (spec.get("paths") or {}).items():
+        plans.extend(_plans_for_path(path, path_item, spec, config, used_names, notes))
 
     if len(plans) > config.max_operations:
         notes.append(
