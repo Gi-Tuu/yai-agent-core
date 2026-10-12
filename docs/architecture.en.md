@@ -155,6 +155,21 @@ YAI is an in-process kernel running on a single-threaded asyncio event loop. Its
 
 This reduces horizontal scaling to a simple rule: **many sessions on one host = many instances in one process; across machines = multiple replicas sharing stateless model/discovery backends.** The kernel itself introduces no thread pools, queues, or distributed locks.
 
+### 2.7 Local diagnostic events (zero-dependency side channel)
+
+At moments when the kernel **silently falls back so the main flow keeps running, but operations/debugging still needs visibility**, it emits a `DiagnosticEvent` through a callback that is **synchronous, dependency-free, and never able to break the main flow**. It complements, rather than replaces, the other two observability channels:
+
+| Channel | Audience | Answers | Emitted by |
+|---|---|---|---|
+| `AgentEvent` (event stream) | Product / end user | What the agent is **deciding and doing** (routing, tool calls, discovery, authorization…) | Main kernel flow; always present, replayable |
+| `DiagnosticEvent` (this section) | Local ops / debugging | Where the kernel **quietly degraded an enhancement** (model timeout, classifier fallback, discovery failure, compaction fallback…) | Only when the host passes an `on_diagnostic` callback |
+| OpenTelemetry tracing (optional extra) | Distributed / cross-service | The **trace, latency, and attribution** of a request across processes | The host, subscribing to the event stream from the outside; the kernel initializes no exporter |
+
+- **Shape:** `DiagnosticEvent(kind, message, level, data)`, with `level ∈ debug/info/warning/error`. The current eight `kind`s are `model_error`, `model_timeout`, `model_fallback`, `router_llm_fallback`, `discovery_failed`, `discoverable_list_failed`, `compaction_fallback`, and `schema_focus_fallback`.
+- **Safety contract:** the callback is synchronous and should be fast and non-blocking (a log line or a metrics counter is enough). Any exception raised inside the callback is swallowed by the kernel: diagnostics are a side channel and must never take the agent down because "the logger crashed." The kernel does not depend on `logging` and turns no logging library into a hard dependency.
+- **Wiring:** pass it once via `AgentCore(model, on_diagnostic=fn)`. The kernel duck-types the same callback onto the internal `AdaptiveRouter` and `FallbackModelProvider` (both expose a writable `on_diagnostic` attribute; custom host-built components that lack it are unaffected). With no callback the kernel stays completely silent and behaves exactly as before.
+- **Deliberately excluded:** a sandbox failure surfaces as `tool_result(ok=False)` and a permission denial emits `permission_asked`; these are already user-visible business events, not silent fallbacks, so they are not re-emitted as diagnostics.
+
 ## 3. SPI contracts
 
 | Contract | Methods | Default implementation | When a host replaces it |

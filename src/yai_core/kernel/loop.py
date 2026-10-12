@@ -13,6 +13,13 @@ import json
 import re
 from collections.abc import AsyncIterator, Iterable
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticLevel,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
@@ -94,6 +101,7 @@ class AgentLoop:
         compaction_policy: CompactionPolicy | None = None,
         tier_policy: TierPolicy | None = None,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
+        on_diagnostic: DiagnosticSink | None = None,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -125,6 +133,29 @@ class AgentLoop:
         self.tier_policy = tier_policy
         # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。
         self.model_timeout = model_timeout
+        # 本地诊断回调（旁路排障）；None=安静运行。同步、零依赖、异常不反噬。
+        self._on_diagnostic = on_diagnostic
+        # 鸭子接线：把同一回调交给路由与模型后端，只要它们暴露可写的
+        # on_diagnostic 属性（AdaptiveRouter / FallbackModelProvider 都支持）。
+        # 宿主自建、不认识该属性的自定义组件不受影响。
+        if hasattr(self.router, "on_diagnostic"):
+            self.router.on_diagnostic = on_diagnostic
+        if hasattr(self.model, "on_diagnostic"):
+            self.model.on_diagnostic = on_diagnostic
+
+    def _diag(
+        self,
+        kind: DiagnosticKind | str,
+        message: str,
+        *,
+        level: DiagnosticLevel = DiagnosticLevel.WARNING,
+        **data: object,
+    ) -> None:
+        """安全发出一条本地诊断（回调异常被 emit 吞掉，不影响主流程）。"""
+        emit(
+            self._on_diagnostic,
+            DiagnosticEvent(kind=str(kind), message=message, level=level, data=data),
+        )
 
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
@@ -248,6 +279,18 @@ class AgentLoop:
             # react 主轮的模型异常已在循环内局部转 ERROR，不会走到这里。
             # CancelledError 属于 BaseException，不被本分支捕获，从而能干净传播、
             # 真正响应用户终止 / aclose / 任务取消（见 _model_chat）。
+            is_timeout = isinstance(exc, TimeoutError)
+            self._diag(
+                DiagnosticKind.MODEL_TIMEOUT if is_timeout else DiagnosticKind.MODEL_ERROR,
+                (
+                    f"模型调用超过 {self.model_timeout:g}s 硬超时，已体面收尾"
+                    if is_timeout
+                    else f"模型调用失败（{type(exc).__name__}），已体面收尾"
+                ),
+                level=DiagnosticLevel.ERROR,
+                stage="model",
+                error=f"{type(exc).__name__}: {exc}",
+            )
             yield AgentEvent(
                 EventType.ERROR,
                 {"stage": "model", "error": f"{type(exc).__name__}: {exc}"},
@@ -334,7 +377,13 @@ class AgentLoop:
             return None
         try:
             items = getter()
-        except Exception:  # noqa: BLE001 - 可发现目录是增强，失败静默退化
+        except Exception as exc:  # noqa: BLE001 - 可发现目录是增强，失败静默退化
+            self._diag(
+                DiagnosticKind.DISCOVERABLE_LIST_FAILED,
+                f"拉取可发现能力目录失败（{type(exc).__name__}），退化为被动发现",
+                source=type(self.discovery).__name__,
+                error=f"{type(exc).__name__}: {exc}",
+            )
             return None
         if not isinstance(items, list):
             # 返回 None / 非列表（表示无可发现项）同样退化为被动发现，不能崩溃。
@@ -362,6 +411,14 @@ class AgentLoop:
                 available=[s.name for s in self.registry.all()],
             )
         except Exception as exc:  # noqa: BLE001 - 发现是增强不是依赖，失败不致命
+            self._diag(
+                DiagnosticKind.DISCOVERY_FAILED,
+                f"工具发现源执行失败（{type(exc).__name__}），本次不注册新工具",
+                level=DiagnosticLevel.ERROR,
+                source=type(self.discovery).__name__,
+                need=need,
+                error=f"{type(exc).__name__}: {exc}",
+            )
             yield AgentEvent(
                 EventType.ERROR,
                 {"stage": "tool_discovery", "error": f"{type(exc).__name__}: {exc}"},
@@ -458,7 +515,13 @@ class AgentLoop:
                 tier=STANDARD,
             )
             names = self._parse_tool_names(resp.content)
-        except Exception:  # noqa: BLE001 - 聚焦是优化不是依赖，失败回退全量
+        except Exception as exc:  # noqa: BLE001 - 聚焦是优化不是依赖，失败回退全量
+            self._diag(
+                DiagnosticKind.SCHEMA_FOCUS_FALLBACK,
+                f"工具 schema 聚焦失败（{type(exc).__name__}），回退注入全量 schema",
+                level=DiagnosticLevel.DEBUG,
+                error=f"{type(exc).__name__}: {exc}",
+            )
             return self.registry.llm_schemas(), None
         chosen: list[str] = []
         seen: set[str] = set()
@@ -523,6 +586,7 @@ class AgentLoop:
                     self.model,
                     self.compaction_policy,
                     timeout=self.model_timeout,
+                    on_diagnostic=self._on_diagnostic,
                 )
                 if compact_ev is not None:
                     yield compact_ev
@@ -550,6 +614,19 @@ class AgentLoop:
             try:
                 resp = await self._model_chat(ctx.llm_messages(), tools_schema, tier=tier)
             except Exception as exc:  # noqa: BLE001
+                is_timeout = isinstance(exc, TimeoutError)
+                self._diag(
+                    DiagnosticKind.MODEL_TIMEOUT if is_timeout else DiagnosticKind.MODEL_ERROR,
+                    (
+                        f"执行轮模型调用超过 {self.model_timeout:g}s 硬超时，已终止"
+                        if is_timeout
+                        else f"执行轮模型调用失败（{type(exc).__name__}），已终止本轮"
+                    ),
+                    level=DiagnosticLevel.ERROR,
+                    stage="react",
+                    iteration=iteration,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
                 yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
                 return
 

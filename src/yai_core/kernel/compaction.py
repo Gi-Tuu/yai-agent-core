@@ -12,6 +12,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticLevel,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.kernel.context import Context
 from yai_core.types import AgentEvent, ChatMessage, EventType
 
@@ -94,6 +101,7 @@ async def compact_context(
     policy: CompactionPolicy,
     *,
     timeout: float | None = None,
+    on_diagnostic: DiagnosticSink | None = None,
 ) -> AgentEvent | None:
     """超预算时把旧轮摘要压缩；返回 ``CONTEXT_COMPACTED`` 事件，否则返回 None。
 
@@ -126,10 +134,26 @@ async def compact_context(
         else:
             resp = await asyncio.wait_for(_summarize(), timeout=timeout)
         summary = (getattr(resp, "content", "") or "").strip()
-    except Exception:  # noqa: BLE001 - 摘要超时/失败都是增强失败，回退硬裁剪
+    except Exception as exc:  # noqa: BLE001 - 摘要超时/失败都是增强失败，回退硬裁剪
+        emit(
+            on_diagnostic,
+            DiagnosticEvent(
+                kind=str(DiagnosticKind.COMPACTION_FALLBACK),
+                message=f"上下文摘要压缩失败（{type(exc).__name__}），已回退硬裁剪",
+                data={"error": f"{type(exc).__name__}: {exc}"},
+            ),
+        )
         ctx.enforce_budget()
         return None
     if not summary:
+        emit(
+            on_diagnostic,
+            DiagnosticEvent(
+                kind=str(DiagnosticKind.COMPACTION_FALLBACK),
+                message="摘要模型返回空摘要，已回退硬裁剪",
+                level=DiagnosticLevel.DEBUG,
+            ),
+        )
         ctx.enforce_budget()
         return None
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from yai_core.channels import CollectChannel
+from yai_core.diagnostics import DiagnosticSink
 from yai_core.discovery import discover
 from yai_core.kernel import (
     DEFAULT_MODEL_TIMEOUT,
@@ -82,6 +83,7 @@ class AgentCore:
         context_compaction: bool | CompactionPolicy = False,
         cost_aware: bool = True,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
+        on_diagnostic: DiagnosticSink | None = None,
     ) -> None:
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
@@ -177,6 +179,8 @@ class AgentCore:
             tier_policy=TierPolicy() if cost_aware else None,
             # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。
             model_timeout=model_timeout,
+            # 本地诊断回调（旁路排障），并由 AgentLoop 鸭子接线给 router/model。
+            on_diagnostic=on_diagnostic,
         )
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout

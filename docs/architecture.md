@@ -132,6 +132,21 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 这条契约把水平扩展简化为：**单机多会话 = 一进程多实例；跨机器 = 多副本 + 共享无状态的模型/发现后端**，内核自身不引入线程池、消息队列或分布式锁。
 
+### 2.7 本地诊断事件（Diagnostics，零依赖旁路）
+
+内核在"已静默兜底、主流程不失败、但运维排障必须看得见"的瞬间，会通过一个**同步、零依赖、永不反噬主流程**的回调发出 `DiagnosticEvent`。它与另外两套可观测手段分工明确，互不替代：
+
+| 通道 | 面向 | 回答什么 | 触发方 |
+|---|---|---|---|
+| `AgentEvent`（事件流） | 产品 / 终端用户 | Agent **正在做什么决策与动作**（路由、工具调用、发现、授权…） | 内核主流程，必经、可回放 |
+| `DiagnosticEvent`（本小节） | 本地运维 / 排障 | 内核**在哪些增强环节悄悄降级了**（模型超时、分类回退、发现失败、压缩回退…） | 仅当宿主传入 `on_diagnostic` 回调 |
+| OpenTelemetry tracing（可选 extra） | 分布式 / 跨服务 | 一次请求跨进程的**链路、耗时、归因** | 宿主在外侧订阅事件流，内核不初始化 exporter |
+
+- **数据结构**：`DiagnosticEvent(kind, message, level, data)`。`level ∈ debug/info/warning/error`；`kind` 当前覆盖 8 类：`model_error`、`model_timeout`、`model_fallback`、`router_llm_fallback`、`discovery_failed`、`discoverable_list_failed`、`compaction_fallback`、`schema_focus_fallback`。
+- **安全语义**：回调是同步的，宿主应让它快速、非阻塞（写一行日志、推一个监控计数即可）；回调内部抛出的任何异常都会被内核吞掉，诊断是旁路，绝不能因为"日志系统挂了"而拖垮 Agent 主流程。内核不依赖 `logging`，不把任何日志库变成硬依赖。
+- **接线方式**：`AgentCore(model, on_diagnostic=fn)` 一处传入，内核会把同一回调鸭子接线给内部的 `AdaptiveRouter` 与 `FallbackModelProvider`（它们暴露可写的 `on_diagnostic` 属性；宿主自建、不认识该属性的自定义组件不受影响）。不传回调时内核完全安静，行为与旧版本一致。
+- **刻意不纳入诊断的情况**：沙箱执行失败会冒泡成 `tool_result(ok=False)`、权限拒绝会发 `permission_asked`——这些本就是用户可见的业务事件，不属于"静默兜底"，因此不重复发诊断。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |

@@ -18,6 +18,12 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import Strategy
 
@@ -28,17 +34,50 @@ if TYPE_CHECKING:
 # 多步骤信号：出现时倾向先规划再执行
 # （"一共"是数量信号而非多步信号，已移入行动信号，避免"一共多少条"误判）
 _PLAN_HINTS = (
-    "然后", "接着", "之后", "再把", "分步", "步骤", "先", "并且", "同时",
-    "对比", "整理成", "汇总成", "最终", "分别",
+    "然后",
+    "接着",
+    "之后",
+    "再把",
+    "分步",
+    "步骤",
+    "先",
+    "并且",
+    "同时",
+    "对比",
+    "整理成",
+    "汇总成",
+    "最终",
+    "分别",
 )
 # 行动信号：需要调用工具
 _ACTION_HINTS = (
-    "查", "找", "搜", "列出", "统计", "计算", "导出", "获取", "读取",
-    "记录", "新增", "整理", "分析", "筛选", "生成",
+    "查",
+    "找",
+    "搜",
+    "列出",
+    "统计",
+    "计算",
+    "导出",
+    "获取",
+    "读取",
+    "记录",
+    "新增",
+    "整理",
+    "分析",
+    "筛选",
+    "生成",
     # 显式的工具/MCP 调用意图（v0.2 接外部 MCP Server 后补齐）
-    "问一下", "查询", "调用", "工具", "mcp",
+    "问一下",
+    "查询",
+    "调用",
+    "工具",
+    "mcp",
     # 数量/存在性问法本质是查询，需要工具（Q2 回归）
-    "多少", "几个", "几条", "几号", "有没有",
+    "多少",
+    "几个",
+    "几条",
+    "几号",
+    "有没有",
 )
 # 过于模糊、需要反问
 _CLARIFY_HINTS = ("随便", "你看着办", "什么都行", "帮我弄一下")
@@ -65,6 +104,7 @@ class AdaptiveRouter:
         model: ModelProvider | None = None,
         classify_timeout: float = 15.0,
         selector: RouteSelector | None = None,
+        on_diagnostic: DiagnosticSink | None = None,
     ) -> None:
         self.min_plan_steps = min_plan_steps
         # model 可选：注入了才启用 LLM 分类；不注入时 aclassify 直接走规则。
@@ -73,6 +113,9 @@ class AdaptiveRouter:
         # 学习型路由先验源（第六个 SPI RouteSelector）：默认 None，路由行为与
         # 纯规则逐字节一致。第一版仅在未配置 LLM 路由（model is None）时由它前置。
         self.selector = selector
+        # 本地诊断回调：LLM 分类失败回退规则时发一条 warning（AgentLoop 会把
+        # 自己的回调鸭子注入到这里，外部自建 router 也可显式传入）。
+        self.on_diagnostic = on_diagnostic
 
     # ---------- 规则路径（同步、永远可用的兜底） ----------
 
@@ -90,9 +133,7 @@ class AdaptiveRouter:
             return RouteDecision(Strategy.DIRECT, "rules", "宿主无任何工具，直接回答")
         # 拉丁字母提示词（如 mcp）大小写不敏感；中文提示词按原文匹配。
         lowered = text.lower()
-        wants_action = any(
-            (h in lowered) if h.isascii() else (h in text) for h in _ACTION_HINTS
-        )
+        wants_action = any((h in lowered) if h.isascii() else (h in text) for h in _ACTION_HINTS)
         multi_step = sum(1 for h in _PLAN_HINTS if h in text) >= 1
         if multi_step and wants_action:
             return RouteDecision(
@@ -136,13 +177,22 @@ class AdaptiveRouter:
                 fallback.reason = (
                     f"LLM 分类失败（{type(exc).__name__}），回退规则：{fallback.reason}"
                 )
+                emit(
+                    self.on_diagnostic,
+                    DiagnosticEvent(
+                        kind=str(DiagnosticKind.ROUTER_LLM_FALLBACK),
+                        message=(f"LLM 路由分类失败（{type(exc).__name__}），已回退关键词规则"),
+                        data={
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "fallback_strategy": fallback.strategy.value,
+                        },
+                    ),
+                )
                 return fallback
         # 4) 规则兜底（永远可用）。
         return self._rules(task, registry)
 
-    def _learned_decision(
-        self, task: str, registry: ToolRegistry
-    ) -> RouteDecision | None:
+    def _learned_decision(self, task: str, registry: ToolRegistry) -> RouteDecision | None:
         """把学习器建议转成 RouteDecision；学习器不表态时返回 None。"""
         if self.selector is None:
             return None
@@ -152,10 +202,7 @@ class AdaptiveRouter:
         return RouteDecision(
             strategy=suggestion.strategy,
             source=suggestion.source,
-            reason=(
-                f"自校准路由建议（{suggestion.source}，"
-                f"置信度 {suggestion.confidence:.2f}）"
-            ),
+            reason=(f"自校准路由建议（{suggestion.source}，置信度 {suggestion.confidence:.2f}）"),
             tier="strong" if suggestion.strategy == Strategy.PLAN else "standard",
         )
 
@@ -168,9 +215,7 @@ class AdaptiveRouter:
         """一次轻量模型调用，要求只输出路由 JSON。"""
         if self.model is None:
             raise RuntimeError("_llm_classify 需要已配置 model")
-        tools_text = "\n".join(
-            f"- {s.name}: {s.description}" for s in registry.all()
-        )
+        tools_text = "\n".join(f"- {s.name}: {s.description}" for s in registry.all())
         # 可按需启用能力段：让 LLM 在"自己也会做"的认知任务上仍选择走宿主工具，
         # 而不是 direct 代做（否则绕过业务工具，丢失统一口径与留痕）。只给声明、
         # 不含 handler；注册与执行授权仍由内核与 PermissionPolicy 负责。
@@ -240,6 +285,4 @@ class AdaptiveRouter:
         missing_capability: str | None = None
         if missing is not None and str(missing).strip().lower() not in ("null", "none", ""):
             missing_capability = str(missing).strip()[:120]
-        return RouteDecision(
-            strategy, "llm", reason, tier, missing_capability=missing_capability
-        )
+        return RouteDecision(strategy, "llm", reason, tier, missing_capability=missing_capability)
