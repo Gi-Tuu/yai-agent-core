@@ -144,6 +144,17 @@ The most recent keep_recent_rounds complete turns stay intact, so long conversat
 - Boundary: compaction only rearranges the current context and never rewrites persistent history in the
   MemoryStore; cross-request history trimming still goes through retention (§2.2).
 
+### 2.6 Concurrency model and multi-tenant isolation
+
+YAI is an in-process kernel running on a single-threaded asyncio event loop. Its concurrency contract is deliberately narrow and safe by default:
+
+- **One `AgentCore` instance = one serial session.** At most one task runs at a time within an instance: `astream`/`run` hold an instance-level `asyncio.Lock` for their whole duration. Concurrent calls queue up instead of letting two tasks interleave at `await` points and corrupt the shared context, memory, tool registry, or routing-learning state.
+- **For concurrency, use multiple instances.** Independent sessions (multiple tenants, specialists, or sub-employees) each construct their own `AgentCore`. Stateless model clients, discovery sources, and sandboxes may be shared singletons across cores, while stateful parts (`registry / memory / learning / code_tool_manager`) stay per-instance. Sub-employees (`shell/employee`) and each Dynamic Island specialist hold their own core this way and can still run in parallel (bounded by their own concurrency limits).
+- **Closing a stream early releases the lock.** When the async generator is `aclose()`d (or the host breaks/discards it), the `async with` block releases the instance lock automatically. Hosts should fully drain or explicitly close the event stream; otherwise the next task waits.
+- **Maintenance methods are synchronous.** `sweep_code_tools()` and memory retention run atomically on the event-loop thread (no `await` suspension), use snapshot iteration and atomic replacement for writes, and are meant to be called between tasks; they do not and should not share the task lock.
+
+This reduces horizontal scaling to a simple rule: **many sessions on one host = many instances in one process; across machines = multiple replicas sharing stateless model/discovery backends.** The kernel itself introduces no thread pools, queues, or distributed locks.
+
 ## 3. SPI contracts
 
 | Contract | Methods | Default implementation | When a host replaces it |

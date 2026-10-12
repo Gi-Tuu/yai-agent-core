@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Literal
@@ -43,6 +44,14 @@ FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
 
 
 class AgentCore:
+    """进程内嵌入式自适应 Agent 内核的唯一门面。
+
+    并发模型：一个实例代表一条**串行会话**，实例内同一时刻只运行一个任务；
+    需要并发会话（多租户 / 多专员 / 多子员工）时，请为每条会话实例化独立的
+    ``AgentCore``（可共享无状态的模型 / 发现源 / 沙箱单例）。详见
+    :meth:`astream` 的并发契约说明。
+    """
+
     def __init__(
         self,
         model: ModelProvider,
@@ -67,6 +76,8 @@ class AgentCore:
         context_compaction: bool | CompactionPolicy = False,
         cost_aware: bool = True,
     ) -> None:
+        # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
+        self._task_lock = asyncio.Lock()
         self.model = model
         self.registry = ToolRegistry()
         # 自校准路由学习器（第六个 SPI）：默认 None，行为与不接入学习完全一致。
@@ -221,26 +232,37 @@ class AgentCore:
     # ---------- 运行 ----------
 
     async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
+        """运行一个任务并流式产出事件。
+
+        并发契约：实例内任意时刻只运行一个任务。并发调用 ``astream`` /
+        :meth:`run` 会在实例锁上排队，而不会让两条任务在 await 点交错、互相
+        污染共享的上下文、记忆、工具注册表与路由学习态。要并发处理多条相互
+        独立的会话，请为每条会话实例化独立的 :class:`AgentCore`。
+
+        流式宿主若提前结束消费（``break`` 或丢弃迭代器），异步生成器被关闭时
+        会自动释放该锁；请正常耗尽或显式关闭事件流，否则后续任务会一直等待。
+        """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
-        events: list[AgentEvent] = []
-        strategy: Strategy | None = None
-        completed = False
-        try:
-            async for event in self._loop.astream(task):
-                await self.channel.emit(event)
-                events.append(event)
-                data = event.data or {}
-                if "strategy" in data:
-                    strategy = Strategy(data["strategy"])
-                yield event
-            completed = True
-        finally:
-            # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
-            # 避免把"用户中途终止"误当成负样本污染学习。
-            if completed:
-                chosen = strategy or self.router.classify(task, self.registry)
-                self._record_feedback(task, chosen, events)
+        async with self._task_lock:
+            events: list[AgentEvent] = []
+            strategy: Strategy | None = None
+            completed = False
+            try:
+                async for event in self._loop.astream(task):
+                    await self.channel.emit(event)
+                    events.append(event)
+                    data = event.data or {}
+                    if "strategy" in data:
+                        strategy = Strategy(data["strategy"])
+                    yield event
+                completed = True
+            finally:
+                # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
+                # 避免把"用户中途终止"误当成负样本污染学习。
+                if completed:
+                    chosen = strategy or self.router.classify(task, self.registry)
+                    self._record_feedback(task, chosen, events)
 
     async def run(self, task: str) -> RunResult:
         events: list[AgentEvent] = []
