@@ -186,9 +186,10 @@ uv sync --extra desktop
 | 4 | `host_f_discovery` | 能力缺口 → 发现 → 本轮可用（静态 / 语义） |
 | 5 | `host_g_sandbox` | 教学沙箱：现场造代码工具并执行 |
 | 6 | `host_e_sales_crm` | 旗舰：独立 CRM，一个开关嵌入 Core（终端 + 网页，端口 8200） |
-| 7 | `host_i_mealie` | 适配真实第三方高 star 开源项目（Mealie） |
+| 7 | `host_i_mealie` | 适配真实第三方开源项目（Mealie，REST） |
+| 8 | `host_j_actual` | 第三方播种五拍标准线：记账应用 Actual Budget（发现补能力 / 派子员工，网页 8240） |
 
-> 目录名保留历史编号（a/c/d/e/f/g/i），不随学习顺序重排，以便与各版材料、讲义路径一致。
+> 目录名保留历史编号（a/c/d/e/f/g/i/j），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
 ## 在线 HTTP API
 

@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-11。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
+> 最后更新：2026-10-12。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 Release notes 为准。
 
 ## 愿景
 
@@ -88,6 +88,7 @@
 - **成本·延迟感知选档 tiering（已落地）**：新增零硬依赖 `kernel/tiering.py`，默认 standard（便宜快），仅在规划 / 工具失败纠偏 / 执行到第 3 轮仍未完成时才升 strong；选档是确定性规则、不额外调模型，档位相对上一轮变化才发 `tier_changed`（首轮声明起始档），DONE 新增 `standard_calls` / `strong_calls` / `model_calls` 成本汇总。`AgentCore(cost_aware=False)` 关闭、执行轮恒 standard、行为与旧版一致，宿主可自定义规则松紧。见讲义第 32 篇。
 - **结构化 tracing（OpenTelemetry，已落地，opt-in）**：新增可选 `[otel]` extra 与 `integrations/tracing/`，在**外侧订阅**事件流（不改 kernel/loop、库内不初始化 TracerProvider/Exporter、opentelemetry 不进硬依赖）：一次 run 映射为一个 root span，每次工具调用是其下子 span（成功 / 失败 / 耗时，无配对 CALL 的组合 / meta 工具结果补即时 span、流中断关闭未闭合 span），自适应决策落为 span event；`traced_astream` / `traced_run` 两个入口，宿主配好 OTLP 即可对接 Jaeger / Tempo。见讲义第 33 篇与 `docs/tracing.md`（中英）。
 - **运行指标与就绪探针（metrics / readiness，已落地）**：零依赖 `metrics.py` 的 `MetricsRecorder` 在 `astream` 唯一出口旁路 tap，统计 runs（completed/failed/cancelled 分类）、策略、工具 total/errors、模型档位 standard/strong、事件计数与 run 时延直方图，`render_prometheus()` 直接吐 Prometheus 文本；FastAPI Battery 新增 `GET /readyz`（探针并发、5s 超时、逐探针隔离，失败只摘流量不重启；liveness `/health` 仍不查下游）与 `GET /metrics`（默认文本、`?format=json`，配 Key 时鉴权、`YAI_METRICS_PUBLIC=1` 可公开，GET 探针不限流）。可选 `[otel]` extra 的 `integrations/metrics.register_otel_meter` 用 observable 仪器采集时 pull 快照、库内不初始化 MeterProvider。多实例指标为 per-process、由 Prometheus 按 instance 抓取后查询层聚合。见讲义第 38 篇与 `docs/deployment-scaling.md` §7。
+- **第三方播种端到端验证 host_j（已落地，示例层）**：`examples/host_j_actual/` 把内核嵌进真实开源记账应用 [Actual Budget](https://actualbudget.org/)（官方主力为 Node `@actual-app/cli`、金额整数分、无朴素 REST），不改其源码。新增跨宿主复用的 `examples/five_beats.py` 五拍标准线（唤醒 → 长尾任务 → 能力缺口 → 补能力 / 派子员工 → 授权 → 完成，断言事件下标顺序与因果），离线跑通两条链路：发现链路（缺口 → 现场发现只读建议工具 → 新工具与写操作两次授权 → 未分类清零 → 预算超支）与委派链路（根一次 `delegate` 派两个白名单收窄到单一只读工具的子员工并行、结果只回流根）。真机经可注入 runner 走官方 CLI 子进程、口令只走环境变量；默认离线假账保证 CI 不联网。`tests/test_host_j_actual.py` 17 例，见讲义第 39 篇；内核本体零改动。
 
 ### v1.0 — 回流 AMBRACE
 
