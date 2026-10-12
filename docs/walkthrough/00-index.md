@@ -62,7 +62,7 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 八个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning/embedding） | 插座标准 |
+| `spi/*.py` | 九个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning/embedding/cipher） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
 | `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源，关键词） | 备用零件柜 |
 | `discovery/scoring.py` | 词法相关度打分（规范化、中文 bigram、同义词，零依赖） | 字面匹配的标尺 |

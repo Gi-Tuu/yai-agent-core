@@ -57,8 +57,11 @@ YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 
 **路线 A · 只装库、零 Key 验证嵌入**（不必克隆、不必申请模型）。内核本体零第三方硬依赖：
 
 ```bash
-pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"
+pip install yai-agent-core
 ```
+
+> 想尝鲜 main 上尚未发版的最新提交，再用源码安装：
+> `pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"`
 
 ```python
 import asyncio
@@ -110,15 +113,16 @@ uv run pytest                         # 全量测试，不需要 API Key
 | **成本感知选档** | 默认走便宜快档 standard，仅规划 / 工具失败纠偏 / 后段卡住才升 strong；选档是确定性规则、不额外花钱，DONE 汇总各档调用数，`cost_aware=False` 可关 |
 | **结构化长期记忆** | `remember` / `recall` 主动把事实 / 偏好 / 画像存档并召回；高相似去重合并、重要度加权、落盘 JSON；不内置向量记忆，语义召回走 Embedding SPI |
 | **安全边界** | 权限三档（全部 / 部分 / 无需审批）；组合工具只编排已注册工具、不执行生成代码；代码生成仅定义 `ToolSandbox` 契约、沙箱由宿主提供 |
+| **子员工委派** | 根员工可把子任务派给短命子员工：工具白名单 ⊆ 根、权限单调收窄、独立小上下文、带预算与全局并发闸（并行 ≤ 5、嵌套 ≤ 2），结果只回流根、完成即销毁；灵动岛一座岛切换多个彼此隔离的专员 |
 | **全程可观测** | 每次策略选择、能力缺口、工具发现 / 组合 / 调用、权限确认都通过统一事件流对外发出 |
 | **结构化 tracing** | 可选 `[otel]` extra 在**外侧订阅**事件流，把一次 run 转成一条 OpenTelemetry trace：root span 串起每个工具的子 span（成功 / 失败 / 耗时），自适应决策落为 span event；不改内核、不初始化 exporter，是否接 Jaeger / Tempo / OTLP 由宿主决定 |
 | **端到端评测** | 内核自带离线 eval harness：ScriptedModel 真跑完整 Core，量化完成率、工具精确 / 召回、越权与无支撑断言；golden 回归基线 + 非门禁 CI |
 
 <details>
-<summary>展开：八个可替换 SPI 契约</summary>
+<summary>展开：九个可替换 SPI 契约</summary>
 
-`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding`
-——宿主可替换任意一个，Core 提供零配置默认实现。内核本体始终零第三方硬依赖。
+`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher`
+——宿主可替换任意一个，Core 提供零配置默认实现（`StorageCipher` 为可选的落盘加密插槽）。内核本体始终零第三方硬依赖。
 
 </details>
 
@@ -209,7 +213,7 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.4 – v0.6（已完成）**：能力缺口感知与 ToolDiscovery 闭环、host_e CRM 零改造嵌入、权限三档、组合工具、双通道语义发现、执行中动态发现
 - **v0.7（已完成）**：自校准路由 contextual bandit（离线 +16pp）、代码工具注册 / TTL / 授权闸、子进程教学沙箱、灵动岛员工薄壳
 - **v0.8（已完成）**：上下文摘要压缩、MCP/OpenAPI 动态发现源与多源聚合、SQLite KV TTL、Docker 沙箱适配器、API Key 鉴权 / 限流 / 响应守卫、发布 PyPI、CI 安全加固（CodeQL、OpenSSF Scorecard、mypy、覆盖率门禁）
-- **v0.9（开发中）**：动态重规划 `replan`（计划走不通显式回到规划）、成本·延迟感知选档 `tiering`（standard/strong 自动换挡 + DONE 成本汇总）
+- **v0.9（开发中，已在 main 落地）**：动态重规划 `replan`、成本·延迟感知选档 `tiering`（standard/strong 自动换挡 + DONE 成本汇总）；长期记忆语义召回与任务起始主动注入、落盘加密第九 SPI `StorageCipher`；结构化 tracing（OpenTelemetry）与 metrics / readiness、任务级预算熔断；子员工预算与全局并发闸；第三方播种五拍标准线（`host_j` 零改造嵌入真实记账应用 Actual Budget）
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
 ## 许可证

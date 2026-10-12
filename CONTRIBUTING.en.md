@@ -79,9 +79,9 @@ cp .env.example .env              # Windows: copy .env.example .env
    stay empty; openai, fastapi, mcp, etc. may only appear as optional extras (`llm` / `server` / `mcp` /
    …) and be **lazily imported** inside their modules (top-level `integrations/mcp/` must not import
    `mcp`; an AST test enforces this).
-2. **All external capabilities go through SPI contracts** (`src/yai_core/spi/`). The eight slots —
-   model, channel, memory, policy, discovery, sandbox, route-selector and embedding — must be replaceable;
-   Core depends only on `Protocol`s, never on concrete implementations.
+2. **All external capabilities go through SPI contracts** (`src/yai_core/spi/`). The nine slots —
+   model, channel, memory, policy, discovery, sandbox, route-selector, embedding and storage cipher —
+   must be replaceable; Core depends only on `Protocol`s, never on concrete implementations.
 3. **The event stream has exactly one exit.** Process events such as tool execution are collected by the
    executor, yielded uniformly by `AgentLoop`, and `AgentCore.astream` is the single outward emit point.
    No second event path is allowed.

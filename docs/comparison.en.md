@@ -61,8 +61,8 @@
    five-line benchmark (including "no prior" and "no context" ablations) shows late-round success of 89.6%
    vs 73.3% for rules. Learning is off by default and abstains in hard-rule regions; the learning
    algorithm itself is the seventh SPI (`RouteSelector`) and is replaceable.
-5. **Zero hard kernel dependencies + eight SPI contracts.** The kernel itself has `dependencies = []`;
-   model/channel/memory/policy/discovery source/sandbox/route-learning/text-embedding are all replaceable,
+5. **Zero hard kernel dependencies + nine SPI contracts.** The kernel itself has `dependencies = []`;
+   model/channel/memory/policy/discovery source/sandbox/route-learning/text-embedding/storage-cipher are all replaceable,
    letting the kernel fit into mobile, desktop and restricted-network environments that cannot hold a
    framework's full dependency tree.
 6. **Tool discovery is "dual channel", not keyword-based.** Keyword matching cannot recall a gap like
