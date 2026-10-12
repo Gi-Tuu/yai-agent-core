@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from yai_core import AgentCore, ModelResponse, build_spec
 from yai_core.batteries.fastapi_server import RateLimitConfig, create_app
+from yai_core.batteries.fastapi_server.auth import ApiKeyAuth
 from yai_core.batteries.fastapi_server.ratelimit import SlidingWindowLimiter, client_ip
 
 
@@ -212,3 +213,29 @@ def test_default_create_app_still_works(monkeypatch) -> None:
     client = TestClient(create_app(core))  # 与 test_battery_api.py 同款零配置调用
     assert client.get("/health").status_code == 200
     assert client.post("/v1/agent/run", json={"task": "你好"}).status_code == 200
+
+
+# ---------- 11. 鉴权失败请求也计入限流（防 API Key 在线爆破） ----------
+
+def test_unauthorized_requests_are_rate_limited(monkeypatch) -> None:
+    """回归 M2：限流必须在鉴权外层，错误 Key 的请求也要计数。
+
+    修复前鉴权在外层，错误 Key 直接 401、不经过 limiter，可无限速爆破；
+    修复后前 N 次 401（已计数），配额耗尽后第 N+1 次返回 429。
+    """
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    clock = FakeClock()
+    core = AgentCore(CountingModel())
+    core.register_tools([build_spec(list_notes)])
+    app = create_app(
+        core,
+        auth=ApiKeyAuth(("secret",)),
+        rate_limit=limited_config(clock, per_minute=2),
+    )
+    client = TestClient(app)
+    bad = {"Authorization": "Bearer wrong"}
+    # 前两次：未过鉴权 => 401，但已被最外层限流计数。
+    assert client.post("/v1/agent/run", json={"task": "x"}, headers=bad).status_code == 401
+    assert client.post("/v1/agent/run", json={"task": "x"}, headers=bad).status_code == 401
+    # 第三次：同一 IP 配额耗尽 => 429（修复前这里仍会是 401）。
+    assert client.post("/v1/agent/run", json={"task": "x"}, headers=bad).status_code == 429
