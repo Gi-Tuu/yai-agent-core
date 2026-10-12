@@ -93,6 +93,7 @@ class AgentCore:
         learning: RouteSelector | None = None,
         on_feedback: FeedbackHook | None = None,
         context_compaction: bool | CompactionPolicy = False,
+        compaction_model: ModelProvider | None = None,
         cost_aware: bool = True,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         on_diagnostic: DiagnosticSink | None = None,
@@ -216,6 +217,8 @@ class AgentCore:
             meta_tools=meta_tools,
             # 上下文摘要压缩：opt-in，默认关闭；灵动岛真机开启。
             compaction_policy=comp_policy,
+            # 摘要专用模型：None 时压缩走主模型；可注入更便宜的小模型省钱。
+            compaction_model=compaction_model,
             # 成本·延迟感知选档：默认开启（该花才花）；cost_aware=False 时恒 standard。
             tier_policy=TierPolicy() if cost_aware else None,
             # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。

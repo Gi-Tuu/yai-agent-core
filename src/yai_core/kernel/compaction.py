@@ -43,6 +43,40 @@ class CompactionPolicy:
     target_chars: int = 16000
     keep_recent_rounds: int = 2
 
+    @classmethod
+    def from_context_window(
+        cls,
+        chars: int,
+        *,
+        keep_recent_rounds: int = 2,
+        hard_ratio: float = 0.6,
+        target_ratio: float = 0.4,
+    ) -> CompactionPolicy:
+        """按"会话工作区字符预算"按比例推算高/低水位（字符口径，不引入 tokenizer）。
+
+        宿主只需给出本次会话预留的字符预算 ``chars``（建议已扣除系统提示、工具
+        schema 与输出预留），高水位取 ``hard_ratio``、压缩目标低水位取
+        ``target_ratio``，免去手填两个绝对值。
+
+        例：``from_context_window(40_000)`` 恰好得到默认的 24000 / 16000
+        （0.6 / 0.4），与无参 :class:`CompactionPolicy` 等价，可作为换算锚点。
+        """
+        if isinstance(chars, bool) or not isinstance(chars, int) or chars <= 0:
+            raise ValueError("chars 必须是正整数")
+        if not 0 < target_ratio < hard_ratio <= 1:
+            raise ValueError("需满足 0 < target_ratio < hard_ratio <= 1")
+        if isinstance(keep_recent_rounds, bool) or keep_recent_rounds < 1:
+            raise ValueError("keep_recent_rounds 必须是 >=1 的整数")
+        hard = int(chars * hard_ratio)
+        target = int(chars * target_ratio)
+        if target <= 0 or hard <= target:
+            raise ValueError("按比例算出的水位不合法（chars 过小或比例不当）")
+        return cls(
+            hard_max_chars=hard,
+            target_chars=target,
+            keep_recent_rounds=keep_recent_rounds,
+        )
+
 
 def user_round_starts(messages: list[ChatMessage]) -> list[int]:
     """返回每个 user 轮首的索引（跳过 index 0 的 system）。"""
