@@ -12,15 +12,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
+import pytest  # noqa: E402
 from shell.employee import (  # noqa: E402
     MAX_DEPTH,
+    DelegationSupervisor,
     attach_delegate,
     build_worker_core,
+    default_budget,
     default_read_tools,
     run_worker,
 )
 
 from yai_core import AgentCore, ModelResponse, build_spec  # noqa: E402
+from yai_core.kernel.budget import Budget  # noqa: E402
 from yai_core.llm.scripted import ScriptedModel  # noqa: E402
 from yai_core.types import ToolCallRequest  # noqa: E402
 
@@ -247,3 +251,164 @@ def test_delegate_timeout_does_not_block_gather() -> None:
     assert all(not r["ok"] for r in results)
     # 关键：两个慢任务都被墙钟上限截断，gather 没有无限等待。
     assert elapsed < 3
+
+
+def test_default_budget_derivation() -> None:
+    budget = default_budget(3)
+    # 模型调用按轮 + 收尾余量；工具按每轮最多 4 个并行放宽；token 默认不硬限。
+    assert budget.max_model_calls == 5
+    assert budget.max_tool_calls == 12
+    assert budget.max_tokens is None
+    assert budget.enabled
+
+
+def test_worker_reports_budget_snapshot_on_done() -> None:
+    root = _root([ModelResponse(content="ok")])
+
+    result = asyncio.run(
+        run_worker(root, goal="列出条目数量", tools=["list_items"], max_iters=3)
+    )
+
+    assert result.ok
+    assert result.status == "done"
+    assert result.budget is not None
+    assert result.budget["limits"]["max_model_calls"] == 5
+    assert result.budget["limits"]["max_tool_calls"] == 12
+    # 预算快照随 observation 回流给根，便于根感知子员工花费。
+    assert result.to_observation()["budget"] is result.budget
+
+
+def test_worker_budget_exceeded_marks_status() -> None:
+    # 模型连续两轮都要求调工具；工具上限 1，第二次工具调用前即熔断。
+    root = _root(
+        [
+            ModelResponse(
+                tool_calls=[ToolCallRequest(id="c1", name="list_items", arguments={})]
+            ),
+            ModelResponse(
+                tool_calls=[ToolCallRequest(id="c2", name="list_items", arguments={})]
+            ),
+            ModelResponse(content="不应走到这里"),
+        ]
+    )
+
+    result = asyncio.run(
+        run_worker(
+            root,
+            goal="列出条目",
+            tools=["list_items"],
+            max_iters=5,
+            budget=Budget(max_tool_calls=1),
+        )
+    )
+
+    assert result.status == "budget_exceeded"
+    assert not result.ok
+    assert result.budget is not None
+    assert result.budget["limits"]["max_tool_calls"] == 1
+    assert result.budget["tool_calls"] == 1
+    # 第一次工具已实际执行并记录步骤，熔断发生在第二次调用前，未产生额外副作用。
+    assert result.steps == ["list_items"]
+
+
+def test_shared_supervisor_caps_concurrency_across_levels() -> None:
+    """根 delegate 与子员工 delegate 共用同一 supervisor 时，跨层级并发峰值 ≤ 上限。
+
+    若每层各建一把信号量（回归到旧行为），根 2 个 + 子 2 个会同时占用 -> peak=4；
+    共享全局闸时 peak 必须等于上限 2。
+    """
+    state = {"active": 0, "peak": 0}
+    lock = asyncio.Lock()
+
+    async def occupy_seat() -> dict:
+        """占座并列出状态：执行期间持有委派并发名额。"""
+        async with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        await asyncio.sleep(0.2)
+        async with lock:
+            state["active"] -= 1
+        return {"occupied": True}
+
+    class HoldModel:
+        """无状态：没拿到工具结果就调 occupy_seat，拿到后即收尾，可被多员工共享。"""
+
+        async def achat(self, messages, tools=None, *, tier: str = "standard"):
+            last = messages[-1] if messages else None
+            if getattr(last, "role", None) == "tool":
+                return ModelResponse(content="占座完成")
+            return ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c", name="occupy_seat", arguments={})
+                ]
+            )
+
+    root = AgentCore(HoldModel())
+    root.register_tools([build_spec(occupy_seat)])
+    supervisor = DelegationSupervisor(max_concurrent=2)
+    attach_delegate(root, depth=1, supervisor=supervisor)
+    root_delegate = root.registry.get("delegate")
+
+    child = build_worker_core(
+        root,
+        goal="列出占座情况",
+        tools=["occupy_seat"],
+        depth=1,
+        register_delegate=True,
+        supervisor=supervisor,
+    )
+    child_delegate = child.registry.get("delegate")
+
+    async def scenario() -> None:
+        await asyncio.gather(
+            root_delegate.handler(
+                tasks=[
+                    {"goal": "列出占座情况", "tools": ["occupy_seat"]},
+                    {"goal": "列出占座情况", "tools": ["occupy_seat"]},
+                ]
+            ),
+            child_delegate.handler(
+                tasks=[
+                    {"goal": "列出占座情况", "tools": ["occupy_seat"]},
+                    {"goal": "列出占座情况", "tools": ["occupy_seat"]},
+                ]
+            ),
+        )
+
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(scenario())
+    loop.close()
+
+    assert state["peak"] == 2
+    assert state["active"] == 0
+
+
+def test_worker_cancellation_propagates() -> None:
+    async def slow_tool() -> str:
+        """长时间运行，用于验证外层取消能干净穿透子员工。"""
+        await asyncio.sleep(5)
+        return "late"
+
+    root = AgentCore(
+        ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=[
+                        ToolCallRequest(id="c1", name="slow_tool", arguments={})
+                    ]
+                )
+            ]
+        )
+    )
+    root.register_tools([build_spec(slow_tool)])
+
+    async def scenario() -> None:
+        task = asyncio.ensure_future(
+            run_worker(root, goal="调用慢工具并返回结果", tools=["slow_tool"], timeout=10)
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())

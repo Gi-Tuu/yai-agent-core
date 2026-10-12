@@ -6,6 +6,7 @@
 
 from shell.employee.delegate import (
     DELEGATE_TOOL,
+    DelegationSupervisor,
     attach_delegate,
     build_delegate_tool,
 )
@@ -14,8 +15,10 @@ from shell.employee.worker import (
     DEFAULT_WORKER_TIMEOUT,
     MAX_CONCURRENT,
     MAX_DEPTH,
+    STATUS_BUDGET_EXCEEDED,
     WorkerResult,
     build_worker_core,
+    default_budget,
     default_read_tools,
     run_worker,
 )
@@ -26,10 +29,13 @@ __all__ = [
     "DEFAULT_WORKER_TIMEOUT",
     "MAX_CONCURRENT",
     "MAX_DEPTH",
+    "STATUS_BUDGET_EXCEEDED",
+    "DelegationSupervisor",
     "WorkerResult",
     "attach_delegate",
     "build_delegate_tool",
     "build_worker_core",
+    "default_budget",
     "default_read_tools",
     "run_worker",
 ]

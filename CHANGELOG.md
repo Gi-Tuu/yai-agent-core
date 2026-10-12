@@ -25,6 +25,10 @@
   - **CoreConfig 集中配置与早期校验**：新增零依赖 `config.py` 的 `CoreConfig` dataclass，收敛 `AgentCore` 全部与模型无关的可选项（默认值与 kwargs 一致），`validate()` 在构造早期拒绝非法取值（迭代次数非正、bool 冒充整数、`llm_router`/`context_compaction`/`budget`/`model_timeout` 类型错误），`as_kwargs()` 展开为构造参数；新增 `AgentCore.from_config(model, config)`（一份配置复用于多专员 / 多子员工），公共 kwargs 签名与默认行为不变；顺手把 router 装配抽成纯静态方法 `_resolve_router`，缩短构造器。新增 `tests/test_core_config.py`。
   - **SQLite 在线热备份与恢复**：`SqliteStore.backup_to(dest)` 用标准库 `sqlite3.Connection.backup` 在实例锁内做页级一致快照（**无需停服**，文件库与 `:memory:` 均可，目标 db/-wal/-shm 先干净清掉），`@classmethod restore_to(backup, dest)` 离线恢复（备份损坏时直接抛 `sqlite3.DatabaseError`，不静默起空库）；崩溃恢复由 WAL + 原子写保证（close 后同路径重开数据不丢）。新增 `tests/test_sqlite_backup.py`（7 例）。
   - 新增逐行讲义第 35 篇与 `docs/architecture(.en).md` 对应小节；新增模块行覆盖率 budget/config/cipher/sqlite_store 均 100%、fernet_cipher 93%，全仓约 96%。
+- **子员工预算兜底与跨层级共享并发闸**：
+  - **子员工默认挂硬预算**：`shell/employee/worker.py` 新增 `default_budget(max_iters)`（模型调用 `max_iters+2`、工具调用 `max_iters*4`、token 不硬限），`_assemble_worker` / `run_worker` 新增 `budget` 形参（None 时自动推导），每个子员工在构造 `AgentCore` 时即带上独立预算；触发预算硬墙时 `WorkerResult.status="budget_exceeded"`、`ok=False`，已产出文本与预算快照随结果回流，根可据此缩小任务或放宽预算重派，熔断不作为异常穿透、不拖垮并行 gather。
+  - **跨层级共享全局并发闸**：新增 `delegate.DelegationSupervisor(max_concurrent)`（持单一 `asyncio.Semaphore`），`attach_delegate` / `build_delegate_tool` 新增 `supervisor` 形参并返回该闸，沿根→子→孙原样透传，把"根并行 5、每个子又并行 5"的理论超额收敛为全局同时存活 ≤5；delegate schema 每个 task 新增可选 `max_model_calls` / `max_tool_calls`（容错非法值，未覆盖维度用默认推导补齐），`_normalize_tasks` 透传。
+  - 新增逐行讲义第 36 篇；`tests/test_shell_employee.py` 新增默认预算推导、DONE 预算快照、budget_exceeded 熔断、跨层级并发峰值（共享时 peak=2、旧行为会得 4）、取消传播共 5 组离线用例，全离线、不依赖 API Key。
 
 ## [v0.8.1] - 2026-10-11
 
