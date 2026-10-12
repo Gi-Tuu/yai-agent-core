@@ -35,7 +35,7 @@
 | Permission control | Host provides the PermissionPolicy SPI; read/write graded, writes can be human-authorized | Implemented by the app | Implemented by the app | Platform permission model | Platform model |
 | Deployment requirements | Follows the host; an optional FastAPI battery and Docker example are provided | Deployed by the app | Deployed by the app | Must deploy and operate the platform | Just sign up |
 | Offline testable | The full suite is offline (fake models/MockTransport/injected clocks), no network or keys | Testable, you mock yourself | Testable, you mock yourself | Depends on the platform running | Depends on the platform |
-| Maturity | A new single-person project; 517 tests, 7 example hosts | Mature large ecosystem | Mature community | Mature platform (156K+ stars) | Commercial product |
+| Maturity | A new single-person project; 834 tests, 8 example hosts | Mature large ecosystem | Mature community | Mature platform (156K+ stars) | Commercial product |
 
 ## 3. YAI's differentiating claims (mapped to "technical innovation" scoring)
 
