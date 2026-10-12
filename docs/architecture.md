@@ -134,18 +134,21 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 ### 2.7 本地诊断事件（Diagnostics，零依赖旁路）
 
-内核在"已静默兜底、主流程不失败、但运维排障必须看得见"的瞬间，会通过一个**同步、零依赖、永不反噬主流程**的回调发出 `DiagnosticEvent`。它与另外两套可观测手段分工明确，互不替代：
+内核在"已静默兜底、主流程不失败、但运维排障必须看得见"的瞬间，会通过一个**同步、零依赖、永不反噬主流程**的回调发出 `DiagnosticEvent`。它与另外三套可观测手段分工明确，互不替代：
 
 | 通道 | 面向 | 回答什么 | 触发方 |
 |---|---|---|---|
 | `AgentEvent`（事件流） | 产品 / 终端用户 | Agent **正在做什么决策与动作**（路由、工具调用、发现、授权…） | 内核主流程，必经、可回放 |
 | `DiagnosticEvent`（本小节） | 本地运维 / 排障 | 内核**在哪些增强环节悄悄降级了**（模型超时、分类回退、发现失败、压缩回退…） | 仅当宿主传入 `on_diagnostic` 回调 |
+| Metrics（零依赖收集器，见下） | 运维 / 成本看板 | 这段时间**整体跑得怎么样**（run 成败计数、工具失败率、强档模型调用量、时延分布） | `astream` 唯一出口旁路 tap，默认开启 |
 | OpenTelemetry tracing（可选 extra） | 分布式 / 跨服务 | 一次请求跨进程的**链路、耗时、归因** | 宿主在外侧订阅事件流，内核不初始化 exporter |
 
 - **数据结构**：`DiagnosticEvent(kind, message, level, data)`。`level ∈ debug/info/warning/error`；`kind` 当前覆盖 8 类：`model_error`、`model_timeout`、`model_fallback`、`router_llm_fallback`、`discovery_failed`、`discoverable_list_failed`、`compaction_fallback`、`schema_focus_fallback`。
 - **安全语义**：回调是同步的，宿主应让它快速、非阻塞（写一行日志、推一个监控计数即可）；回调内部抛出的任何异常都会被内核吞掉，诊断是旁路，绝不能因为"日志系统挂了"而拖垮 Agent 主流程。内核不依赖 `logging`，不把任何日志库变成硬依赖。
 - **接线方式**：`AgentCore(model, on_diagnostic=fn)` 一处传入，内核会把同一回调鸭子接线给内部的 `AdaptiveRouter` 与 `FallbackModelProvider`（它们暴露可写的 `on_diagnostic` 属性；宿主自建、不认识该属性的自定义组件不受影响）。不传回调时内核完全安静，行为与旧版本一致。
 - **刻意不纳入诊断的情况**：沙箱执行失败会冒泡成 `tool_result(ok=False)`、权限拒绝会发 `permission_asked`——这些本就是用户可见的业务事件，不属于"静默兜底"，因此不重复发诊断。
+
+**Metrics（运行指标，零依赖）**：`metrics.py` 的 `MetricsRecorder` 在 `astream` 唯一出口做旁路 tap——run 开始打点、逐事件累计、`finally` 按结局结算，统计 runs（started/completed/failed/cancelled，取消类与真实异常分开）、按策略计数、工具 total/errors、模型档位 standard/strong（DONE 一次性结算）、事件计数与 run 墙钟时延直方图（`monotonic` 测时）。它只用标准库（一把 `threading.Lock` 兼容跨线程抓取，`snapshot()` 深拷贝），`render_prometheus()` 直接吐 Prometheus 文本，FastAPI Battery 经 `GET /metrics`（默认文本、`?format=json` 快照）暴露，配了 API Key 时默认鉴权、`YAI_METRICS_PUBLIC=1` 可显式公开；另有 `GET /readyz` 就绪探针（并发、5s 超时、逐探针隔离，失败只摘流量不重启）。想走 OTel 指标管线时，用可选 `[otel]` extra 的 `integrations/metrics.register_otel_meter`——全部 observable 仪器、采集时才从快照 pull（run 热路径零回调），库内不初始化 MeterProvider。与 diagnostics 相同，指标回调里的任何异常都被吞掉，绝不反噬主流程。详见逐行讲义第 38 篇与 `docs/deployment-scaling.md` §7。
 
 ### 2.8 生产加固 P1：预算熔断、落盘加密、集中配置、在线热备份
 

@@ -215,7 +215,73 @@ class RedisMemoryStore:
 
 ---
 
-## 7. 安全、配额与成本（多租户必看）
+## 7. 健康检查、就绪探针与指标抓取（/health、/readyz、/metrics）
+
+Battery 提供三个 GET 观测端点，部署时务必把 **liveness** 与 **readiness** 分开配置：
+
+| 端点 | 语义 | 失败时编排动作 | 是否查下游 | 鉴权 |
+|---|---|---|---|---|
+| `GET /health` | **liveness**：进程活着吗 | **重启 / 重建** | 否（只回 commit） | 恒公开 |
+| `GET /readyz` | **readiness**：现在能接请求吗 | **移出 LB（不重启）** | 可（探针并发、5s 超时、逐个隔离） | 恒公开 |
+| `GET /metrics` | Prometheus 指标 | 仅抓取，不影响流量 | 否 | 配了 Key 默认保护，`YAI_METRICS_PUBLIC=1` 可公开 |
+
+**为什么 liveness 不能查数据库 / 模型**：一次下游抖动若让 liveness 失败，编排器会不断重启 Pod，而重启又依赖下游恢复，形成"重启风暴"，越重启越起不来。下游健康只放 readiness——失败仅摘流量，下游恢复后探针自动转 ok、流量自动加回。
+
+### 7.1 注册自定义就绪探针
+
+默认探针只报告本地状态（已注册工具数、记忆后端类型），**不调模型、不发网络请求**。真实下游探活由装配层注册：
+
+```python
+async def db_probe():
+    ok = await ping_database()          # 宿主自己的连接
+    return True if ok else "database unreachable"   # 字符串=失败原因
+
+app = create_app(
+    core,
+    readiness_probes={"database": db_probe},
+    readiness_timeout=5.0,
+)
+```
+
+探针可以是同步或 async 函数；返回 `None/True`=就绪、`False/str`=失败、`dict` 取 `ok` 键、抛异常=失败。所有探针并发执行，单个探针超时或抛错只影响它自己（该探针 `status=error`，整体 503），不会拖垮整个端点。
+
+### 7.2 各平台怎么填
+
+- **Kubernetes**：
+
+  ```yaml
+  livenessProbe:
+    httpGet: { path: /health, port: 8000 }
+  readinessProbe:
+    httpGet: { path: /readyz, port: 8000 }
+  ```
+
+- **Render / Caddy / Nginx / 普通 LB**：健康检查 URL 填 `/readyz`（决定是否导流）；不要填 `/v1/agent/run`。
+- **Caddy / Nginx 反代 SSE**：仍按 §6 关闭缓冲、放大读超时；探针路径不要走鉴权。
+
+### 7.3 Prometheus 抓 /metrics
+
+- 默认返回 Prometheus 文本 exposition（`yai_agent_runs_total{outcome}`、`yai_agent_tool_calls_total{tool,result}`、`yai_agent_model_calls_total{tier}`、`yai_run_duration_seconds_bucket/...` 等）；加 `?format=json` 返回结构化快照供人 / 调试查看。
+- **未配 API Key**：`/metrics` 直接可抓。
+- **配了 `YAI_API_KEY`**：`/metrics` 默认 401。两种放行方式：
+  - 抓取端带 Bearer：Prometheus scrape_config 设 `authorization: { credentials: "Bearer <key>" }`（或用 `bearer_token_file`）；
+  - 内网显式公开：设 `YAI_METRICS_PUBLIC=1`，此时仅 `/metrics` 匿名可抓，`/v1/**` 业务路径仍需 Key。
+- 探针与指标端点**不受限流中间件约束**（限流只拦 `POST /v1/agent/run`），高频抓取不会触发 429。
+
+### 7.4 多实例下的指标口径
+
+每个进程的 `/metrics` 只统计**本进程**（per-process counter），内核不做跨进程聚合（那会重新引入中心化依赖，违背嵌入式定位）。水平扩展时让 Prometheus 给每个实例打上 `instance` 标签分别抓取，在查询层聚合：
+
+```promql
+sum by (outcome) (increase(yai_agent_runs_total[5m]))      # 全集群 run 结局
+sum by (tier)     (increase(yai_agent_model_calls_total[1d]))  # 强档模型花费代理
+```
+
+需要接 OpenTelemetry / OTLP 而不是直接抓文本时，用可选 `[otel]` extra 的 `integrations/metrics.register_otel_meter`（observable 仪器，采集时 pull，库内不初始化 Provider），详见逐行讲义第 38 篇。
+
+---
+
+## 8. 安全、配额与成本（多租户必看）
 
 - **共享上游模型 Key**：现有 Battery 限流是"每 IP"（`YAI_RATE_LIMIT_*`）；多租户建议改为"**每租户**"限流 + 配额 / 预算，防止单个租户把共享 Key 的额度或并发耗尽。
 - **每租户独立上游 Key**：隔离计费与配额的另一种方式，适合对成本敏感的部署。
@@ -225,20 +291,23 @@ class RedisMemoryStore:
 
 ---
 
-## 8. 落地清单（Checklist）
+## 9. 落地清单（Checklist）
 
 - [ ] 确认目标层级（多数情况 L1 已够）。
 - [ ] L1：实现"租户 → core"工厂，用 scope 或独立实例隔离（§5.1）。
 - [ ] 本地用两个租户交叉对话，验证记忆 / KV 互不可见、`clear()` 只影响本租户。
 - [ ] 上 L2：决定路线 A（分片 / 粘性）或 B（外部存储 SPI）。
 - [ ] 配置 LB：请求-响应可轮询；SSE 必须粘性。
+- [ ] liveness 填 `/health`、readiness 填 `/readyz`，不要在 liveness 查下游（§7）。
+- [ ] 为数据库 / 模型等真实依赖注册就绪探针，并演练一次依赖故障：只摘流量、不重启。
+- [ ] 配置 Prometheus 抓 `/metrics`（配 Key 时带 Bearer 或设 `YAI_METRICS_PUBLIC=1`），加多实例聚合告警。
 - [ ] 把限流口径从"每 IP"改为"每租户"，配预算与告警。
 - [ ] 确认每租户沙箱 / 权限独立；容器端口不直接对公网开放。
 - [ ] 演练一次实例故障：租户能否重路由、历史是否保留。
 
 ---
 
-## 9. 现状边界（诚实声明）
+## 10. 现状边界（诚实声明）
 
 - `scripts/serve_example.py` 当前是**单租户演示装配**：模块加载时建一个全局 core、一个 `scope="default"` 的 store。**做多租户需要改装配层**；而内核所需能力（独立实例、scope、Memory SPI）均已具备。
 - 内核**明确不内置**：Redis / PostgreSQL、服务发现、分布式锁、负载均衡、多租户 Key 管理——这些由部署层 / SPI 负责，以守护零硬依赖红线。
@@ -258,4 +327,7 @@ class RedisMemoryStore:
 | `src/yai_core/spi/memory.py` | `MemoryStore` 契约（历史 + KV） |
 | `src/yai_core/memory/sqlite_store.py` | 带 scope 隔离的持久化实现（WAL） |
 | `src/yai_core/memory/inmemory.py` | 进程内单空间实现 |
-| `src/yai_core/batteries/fastapi_server/` | FastAPI Battery + 限流 |
+| `src/yai_core/batteries/fastapi_server/` | FastAPI Battery + 限流 + 鉴权 |
+| `src/yai_core/batteries/fastapi_server/readiness.py` | `/readyz` 就绪探针（并发 / 超时 / 异常隔离） |
+| `src/yai_core/metrics.py` | 零依赖指标收集器 + `/metrics` Prometheus 文本 |
+| `src/yai_core/integrations/metrics/` | OTel meter 桥接（可选 `[otel]` extra） |
