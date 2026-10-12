@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Iterable
@@ -65,9 +66,14 @@ _CLARIFY_QUESTION = (
 _CLARIFY_TASK_PREVIEW_CHARS = 80
 # 澄清被放弃（空回答/超时/用户终止）时的收尾文案。
 _CLARIFY_ABORT_TEXT = (
-    "任务信息不足，已停止。请换个说法重新描述你想做什么，"
-    "例如“统计华东区硬件订单的销售额”。"
+    "任务信息不足，已停止。请换个说法重新描述你想做什么，例如“统计华东区硬件订单的销售额”。"
 )
+
+
+#: 单次模型调用的默认硬超时（秒）：防止模型 / 网络永久挂起把任务拖死。
+#: 传 None 可关闭（由模型客户端自身的超时负责）；对第三方自定义模型同样生效，
+#: 因为超时在 loop 层用 asyncio.wait_for 统一兜底，而不是依赖各模型实现。
+DEFAULT_MODEL_TIMEOUT = 60.0
 
 
 class AgentLoop:
@@ -87,6 +93,7 @@ class AgentLoop:
         meta_tools: Iterable[str] = (),
         compaction_policy: CompactionPolicy | None = None,
         tier_policy: TierPolicy | None = None,
+        model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -116,6 +123,27 @@ class AgentLoop:
         # 成本·延迟感知选档：None（关闭）时执行轮恒走 standard（旧行为）；
         # 传入 TierPolicy 后按"该花才花"在规划/失败/后段升 strong。
         self.tier_policy = tier_policy
+        # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。
+        self.model_timeout = model_timeout
+
+    async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
+        """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
+
+        - 超时：``wait_for`` 会先取消挂起的模型调用协程，再抛 TimeoutError，
+          因此挂死的调用不会残留；上层据此发 ERROR 事件体面收尾。
+        - 外层取消（用户终止 / aclose / 任务 cancel）：抛 CancelledError，
+          它属于 BaseException、不会被这里或上层的 ``except Exception`` 吞掉，
+          因而能干净传播、真正中断任务。
+        """
+        if self.model_timeout is None:
+            return await self.model.achat(messages, tools=tools, tier=tier)
+        try:
+            return await asyncio.wait_for(
+                self.model.achat(messages, tools=tools, tier=tier),
+                timeout=self.model_timeout,
+            )
+        except TimeoutError:
+            raise TimeoutError(f"模型调用超过 {self.model_timeout:g}s 硬超时上限，已终止") from None
 
     async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
         """任务执行的统一入口：路由一次，按策略分发，最后落记忆并发 DONE。
@@ -180,39 +208,50 @@ class AgentLoop:
         # 重规划）；不含路由分类与上下文压缩调用，口径在讲义说明。
         tier_counts: dict[str, int] = {STANDARD: 0, STRONG: 0}
 
-        if strategy == Strategy.PLAN:
-            # replan meta-tool 只在多步计划执行中需要，进入 PLAN 时幂等注册，
-            # 让模型在计划走不通时显式触发重规划（空宿主 / direct / 简单 react 不注册）。
-            self._ensure_replan_tool()
-            async for ev in self._make_plan(
+        final_text = ""
+        try:
+            if strategy == Strategy.PLAN:
+                # replan meta-tool 只在多步计划执行中需要，进入 PLAN 时幂等注册，
+                # 让模型在计划走不通时显式触发重规划（空宿主 / direct / 简单 react 不注册）。
+                self._ensure_replan_tool()
+                async for ev in self._make_plan(
+                    ctx,
+                    task,
+                    tier=decision.tier,
+                    tier_policy=self.tier_policy,
+                    tier_counts=tier_counts,
+                ):
+                    yield ev
+                # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
+                # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
+                ctx.add(
+                    ChatMessage(
+                        role="user",
+                        content="请按上面的计划逐步调用工具执行，拿到全部结果后给出最终汇报。",
+                    )
+                )
+
+            async for ev in self._react_cycle(
                 ctx,
-                task,
-                tier=decision.tier,
+                use_tools=strategy != Strategy.DIRECT,
+                task=task,
+                strategy=strategy,
                 tier_policy=self.tier_policy,
                 tier_counts=tier_counts,
             ):
                 yield ev
-            # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
-            # 否则真实模型会把计划本身当成最终答复（离线脚本模型曾掩盖此问题）。
-            ctx.add(
-                ChatMessage(
-                    role="user",
-                    content="请按上面的计划逐步调用工具执行，拿到全部结果后给出最终汇报。",
-                )
+                if ev.type == EventType.MODEL_MESSAGE:
+                    final_text = ev.data.get("text", final_text)
+        except Exception as exc:  # noqa: BLE001 - 模型超时/失败体面收尾，不穿透到宿主
+            # 规划 / 收尾 / 重规划等未被局部捕获的模型异常（含硬超时）在此兜底：
+            # 发 ERROR 事件后仍照常落 DONE，宿主拿到有界结果而不是裸异常。
+            # react 主轮的模型异常已在循环内局部转 ERROR，不会走到这里。
+            # CancelledError 属于 BaseException，不被本分支捕获，从而能干净传播、
+            # 真正响应用户终止 / aclose / 任务取消（见 _model_chat）。
+            yield AgentEvent(
+                EventType.ERROR,
+                {"stage": "model", "error": f"{type(exc).__name__}: {exc}"},
             )
-
-        final_text = ""
-        async for ev in self._react_cycle(
-            ctx,
-            use_tools=strategy != Strategy.DIRECT,
-            task=task,
-            strategy=strategy,
-            tier_policy=self.tier_policy,
-            tier_counts=tier_counts,
-        ):
-            yield ev
-            if ev.type == EventType.MODEL_MESSAGE:
-                final_text = ev.data.get("text", final_text)
 
         await self.memory.append_history(ChatMessage(role="user", content=task))
         await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
@@ -253,9 +292,7 @@ class AgentLoop:
                 async for ev in self._discover_tools(decision.missing_capability, task):
                     yield ev
 
-    async def _run_clarify(
-        self, task: str, depth: int
-    ) -> AsyncIterator[AgentEvent]:
+    async def _run_clarify(self, task: str, depth: int) -> AsyncIterator[AgentEvent]:
         """向用户反问并累积补充后重新路由；空回答体面收尾，绝不无限反问。"""
         preview = task.strip()
         if len(preview) > _CLARIFY_TASK_PREVIEW_CHARS:
@@ -310,9 +347,7 @@ class AgentLoop:
         ]
         return catalog or None
 
-    async def _discover_tools(
-        self, need: str, task: str
-    ) -> AsyncIterator[AgentEvent]:
+    async def _discover_tools(self, need: str, task: str) -> AsyncIterator[AgentEvent]:
         """能力缺口出现时，向发现源要候选并注册：全程可观测、失败不致命。
 
         发现源只负责"返回候选规格"，注册去重由内核统一完成；
@@ -375,12 +410,10 @@ class AgentLoop:
         )
         ctx.add(ChatMessage(role="user", content=prompt))
         # 档位：成本感知开启时由策略决定（规划默认 strong），否则沿用路由建议 tier。
-        plan_tier = (
-            tier_policy.for_planning().tier if tier_policy is not None else tier
-        )
+        plan_tier = tier_policy.for_planning().tier if tier_policy is not None else tier
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=plan_tier)
+        resp = await self._model_chat(ctx.llm_messages(), None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
@@ -416,12 +449,12 @@ class AgentLoop:
         try:
             if tier_counts is not None:
                 tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
-            resp = await self.model.achat(
+            resp = await self._model_chat(
                 [
                     {"role": "system", "content": "你只输出 JSON 工具名数组。"},
                     {"role": "user", "content": prompt},
                 ],
-                tools=None,
+                None,
                 tier=STANDARD,
             )
             names = self._parse_tool_names(resp.content)
@@ -472,9 +505,7 @@ class AgentLoop:
         ``use_tools=False``（DIRECT）时不注入任何工具。
         """
         if use_tools:
-            tools_schema, focused_names = await self._focus_tool_schemas(
-                task, tier_counts
-            )
+            tools_schema, focused_names = await self._focus_tool_schemas(task, tier_counts)
         else:
             tools_schema, focused_names = None, None
         # 跨轮状态：是否已发生工具失败（决定纠偏升档）、上一轮档位（仅变化时发事件）。
@@ -488,7 +519,10 @@ class AgentLoop:
             # 硬裁剪丢失早期事实；压缩本身可观测，模型失败回退硬裁剪。
             if self.compaction_policy is not None:
                 compact_ev = await compact_context(
-                    ctx, self.model, self.compaction_policy
+                    ctx,
+                    self.model,
+                    self.compaction_policy,
+                    timeout=self.model_timeout,
                 )
                 if compact_ev is not None:
                     yield compact_ev
@@ -514,9 +548,7 @@ class AgentLoop:
             if tier_counts is not None:
                 tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
-                resp = await self.model.achat(
-                    ctx.llm_messages(), tools=tools_schema, tier=tier
-                )
+                resp = await self._model_chat(ctx.llm_messages(), tools_schema, tier=tier)
             except Exception as exc:  # noqa: BLE001
                 yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
                 return
@@ -524,9 +556,7 @@ class AgentLoop:
             if not resp.tool_calls:
                 text = resp.content.strip()
                 ctx.add(ChatMessage(role="assistant", content=text))
-                yield AgentEvent(
-                    EventType.MODEL_MESSAGE, {"text": text, "tier": tier}
-                )
+                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
                 return
 
             self._append_assistant_tool_calls(ctx, resp)
@@ -547,9 +577,7 @@ class AgentLoop:
             # 执行中发现的新工具：下一轮 function-calling 必须能看到其完整 schema，
             # 否则模型"发现了却调不到"。全量模式重算；聚焦模式把新名字并入聚焦集。
             if newly_registered and use_tools:
-                tools_schema = self._schema_after_registration(
-                    newly_registered, focused_names
-                )
+                tools_schema = self._schema_after_registration(newly_registered, focused_names)
 
             if failed:
                 # 轻量反思（不额外调用模型）：失败观察回灌成明确引导，让模型自我修正；
@@ -615,9 +643,7 @@ class AgentLoop:
                     elif ev.type == EventType.CODE_TOOL_CREATED:
                         newly_registered.append(ev.data.get("name", ""))
                 continue
-            tool_events, ok, result_text = await self.executor.execute(
-                call.name, call.arguments
-            )
+            tool_events, ok, result_text = await self.executor.execute(call.name, call.arguments)
             for tool_event in tool_events:
                 yield tool_event
             ctx.add(
@@ -640,9 +666,7 @@ class AgentLoop:
         for name in newly_registered:
             if name not in focused_names:
                 focused_names.append(name)
-        return self._with_meta_schemas(
-            self.registry.schemas_for(focused_names)
-        )
+        return self._with_meta_schemas(self.registry.schemas_for(focused_names))
 
     def _with_meta_schemas(self, schemas: list[dict]) -> list[dict]:
         """把内核 meta-tool 的完整 schema 合并进注入集（聚焦裁剪不丢 meta）。"""
@@ -689,7 +713,7 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
-        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=STANDARD)
+        resp = await self._model_chat(ctx.llm_messages(), None, tier=STANDARD)
         yield AgentEvent(
             EventType.MODEL_MESSAGE,
             {"text": resp.content.strip(), "tier": STANDARD},
@@ -868,18 +892,13 @@ class AgentLoop:
         内核保留已完成步骤、基于当前观察产出修正计划，并发 ``plan_revised`` 事件。
         """
         arguments = call.arguments if isinstance(call.arguments, dict) else {}
-        reason = (
-            str(arguments.get("reason", "")).strip()
-            or "执行中发现原计划需要调整"
-        )
+        reason = str(arguments.get("reason", "")).strip() or "执行中发现原计划需要调整"
         revision = 1
         if replanned is not None:
             replanned[0] += 1
             revision = replanned[0]
         # 重规划属于复杂拆解：成本感知开启时由策略给档（默认 strong），否则 strong。
-        plan_tier = (
-            tier_policy.for_planning().tier if tier_policy is not None else STRONG
-        )
+        plan_tier = tier_policy.for_planning().tier if tier_policy is not None else STRONG
         ctx.add(
             ChatMessage(
                 role="user",
@@ -893,7 +912,7 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=plan_tier)
+        resp = await self._model_chat(ctx.llm_messages(), None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]

@@ -1,8 +1,8 @@
 """AgentCore 门面：宿主接入的唯一入口。
 
-    from yai_core import AgentCore
-    core = AgentCore.auto(my_app)          # 内省宿主能力，自动注册工具
-    result = await core.run("整理本周笔记")  # 自适应选策略/工具/模型
+from yai_core import AgentCore
+core = AgentCore.auto(my_app)          # 内省宿主能力，自动注册工具
+result = await core.run("整理本周笔记")  # 自适应选策略/工具/模型
 """
 
 from __future__ import annotations
@@ -14,7 +14,13 @@ from typing import Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.discovery import discover
-from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy, TierPolicy
+from yai_core.kernel import (
+    DEFAULT_MODEL_TIMEOUT,
+    AdaptiveRouter,
+    AgentLoop,
+    CompactionPolicy,
+    TierPolicy,
+)
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.policy import AllowlistPolicy
@@ -75,6 +81,7 @@ class AgentCore:
         on_feedback: FeedbackHook | None = None,
         context_compaction: bool | CompactionPolicy = False,
         cost_aware: bool = True,
+        model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
     ) -> None:
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
@@ -99,9 +106,7 @@ class AgentCore:
             if llm_router is True:
                 route_model: ModelProvider | None = model
             elif llm_router == "auto":
-                route_model = (
-                    model if getattr(model, "yai_live_router", False) else None
-                )
+                route_model = model if getattr(model, "yai_live_router", False) else None
             elif llm_router is False:
                 route_model = None
             else:
@@ -114,9 +119,7 @@ class AgentCore:
         # 只做注册表 + TTL 生命周期；没有沙箱就不注册 create_code_tool。
         self.code_manager: CodeToolManager | None = None
         if sandbox is not None:
-            self.code_manager = CodeToolManager(
-                self.registry, storage_path=code_storage
-            )
+            self.code_manager = CodeToolManager(self.registry, storage_path=code_storage)
         # 结构化长期记忆：opt-in。vault 负责 remember/recall 的存储与词法检索，
         # 内核不内置向量长期记忆（更强语义召回由宿主经 Embedding SPI 提供）。
         self.memory_vault: MemoryVault | None = None
@@ -155,9 +158,7 @@ class AgentCore:
         elif context_compaction is False:
             comp_policy = None
         else:
-            raise ValueError(
-                "context_compaction 只接受 False、True 或 CompactionPolicy"
-            )
+            raise ValueError("context_compaction 只接受 False、True 或 CompactionPolicy")
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,
@@ -174,8 +175,11 @@ class AgentCore:
             compaction_policy=comp_policy,
             # 成本·延迟感知选档：默认开启（该花才花）；cost_aware=False 时恒 standard。
             tier_policy=TierPolicy() if cost_aware else None,
+            # 单次模型调用硬超时（秒）；None=关闭，交给模型客户端自身超时。
+            model_timeout=model_timeout,
         )
         self.cost_aware = cost_aware
+        self.model_timeout = model_timeout
 
     # ---------- 接入 ----------
 
@@ -283,9 +287,7 @@ class AgentCore:
             final_text=final_text,
         )
 
-    def _record_feedback(
-        self, task: str, chosen: Strategy, events: list[AgentEvent]
-    ) -> None:
+    def _record_feedback(self, task: str, chosen: Strategy, events: list[AgentEvent]) -> None:
         """事后回灌：学习只发生在任务结束后，不影响当次稳定性。
 
         反馈不进当次事件流（事件流在收集完才算得出结果），通过 ``on_feedback``
