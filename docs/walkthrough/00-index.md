@@ -48,6 +48,7 @@
   │             └─ 结果包成 tool 消息塞回 Context，继续循环
   │
   │ ⑦ 全过程的每个动作变成 AgentEvent，经 Channel 往外发  【channels/】
+  │    └─（可选）外侧订阅者 traced_astream 把同一条事件流转成一条 OTel trace（第 33 篇）【integrations/tracing/】
   │ ⑧ 历史写进 Memory（InMemoryStore / SqliteStore）【memory/】
   │ ⑨（可选）任务结束后从事件流抽成败，回灌 learning 学习器  【learning/】
   └ 返回 RunResult（策略 + 事件列表 + 最终文本）
@@ -95,6 +96,7 @@
 | `discovery/aggregate.py` | `CompositeDiscovery`：多个发现源串成一个、跨源去重 | 总台汇总窗口 |
 | `shell/desktop/docker_sandbox.py` | 生产级沙箱：一次性容器 OS 级隔离（无网/只读/限资源） | 加固的隔离车间 |
 | `evaluation/` | 端到端离线评测：完成率、工具精确/召回、越权、无支撑断言（golden 回归基线） | 考完打分的判卷人 |
+| `integrations/tracing/otel.py` | 结构化 tracing：外侧订阅事件流转成一条 OpenTelemetry trace（可选 `[otel]` extra，不改内核） | 给整场手术录像并标注每一刀 |
 
 ## 3. 贯穿全项目的 5 个 Python 语法（先混个脸熟，后面逐个细讲）
 
@@ -138,6 +140,7 @@
 - 30 · `discovery/scoring.py` + `remote_sources.py`：远程源按 need 筛选（双向词法 + 可选语义，保守收窄、空命中回退全量）
 - 31 · `tools/meta.py` + `loop.py`：动态重规划 replan（计划走不通显式回到规划，仅 PLAN 注册、不走授权）
 - 32 · `kernel/tiering.py` + `core.py`：成本·延迟感知选档（standard/strong 自动换挡，DONE 成本汇总）
+- 33 · `integrations/tracing/otel.py`：结构化 tracing（外侧订阅事件流 → OpenTelemetry trace，root + 工具子 span，可选 `[otel]` extra，不改内核）
 
 ## 5. 自检（读完本篇应能回答）
 

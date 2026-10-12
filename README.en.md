@@ -122,6 +122,7 @@ For architecture in English see [`docs/architecture.en.md`](docs/architecture.en
 | **Structured long-term memory** | `remember` / `recall` proactively store and retrieve facts / preferences / profiles; near-duplicate merge, importance weighting, JSON persistence; no built-in vector memory — semantic recall goes through the Embedding SPI |
 | **Safety boundaries** | Three permission tiers (approve-all / partial / no-approval); composed tools only orchestrate registered tools and never run generated code; code generation defines only the `ToolSandbox` contract — the sandbox is host-provided |
 | **Fully observable** | Every strategy choice, capability gap, tool discovery/composition/call, and permission confirmation is emitted through one unified event stream |
+| **Structured tracing** | The optional `[otel]` extra subscribes to the event stream from the outside and turns a run into one OpenTelemetry trace: a root span with a child span per tool (ok/error/duration) and adaptive decisions as span events; it never touches the kernel and never initializes an exporter — wiring Jaeger / Tempo / OTLP is the host's decision |
 | **End-to-end evaluation** | A built-in offline eval harness runs the full Core with a ScriptedModel, quantifying completion rate, tool precision/recall, overreach and unsupported claims; golden regression baseline + non-blocking CI |
 
 <details>
