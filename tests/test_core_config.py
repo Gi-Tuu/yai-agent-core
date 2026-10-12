@@ -25,8 +25,18 @@ def test_defaults_validate_and_kwargs_cover_keys() -> None:
     assert kwargs["llm_router"] is False
     assert kwargs["budget"] is None
     # 关键开关都应在展开字典里（供 from_config 使用）。
-    for key in ("memory_cipher", "context_compaction", "model_timeout", "sandbox"):
+    for key in (
+        "memory_cipher",
+        "context_compaction",
+        "model_timeout",
+        "sandbox",
+        "memory_embedder",
+        "auto_memory_recall",
+        "auto_recall_k",
+    ):
         assert key in kwargs
+    assert kwargs["auto_memory_recall"] is False
+    assert kwargs["auto_recall_k"] == 3
 
 
 @pytest.mark.parametrize(
@@ -42,6 +52,8 @@ def test_defaults_validate_and_kwargs_cover_keys() -> None:
         ("budget", "not-a-budget"),
         ("model_timeout", 0),
         ("model_timeout", -2.5),
+        ("auto_recall_k", 0),
+        ("auto_recall_k", True),  # bool 不算条数
     ],
 )
 def test_invalid_values_rejected(field: str, value: object) -> None:
@@ -74,3 +86,32 @@ def test_from_config_matches_direct_construction() -> None:
 def test_from_config_validates_before_construction() -> None:
     with pytest.raises(ValueError):
         AgentCore.from_config(ScriptedModel(), CoreConfig(max_clarify_rounds=-1))
+
+
+class _OkayEmbedder:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] for _ in texts]
+
+
+class _BadEmbedder:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:  # 非 async
+        return [[0.0] for _ in texts]
+
+
+def test_auto_recall_requires_long_memory() -> None:
+    with pytest.raises(ValueError):
+        CoreConfig(auto_memory_recall=True, long_memory=False).validate()
+
+
+def test_memory_embedder_must_be_async() -> None:
+    with pytest.raises(ValueError):
+        CoreConfig(memory_embedder=_BadEmbedder()).validate()
+
+
+def test_valid_semantic_memory_config_passes() -> None:
+    CoreConfig(
+        long_memory=True,
+        auto_memory_recall=True,
+        auto_recall_k=5,
+        memory_embedder=_OkayEmbedder(),
+    ).validate()

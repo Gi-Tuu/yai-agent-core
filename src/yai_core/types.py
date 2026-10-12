@@ -38,6 +38,7 @@ class EventType(StrEnum):
     CODE_TOOL_CREATED = "code_tool_created"
     CODE_TOOL_RETIRED = "code_tool_retired"
     CONTEXT_COMPACTED = "context_compacted"
+    MEMORIES_RECALLED = "memories_recalled"
     PLAN_REVISED = "plan_revised"
     TIER_CHANGED = "tier_changed"
     BUDGET_EXCEEDED = "budget_exceeded"

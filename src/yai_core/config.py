@@ -18,6 +18,7 @@ discovery / sandbox 等）只做类型标注，内核不持有它们的具体实
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ from yai_core.kernel import (
 )
 from yai_core.spi import (
     Channel,
+    EmbeddingProvider,
     MemoryStore,
     PermissionPolicy,
     RouteSelector,
@@ -74,6 +76,11 @@ class CoreConfig:
     long_memory: bool = False
     memory_storage: Path | str | None = None
     memory_cipher: StorageCipher | None = None
+    # 长期记忆语义召回：memory_embedder 为第八 SPI（None=纯词法召回）；
+    # auto_memory_recall 开启后任务起始自动把相关记忆注入上下文（须先开 long_memory）。
+    memory_embedder: EmbeddingProvider | None = None
+    auto_memory_recall: bool = False
+    auto_recall_k: int = 3
     # 循环 / 上下文控制。
     max_iters: int = 6
     max_clarify_rounds: int = 2
@@ -102,6 +109,14 @@ class CoreConfig:
             isinstance(self.model_timeout, bool) or self.model_timeout <= 0
         ):
             raise ValueError("model_timeout 必须是正数或 None")
+        if self.auto_memory_recall and not self.long_memory:
+            raise ValueError("auto_memory_recall=True 时必须同时启用 long_memory=True")
+        if not _is_positive_int(self.auto_recall_k):
+            raise ValueError("auto_recall_k 必须是 >=1 的整数")
+        if self.memory_embedder is not None and not inspect.iscoroutinefunction(
+            getattr(self.memory_embedder, "embed_texts", None)
+        ):
+            raise ValueError("memory_embedder 必须实现 async embed_texts(texts) 方法")
         return self
 
     def as_kwargs(self) -> dict[str, Any]:

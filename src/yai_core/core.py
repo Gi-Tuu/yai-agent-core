@@ -8,6 +8,7 @@ result = await core.run("整理本周笔记")  # 自适应选策略/工具/模�
 from __future__ import annotations
 
 import asyncio
+import functools
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Literal
@@ -29,6 +30,7 @@ from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.policy import AllowlistPolicy
 from yai_core.spi import (
     Channel,
+    EmbeddingProvider,
     MemoryStore,
     ModelProvider,
     PermissionPolicy,
@@ -79,6 +81,9 @@ class AgentCore:
         long_memory: bool = False,
         memory_storage: Path | str | None = None,
         memory_cipher: StorageCipher | None = None,
+        memory_embedder: EmbeddingProvider | None = None,
+        auto_memory_recall: bool = False,
+        auto_recall_k: int = 3,
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
@@ -109,6 +114,9 @@ class AgentCore:
             long_memory=long_memory,
             memory_storage=memory_storage,
             memory_cipher=memory_cipher,
+            memory_embedder=memory_embedder,
+            auto_memory_recall=auto_memory_recall,
+            auto_recall_k=auto_recall_k,
             max_iters=max_iters,
             max_clarify_rounds=max_clarify_rounds,
             full_schema_budget=full_schema_budget,
@@ -149,7 +157,9 @@ class AgentCore:
             # memory_cipher 提供时对落盘记忆做静态加密（内存中仍为明文）；
             # 不传则明文 JSON（默认），是否加密/密钥来源由宿主决定。
             self.memory_vault = MemoryVault(
-                storage_path=memory_storage, cipher=memory_cipher
+                storage_path=memory_storage,
+                cipher=memory_cipher,
+                embedder=memory_embedder,
             )
         self.executor = ToolExecutor(
             self.registry,
@@ -207,6 +217,14 @@ class AgentCore:
             on_diagnostic=on_diagnostic,
             # 任务级预算硬上限（模型/工具/token），None=不限制；防止失控烧钱。
             budget=budget,
+            # 任务起始主动召回：把 vault.arecall 绑定 k 后作为回调交给 loop；
+            # 未开启长期记忆或未开 auto_memory_recall 时为 None（loop 行为不变）。
+            auto_recall=(
+                functools.partial(self.memory_vault.arecall, k=auto_recall_k)
+                if (auto_memory_recall and self.memory_vault is not None)
+                else None
+            ),
+            auto_recall_k=auto_recall_k,
         )
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout
