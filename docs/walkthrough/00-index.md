@@ -140,7 +140,6 @@
 - 22 · `shell/desktop/`：原生桌面端（PySide6 + QML 灵动岛，内核与界面同进程，事件驱动动效与线程纪律）
 - 23 · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
 - 24 · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）
-- 25 · `policy/redact.py` + `policy/authorize.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）
 - 25 · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
 - 26 · `discovery/remote_sources.py` + `aggregate.py`：远程动态发现源（MCP / OpenAPI 懒连接）与多源聚合去重
 - 27 · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
@@ -159,6 +158,8 @@
 - 40 · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
 - 41 · `tools/executor.py` + `tools/registry.py`：上下文轻量治理（三类工具结果回灌前统一按 16000 字符"头+尾"有界收口并打 `truncated` 标记；喂模型的工具目录 / schema 按名确定性排序以稳定提示缓存前缀；内部存储顺序不变）
 - 42 · `kernel/compaction.py` + `kernel/loop.py` + `core.py`：摘要压缩省钱与水位便捷构造（C2 `compaction_model` 让摘要改走便宜小模型、`None` 完全回归主模型、不进 CoreConfig 也不计预算；C3 `CompactionPolicy.from_context_window(chars)` 按 0.6/0.4 比例算高/低水位，`from_context_window(40000)` 恰等于默认策略，字符口径不引 tokenizer）
+- 43 · `policy/redact.py` + `policy/authorize.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）
+- 44 · `integrations/acc/`：ACC v1 兼容层（零依赖声明校验器 + 严格 JSON 审批原语 + 官方 26 条参考向量）
 
 ## 5. 自检（读完本篇应能回答）
 

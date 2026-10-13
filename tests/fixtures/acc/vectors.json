@@ -1,0 +1,271 @@
+{
+  "format_version": 1,
+  "acc_version": 1,
+  "specification_release": "1.0.5",
+  "vectors": [
+    {
+      "id": "T-PARSE-01",
+      "profile": "parser",
+      "kind": "declaration",
+      "assertion": "A minimal ACC v1 declaration is valid.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.read" } },
+      "expected": { "valid": true }
+    },
+    {
+      "id": "T-PARSE-02",
+      "profile": "parser",
+      "kind": "declaration",
+      "assertion": "A declaration without scope is invalid.",
+      "input": { "declaration": { "version": 1, "enabled": true } },
+      "expected": { "valid": false, "diagnostic": "invalid_declaration" }
+    },
+    {
+      "id": "T-PARSE-03",
+      "profile": "parser",
+      "kind": "declaration",
+      "assertion": "An unsupported major version is rejected or skipped with diagnostics.",
+      "input": { "declaration": { "version": 2, "enabled": true, "scope": "order.read" } },
+      "expected": { "valid": false, "diagnostic": "unsupported_version" }
+    },
+    {
+      "id": "T-PARSE-04",
+      "profile": "parser",
+      "kind": "declaration",
+      "assertion": "An unknown field is ignored without making the declaration invalid.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.read", "x_future_hint": true } },
+      "expected": { "valid": true }
+    },
+    {
+      "id": "T-PARSE-05",
+      "profile": "parser",
+      "kind": "declaration",
+      "assertion": "A declaration without a version is invalid rather than classified as an unsupported version.",
+      "input": { "declaration": { "enabled": true, "scope": "order.read" } },
+      "expected": { "valid": false, "diagnostic": "invalid_declaration" }
+    },
+    {
+      "id": "T-EXPOSE-01",
+      "profile": "runtime",
+      "kind": "exposure",
+      "assertion": "A disabled capability is not exposed.",
+      "input": { "declaration": { "version": 1, "enabled": false, "scope": "order.read" }, "scope_allowed": true, "trusted_subject": true },
+      "expected": { "exposed": false }
+    },
+    {
+      "id": "T-EXPOSE-02",
+      "profile": "runtime",
+      "kind": "exposure",
+      "assertion": "A subject-required capability is not exposed without a trusted subject.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.read", "subject": { "required": true } }, "scope_allowed": true, "trusted_subject": false },
+      "expected": { "exposed": false }
+    },
+    {
+      "id": "T-EXPOSE-03",
+      "profile": "runtime",
+      "kind": "exposure",
+      "assertion": "A capability outside the runtime scope policy is not exposed.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "refund.create" }, "scope_allowed": false, "trusted_subject": true },
+      "expected": { "exposed": false }
+    },
+    {
+      "id": "T-EXPOSE-04",
+      "profile": "runtime",
+      "kind": "exposure",
+      "assertion": "An enabled and allowed capability with required subject available is exposed.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.read", "subject": { "required": true } }, "scope_allowed": true, "trusted_subject": true },
+      "expected": { "exposed": true }
+    },
+    {
+      "id": "T-APPROVAL-01",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "approval.required true creates approval intent even when a condition does not match.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "required": true, "when": [{ "param": "amount", "op": ">", "value": 1000 }] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" } }, "required": ["amount"] },
+        "args": { "amount": 10 }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-02",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The first matching approval.when item is sufficient under ANY semantics.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "when": [{ "param": "amount", "op": ">", "value": 1000 }, { "param": "priority", "op": "==", "value": "urgent" }] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" }, "priority": { "type": "string" } }, "required": ["amount", "priority"] },
+        "args": { "amount": 1500, "priority": "normal" }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-03",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "A later matching approval.when item is sufficient under ANY semantics.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "when": [{ "param": "amount", "op": ">", "value": 1000 }, { "param": "priority", "op": "==", "value": "urgent" }] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" }, "priority": { "type": "string" } }, "required": ["amount", "priority"] },
+        "args": { "amount": 10, "priority": "urgent" }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-04",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "No conditional approval intent is created when no approval.when item matches.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "when": [{ "param": "amount", "op": ">", "value": 1000 }, { "param": "priority", "op": "==", "value": "urgent" }] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" }, "priority": { "type": "string" } }, "required": ["amount", "priority"] },
+        "args": { "amount": 10, "priority": "normal" }
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-APPROVAL-05",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "An invocation value incompatible with its bound input schema is rejected before condition evaluation.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "when": [{ "param": "amount", "op": ">", "value": 1000 }] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" } }, "required": ["amount"] },
+        "args": { "amount": "1500" }
+      },
+      "expected": { "decision": "reject_invalid_arguments" }
+    },
+    {
+      "id": "T-APPROVAL-06",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "An empty approval.when array creates no conditional approval intent.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "refund.create", "approval": { "when": [] } },
+        "parameter_schema": { "type": "object", "properties": { "amount": { "type": "number" } } },
+        "args": { "amount": 1500 }
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-APPROVAL-07",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The in operator matches a parameter that is strictly JSON-equal to one array member.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "case.assign", "approval": { "when": [{ "param": "team", "op": "in", "value": ["support", "finance"] }] } },
+        "parameter_schema": { "type": "object", "properties": { "team": { "type": "string" } }, "required": ["team"] },
+        "args": { "team": "finance" }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-08",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The in operator does not coerce a JSON number into a string.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "case.assign", "approval": { "when": [{ "param": "code", "op": "in", "value": ["1", "2"] }] } },
+        "parameter_schema": { "type": "object", "properties": { "code": { "type": ["number", "string"] } }, "required": ["code"] },
+        "args": { "code": 1 }
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-APPROVAL-09",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The contains operator uses substring matching for a string parameter and string value.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "message.send", "approval": { "when": [{ "param": "message", "op": "contains", "value": "secret" }] } },
+        "parameter_schema": { "type": "object", "properties": { "message": { "type": "string" } }, "required": ["message"] },
+        "args": { "message": "contains secret material" }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-10",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The contains operator uses strict JSON equality for members of an array parameter.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "role.update", "approval": { "when": [{ "param": "roles", "op": "contains", "value": { "name": "admin", "active": true } }] } },
+        "parameter_schema": { "type": "object", "properties": { "roles": { "type": "array", "items": { "type": "object" } } }, "required": ["roles"] },
+        "args": { "roles": [{ "active": true, "name": "admin" }] }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-11",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "Array containment does not coerce a JSON number element into a string.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "tag.update", "approval": { "when": [{ "param": "tags", "op": "contains", "value": "1" }] } },
+        "parameter_schema": { "type": "object", "properties": { "tags": { "type": "array", "items": { "type": ["number", "string"] } } }, "required": ["tags"] },
+        "args": { "tags": [1] }
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-APPROVAL-12",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The exists operator matches a path that resolves to a non-null JSON value.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "order.update", "approval": { "when": [{ "param": "reason", "op": "exists" }] } },
+        "parameter_schema": { "type": "object", "properties": { "reason": { "type": "string" } } },
+        "args": { "reason": "manual override" }
+      },
+      "expected": { "decision": "approval_required" }
+    },
+    {
+      "id": "T-APPROVAL-13",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The exists operator does not match a path that is absent from the invocation input.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "order.update", "approval": { "when": [{ "param": "reason", "op": "exists" }] } },
+        "parameter_schema": { "type": "object", "properties": { "reason": { "type": "string" } } },
+        "args": {}
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-APPROVAL-14",
+      "profile": "runtime",
+      "kind": "approval",
+      "assertion": "The exists operator does not match an explicit JSON null value.",
+      "input": {
+        "declaration": { "version": 1, "enabled": true, "scope": "order.update", "approval": { "when": [{ "param": "reason", "op": "exists" }] } },
+        "parameter_schema": { "type": "object", "properties": { "reason": { "type": ["string", "null"] } }, "required": ["reason"] },
+        "args": { "reason": null }
+      },
+      "expected": { "decision": "allow" }
+    },
+    {
+      "id": "T-RISK-01",
+      "profile": "runtime",
+      "kind": "risk-default",
+      "assertion": "Under the OpenAPI binding, a GET operation defaults to low risk when risk and execution.readonly are omitted.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.read" }, "http_method": "GET" },
+      "expected": { "effective_risk": "low" }
+    },
+    {
+      "id": "T-RISK-02",
+      "profile": "runtime",
+      "kind": "risk-default",
+      "assertion": "A non-readonly write operation defaults to medium risk when risk is omitted.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "order.update", "execution": { "readonly": false } }, "http_method": "POST" },
+      "expected": { "effective_risk": "medium" }
+    },
+    {
+      "id": "T-AUDIT-01",
+      "profile": "runtime",
+      "kind": "audit-hint",
+      "assertion": "The broad audit sensitivity hint is preserved as true.",
+      "input": { "declaration": { "version": 1, "enabled": true, "scope": "customer.read", "audit": { "sensitive": true } } },
+      "expected": { "audit_sensitive": true }
+    }
+  ]
+}
