@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.integrations.acc.gate import build_gate
 from yai_core.integrations.acc.openapi import bind_operation, misplaced_declarations
 from yai_core.integrations.openapi.spec import (
     _HTTP_METHODS,
@@ -228,11 +229,15 @@ def _plan_one_operation(
             return None
         tool_description = _with_guidance(tool_description, binding)
 
-    governance = (
-        ToolGovernance(audit_sensitive=binding.audit_sensitive, acc=binding.raw)
-        if binding.declared
-        else None
-    )
+    governance: ToolGovernance | None = None
+    if binding.declared and binding.declaration is not None:
+        governance = ToolGovernance(
+            audit_sensitive=binding.audit_sensitive,
+            acc=binding.raw,
+            # 声明参与准入的方式：编译成一个中性判定函数挂到 governance.gate 上，
+            # 执行器只认 GateDecision，不认识 ACC。
+            gate=build_gate(binding.declaration, input_schema),
+        )
 
     return OperationPlan(
         name=name,

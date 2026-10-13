@@ -10,6 +10,8 @@
   拒绝则不发 ``TOOL_CALL``。
 - ``DENY``：不发 ``TOOL_CALL``，直接判定不通过。
 - ``ALLOW``：发 ``TOOL_CALL`` 后放行。
+- ``require_approval``（能力契约的审批意图）只能把闸门**往上抬**：策略 ALLOW 也走 ASK
+  的分支，但策略 DENY 永远优先——外部声明不能替宿主放行。
 
 返回 ``(events, approved, reason)``。
 
@@ -22,7 +24,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from yai_core.policy.redact import redact_arguments
 from yai_core.spi.policy import PermissionDecision
@@ -30,7 +32,7 @@ from yai_core.types import AgentEvent, EventType
 
 if TYPE_CHECKING:
     from yai_core.spi.channel import Channel
-    from yai_core.spi.policy import PermissionPolicy
+    from yai_core.spi.policy import PermissionPolicy, SubjectAwarePermissionPolicy
 
 
 def snapshot_arguments(arguments: dict) -> dict:
@@ -45,6 +47,33 @@ def snapshot_arguments(arguments: dict) -> dict:
         return arguments
 
 
+def _fill_prompt(template: str, shown: dict) -> str:
+    """把 ``{参数名}`` 占位符填进审批话术，**只用对外副本里的值**。
+
+    未知占位符原样留着（模板与参数不匹配是宿主的事，不该把审批整条吞掉）。
+    """
+    text = template
+    for key, value in (shown or {}).items():
+        token = "{" + str(key) + "}"
+        if token in text:
+            text = text.replace(token, str(value))
+    return text
+
+
+async def _check(
+    policy: PermissionPolicy, name: str, arguments: dict, subject: Any
+) -> PermissionDecision:
+    """策略判定：只有策略自己声明 ``yai_subject_aware`` 时才多传主体。
+
+    这样旧的 PermissionPolicy 实现一字不改照样跑；主体感知的宿主也不用接受
+    一个它读不懂的入参——**内核不替策略假装它懂身份**。
+    """
+    if subject is not None and getattr(policy, "yai_subject_aware", False):
+        aware = cast("SubjectAwarePermissionPolicy", policy)
+        return await aware.check(name, arguments, subject=subject)
+    return await policy.check(name, arguments)
+
+
 async def authorize_tool_call(
     policy: PermissionPolicy,
     channel: Channel,
@@ -53,6 +82,10 @@ async def authorize_tool_call(
     *,
     sensitive_paths: tuple[str, ...] = (),
     audit_sensitive: bool = False,
+    subject: Any = None,
+    require_approval: bool = False,
+    approval_reason: str = "",
+    approval_prompt: str = "",
 ) -> tuple[list[AgentEvent], bool, str]:
     """对一次工具调用做权限判定，返回（要追加的事件，是否放行，拒绝原因）。
 
@@ -65,23 +98,32 @@ async def authorize_tool_call(
     副本里的这些路径会被替换成占位符，而执行仍拿原值（脱敏不得改变业务行为）。
     ``audit_sensitive`` 是宽口径审计提示：只把**审计事件**那份的顶层值整体收口，
     给审批人的副本仍按路径脱敏（全糊掉会让人工批准失去判断依据）。
+
+    ``subject`` 是宿主注入的可信操作主体，只交给声明了 ``yai_subject_aware`` 的策略。
+
+    ``require_approval`` 来自能力契约的审批意图（``approval.required`` / 命中的
+    ``approval.when``）：**它只能把闸门往上抬**——策略 DENY 仍然优先，策略 ALLOW
+    也会被抬成人工确认；反过来说，契约永远不能替策略放行。
     """
     events: list[AgentEvent] = []
-    decision = await policy.check(name, arguments)
-    if decision == PermissionDecision.ASK:
-        asked = redact_arguments(arguments, sensitive_paths)
-        confirmed = redact_arguments(arguments, sensitive_paths)
-        events.append(
-            AgentEvent(
-                EventType.PERMISSION_ASKED,
-                {"tool": name, "arguments": asked},
-            )
-        )
-        approved = await channel.confirm(name, confirmed)
-        if not approved:
-            return events, False, f"用户/宿主拒绝执行工具 {name}"
+    decision = await _check(policy, name, arguments, subject)
     if decision == PermissionDecision.DENY:
         return events, False, f"权限策略拒绝执行工具 {name}"
+
+    if decision == PermissionDecision.ASK or require_approval:
+        asked = redact_arguments(arguments, sensitive_paths)
+        payload: dict[str, Any] = {"tool": name, "arguments": asked}
+        if require_approval:
+            payload["approval_required"] = True
+            payload["reason"] = approval_reason
+            if approval_prompt:
+                payload["prompt"] = _fill_prompt(approval_prompt, asked)
+        events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
+        approved = await channel.confirm(
+            name, redact_arguments(arguments, sensitive_paths)
+        )
+        if not approved:
+            return events, False, f"用户/宿主拒绝执行工具 {name}"
 
     events.append(
         AgentEvent(

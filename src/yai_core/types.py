@@ -46,6 +46,25 @@ class EventType(StrEnum):
     DONE = "done"
 
 
+@dataclass(frozen=True)
+class Subject:
+    """宿主在当前运行上下文里注入的**可信操作主体**。
+
+    只有宿主能构造它：模型输出、工具参数、上游消息里抄来的"我是某某"都不算
+    ——接收方必须通过自己的可信上下文或显式委托绑定来判定主体可信性。
+    内核用它做能力准入（如外部契约的 ``subject.required``）并交给声明了
+    ``yai_subject_aware`` 的权限策略；身份到底能不能做这件事，仍由宿主业务层裁决。
+    """
+
+    subject_id: str
+    display_name: str = ""
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not str(self.subject_id).strip():
+            raise ValueError("Subject.subject_id 必须是非空字符串")
+
+
 @dataclass
 class CompositeStep:
     """组合工具中的一步：调用一个已注册的内部工具，参数可引用前序结果。
@@ -57,6 +76,27 @@ class CompositeStep:
 
     tool: str
     args: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    """工具自带准入判定（``ToolGovernance.gate``）的返回值：内核的中性语言。
+
+    内核不知道这个结论是谁算的（外部能力契约、宿主策略引擎、都行），只按三条话行动：
+
+    - ``reject`` 非空：这次调用不该到达业务操作，直接失败并把理由回灌给模型；
+    - ``require_approval``：要人工确认——**只能把闸门往上抬**，权限策略的 DENY 永远优先；
+    - 两者皆假：这一层对这次调用没有意见。
+
+    ``risk`` / ``scope`` 是附带信息（进诊断与宿主 UI 用），不参与内核决策。
+    """
+
+    reject: str = ""
+    require_approval: bool = False
+    reason: str = ""
+    prompt: str = ""
+    risk: str = ""
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,13 +112,17 @@ class ToolGovernance:
     - ``audit_sensitive``：**宽口径**审计敏感提示（外部能力契约的 ``audit.sensitive``）。
       只把"进审计/日志的那一份"整体收口，**审批人要看的副本仍按路径脱敏**——
       把所有值都糊掉会让人工批准失去判断依据，而规范的义务范围是 logs。
-    - ``acc``：外部能力契约声明的**原样快照**（已校验过的 mapping）。内核只透传，
-      解释与判定在 ``integrations/acc``，这样核心类型不反向依赖集成层。
+    - ``acc``：外部能力契约声明的**原样快照**（已校验过的 mapping）。内核只透传不解释，
+      它本身**不产生任何执行效果**；要让声明参与准入，得配上下面的 ``gate``。
+    - ``gate``：工具自带的**准入判定函数** ``(arguments, subject) -> GateDecision``，
+      由宿主或集成层提供（``integrations/acc`` 用已校验的声明造一个）。每次调用现场算，
+      用当时的参数与当时的主体；内核不 import 任何协议实现，只按 :class:`GateDecision` 行动。
     """
 
     sensitive: tuple[str, ...] = ()
     audit_sensitive: bool = False
     acc: Mapping[str, Any] | None = None
+    gate: Callable[[dict[str, Any], Any], GateDecision] | None = None
 
 
 @dataclass

@@ -157,7 +157,37 @@ bind_operation(operation, method=..., tool_name=..., input_schema=...,
 最后一条铁律写在 `misplaced_declarations()`：扩展只认 operation 级。作者把它贴到根节点或
 pathItem 上时，绑定**不读它**（不能让它产生任何治理效果），但会把"贴错位置"作为诊断报出来。
 
-## 7. 边界与限制（照实说）
+## 7. 从声明到每一次调用：能力闸与可信主体
+
+前面都是"读得懂"。这一节是"用得上"，而且用法只有一个方向：**外部声明只能把闸门往上抬**。
+
+```
+模型给出参数
+  └─ executor：snapshot → governance.gate(arguments, subject)   ← 内核不认识 ACC
+        ├─ reject 非空 → 直接失败：不过策略、不发 TOOL_CALL、不碰 handler
+        ├─ require_approval → 授权闸把策略的 ALLOW 抬成人工确认（策略 DENY 仍然优先）
+        └─ 沉默 → 照旧
+```
+
+**为什么是"一个 callable"而不是"内核 import ACC"**：`ToolGovernance.gate` 的类型是
+`(arguments, subject) -> GateDecision`，判定由宿主或集成层提供，内核只按 `GateDecision`
+的三种话行动。这样 `integrations/acc` 保持可选（执行器热路径不依赖它），自带策略引擎的宿主
+也能挂同一个口子。`governance.acc` 那份声明快照只做透明记录，**它本身不产生任何执行效果**——
+要让声明参与准入就得附上 gate（OpenAPI 桥用 `build_gate(declaration, input_schema)` 造一个）。
+判定发生在每次调用现场，用当时的参数与当时的主体。
+
+**主体（`Subject`）**：宿主经 `core.run(task, subject=...)` / `astream(...)` 注入，
+沿 loop → 执行器 → 授权闸一路透传，不落在任何实例属性上，所以并发跑两条会话不会互相粘连。
+两个消费点：
+
+- 闸：声明 `subject.required` 而这次运行没有主体 → 直接拒，**且不沿用上一位的身份**；
+- 策略：只有声明了 `yai_subject_aware = True` 的策略才会收到 `subject=` 关键字——
+  用能力旗标而不是鸭子探测签名，猜探在宿主写了 `**kwargs` 时会猜错，宁可不传。
+
+拒绝理由的可见性是刻意分开的：闸拒绝**不发事件**（与权限 DENY 同形，免得看起来"调用过"），
+但理由会作为 `role="tool"` 消息回灌给模型，由模型决定换路还是收口——审计链安静，模型不瞎。
+
+## 8. 边界与限制（照实说）
 
 1. **入参校验只实现 `type` / `required` / `properties` / `items` 四个关键字**，`enum`、`pattern`、
    `min/max` 被忽略。向量依赖的四个都在子集内；向量之外这意味着"ACC 层的入参门槛比完整 JSON Schema 松"，
@@ -165,21 +195,23 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
 2. **一处刻意偏离参考 oracle**：`GET` + 显式 `execution.readonly: false` 我们取 `medium`，
    oracle 给 `low`。绑定文本说"显式声明优先"，取更保守的那一档；向量没有覆盖这个组合。
 3. `timeout_ms` / `rate_limit` **只解析、不执行**，还没映射到执行器的超时与限流。
-4. **绑定只决定"暴不暴露"**：`approval_outcome` 还没接进 `ToolExecutor` 的授权闸，
-   所以带 `approval.required` 的操作目前仍按 YAI 原有的三档权限走。接线是下一步（任务 G）。
-   接进去之前，YAI 是"读得懂 ACC 声明并按它筛选暴露面"，还不是"按 ACC 治理每一次调用"。
-5. 主体身份只到"默认不信任"这一档：`trusted_subject` 由宿主显式置真，
-   内核还没有主体注入与逐次校验（任务 I）。
-6. `governance.acc` 快照**尚未进 manifest 序列化**（`to_manifest_dict`），跨进程传工具清单时
-   ACC 治理不会跟着走——等字段集稳定再加，免得把格式变更留在中途。
+4. **闸只覆盖审批意图与主体准入**：`approval.required` / 命中的 `approval.when` /
+   `subject.required` 已经接进每一次调用；风险等级 (`effective_risk`) 只是随
+   `GateDecision` 带出来给宿主与诊断看，内核**没有**按风险自动升降档（那是宿主的权限模型）。
+5. **主体是"注入 + 透传 + 准入"，不是"认证"**：内核不验签、不发 token、不做跨跳主体连续性，
+   `Subject` 的可信性完全来自宿主在自己的信任边界上给不给。规范 §4.5 也明令这一点。
+6. `governance.acc` 快照与 `gate` **都不进 manifest 序列化**（`to_manifest_dict`），
+   跨进程传工具清单时 ACC 治理不会跟着走——等字段集稳定再加，免得把格式变更留在中途。
 
 因此对外口径只有一句：**Implements the ACC v1 OpenAPI Binding Parser Profile**
-（读扩展、校验、按绑定决定暴露与否、出诊断；决策原语也已跑通）。Runtime Profile 要等
-执行器接线 + 超时/限流映射 + 集成证据齐了再说，"ACC certified" 这种说法规范明令禁止，我们也不写。
+（读扩展、校验、按绑定决定暴露与否、出诊断）。Runtime Profile 还缺三块证据：超时/限流映射、
+按主体的资源级授权落点、以及"模型文本改不动治理"的对抗性集成证据；补齐才敢这么声称。
+"ACC certified" 这种说法规范明令禁止，我们也不写。
 
-## 7. 自检（读完本篇应回答）
+## 9. 自检（读完本篇应回答）
 
 1. 为什么"缺 version"和"version=2"必须给不同的诊断？
 2. ACC 声明里的 `subject.required` 靠谁判定？为什么不能从工具参数里拿？
 3. `approval.when` 判不出来时，allow 和 reject 哪个才是对的？为什么？
-4. 这个包现在声称实现了哪个 Profile，另外两个还缺哪些证据？
+4. 契约的 `require_approval` 能把策略的 DENY 抬成"要人工确认"吗？方向为什么是单向的？
+5. 为什么内核吃 `governance.gate` 这个 callable，而不是直接 import ACC 判定？

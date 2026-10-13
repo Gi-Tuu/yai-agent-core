@@ -41,6 +41,7 @@ from yai_core.integrations.acc.evaluate import (
     schema_at_path,
     value_at_path,
 )
+from yai_core.integrations.acc.gate import build_gate
 from yai_core.integrations.acc.openapi import (
     AccOperationBinding,
     bind_operation,
@@ -65,6 +66,7 @@ __all__ = [
     "ApprovalOutcome",
     "approval_outcome",
     "audit_sensitive",
+    "build_gate",
     "bind_operation",
     "effective_risk",
     "invocation_errors",
