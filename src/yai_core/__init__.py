@@ -60,6 +60,7 @@ from yai_core.types import (
     Strategy,
     TokenUsage,
     ToolCallRequest,
+    ToolGovernance,
     ToolSpec,
 )
 
@@ -112,6 +113,7 @@ __all__ = [
     "Strategy",
     "TokenUsage",
     "ToolCallRequest",
+    "ToolGovernance",
     "ToolSpec",
     "__version__",
 ]

@@ -25,7 +25,7 @@ from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
 from yai_core.kernel.tiering import STANDARD, STRONG, TierPolicy
-from yai_core.policy.authorize import authorize_tool_call
+from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
 from yai_core.spi import (
     Channel,
     MemoryStore,
@@ -984,7 +984,12 @@ class AgentLoop:
         task: str,
     ) -> AsyncIterator[AgentEvent]:
         """执行中"请求发现新能力"：授权 -> 发缺口事件 -> 发现注册 -> 回灌结果。"""
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        # meta-tool 同样先快照：审批看到的与内核实际执行的必须是同一份参数
+        arguments = (
+            snapshot_arguments(call.arguments)
+            if isinstance(call.arguments, dict)
+            else {}
+        )
         auth_events, approved, reason = await authorize_tool_call(
             self.executor.policy, self.channel, REQUEST_CAPABILITY, arguments
         )
@@ -1049,7 +1054,12 @@ class AgentLoop:
         创建是敏感动作，除"无需审批"档外都要先授权；真正执行该工具时
         ToolExecutor 还会再走一次权限闸（创建与首次执行双重授权）。
         """
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        # meta-tool 同样先快照：审批看到的与内核实际执行的必须是同一份参数
+        arguments = (
+            snapshot_arguments(call.arguments)
+            if isinstance(call.arguments, dict)
+            else {}
+        )
         auth_events, approved, reason = await authorize_tool_call(
             self.executor.policy, self.channel, CREATE_CODE_TOOL, arguments
         )

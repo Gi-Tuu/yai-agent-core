@@ -59,6 +59,21 @@ class CompositeStep:
     args: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ToolGovernance:
+    """宿主声明的工具治理元数据。
+
+    只由宿主/集成层填写，**模型输出永远不能改它**；缺省即"无声明"，
+    此时内核保持原有行为（不猜、不假装保护）。
+
+    - ``sensitive``：需要脱敏的**参数路径**（dot-notation，如
+      ``api_key``、``headers.authorization``、``rows.0.token``）。声明了才会被
+      脱敏——内核不按字段名关键词猜"这像不像密钥"，因为猜出来的东西不能当安全承诺。
+    """
+
+    sensitive: tuple[str, ...] = ()
+
+
 @dataclass
 class ToolSpec:
     """统一工具规格。Native / OpenAPI / MCP / 组合工具在 Registry 中同构。"""
@@ -73,6 +88,8 @@ class ToolSpec:
     # 仅 source == "code" 时使用：模型生成、需在宿主沙箱里执行的 Python 代码。
     # 内核不内置任何代码执行器（见 ToolSandbox SPI），handler 保持 None。
     code: str | None = None
+    # 宿主声明的治理元数据（脱敏、风险等）；默认空声明 = 行为与从前一致。
+    governance: ToolGovernance = field(default_factory=ToolGovernance)
 
     def llm_schema(self) -> dict[str, Any]:
         """转换成 OpenAI 兼容的 function-calling 工具描述。"""

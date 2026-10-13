@@ -4,7 +4,7 @@ import inspect
 import json
 from typing import Any
 
-from yai_core.policy.authorize import authorize_tool_call
+from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
@@ -96,11 +96,17 @@ class ToolExecutor:
             return events, False, f"工具 {name!r} 不存在"
 
         spec = self.registry.get(name)
+        # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
+        arguments = snapshot_arguments(arguments)
         if spec.source == "composite" and spec.steps:
             return await self._execute_composite(spec, arguments)
 
         auth_events, approved, reason = await authorize_tool_call(
-            self.policy, self.channel, name, arguments
+            self.policy,
+            self.channel,
+            name,
+            arguments,
+            sensitive_paths=spec.governance.sensitive,
         )
         events.extend(auth_events)
         if not approved:
