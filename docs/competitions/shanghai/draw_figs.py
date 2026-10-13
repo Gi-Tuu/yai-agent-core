@@ -96,8 +96,8 @@ def save(fig, name):
 def fig_position():
     fig, ax = new_fig(11, 6.6)
     cols = [
-        ("托管平台", "Dify · Coze", "应用进入平台运行\n数据 / UI / 发布在平台侧\n存量软件无法内嵌", TINT2, GREY),
-        ("拼装框架", "LangChain · CrewAI · AutoGen", "提供积木与范式\n谁是 Agent、有哪些工具\n仍需开发者逐一定义装配", TINT2, GREY),
+        ("托管平台", "可视化编排 · 托管运行", "应用进入平台运行\n数据 / UI / 发布在平台侧\n存量软件无法内嵌", TINT2, GREY),
+        ("拼装框架", "通用编排 · 图运行时 · 多智能体", "提供积木与范式\n谁是 Agent、有哪些工具\n仍需开发者逐一定义装配", TINT2, GREY),
         ("YAI 内核", "进程内嵌入式（类 SQLite）", "内核进入应用进程\n宿主声明能力\n其余由内核自适应完成", TINT, INK),
     ]
     x0, w, gap = 4, 28, 4

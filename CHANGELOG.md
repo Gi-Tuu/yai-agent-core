@@ -26,6 +26,10 @@
 - **声明式参数脱敏（`ToolSpec.governance`）**：内核新增 `ToolGovernance` 元数据（宿主声明、模型不可改），首个字段 `sensitive` 声明需要脱敏的**参数路径**（dot-notation，如 `api_key`、`headers.Authorization`、`rows.0.token`）。声明后，审批事件、`Channel.confirm` 入参、`TOOL_CALL` 审计事件与追踪 span 里的对应值统一替换为 `[redacted:len=N]`，而**实际执行仍拿真值**（脱敏不得改变业务行为）。内核刻意不按字段名关键词猜"像不像密钥"——猜的规则既会漏也会误伤审批可读性，因此"未声明即不脱敏"是有意的边界。新增 `policy/redact.py` 与 `tests/test_redaction.py`。
 - **审批-执行-审计三方一致性（参数快照）**：`ToolExecutor.execute` 与两个过闸 meta-tool 在进入权限判定前对模型参数做深拷贝，`authorize_tool_call` 再为"给用户看的那一份"和"审计事件那一份"各持独立副本——通道或宿主在 `confirm()` 期间改写的只是它拿到的副本，改不动真正执行的参数，也污染不了审计链。补 `tests/test_argument_snapshot.py`（含"篡改审批后仍按批准值执行""拒绝后 handler 零调用且不发 `TOOL_CALL`"）。见讲义第 43 篇。
 
+### Changed
+
+- **对外文档改为"按类别"对比，不再点名同类项目**：`docs/comparison.md` / `.en.md` 重写为**类别描述**（通用框架 / 图编排运行时 / 多智能体框架 / 自托管平台 / 托管无代码平台），同时删除他方的自我宣传文案、星标数与指向他站的链接；README、`docs/architecture`、v0.6.0 发布说明、参赛材料里的同类项目名字一并改为中性类别说法。YAI 一侧的事实（零硬依赖、九契约、benchmark 数字、测试数、宿主数）逐条保留并复核，中英两份同步。**刻意保留**两类名字：我们实现/依赖的接口与库名（模型兼容接口、MCP、OpenAPI、PySide6 等），以及作为类比对象的嵌入式数据库名。已生成的 PDF 与参赛图 PNG 不在本轮重导（文本层已改，图里仍有旧名字，重导需另行确认）。
+
 ### Security
 
 - **host_e 跨进程工具口加本地令牌鉴权**：`POST /api/agent/tool` 与 `GET /api/agent/tools` 此前**无任何鉴权**——由于权限三档的决策在调用方（桌面灵动岛）完成，同机任意进程都能绕过审批直接执行宿主写操作。现在两个端点只认 `Authorization: Bearer <token>`：令牌按 `--tool-token` → 环境变量 `YAI_TOOL_TOKEN` → 本地令牌文件（`data/host_e/tool_token`，首次启动自动生成）解析，比较用 `hmac.compare_digest`；**绑定非环回地址时必须显式提供令牌，否则拒绝启动**。诚实边界：能读到令牌文件的进程即被视为同一用户身份，这一层挡的是同机其他用户/服务与误接客户端，不防同一用户自己写的恶意本地进程（那需要 OS 级隔离）。新增 `examples/host_e_sales_crm/tool_auth.py`、`tests/test_host_e_tool_auth.py`（27 项，含 401 时零业务副作用、两侧令牌约定不漂移）。

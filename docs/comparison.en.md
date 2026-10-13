@@ -2,48 +2,50 @@
 
 [English](comparison.en.md) · [简体中文](comparison.md)
 
-> Last updated: 2026-10-10. This document states only verifiable facts: YAI's side is based on this
-> repository's code/config, and each alternative on its official documentation. No disparaging
-> comparisons; the end tells you "who to pick in which scenario".
+> Last updated: 2026-10-13. This document states only **verifiable facts**; YAI's side is based on this
+> repository's code/config. To avoid restating third parties' own marketing copy, alternatives are
+> described **by category** (general framework / graph runtime / multi-agent framework / self-hosted
+> platform / hosted no-code) — no names, no slogans, no vendor metrics. Category traits reflect public
+> common knowledge and may drift; treat each product's own documentation as authoritative. No disparaging
+> comparisons; the end says which category to pick in which scenario.
 
-## 1. One-line positioning
+## 1. One-line positioning (by category)
 
-| Project | Official self-positioning (fact) | Form |
+| Option | Positioning | Form |
 |---|---|---|
 | **YAI Agent Core (this project)** | An in-process, embeddable, self-adaptive Agent **kernel**: the host only declares capabilities; the kernel auto-discovers tools, routes adaptively and executes | A Python library (`pip install`); the kernel itself has zero third-party hard dependencies |
-| LangChain | "The fastest way to build agents", with a standard tool-calling architecture, vendor-agnostic design and middleware | Python/JS framework |
-| LangGraph | LangChain's official **low-level orchestration framework/runtime**, for precise control and production-grade long-running agents | Python/JS framework |
-| CrewAI | A **role-based multi-agent orchestration framework** for quickly building role-divided agent workflows | Python framework |
-| AutoGen / Microsoft Agent Framework | Microsoft's **multi-agent conversation framework** (Agent Framework is the unified successor of AutoGen + Semantic Kernel) | Python/.NET framework |
-| Dify | An open-source LLM-application **platform**: Backend-as-a-Service + LLMOps, visual Workflow/Chatflow editor, self-hosted via Docker | Self-hosted platform (server + web console) |
-| Coze | An AI-application **platform** for users of all skill levels, visual no-code/low-code orchestration, hosted and operated | Hosted SaaS (Coze China / Coze global) |
+| General agent frameworks (category) | Provide tool abstractions, chain composition and middleware; the developer assembles an agent | Python/JS library or framework |
+| Low-level graph orchestration runtimes (category) | Express an agent as nodes/edges and a state machine, emphasising precise control and long-running flows | Python/JS framework |
+| Multi-agent frameworks (category) | Take "roles + collaboration/conversation" as the first abstraction, orchestrating several agents | Python framework |
+| Self-hosted LLM app platforms (category) | A server-side platform with visual orchestration, plugin marketplace and ops panel; apps call into it | Self-hosted platform (server + web console) |
+| Hosted no-code platforms (category) | Configure bots/workflows by dragging on a web page; execution and operation live in the platform | Hosted SaaS |
 
 ## 2. Comparison across key dimensions
 
-| Dimension | YAI Agent Core | LangChain / LangGraph | CrewAI / AutoGen | Dify | Coze |
+| Dimension | YAI Agent Core | General / graph frameworks | Multi-agent frameworks | Self-hosted platforms | Hosted no-code platforms |
 |---|---|---|---|---|---|
 | Delivery form | An imported library running in the host process | Library/framework | Library/framework | Self-hosted server platform | Hosted SaaS |
 | What the developer does | Write ordinary business functions and declare capabilities; **no Agent Loop/Planner/tool selection** | Define agents, tools, chains/graphs, states and edges yourself | Define roles, tasks, collaboration flows yourself | Configure prompts, tools, workflows in the platform | Drag-and-drop a Bot/plugin on a web page |
-| Embedding into existing software | In-process `import`, one-line `AgentCore.auto`; no server introduced | Embeddable, but you must implement agent assembly and the loop yourself | Embeddable, but the multi-agent paradigm needs app cooperation | The app becomes a Dify client/external caller | Cannot embed; the app runs inside the platform |
-| Kernel runtime deps | **`dependencies = []`** (openai/fastapi/mcp/httpx are all optional, lazily-loaded extras) | A set of layered dependency packages | Framework dependencies | A full server stack (multi-container Docker Compose) | None (hosted) |
+| Embedding into existing software | In-process `import`, one-line `AgentCore.auto`; no server introduced | Embeddable, but you must implement agent assembly and the loop yourself | Embeddable, but the multi-agent paradigm needs app cooperation | The app becomes a platform client/external caller | Cannot embed; the app runs inside the platform |
+| Kernel runtime deps | **`dependencies = []`** (openai/fastapi/mcp/httpx are all optional, lazily-loaded extras) | A set of layered dependency packages | Framework dependencies | A full server stack (multi-container orchestration) | None (hosted) |
 | Tool onboarding | Function introspection auto-registration; **MCP Client**; **OpenAPI auto-discovery**; **on-demand ToolDiscovery loop** | Tool abstractions + many integration packages | Tool abstractions | In-platform tools/plugin marketplace | Platform plugin ecosystem |
 | Tool discovery/matching | **Dual channel: lexical (zero-dep, Chinese bigrams, synonyms) + optional embedding semantics**, stdlib cosine, two-layer summaries, margin to prevent false recall; degrades to pure lexical with no embedder configured | Usually manual binding by the developer or stuffing everything into the prompt; no built-in semantic retrieval | None built in | Fixed in-platform toolset, chosen by name | Platform plugin marketplace |
-| Orchestration paradigm | Adaptive routing (direct/react/plan/clarify) + a minimal capability-gap loop (sense→discover→register→usable this turn); the host presets no flow | Chains/middleware (LangChain); graphs and state machines (LangGraph) | Role teams / conversation-driven | Visual workflow graph | Visual orchestration |
+| Orchestration paradigm | Adaptive routing (direct/react/plan/clarify) + a minimal capability-gap loop (sense→discover→register→usable this turn); the host presets no flow | Chains/middleware; graphs and state machines | Role teams / conversation-driven | Visual workflow graph | Visual orchestration |
 | Routing self-calibration | **A contextual bandit learning from execution feedback** (Beta/Thompson bucketed by task features, rules as the cold-start prior), getting more accurate for similar tasks; offline benchmark reproducible (late rounds 89.6% vs rules 73.3%), off by default | None built in; you build the eval/fine-tune loop yourself | None built in | None built in | None built in |
-| Multi-agent | **Explicitly not done** (belongs to the host layer) | Build it yourself | **Native strength** | Supports multiple agents | Native platform multi-agent collaboration |
-| Decision observability | One event-stream exit; every strategy choice/tool call/permission/capability-gap/tool-discovery has an event | Relies on external observability such as LangSmith | Framework logs/external services | Platform runtime logs | Built-in platform logs |
+| Multi-agent | **Explicitly not done** (belongs to the host layer) | Build it yourself | **Native strength** | Often supported | Platform-side multi-agent collaboration |
+| Decision observability | One event-stream exit; every strategy choice/tool call/permission/capability-gap/tool-discovery has an event | External observability services or your own instrumentation | Framework logs/external services | Platform runtime logs | Built-in platform logs |
 | Permission control | Host provides the PermissionPolicy SPI; read/write graded, writes can be human-authorized | Implemented by the app | Implemented by the app | Platform permission model | Platform model |
-| Deployment requirements | Follows the host; an optional FastAPI battery and Docker example are provided | Deployed by the app | Deployed by the app | Must deploy and operate the platform | Just sign up |
+| Deployment requirements | Follows the host; an optional FastAPI battery and container example are provided | Deployed by the app | Deployed by the app | Must deploy and operate the platform | Just sign up |
 | Offline testable | The full suite is offline (fake models/MockTransport/injected clocks), no network or keys | Testable, you mock yourself | Testable, you mock yourself | Depends on the platform running | Depends on the platform |
-| Maturity | A new single-person project; 834 tests, 8 example hosts | Mature large ecosystem | Mature community | Mature platform (156K+ stars) | Commercial product |
+| Maturity | A new single-person project; 1088 tests, 8 example hosts | Mature ecosystems | Mature communities | Mature platforms | Commercial products |
 
 ## 3. YAI's differentiating claims (mapped to "technical innovation" scoring)
 
 1. **A paradigm inversion: from "assembly framework" to "embedded kernel".** Existing frameworks share the
    premise "the developer first has an agent to build, then defines it". YAI answers a different question —
    "how does an already-existing piece of software (notes, CRM, a companion app…) gain agent capability
-   without writing agent code?" The analogy is not an ORM but SQLite: capabilities live in the app like
-   data.
+   without writing agent code?" The analogy is not an ORM but an embedded database: capabilities live in
+   the app like data.
 2. **Capability auto-discovery rather than manual registration.** Ordinary host Python functions become
    JSON-Schema tools via type hints + docstrings; external MCP servers and OpenAPI services integrate
    isomorphically, with zero awareness on the execution side.
@@ -70,32 +72,29 @@
    recalls through two independent channels — lexical (zero-dep, always available) and optional embedding
    semantics — computes cosine with stdlib `math` (no numpy in the kernel), and uses "an absolute threshold
    + the top-1 margin over multiple candidates" to avoid false recall among similar candidates. The
-   embedding backend is pluggable (local bge-m3, offline and free, or an OpenAI-compatible cloud) and
-   degrades to pure lexical on missing config or error; thresholds are calibrated against real bge-m3, not
-   guessed.
+   embedding backend is pluggable (a free local model, or a cloud-compatible embedding API) and degrades to
+   pure lexical on missing config or error; thresholds are calibrated against a real local model, not guessed.
 
-## 4. Who to pick in which scenario (honest advice)
+## 4. Which category to pick (honest advice)
 
-- You want to **drag-and-drop and let non-technical teammates build a Bot/knowledge base** → pick
-  **Dify / Coze**; that is their home turf and YAI does not compete there.
-- You want **role division and multi-agent collaboration** → pick **CrewAI / AutoGen (Microsoft Agent
-  Framework)**; YAI explicitly does not do multi-agent.
-- You want **fine-grained graph orchestration, long-running stateful flows, human-approval nodes** → pick
-  **LangGraph**; graphs are its abstraction strength.
-- You want **fast prototyping with the richest integration ecosystem** → pick **LangChain**.
-- You want to **embed agent capability into existing software, keep it in-process, introduce no platform,
-  and not write your own agent loop** → that is exactly where **YAI Agent Core** sits.
+- **Visual dragging so non-technical teammates can build a Bot/knowledge base** → the self-hosted or
+  hosted no-code platform categories; that is their home turf and YAI does not compete there.
+- **Role division and multi-agent collaboration** → the multi-agent framework category; YAI explicitly
+  does not do multi-agent.
+- **Fine-grained graph orchestration, long-running stateful flows, human-approval nodes** → the low-level
+  graph runtime category.
+- **The largest ready-made integration surface and fast prototyping** → the general agent framework category.
+- **Embed agent capability into existing software, keep it in-process, introduce no platform, and do not
+  write your own agent loop** → that is exactly where **YAI Agent Core** sits.
 
-## 5. Sources
+> Names and links of alternatives are deliberately omitted here. When shortlisting concrete projects
+> inside a category, search for them yourself and follow their official documentation.
+
+## 5. Sources of fact
 
 - YAI facts: this repository's `pyproject.toml` (dependencies/extras), `src/yai_core/`, `README.md`,
-  `ROADMAP.md` (re-checked 2026-10-10).
-- LangChain / LangGraph: official docs https://docs.langchain.com/oss/python/concepts/products ; the 1.0
-  release notes https://www.langchain.com/blog/langchain-langgraph-1dot0
-- CrewAI / AutoGen: LangChain's official framework roundup (2026-06)
-  https://www.langchain.com/resources/ai-agent-frameworks
-- Dify: site https://dify.ai/ ; docs https://docs.dify.ai/
-- Coze: https://docs.coze.com/guides ; https://docs.coze.cn/what_is_coze
+  `ROADMAP.md` (re-checked 2026-10-13; the test count comes from an actual `uv run pytest` run).
+- Alternatives: described by category from public common knowledge; no third-party text, metrics or links.
 
-> These projects iterate quickly; the above reflects their official pages as of 2026-09-20. Before
-> submitting, if a project's version/positioning has changed, defer to its latest official docs.
+> Category descriptions may lag behind product changes; treat each project's own current documentation
+> as authoritative.

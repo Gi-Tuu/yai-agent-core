@@ -263,7 +263,7 @@ the peer address; state is in-memory only and clears on restart; there is no glo
 
 ## 6. Differentiation from the ecosystem (honest comparison)
 
-- Claude/OpenAI Agents SDK, LangGraph: developer-builds-agent; tools/orchestration must be explicitly
+- Vendor-provided agent SDKs and graph orchestration frameworks: developer-builds-agent; tools/orchestration must be explicitly
   defined and they bind to their own ecosystems;
 - agentic-kernel (TS): a similar embedded-runtime idea, but TypeScript-only and without capability
   auto-discovery or adaptive strategy;
