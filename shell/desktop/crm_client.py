@@ -8,7 +8,10 @@
   因此 Core 自省到的工具描述与进程内嵌入完全一致；
 - 只用标准库（urllib，同步），Core 会在工作线程里执行同步工具，不阻塞事件循环；
 - 只连 ``127.0.0.1``；权限三档决策在灵动岛侧（AllowlistPolicy），
-  宿主只负责执行，连接不上时给出可操作的中文提示。
+  宿主只负责执行，连接不上时给出可操作的中文提示；
+- 每个请求带 ``Authorization: Bearer <token>``：令牌取自 ``YAI_TOOL_TOKEN``，
+  否则读宿主启动时落盘的本地令牌文件。服务端无令牌一律 401——否则同机任意
+  进程都能绕过灵动岛侧的审批直接改业务数据。
 """
 
 from __future__ import annotations
@@ -17,30 +20,50 @@ import json
 import os
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 
 class HostECrmClient:
     """host_e 销售 CRM 的本地 HTTP 代理（方法与 ``SalesCrm`` 同名同参）。"""
 
+    #: 与 host_e 服务端约定的令牌文件位置（两侧各一份常量，由测试断言一致）。
+    TOKEN_FILE = Path(__file__).resolve().parents[2] / "data" / "host_e" / "tool_token"
+    TOKEN_ENV = "YAI_TOOL_TOKEN"
+
     def __init__(
         self,
         base_url: str | None = None,
         *,
         timeout: float = 20.0,
+        token: str | None = None,
     ) -> None:
         self.base_url = (
             base_url or os.getenv("YAI_HOST_E_URL") or "http://127.0.0.1:8200"
         ).rstrip("/")
         self.timeout = timeout
         self._tool_url = f"{self.base_url}/api/agent/tool"
+        self._token = token or self._resolve_token()
+
+    @classmethod
+    def _resolve_token(cls) -> str:
+        """环境变量优先，其次读宿主启动时落盘的本地令牌文件。"""
+        env = os.getenv(cls.TOKEN_ENV, "").strip()
+        if env:
+            return env
+        try:
+            return cls.TOKEN_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
 
     def ping(self) -> bool:
         """探测宿主是否在线（工具清单端点），不抛异常。"""
         try:
-            with urllib.request.urlopen(
-                f"{self.base_url}/api/agent/tools", timeout=3.0
-            ) as resp:
+            request = urllib.request.Request(
+                f"{self.base_url}/api/agent/tools",
+                headers=self._auth_headers(),
+            )
+            with urllib.request.urlopen(request, timeout=3.0) as resp:
                 return resp.status == 200
         except (urllib.error.URLError, OSError):
             return False
@@ -171,6 +194,12 @@ class HostECrmClient:
         return self._call("calc_quote_with_tax", amount=amount, rate=rate)
 
     # ---- HTTP 传输 ----
+    def _auth_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        return headers
+
     def _call(self, tool_name: str, **arguments: Any) -> Any:
         # 形参刻意不叫 ``name``：add_customer / get_customer / update_customer 等
         # 业务工具本身就带名为 name 的关键字参数，同名会与本方法首参撞车报
@@ -179,7 +208,7 @@ class HostECrmClient:
         request = urllib.request.Request(
             self._tool_url,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=self._auth_headers(),
             method="POST",
         )
         try:

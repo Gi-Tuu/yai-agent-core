@@ -126,10 +126,14 @@ def test_business_validation_dict_passthrough_and_raised_error():
 
 # ---------- HTTP /api/agent/tool：跨进程契约 ----------
 
+#: 本文件内所有 HTTP 用例共用的工具口令牌。
+TOKEN = "test-tool-token"
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
 def _start_tool_server(crm: SalesCrm | None = None):
     crm = crm or _crm()
     workbench = Workbench(model_factory=lambda: _NoopModel(), model_label="离线", crm=crm)
-    httpd = create_server(workbench, "127.0.0.1", 0)
+    httpd = create_server(workbench, "127.0.0.1", 0, TOKEN)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_port}"
@@ -140,7 +144,7 @@ def _post_tool(base, name, arguments):
     payload = json.dumps({"name": name, "arguments": arguments}).encode("utf-8")
     req = urllib.request.Request(
         base + "/api/agent/tool", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        headers={"Content-Type": "application/json", **AUTH}, method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -150,7 +154,8 @@ def _post_tool(base, name, arguments):
 
 
 def _get_json(base, path):
-    with urllib.request.urlopen(base + path, timeout=10) as resp:
+    req = urllib.request.Request(base + path, headers=AUTH)
+    with urllib.request.urlopen(req, timeout=10) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 

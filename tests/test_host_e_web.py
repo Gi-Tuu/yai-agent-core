@@ -128,7 +128,7 @@ def _start_server(model, crm=None, *, learning_path=None, enable_learning=True):
         model_factory=lambda: model, model_label="离线测试模型", crm=crm,
         learning_path=learning_path, enable_learning=enable_learning,
     )
-    httpd = create_server(workbench, "127.0.0.1", 0)
+    httpd = create_server(workbench, "127.0.0.1", 0, "test-tool-token")
     if tmpdir is not None:
         original_shutdown = httpd.shutdown
 
@@ -780,7 +780,7 @@ def test_start_in_core_off_mode_rejects_run():
         model_factory=lambda: _OneToolModel("sum_amount", {}),
         model_label="离线测试模型", crm=crm, core_enabled=False,
     )
-    httpd = create_server(workbench, "127.0.0.1", 0)
+    httpd = create_server(workbench, "127.0.0.1", 0, "test-tool-token")
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_port}"
