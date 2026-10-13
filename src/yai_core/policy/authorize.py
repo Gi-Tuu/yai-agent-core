@@ -14,9 +14,9 @@
 返回 ``(events, approved, reason)``。
 
 **参数快照契约**：调用方在进入权限判定之前用 :func:`snapshot_arguments` 复制一份参数，
-此后"展示给用户审批的""写进审计事件的""真正传给 handler 的"必须是**同一个对象**。
-否则宿主或通道在 ``confirm()`` 期间改写这个 dict，就会出现"用户批准的是 A、
-实际执行的是 B"这类审批与执行不一致的问题。
+此后"策略判定用的""真正传给 handler 的"都必须是**这同一份权威对象**，而"给用户看的"
+和"写进审计事件的"是它派生出的**只读副本**。否则宿主或通道在 ``confirm()`` 期间改写
+这个 dict，就会出现"用户批准的是 A、实际执行的是 B"这类审批与执行不一致的问题。
 """
 
 from __future__ import annotations
@@ -52,27 +52,32 @@ async def authorize_tool_call(
     arguments: dict,
     *,
     sensitive_paths: tuple[str, ...] = (),
+    audit_sensitive: bool = False,
 ) -> tuple[list[AgentEvent], bool, str]:
     """对一次工具调用做权限判定，返回（要追加的事件，是否放行，拒绝原因）。
 
     ``arguments`` 是**权威参数**（调用方进入闸口前已快照），策略判定与实际执行都用它；
     给用户看的审批事件、:meth:`Channel.confirm` 的入参、以及 ``TOOL_CALL`` 事件
-    各自持有独立副本 —— 宿主或通道在确认期间改写的只是它拿到那份，改不动执行。
+    各持独立副本 —— 宿主或通道在确认期间改写的只是它拿到的那份，改不动执行，
+    也改不动已经发出的事件载荷。
 
-    ``sensitive_paths`` 来自宿主在 :class:`ToolSpec.governance` 上的声明：对外三份
+    ``sensitive_paths`` 来自宿主在 :class:`ToolSpec.governance` 上的声明：对外
     副本里的这些路径会被替换成占位符，而执行仍拿原值（脱敏不得改变业务行为）。
+    ``audit_sensitive`` 是宽口径审计提示：只把**审计事件**那份的顶层值整体收口，
+    给审批人的副本仍按路径脱敏（全糊掉会让人工批准失去判断依据）。
     """
     events: list[AgentEvent] = []
     decision = await policy.check(name, arguments)
     if decision == PermissionDecision.ASK:
-        shown = redact_arguments(arguments, sensitive_paths)
+        asked = redact_arguments(arguments, sensitive_paths)
+        confirmed = redact_arguments(arguments, sensitive_paths)
         events.append(
             AgentEvent(
                 EventType.PERMISSION_ASKED,
-                {"tool": name, "arguments": shown},
+                {"tool": name, "arguments": asked},
             )
         )
-        approved = await channel.confirm(name, shown)
+        approved = await channel.confirm(name, confirmed)
         if not approved:
             return events, False, f"用户/宿主拒绝执行工具 {name}"
     if decision == PermissionDecision.DENY:
@@ -81,9 +86,12 @@ async def authorize_tool_call(
     events.append(
         AgentEvent(
             EventType.TOOL_CALL,
-            {"tool": name, "arguments": redact_arguments(
-                arguments, sensitive_paths
-            )},
+            {
+                "tool": name,
+                "arguments": redact_arguments(
+                    arguments, sensitive_paths, broad=audit_sensitive
+                ),
+            },
         )
     )
     return events, True, ""

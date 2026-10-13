@@ -41,6 +41,11 @@ from yai_core.integrations.acc.evaluate import (
     schema_at_path,
     value_at_path,
 )
+from yai_core.integrations.acc.openapi import (
+    AccOperationBinding,
+    bind_operation,
+    misplaced_declarations,
+)
 
 __all__ = [
     "ACC_EXTENSION_KEY",
@@ -54,14 +59,17 @@ __all__ = [
     "AccConditionError",
     "AccDeclaration",
     "AccGuidance",
+    "AccOperationBinding",
     "AccParseResult",
     "AccRateLimit",
     "ApprovalOutcome",
     "approval_outcome",
     "audit_sensitive",
+    "bind_operation",
     "effective_risk",
     "invocation_errors",
     "is_exposed",
+    "misplaced_declarations",
     "parse_declaration",
     "same_json_value",
     "schema_at_path",

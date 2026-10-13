@@ -107,6 +107,7 @@ class ToolExecutor:
             name,
             arguments,
             sensitive_paths=spec.governance.sensitive,
+            audit_sensitive=spec.governance.audit_sensitive,
         )
         events.extend(auth_events)
         if not approved:

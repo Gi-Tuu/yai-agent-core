@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -69,9 +69,16 @@ class ToolGovernance:
     - ``sensitive``：需要脱敏的**参数路径**（dot-notation，如
       ``api_key``、``headers.authorization``、``rows.0.token``）。声明了才会被
       脱敏——内核不按字段名关键词猜"这像不像密钥"，因为猜出来的东西不能当安全承诺。
+    - ``audit_sensitive``：**宽口径**审计敏感提示（外部能力契约的 ``audit.sensitive``）。
+      只把"进审计/日志的那一份"整体收口，**审批人要看的副本仍按路径脱敏**——
+      把所有值都糊掉会让人工批准失去判断依据，而规范的义务范围是 logs。
+    - ``acc``：外部能力契约声明的**原样快照**（已校验过的 mapping）。内核只透传，
+      解释与判定在 ``integrations/acc``，这样核心类型不反向依赖集成层。
     """
 
     sensitive: tuple[str, ...] = ()
+    audit_sensitive: bool = False
+    acc: Mapping[str, Any] | None = None
 
 
 @dataclass

@@ -36,6 +36,24 @@ class OpenApiSpecConfig:
     timeout: float = 15.0
     max_spec_bytes: int = 2 * 1024 * 1024
     max_result_chars: int = 16_000
+    #: ACC 路由白名单：空 = 不因 scope 拦（未采用 ACC 路由策略的宿主零影响）；
+    #: 非空 = 只暴露列出的 scope，尾部 ``.*`` 走前缀匹配。
+    acc_scopes: tuple[str, ...] = ()
+    #: 当前调用上下文里有没有**可信操作主体**（ACC ``subject.required`` 的判定输入）。
+    #: 默认 False：主体必须由宿主在自己的信任边界上注入，模型/参数里抄来的身份不算。
+    trusted_subject: bool = False
+
+    def acc_scope_allowed(self, scope: str) -> bool:
+        """按 ``acc_scopes`` 判断某个能力 scope 是否允许暴露。"""
+        if not self.acc_scopes:
+            return True
+        for allowed in self.acc_scopes:
+            if allowed.endswith(".*"):
+                if scope.startswith(allowed[:-1]):
+                    return True
+            elif allowed == scope:
+                return True
+        return False
 
 
 def _truthy(value: str | None) -> bool:

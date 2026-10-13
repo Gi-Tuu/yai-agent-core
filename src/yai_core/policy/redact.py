@@ -8,7 +8,10 @@
   既会漏（换个名字就绕过）也会误伤（把业务字段抹掉让审批失去意义），
   所以"未声明即不脱敏"是**有意的边界**，不是缺陷；
 - 路径用 dot-notation（``headers.authorization``、``rows.0.token``）；
-  解析不到（键不存在、类型不符、列表越界）时**跳过该路径**，不报错、不因此拒绝执行。
+  解析不到（键不存在、类型不符、列表越界）时**跳过该路径**，不报错、不因此拒绝执行；
+- 宽口径提示（``broad=True``，来自外部能力契约的 ``audit.sensitive``）只把顶层值整体
+  收口，用于**审计/日志副本**；给审批人的那份仍只按声明路径脱敏，避免"全糊掉导致
+  人工批准无从判断"。
 """
 
 from __future__ import annotations
@@ -54,10 +57,14 @@ def _redact_at(root: Any, parts: list[str]) -> None:
             return
 
 
-def redact_arguments(arguments: dict, paths: Any) -> dict:
+def redact_arguments(arguments: dict, paths: Any, *, broad: bool = False) -> dict:
     """返回 ``arguments`` 的脱敏深拷贝；``paths`` 为声明的敏感参数路径序列。
 
     无声明时仍返回一份**拷贝**——调用方拿到的永远不该是可写回执行链的对象。
+
+    ``broad=True`` 是宽口径审计提示（外部契约的 ``audit.sensitive``）：把所有**顶层**
+    参数值整体收口。它只该用在进审计/日志的那一份上——给审批人的副本如果全糊掉，
+    人工批准就没有判断依据了。
     """
     try:
         copy = deepcopy(arguments)
@@ -69,4 +76,7 @@ def redact_arguments(arguments: dict, paths: Any) -> dict:
         parts = [piece for piece in str(path).split(".") if piece]
         if parts:
             _redact_at(copy, parts)
+    if broad:
+        for key in list(copy):
+            copy[key] = _placeholder(copy[key])
     return copy

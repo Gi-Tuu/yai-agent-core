@@ -53,6 +53,26 @@ def test_non_string_values_keep_type_hint() -> None:
     assert out["none"] == "[redacted]"
 
 
+def test_broad_mode_replaces_every_top_level_value() -> None:
+    """宽口径审计提示（外部契约的 audit.sensitive）：顶层值一律收口，不猜嵌套路径。"""
+    out = redact_arguments(
+        {"customer": "张三", "amount": 500, "payload": {"deep": SECRET}}, (), broad=True
+    )
+    assert out == {
+        "customer": f"[redacted:len={len('张三')}]",
+        "amount": "[redacted:int]",
+        "payload": "[redacted:dict]",
+    }
+    assert SECRET not in str(out)
+
+
+def test_broad_mode_applies_after_declared_paths() -> None:
+    payload = {"a": SECRET, "b": 1}
+    out = redact_arguments(payload, ("b",), broad=True)
+    assert out["a"].startswith("[redacted") and out["b"].startswith("[redacted")
+    assert payload["a"] == SECRET
+
+
 # ---------- 执行链集成 ----------
 
 class _Channel:
@@ -113,3 +133,27 @@ def test_undeclared_params_stay_visible_by_design() -> None:
     assert channel.seen["api_key"] == SECRET
     assert SECRET in str(next(e for e in events
                               if e.type == EventType.TOOL_CALL).data)
+
+
+def test_broad_audit_hint_redacts_logs_not_the_approver() -> None:
+    """audit.sensitive 的义务范围是 logs：审计事件整体收口，审批副本仍按声明路径脱敏。"""
+    events, ok, calls, channel = _run_api_call(ToolGovernance(audit_sensitive=True))
+    assert ok is True
+    called = next(e for e in events if e.type == EventType.TOOL_CALL)
+    asked = next(e for e in events if e.type == EventType.PERMISSION_ASKED)
+    assert SECRET not in str(called.data)
+    assert "[redacted" in str(called.data)
+    # 审批人那份没声明路径 → 保持可读，否则人工批准失去判断依据
+    assert asked.data["arguments"]["order_id"] == "A-1"
+    assert channel.seen["order_id"] == "A-1"
+    assert calls == [{"api_key": SECRET, "order_id": "A-1"}]
+
+
+def test_broad_hint_still_hides_declared_paths_from_approver() -> None:
+    events, _ok, _calls, channel = _run_api_call(
+        ToolGovernance(sensitive=("api_key",), audit_sensitive=True)
+    )
+    asked = next(e for e in events if e.type == EventType.PERMISSION_ASKED)
+    assert asked.data["arguments"]["api_key"].startswith("[redacted")
+    assert channel.seen["api_key"].startswith("[redacted")
+    assert asked.data["arguments"]["order_id"] == "A-1"

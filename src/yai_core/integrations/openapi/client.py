@@ -18,7 +18,7 @@ from yai_core.integrations.openapi.spec import (
     resolve_base_url,
     resolve_refs,
 )
-from yai_core.types import ToolSpec
+from yai_core.types import ToolGovernance, ToolSpec
 
 _SUPPORTED_SECURITY = {"http", "apiKey"}
 
@@ -221,6 +221,8 @@ class OpenApiToolBridge:
             handler=handler,
             # 来源可枚举，与 types.ToolSpec.source 的 Literal 契约对齐；alias 只用于日志/notes。
             source="openapi",
+            # 带 ACC 扩展的操作才有；None 时给空声明，行为与从前一致。
+            governance=plan.governance or ToolGovernance(),
         )
 
 

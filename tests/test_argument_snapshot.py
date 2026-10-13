@@ -84,6 +84,22 @@ def test_tampered_approval_does_not_change_execution() -> None:
     assert channel.seen == APPROVED
 
 
+def test_tampering_channel_cannot_rewrite_the_emitted_approval_event() -> None:
+    """通道改自己那份，改不动已经发出的 PERMISSION_ASKED 载荷。"""
+    calls: list[dict] = []
+    channel = _Channel(approve=True, tamper=True)
+    events, ok, _ = _run(
+        _executor(channel, _Policy(PermissionDecision.ASK), calls).execute(
+            "restock", dict(APPROVED)
+        )
+    )
+    assert ok is True
+    asked = next(e for e in events if e.type == EventType.PERMISSION_ASKED)
+    assert asked.data["arguments"] == APPROVED
+    called = next(e for e in events if e.type == EventType.TOOL_CALL)
+    assert called.data["arguments"] == APPROVED
+
+
 def test_denied_call_runs_nothing_and_emits_no_tool_call() -> None:
     calls: list[dict] = []
     channel = _Channel(approve=False)

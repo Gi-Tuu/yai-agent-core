@@ -123,7 +123,41 @@ approval_outcome(decl, args, parameter_schema)
 并对"上游若新增一种 kind"设了栅栏：`test_every_vector_kind_has_an_observation_branch` 会先失败，
 不允许沉默通过。
 
-## 6. 边界与限制（照实说）
+## 6. OpenAPI 绑定：`x-agent-capability` 怎么落进工具注册（`openapi.py`）
+
+规范只定义了声明长什么样，"挂在哪、怎么取"由绑定文档定。这里落四条：
+
+```python
+bind_operation(operation, method=..., tool_name=..., input_schema=...,
+               query_params=..., body_fields=...,
+               scope_policy=config.acc_scope_allowed, trusted_subject=config.trusted_subject)
+```
+
+| 情形 | 结果 |
+|---|---|
+| operation 上没有扩展 | `declared=False`，一切照旧（**未采用 ACC 的宿主零行为变化**） |
+| 扩展不是 object / 声明校验失败 / 主版本不认识 | **整条 operation 跳过** + 诊断，绝不回退成"没有治理的同名工具" |
+| `enabled=false`、需要可信主体但没有、scope 不在宿主路由白名单里 | 跳过 + 诊断（诊断里写清是哪一条） |
+| `approval.when` 的 `param` 在归一化输入 schema 里解析不出来 | 跳过（"输入不足以安全判定"） |
+| `param` 撞上"同名参数同时来自 query 与 body" | 跳过。绑定允许"拒绝该条件"，但被拒的条件等于把声明里的审批承诺削薄，而削的方向是放行更多 |
+| 校验通过且可暴露 | `ToolSpec.governance` 带上 `audit_sensitive` 与 `acc` 原样快照，`guidance.when_to_use / returns` 并进工具描述 |
+
+两个配置口在 `OpenApiSpecConfig` 上：`acc_scopes`（空 = 不因 scope 拦；尾部 `.*` 走前缀匹配）
+和 `trusted_subject`（**默认 False**：主体必须由宿主在自己的信任边界上给，
+模型或参数里抄来的身份不算，所以带 `subject.required` 的操作在接上主体注入之前一律不暴露）。
+
+`ToolGovernance` 因此多了两个字段：
+
+- `audit_sensitive`：宽口径审计提示。落地方式有讲究——规范的义务范围是 **logs**，
+  所以只把**审计事件**那份的顶层值整体收口，**给审批人的副本仍按声明路径脱敏**；
+  全糊掉会让人工批准失去判断依据，这个不对称是刻意的，两条都有测试钉住。
+- `acc`：已校验声明的原样快照。内核不解释它（`types.py` 不 import 集成层），
+  解释在 `integrations/acc`，留给审批接线用。
+
+最后一条铁律写在 `misplaced_declarations()`：扩展只认 operation 级。作者把它贴到根节点或
+pathItem 上时，绑定**不读它**（不能让它产生任何治理效果），但会把"贴错位置"作为诊断报出来。
+
+## 7. 边界与限制（照实说）
 
 1. **入参校验只实现 `type` / `required` / `properties` / `items` 四个关键字**，`enum`、`pattern`、
    `min/max` 被忽略。向量依赖的四个都在子集内；向量之外这意味着"ACC 层的入参门槛比完整 JSON Schema 松"，
@@ -131,15 +165,19 @@ approval_outcome(decl, args, parameter_schema)
 2. **一处刻意偏离参考 oracle**：`GET` + 显式 `execution.readonly: false` 我们取 `medium`，
    oracle 给 `low`。绑定文本说"显式声明优先"，取更保守的那一档；向量没有覆盖这个组合。
 3. `timeout_ms` / `rate_limit` **只解析、不执行**，还没映射到执行器的超时与限流。
-4. **本层不做强制执行**：把 `approval_outcome` 接进 `ToolExecutor` 的授权闸是下一步。
-   接进去之前，YAI 只是"读得懂 ACC 声明"，不是"按 ACC 治理每次调用"。
-5. 主体身份尚未接入（第 3 节那一格目前是调用方喂布尔）。
+4. **绑定只决定"暴不暴露"**：`approval_outcome` 还没接进 `ToolExecutor` 的授权闸，
+   所以带 `approval.required` 的操作目前仍按 YAI 原有的三档权限走。接线是下一步（任务 G）。
+   接进去之前，YAI 是"读得懂 ACC 声明并按它筛选暴露面"，还不是"按 ACC 治理每一次调用"。
+5. 主体身份只到"默认不信任"这一档：`trusted_subject` 由宿主显式置真，
+   内核还没有主体注入与逐次校验（任务 I）。
+6. `governance.acc` 快照**尚未进 manifest 序列化**（`to_manifest_dict`），跨进程传工具清单时
+   ACC 治理不会跟着走——等字段集稳定再加，免得把格式变更留在中途。
 
 因此对外口径只有一句：**Implements the ACC v1 OpenAPI Binding Parser Profile**
-（解析层，加上已经跑通的决策原语）。Runtime Profile 要等执行器接线 + 超时/限流映射 +
-集成证据齐了再说，"ACC certified" 这种说法规范明令禁止，我们也不写。
+（读扩展、校验、按绑定决定暴露与否、出诊断；决策原语也已跑通）。Runtime Profile 要等
+执行器接线 + 超时/限流映射 + 集成证据齐了再说，"ACC certified" 这种说法规范明令禁止，我们也不写。
 
-## 7. 自检（读完本篇应能回答）
+## 7. 自检（读完本篇应回答）
 
 1. 为什么"缺 version"和"version=2"必须给不同的诊断？
 2. ACC 声明里的 `subject.required` 靠谁判定？为什么不能从工具参数里拿？
