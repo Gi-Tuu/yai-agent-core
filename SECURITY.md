@@ -35,6 +35,6 @@
 If you discover a security issue, please **do not** open a public issue. Report it privately via:
 
 - GitHub: repository → Security → Report a vulnerability;
-- Email: zixuan19252270581@gmail.com (please include reproduction steps, impact, and a suggested fix).
+- Email: 19252270588@163.com (please include reproduction steps, impact, and a suggested fix).
 
 After confirmation we will reply as soon as possible and keep details private until a fix is released.
