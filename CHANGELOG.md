@@ -9,6 +9,11 @@
 
 ### Added
 
+- **工具 handler 硬超时（`tool_timeout` / `ToolExecutor.handler_timeout`，默认关闭）**：模型侧早有硬超时，工具侧一直裸着——一个不返回的 OpenAPI/MCP 调用能把整轮任务吊住。现在 `AgentCore(model, tool_timeout=10)` 或 `CoreConfig(tool_timeout=...)` 就给每次工具调用上墙上时限，默认 `None` 完全保持旧行为（含"同步 handler 就在事件循环线程里直接跑"，有测试钉住）。
+  - **两种 handler 语义分开承诺**：`async def` 走 `wait_for`，是**真取消**（协程收到 `CancelledError`）；同步 handler 丢进线程池后改用 `asyncio.wait` 而不是 `wait_for`——后者会 await 被取消的 future，等于一直等线程跑完（实测 0.4s 的同步工具配 0.05s 超时仍要 0.4s 才回话）。超时话术也分两种：异步说"已取消"，同步说"无法中断、可能仍在后台产生副作用，先确认状态再重试"，免得模型原样重打同一个调用。
+  - **不粉饰的边界**：被放弃的同步线程仍在循环默认线程池里，事件循环收尾会 join 它——同步工具的超时是"给模型的止损"，不是进程级立即脱身，可能长阻塞的能力应实现成 `async def`。被放弃 future 的结果由回调取出丢弃，不留 "exception was never retrieved" 噪音。超时以 `TOOL_RESULT(ok=False, timed_out=True)` 入事件流；组合工具的每一步同样受约束。
+- **`await AgentCore.aclose(*, close_shared=False)`**：内核第一次有了统一收尾入口。规则是"谁创建谁负责关"——默认只关本实例自建的资源（未传 channel/memory 时的默认实现、`long_memory=True` 时创建的 `MemoryVault`），**宿主传进来的 model / memory / discovery / sandbox / channel 一个都不碰**（多实例共享无状态模型是官方推荐的并发用法，替别人关资源属于误伤）；要连整张图一起收才传 `close_shared=True`，顺序固定 channel → discovery → sandbox → memory → model。幂等（可放 `finally` 重复调）、持实例串行锁（不会在当前任务跑到一半时把资源抽走）、单个资源关不掉不阻止其余收尾但最后抛汇总异常（收尾故障必须被运维看见）。
+- **校验补强**：`handler_timeout` / `tool_timeout` / `model_timeout` 传字符串现在抛 `ValueError`，不再是 `TypeError: '<=' not supported between instances of 'str' and 'int'`。
 - **资源契约（第 10 个 SPI）与安全文件后端**：让 Agent 能读写文件，同时把可达范围钉死在一个根目录内。内核只定义**契约 + 纯路径策略**（`spi/resources.py`，零 IO），真正碰磁盘的实现在电池层（`batteries/filesystem.py`）——内核不会因为多了一个契约就获得读盘权限。
   - **两道路径闸，缺一不可**：`normalize_relative()` 拒非法形状（`..` 上跳、绝对路径与 UNC、盘符与 NTFS 数据流的冒号、`~` 展开、Windows 保留设备名、段尾点号/空格、控制字符、超深超长、混用分隔符），**报错而不是清洗后放行**；`resolve_within_root()` 逐段拦符号链接与重解析点（Windows 无 `O_NOFOLLOW`，这一道必须自己走），再对 `realpath` 结果做归属复核（root 自身可能是链接）。测试证明：放开第一道的宽松策略仍拦得住逃逸。
   - **写盘四口径**：写永远走 tmp + `fsync` + 原子替换，任何失败不留半截、临时文件清掉、原文件从未被就地改写；新建用 `os.link` 的"目标存在即失败"语义做独占创建（不支持硬链接的文件系统回退到"检查后替换"，窗口变宽但仍报冲突，回退分支有专门测试）；读/写/列举各有上限且**超限报错而非截断**（截断内容看起来是完整的，会让模型基于半份内容判断）；进程内一把写锁 + 跨进程靠指纹检测冲突，**明说不承诺跨进程严格互斥**（文件锁在 Windows/NFS 语义不一致）。

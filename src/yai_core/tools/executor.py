@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import inspect
 import json
+from collections.abc import Callable
 from typing import Any
 
 from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
@@ -53,6 +56,27 @@ def bound_tool_result(
     return bounded, True, original_chars
 
 
+class ToolTimeoutError(RuntimeError):
+    """工具 handler 超过 ``handler_timeout``。"""
+
+
+def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
+    """被超时放弃的线程任务：把结果/异常取出来丢掉。
+
+    不取的话，后台线程之后抛错会留下 "exception was never retrieved" 的噪音，
+    运维看到会以为还有一个没处理的故障。
+    """
+    if not future.cancelled():
+        future.exception()
+
+
+def _check_timeout(value: Any, label: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f"{label} 必须是正数或 None")
+
+
 class ToolExecutor:
     """Tool Bus：权限检查 -> 执行（同步/异步 handler 均可）-> 结构化结果。
 
@@ -70,11 +94,13 @@ class ToolExecutor:
         code_manager: CodeToolManager | None = None,
         code_timeout: float = DEFAULT_CODE_TIMEOUT,
         result_char_limit: int | None = DEFAULT_TOOL_RESULT_CHARS,
+        handler_timeout: float | None = None,
     ) -> None:
         if result_char_limit is not None and (
             isinstance(result_char_limit, bool) or result_char_limit <= 0
         ):
             raise ValueError("result_char_limit 必须是正整数或 None")
+        _check_timeout(handler_timeout, "handler_timeout")
         self.registry = registry
         self.policy = policy
         self.channel = channel
@@ -83,6 +109,54 @@ class ToolExecutor:
         self.code_timeout = code_timeout
         # 单个工具结果回灌上下文前的统一上界（None=关闭）。
         self.result_char_limit = result_char_limit
+        # 普通工具 handler 的墙上超时（None=关闭，默认关闭以保证零行为变化）。
+        # 代码工具的超时走 code_timeout + 沙箱，两者是不同链路。
+        self.handler_timeout = handler_timeout
+
+    async def _invoke_handler(self, handler: Callable[..., Any], arguments: dict) -> Any:
+        """调用 handler；只有配了 ``handler_timeout`` 才包上超时，默认路径与从前一字不差。
+
+        两种形状的区别必须说清楚，不能一起承诺：
+
+        - ``async def`` handler：``wait_for`` 会真的取消它，协程收到 ``CancelledError``；
+        - 同步 handler：只能丢进线程池，**线程杀不掉**。这里刻意不用 ``wait_for``——
+          它会 await 被取消的 future，等于一直等线程跑完（实测 0.4s 的活儿要满 0.4s
+          才回话）；改用 ``asyncio.wait`` 拿到"到点未完成"就立刻放弃，回话不延迟。
+
+        同步路径还剩一处诚实的边界：被放弃的线程仍在**循环默认线程池**里，
+        ``asyncio.run`` / 事件循环收尾会 join 它（asyncio 的行为，不绕过）。
+        所以"同步工具超时"是**给模型的止损**，不是进程级立即脱身；
+        真正可能长时间阻塞的能力应当实现成 ``async def``。
+        """
+        timeout = self.handler_timeout
+        if inspect.iscoroutinefunction(handler):
+            if timeout is None:
+                return await handler(**arguments)
+            try:
+                return await asyncio.wait_for(handler(**arguments), timeout)
+            except TimeoutError as exc:
+                raise ToolTimeoutError(
+                    f"超过 {timeout:g}s 未完成，已取消（异步工具会被真正中断）"
+                ) from exc
+        if timeout is None:
+            result = handler(**arguments)
+            return await result if inspect.isawaitable(result) else result
+        # 同步 handler 只能丢进线程池，而线程杀不掉。这里刻意**不用 wait_for**：
+        # wait_for 会 await 被取消的 future，等于一直等线程跑完（实测 0.4s 的活儿
+        # 要满 0.4s 才回话）。改用 asyncio.wait 拿到"到点但没完成"的结果后直接放弃，
+        # 立刻给模型回话；线程仍在后台跑完，所以话术必须说清"可能仍有副作用"。
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, functools.partial(handler, **arguments))
+        future.add_done_callback(_consume_abandoned_result)
+        done, _pending = await asyncio.wait({future}, timeout=timeout)
+        if not done:
+            raise ToolTimeoutError(
+                f"超过 {timeout:g}s 未完成；同步工具无法中断，"
+                "它可能仍在后台跑完并产生副作用，重试前先确认状态"
+            )
+        outcome = future.result()
+        # 少见形状：同步函数返回 awaitable。此时已花掉的时间不计，但语义要保持正确。
+        return await outcome if inspect.isawaitable(outcome) else outcome
 
     def _bound(self, text: str) -> tuple[str, bool, int]:
         return bound_tool_result(text, self.result_char_limit)
@@ -140,10 +214,18 @@ class ToolExecutor:
         if handler is None:
             return events, False, f"工具 {name} 没有可执行 handler"
         try:
-            result = handler(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await self._invoke_handler(handler, arguments)
             text = json.dumps(result, ensure_ascii=False, default=str)
+        except ToolTimeoutError as exc:
+            # 超时单独成支：给模型的话术要说明"这次没做成、且可能仍在后台跑完"，
+            # 不能和"执行出错"混成一句，否则模型只会原样重试。
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": name, "ok": False, "error": str(exc), "timed_out": True},
+                )
+            )
+            return events, False, f"工具 {name} 执行失败: {exc}"
         except Exception as exc:  # noqa: BLE001 - 工具错误必须回灌给模型而不是崩溃
             events.append(
                 AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": False,
