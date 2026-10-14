@@ -188,6 +188,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 | RouteSelector | 选策略 + 观察反馈（上下文 bandit） | 内置自校准 bandit | 自定义路由/学习策略 |
 | EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | 无（可选；本地 bge-m3 或 OpenAI 兼容云端） | 语义工具发现；长期记忆语义召回（`memory_embedder`） |
 | StorageCipher | `encrypt / decrypt(bytes) → bytes` | 无（可选；`[crypto]` extra 提供 FernetStorageCipher） | 长期记忆 vault 落盘静态加密（KMS / 密钥链 / 国密） |
+| ResourceProvider | `list / read / create / patch`（带 `expected_sha256`） | 内核不碰磁盘；`batteries/filesystem.py` 提供单目录沙箱式实现 | 让 Agent 读写文件，但把可达范围钉死在一个根目录内 |
 
 ## 4. Adaptive Router 状态机
 

@@ -1,0 +1,307 @@
+"""文件系统资源后端：把**一个目录**安全地暴露成 :class:`~yai_core.spi.resources.ResourceProvider`。
+
+实现的是 ``spi/resources.py`` 定义的契约，路径策略也复用那里的纯函数，
+所以"内核定义的规矩"和"真正落盘的实现"不会各写一半、各漏一半。
+
+四条实现口径：
+
+- **写永远走 tmp + 原子替换**：任何一步失败，原文件保持不动、临时文件清掉，
+  不会留半截内容给下一次读；
+- **新建是"不存在才创建"**：目标已存在就报冲突，绝不静默覆盖（覆盖归 ``patch``，
+  且必须带 ``expected_sha256``）；
+- **改动必须带指纹**：``patch`` 先比对当前内容 sha256，不一致说明别人先改过 → 冲突，
+  模型应当重读再改，而不是硬写重试；
+- **IO 放线程里**：契约方法与生成的四个工具都是 async，真读写用 ``to_thread``，不卡事件循环。
+
+已知边界（不假装解决）：``expected_sha256`` 能挡住进程内与跨进程的"读-改-写"竞态的绝大部分，
+但**跨进程的严格互斥需要文件锁**，而文件锁在 Windows/NFS 上语义不一致。因此这里的承诺是
+"进程内串行 + 跨进程检测冲突"；要强互斥就该由宿主加一层带锁的服务。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import os
+import stat as stat_module
+import tempfile
+import threading
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from yai_core.spi.resources import (
+    PathEscapeError,
+    ResourceConflictError,
+    ResourceContent,
+    ResourceEntry,
+    ResourceError,
+    ResourceNotFoundError,
+    ResourcePolicy,
+    ResourceTooLargeError,
+    resolve_within_root,
+    sha256_text,
+)
+
+_REPARSE = getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+
+
+def _relative(target: Path, root: Path) -> str:
+    return target.relative_to(root).as_posix()
+
+
+def _is_reparse(target: Path) -> bool:
+    try:
+        info = target.lstat()
+    except OSError:
+        return False
+    if stat_module.S_ISLNK(getattr(info, "st_mode", 0)):
+        return True
+    return bool(_REPARSE and getattr(info, "st_file_attributes", 0) & _REPARSE)
+
+
+def _discard(name: str) -> None:
+    try:
+        os.unlink(name)
+    except OSError:
+        pass
+
+
+class FileSystemResources:
+    """以 ``root`` 为唯一可及范围的资源后端；``root`` 之外一律不可见、不可写。"""
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        policy: ResourcePolicy | None = None,
+        read_only: bool = False,
+    ) -> None:
+        base = Path(root)
+        if not base.is_dir():
+            raise ResourceError(f"资源根目录必须是已存在的目录：{base}")
+        self.root = base.resolve()
+        self.policy = policy or ResourcePolicy()
+        self.read_only = read_only
+        # 进程内串行化写；跨进程冲突由 expected_sha256 检测，不靠这把锁。
+        self._write_lock = threading.Lock()
+
+    # ---------- 内部：同步实现，由 async 方法丢进线程 ----------
+
+    def _resolve(self, candidate: Any) -> Path:
+        return resolve_within_root(self.root, candidate, policy=self.policy)
+
+    def _guard_write(self) -> None:
+        if self.read_only:
+            raise ResourceError("该资源目录以只读方式挂载，不能写入")
+
+    def _read_bytes(self, target: Path, path: str) -> bytes:
+        if not target.exists():
+            raise ResourceNotFoundError(f"文件不存在：{path}")
+        if target.is_dir():
+            raise ResourceError(f"{path} 是目录，不能当文件读；请用 file_list")
+        size = target.stat().st_size
+        if size > self.policy.max_read_bytes:
+            raise ResourceTooLargeError(
+                f"文件 {size} 字节，超过读取上限 {self.policy.max_read_bytes} 字节"
+            )
+        return target.read_bytes()
+
+    def _decode(self, path: str, raw: bytes) -> ResourceContent:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ResourceError(f"{path} 不是 UTF-8 文本，拒绝当文本处理") from exc
+        return ResourceContent(path=path, text=text, sha256=sha256_text(text), size=len(raw))
+
+    def _write_atomic(self, target: Path, text: str, *, exclusive: bool) -> None:
+        payload = text.encode("utf-8")
+        if len(payload) > self.policy.max_write_bytes:
+            raise ResourceTooLargeError(
+                f"待写内容 {len(payload)} 字节，超过写入上限 {self.policy.max_write_bytes} 字节"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(handle, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if exclusive:
+                # 硬链接是"目标存在即失败"的原子操作，比"先 exists 再 rename"可靠。
+                try:
+                    os.link(tmp_name, str(target))
+                except FileExistsError as exc:
+                    raise ResourceConflictError(
+                        f"文件已存在：{_relative(target, self.root)}；"
+                        "要改它请用 file_patch 并带上 file_read 给的 sha256"
+                    ) from exc
+                except OSError:
+                    # 少数文件系统不支持硬链接：退回"检查后替换"，冲突窗口变宽但仍会报错。
+                    if target.exists():
+                        raise ResourceConflictError(
+                            f"文件已存在：{_relative(target, self.root)}"
+                        ) from None
+                    os.replace(tmp_name, str(target))
+                    return
+                _discard(tmp_name)
+                return
+            os.replace(tmp_name, str(target))
+        except BaseException:
+            # 任何失败都不就地改原文件，也不留临时文件。
+            _discard(tmp_name)
+            raise
+
+    def _sync_list(self, candidate: Any) -> list[ResourceEntry]:
+        relative = "" if str(candidate).strip() in ("", ".", "/") else str(candidate)
+        target = self.root if relative == "" else self._resolve(relative)
+        if not target.exists():
+            raise ResourceNotFoundError(f"目录不存在：{relative or '/'}")
+        if not target.is_dir():
+            raise ResourceError(f"{relative} 是文件，请用 file_read")
+        cap = self.policy.max_list_entries
+        entries: list[ResourceEntry] = []
+        for child in sorted(target.iterdir(), key=lambda item: item.name):
+            link = _is_reparse(child)
+            is_dir = child.is_dir() and not link
+            entries.append(
+                ResourceEntry(
+                    name=child.name,
+                    path=_relative(child, self.root),
+                    is_dir=is_dir,
+                    size=0 if is_dir else child.stat().st_size,
+                )
+            )
+            if len(entries) > cap:
+                break
+        return entries[:cap]
+
+    def _sync_read(self, candidate: str) -> ResourceContent:
+        target = self._resolve(candidate)
+        path = _relative(target, self.root)
+        return self._decode(path, self._read_bytes(target, path))
+
+    def _sync_create(self, candidate: str, content: str) -> ResourceContent:
+        self._guard_write()
+        target = self._resolve(candidate)
+        path = _relative(target, self.root)
+        with self._write_lock:
+            self._write_atomic(target, content, exclusive=True)
+        return ResourceContent(
+            path=path, text=content, sha256=sha256_text(content), size=len(content.encode("utf-8"))
+        )
+
+    def _sync_patch(self, candidate: str, content: str, expected_sha256: Any) -> ResourceContent:
+        self._guard_write()
+        if not isinstance(expected_sha256, str) or not expected_sha256.strip():
+            raise ResourceError("file_patch 必须带 expected_sha256（先 file_read 拿到它）")
+        target = self._resolve(candidate)
+        path = _relative(target, self.root)
+        with self._write_lock:
+            current = self._decode(path, self._read_bytes(target, path))
+            if current.sha256 != expected_sha256.strip():
+                raise ResourceConflictError(
+                    "内容已变化（sha256 不匹配）：请重新 file_read 取最新内容与指纹后再改"
+                )
+            self._write_atomic(target, content, exclusive=False)
+        return ResourceContent(
+            path=path, text=content, sha256=sha256_text(content), size=len(content.encode("utf-8"))
+        )
+
+    # ---------- 契约方法 ----------
+
+    async def list(self, path: str = "") -> list[ResourceEntry]:
+        return await asyncio.to_thread(self._sync_list, path)
+
+    async def read(self, path: str) -> ResourceContent:
+        return await asyncio.to_thread(self._sync_read, path)
+
+    async def create(self, path: str, content: str) -> ResourceContent:
+        return await asyncio.to_thread(self._sync_create, path, content)
+
+    async def patch(self, path: str, content: str, *, expected_sha256: str) -> ResourceContent:
+        return await asyncio.to_thread(self._sync_patch, path, content, expected_sha256)
+
+
+def filesystem_capabilities(
+    root: str | Path,
+    *,
+    policy: ResourcePolicy | None = None,
+    read_only: bool = False,
+) -> list[Callable[..., Any]]:
+    """产出 ``file_list/file_read/file_create/file_patch`` 四个宿主函数。
+
+    返回的是普通闭包函数（带类型注解与 docstring），宿主直接交给
+    ``AgentCore.auto`` / ``build_spec`` 即可，不需要注册胶水。
+    """
+    backend = FileSystemResources(root, policy=policy, read_only=read_only)
+
+    async def file_list(path: str = "") -> dict:
+        """列出目录内的文件与子目录，只返回根目录内的相对路径。
+
+        path 是相对目录，空字符串表示根目录。超过条目上限时 truncated 为真。
+        """
+        entries = await backend.list(path)
+        cap = backend.policy.max_list_entries
+        return {
+            "path": path or "/",
+            "count": len(entries),
+            "truncated": len(entries) >= cap,
+            "entries": [dataclasses.asdict(entry) for entry in entries],
+        }
+
+    async def file_read(path: str) -> dict:
+        """读取一个 UTF-8 文本文件，返回内容与 sha256 指纹。
+
+        请留着这个 sha256：之后用 file_patch 改这个文件时必须带上它。
+        """
+        content = await backend.read(path)
+        return {
+            "path": content.path,
+            "content": content.text,
+            "sha256": content.sha256,
+            "size": content.size,
+        }
+
+    async def file_create(path: str, content: str) -> dict:
+        """新建文件，不覆盖已有文件。
+
+        目标已存在会返回冲突：那种情况改用 file_patch，并带上 file_read 得到的 sha256。
+        """
+        created = await backend.create(path, content)
+        return {
+            "path": created.path,
+            "sha256": created.sha256,
+            "size": created.size,
+            "created": True,
+        }
+
+    async def file_patch(path: str, content: str, expected_sha256: str) -> dict:
+        """整体改写一个已存在的文件，带乐观并发校验。
+
+        expected_sha256 必须是**你上次 file_read 看到的 sha256**。若文件在那之后被改过，
+        返回冲突错误：此时应重新读取再改，而不是重试硬写。
+        """
+        patched = await backend.patch(path, content, expected_sha256=expected_sha256)
+        return {
+            "path": patched.path,
+            "sha256": patched.sha256,
+            "size": patched.size,
+            "updated": True,
+        }
+
+    return [file_list, file_read, file_create, file_patch]
+
+
+__all__ = [
+    "FileSystemResources",
+    "PathEscapeError",
+    "ResourceConflictError",
+    "ResourceError",
+    "ResourceNotFoundError",
+    "ResourcePolicy",
+    "ResourceTooLargeError",
+    "filesystem_capabilities",
+]

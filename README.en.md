@@ -138,11 +138,13 @@ For architecture in English see [`docs/architecture.en.md`](docs/architecture.en
 | **End-to-end evaluation** | A built-in offline eval harness runs the full Core with a ScriptedModel, quantifying completion rate, tool precision/recall, overreach and unsupported claims; golden regression baseline + non-blocking CI |
 
 <details>
-<summary>Show: the nine swappable SPI contracts</summary>
+<summary>Show: the ten swappable SPI contracts</summary>
 
-`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher`
+`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher · Resource`
 — the host can replace any of them; Core provides zero-config defaults (`StorageCipher` is the optional
-at-rest encryption slot). The kernel itself always has zero third-party hard dependencies.
+at-rest encryption slot; `Resource` is the file/resource slot — the kernel never touches disk itself, the
+built-in implementation lives in `batteries/filesystem.py`). The kernel itself always has zero third-party
+hard dependencies.
 
 </details>
 

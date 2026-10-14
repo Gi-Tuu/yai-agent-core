@@ -216,6 +216,7 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 | ToolSandbox | `execute(code, inputs, *, timeout=None) → SandboxResult` | none in the kernel (host-provided; `SubprocessSandbox`/`DockerSandbox` in the shell/examples) | Running generated code in isolation |
 | RouteSelector | route selection + observe feedback (contextual bandit) | the built-in self-calibrating bandit | A custom routing/learning policy |
 | EmbeddingProvider | `embed_texts(list[str]) → list[vector]` | none (optional; local bge-m3 or OpenAI-compatible cloud) | Semantic tool discovery; semantic long-term memory recall (`memory_embedder`) |
+| ResourceProvider | `list / read / create / patch` (with `expected_sha256`) | the kernel never touches disk; `batteries/filesystem.py` ships a single-root sandboxed implementation | let an agent read/write files, pinned inside one root directory |
 | StorageCipher | `encrypt / decrypt(bytes) → bytes` | none (optional; `FernetStorageCipher` in the `[crypto]` extra) | At-rest encryption for the long-term memory vault (KMS / OS keychain / national ciphers) |
 
 ## 4. Adaptive Router state machine
