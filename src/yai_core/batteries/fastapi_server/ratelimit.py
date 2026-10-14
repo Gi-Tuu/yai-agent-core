@@ -1,11 +1,18 @@
-"""评审期限流：每 IP 滑动窗口限流 Battery（v0.3，纯标准库）。
+"""评审期限流：每 IP 滑动窗口 + 可选全局兜底（纯标准库）。
 
 威胁模型（如实声明）：本模块只防"误刷"——手滑重试、爬虫、失控循环；
-**不防**蓄意伪造 X-Forwarded-For 的分布式攻击（那需要鉴权/人机验证，超出 v0.3）。
+**不防**蓄意伪造 X-Forwarded-For 的分布式攻击（那需要鉴权/人机验证）。
 客户端身份取 XFF 最左非空 IP（Render 边缘代理会附加 XFF），缺失回退对端地址。
 
-TODO(v0.4)：全局兜底限流（跨实例/全实例总配额）暂不做——免费层单实例，
-分布式计数属后续议题；目前只有每 IP 维度。
+两个维度：
+
+- **每 IP 配额**（默认开启，30 次 / 60 秒）：挡住单个来源的失控循环；
+- **全局兜底配额**（默认**关闭**，`global_per_minute > 0` 才生效）：跨所有来源的
+  总配额。每 IP 各留一点也能把免费实例刷爆，这一层是它的对偶。
+
+**仍不做的**：跨实例分布式计数（要 Redis / 一致性哈希，单实例场景不值得）。
+全局配额是**进程内**的，多实例部署时每个实例各算各的——这句话必须说清，
+否则"全局"两个字会被读成它没有的含义。
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from threading import Lock
 _ENABLED_ENV = "YAI_RATE_LIMIT_ENABLED"
 _PER_MINUTE_ENV = "YAI_RATE_LIMIT_PER_MINUTE"
 _WINDOW_ENV = "YAI_RATE_LIMIT_WINDOW_SECONDS"
+_GLOBAL_ENV = "YAI_RATE_LIMIT_GLOBAL_PER_MINUTE"
 
 
 def _truthy_enabled(raw: str | None) -> bool:
@@ -46,13 +54,30 @@ def _parse_positive_int(raw: str | None, env_name: str, default: int) -> int:
     return value
 
 
+def _parse_non_negative_int(raw: str | None, env_name: str, default: int) -> int:
+    """非负整数解析（0 是合法值 = 关闭该维度）；非法/负数回退默认 + warning。"""
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        warnings.warn(f"{env_name}={raw!r} 不是合法整数，回退默认值 {default}", stacklevel=2)
+        return default
+    if value < 0:
+        warnings.warn(f"{env_name}={value} 不能为负，回退默认值 {default}", stacklevel=2)
+        return default
+    return value
+
+
 @dataclass
 class RateLimitConfig:
-    """限流配置；默认值（开启 / 30 次 / 60 秒）是对外承诺，改动须先改 10-plan。"""
+    """限流配置；默认值（开启 / 30 次 / 60 秒 / 全局关闭）是对外承诺，改动须先改 10-plan。"""
 
     enabled: bool = True
     per_minute: int = 30
     window_seconds: int = 60
+    #: 全局兜底配额（进程内跨 IP 总数）；0 = 关闭，保持旧行为。
+    global_per_minute: int = 0
     time_func: Callable[[], float] = field(default=time.monotonic)
 
     @classmethod
@@ -67,17 +92,24 @@ class RateLimitConfig:
             window_seconds=_parse_positive_int(
                 environ.get(_WINDOW_ENV), _WINDOW_ENV, 60
             ),
+            global_per_minute=_parse_non_negative_int(
+                environ.get(_GLOBAL_ENV), _GLOBAL_ENV, 0
+            ),
         )
 
 
 class SlidingWindowLimiter:
     """每 key 一个时间戳 deque；请求时先清窗口外时间戳，再判断是否超限。
 
-    状态只在内存（进程重启清零），不落盘、不引 Redis。
+    状态只在内存（进程重启清零），不落盘、不引 Redis。同一个类既当"每 IP 闸"
+    （key = 客户端 IP）也当"全局闸"（key 固定，配额走 ``per_minute`` 覆盖值）——
+    两套窗口逻辑必须一模一样，否则"全局"和"每 IP"会出现两种限流语义。
     """
 
-    def __init__(self, config: RateLimitConfig) -> None:
-        self._per_minute = config.per_minute
+    def __init__(
+        self, config: RateLimitConfig, *, per_minute: int | None = None
+    ) -> None:
+        self._per_minute = config.per_minute if per_minute is None else per_minute
         self._window = config.window_seconds
         self._time_func = config.time_func
         self._hits: dict[str, deque[float]] = {}

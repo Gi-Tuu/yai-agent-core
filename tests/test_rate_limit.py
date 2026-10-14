@@ -239,3 +239,125 @@ def test_unauthorized_requests_are_rate_limited(monkeypatch) -> None:
     assert client.post("/v1/agent/run", json={"task": "x"}, headers=bad).status_code == 401
     # 第三次：同一 IP 配额耗尽 => 429（修复前这里仍会是 401）。
     assert client.post("/v1/agent/run", json={"task": "x"}, headers=bad).status_code == 429
+
+
+# ---------- 12. 全局兜底配额（跨 IP 总闸，默认关闭） ----------
+
+def global_config(
+    clock: FakeClock, *, per_ip: int = 50, global_per_minute: int
+) -> RateLimitConfig:
+    """每 IP 给足配额，只让全局闸成为瓶颈。"""
+    return RateLimitConfig(
+        enabled=True,
+        per_minute=per_ip,
+        window_seconds=60,
+        global_per_minute=global_per_minute,
+        time_func=clock,
+    )
+
+
+def test_global_backstop_fires_across_ips(monkeypatch) -> None:
+    """存在意义本身：每个 IP 都没超限，加起来照样能把实例刷爆。"""
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    clock = FakeClock()
+    client = make_client(CountingModel(), global_config(clock, global_per_minute=3))
+
+    for i, ip in enumerate(["1.1.1.1", "2.2.2.2", "3.3.3.3"]):
+        ok = client.post(
+            "/v1/agent/run", json={"task": str(i)}, headers={"X-Forwarded-For": ip}
+        )
+        assert ok.status_code == 200  # 每个 IP 各自远未超限
+
+    denied = client.post(
+        "/v1/agent/run", json={"task": "x"}, headers={"X-Forwarded-For": "4.4.4.4"}
+    )
+    assert denied.status_code == 429
+    body = denied.json()
+    assert body["scope"] == "global"
+    assert body["error"] == "rate_limited"
+    assert isinstance(body["retry_after"], int) and body["retry_after"] >= 1
+    assert denied.headers["Retry-After"] == str(body["retry_after"])
+
+    clock.advance(seconds=61)  # 同一个滑动窗口语义，全局配额随窗口恢复
+    assert (
+        client.post(
+            "/v1/agent/run", json={"task": "y"}, headers={"X-Forwarded-For": "5.5.5.5"}
+        ).status_code
+        == 200
+    )
+
+
+def test_global_gate_is_evaluated_before_ip_gate(monkeypatch) -> None:
+    """两道闸同时可用时，先算全局：全局拒绝不该消耗某个 IP 的配额。"""
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    clock = FakeClock()
+    client = make_client(
+        CountingModel(), global_config(clock, per_ip=1, global_per_minute=1)
+    )
+    headers = {"X-Forwarded-For": "9.9.9.9"}
+    assert client.post("/v1/agent/run", json={"task": "1"}, headers=headers).status_code == 200
+    denied = client.post("/v1/agent/run", json={"task": "2"}, headers=headers)
+    assert denied.status_code == 429
+    assert denied.json()["scope"] == "global"  # 不是 "ip"：全局闸先命中
+
+
+def test_global_denial_never_reaches_model(monkeypatch) -> None:
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    clock = FakeClock()
+    model = CountingModel()
+    client = make_client(model, global_config(clock, global_per_minute=2))
+    statuses = [
+        client.post(
+            "/v1/agent/run", json={"task": str(i)}, headers={"X-Forwarded-For": f"{i}.0.0.1"}
+        ).status_code
+        for i in range(1, 5)
+    ]
+    assert statuses == [200, 200, 429, 429]
+    assert model.calls == 2
+
+
+def test_get_endpoints_never_hit_global_gate(monkeypatch) -> None:
+    """红线：全局兜底也不许扩到三个 GET 验证端点上。"""
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    monkeypatch.setenv("YAI_PROJECT_SLUG", "yai-test")
+    clock = FakeClock()
+    client = make_client(CountingModel(), global_config(clock, global_per_minute=1))
+    assert client.post("/v1/agent/run", json={"task": "1"}).status_code == 200
+    assert client.post("/v1/agent/run", json={"task": "2"}).status_code == 429
+    assert client.get("/health").status_code == 200
+    assert client.get("/.well-known/xagent-verification.json").status_code == 200
+    assert client.get("/v1/tools").status_code == 200
+
+
+def test_global_backstop_off_by_default(monkeypatch) -> None:
+    """默认 0 = 关闭：不配这一项时行为与旧版逐字节一致。"""
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    clock = FakeClock()
+    client = make_client(CountingModel(), limited_config(clock, per_minute=100))
+    for i in range(1, 30):  # 29 次跨 IP 请求，全部放行
+        assert (
+            client.post(
+                "/v1/agent/run",
+                json={"task": str(i)},
+                headers={"X-Forwarded-For": f"10.0.0.{i}"},
+            ).status_code
+            == 200
+        )
+
+
+def test_from_env_global_parsing() -> None:
+    def parsed(raw: str | None) -> int:
+        env = {} if raw is None else {"YAI_RATE_LIMIT_GLOBAL_PER_MINUTE": raw}
+        return RateLimitConfig.from_env(env=env).global_per_minute
+
+    assert parsed(None) == 0
+    assert parsed("0") == 0
+    assert parsed("120") == 120
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert parsed("-5") == 0
+        assert len(caught) == 1
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert parsed("abc") == 0
+        assert len(caught) == 1

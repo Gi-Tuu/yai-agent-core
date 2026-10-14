@@ -115,8 +115,16 @@ def create_app(
 
     # 2) 限流（外层）：最后注册 => 最外层。所有 POST /v1/agent/run（含未授权
     #    请求）都先计数，超限直接 429，连鉴权与 core 都不再进入。
+    #    只挂在这条 POST 白名单内：三个 GET 端点是评审硬门槛路径，
+    #    全局兜底也**不许**扩到它们上面（否则评审官会看到 429）。
     if config.enabled:
         limiter = SlidingWindowLimiter(config)
+        # 全局兜底（默认关闭）：跨所有来源的总配额，进程内计数。
+        global_limiter = (
+            SlidingWindowLimiter(config, per_minute=config.global_per_minute)
+            if config.global_per_minute > 0
+            else None
+        )
 
         @app.middleware("http")
         async def _rate_limit_middleware(request, call_next):
@@ -125,14 +133,30 @@ def create_app(
                     request.headers.get("x-forwarded-for"),
                     request.client.host if request.client else None,
                 )
-                allowed, retry_after = limiter.check(key)
+                # 先算全局再算每 IP：全局拒绝时不消耗该 IP 的配额。反向的代价是
+                # "全局放行但该 IP 超限"时白扣一个全局名额——宁可多拦不可漏放，
+                # 且这条路径只在总配额真的快耗尽时才发生。
+                scope = "global"
+                allowed, retry_after = (
+                    global_limiter.check("__global__")
+                    if global_limiter is not None
+                    else (True, 0)
+                )
+                if allowed:
+                    scope = "ip"
+                    allowed, retry_after = limiter.check(key)
                 if not allowed:
                     # 被限请求在最外层直接返回：不进鉴权 / core，一分模型钱都不花。
                     return JSONResponse(
                         status_code=429,
                         content={
                             "error": "rate_limited",
-                            "detail": "请求过于频繁，请稍后重试",
+                            "detail": (
+                                "服务总请求量已达上限，请稍后重试"
+                                if scope == "global"
+                                else "请求过于频繁，请稍后重试"
+                            ),
+                            "scope": scope,
                             "retry_after": retry_after,
                         },
                         headers={"Retry-After": str(retry_after)},

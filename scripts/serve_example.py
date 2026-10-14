@@ -153,6 +153,7 @@ _rate_limit = RateLimitConfig.from_env()
 print(
     f"限流策略：enabled={_rate_limit.enabled}，"
     f"per_minute={_rate_limit.per_minute}，window_seconds={_rate_limit.window_seconds}"
-    "（仅 POST /v1/agent/run；GET 验证端点不受限）"
+    f"，global_per_minute={_rate_limit.global_per_minute}"
+    "（仅 POST /v1/agent/run；GET 验证端点不受限；global=0 表示未启用总闸）"
 )
 app = create_app(core, lifespan=app_lifespan, rate_limit=_rate_limit)

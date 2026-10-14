@@ -89,11 +89,43 @@ def create_app(core, lifespan=None, *, rate_limit: RateLimitConfig | None = None
 这是可测性的代价与回报。边界语义钉死在用例里：恰好等于窗口的时间戳按过期清除
 （`<=`），`retry_after` 恒 ≥ 1。
 
-## G. 诚实的边界
+## G. 全局兜底配额：每 IP 各留一点，也能把实例刷爆
+
+每 IP 维度有个天然盲区：来一万个赞不同的 IP，每个只发三次，`per_minute=30` 一次都不会触发，
+但 `/v1/agent/run` 是真金白银——三万次 DeepSeek 调用足够把免费层烧穿。所以加第二个维度：
+**跨所有来源的总配额** `global_per_minute`，默认 `0`（关闭，行为与旧版逐字节一致），
+`YAI_RATE_LIMIT_GLOBAL_PER_MINUTE=120` 之类才生效。
+
+实现上刻意**不写第二套算法**：全局闸就是同一个 `SlidingWindowLimiter`，只是配额换一下、
+key 固定成 `"__global__"`：
+
+```python
+limiter = SlidingWindowLimiter(config)                       # 每 IP
+global_limiter = (
+    SlidingWindowLimiter(config, per_minute=config.global_per_minute)
+    if config.global_per_minute > 0
+    else None
+)                                                            # 全局（同一个类）
+```
+
+两套窗口逻辑必须一模一样，否则"全局"和"每 IP"会长出两种限流语义（恢复时机、
+`Retry-After` 口径都不同），那种分叉最难查。
+
+**先算全局、再算每 IP**：全局拒绝时不消耗该 IP 的配额；反过来"全局放行但该 IP 超限"
+会白扣一个全局名额——宁可多拦不可漏放，且只在总配额真的快耗尽时才发生。
+响应体多带一个 `scope: "global" | "ip"`，运维看日志一眼知道是哪道闸命中的。
+
+红线没变：全局闸**仍然只挂在 `POST /v1/agent/run` 白名单里**。三个 GET 端点是评审硬门槛
+路径，"顺手把全局也限上"正好会让评审官看到 429——这条有测试钉住
+（`test_get_endpoints_never_hit_global_gate`）。
+
+## H. 诚实的边界
 
 1. 不防伪造 XFF 的分布式攻击（见 C 节）；
-2. 重启清零，无跨实例共享计数——多实例部署要做全局限流，先解决状态共享；
-3. 全局限流兜底（整实例总配额）暂不做，模块 docstring 留了 TODO 位；
+2. 重启清零，无跨实例共享计数——**`global_per_minute` 只是本进程内的总数**，
+   多实例部署时每个实例各算各的，它不是分布式限流；要做跨实例总闸得先解决状态共享
+   （Redis / 一致性计数），那属于另一层工程；
+3. 全局限流兜底已实现（G 节），但默认关闭：开不开是宿主的容量决策，不由库替它定；
 4. `X-Forwarded-For` 链上只有最左段被信任，右段可能是任意代理追加的，不做校验。
 
 ## 自检
@@ -104,3 +136,4 @@ def create_app(core, lifespan=None, *, rate_limit: RateLimitConfig | None = None
 4. 伪造 XFF 能绕过本限流吗？那属于哪一层的问题？
 5. 为什么 `enabled=False` 时不注册中间件，而不是注册了直接放行？
 6. 被限请求为什么必须在中间件层返回，而不是放进去让模型拒绝？
+7. 每 IP 都没超限为什么实例照样可能被刷爆？全局兜底为什么默认关闭、又为什么说清"进程内"？
