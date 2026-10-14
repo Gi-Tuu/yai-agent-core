@@ -61,8 +61,8 @@ uv run pytest
 uv run python scripts/smoke_test.py
 ```
 
-The suite currently has **517 tests (8 skipped, 0 failures)**; the number grows over time, so the live
-`pytest` output is authoritative. Tests are fully offline and skip only when an environment piece is
+The suite currently has **1100+ tests (a handful skipped, 0 failures)**; the exact count grows over
+time, so the live `pytest` output is authoritative. Tests are fully offline and skip only when an environment piece is
 missing (no Docker daemon, no local bge-m3 weights, etc.).
 
 To run against a real model (an OpenAI-compatible endpoint such as DeepSeek), copy `.env.example` to
