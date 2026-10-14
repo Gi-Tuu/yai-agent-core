@@ -10,28 +10,37 @@ on:
 permissions:
   contents: read
 
+# Runner 与 action 版本一律钉死，不用 *-latest：GitHub 在 2026-10-19 会把
+# ubuntu-latest 迁到 Ubuntu 26，自动跟随等于在没人改代码时换掉基础镜像。
+# action 引用同样钉到 commit SHA（供应链习惯），且必须是声明 node24 运行时的版本：
+# v4/v5 时代的 node20 已被 GitHub 强制切到 24 并在日志里出弃用告警。
 jobs:
   test:
-    name: lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
+    # 作业名里只放 linux/windows 这种稳定别名，**不放 runner 镜像标签**：
+    # 分支保护的 required_status_checks 按作业名字符串匹配，名字一旦带 ubuntu-latest，
+    # 换镜像就等于把必需检查改成永远不会上报的名字，PR 会被静默卡成 BLOCKED。
+    name: lint & test (${{ matrix.family }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.image }}
     env:
       # 用矩阵解释器覆盖仓库里的 .python-version(3.13)，保证 uv sync/run 不擅自换版本
       UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        family: [linux]
+        image: [ubuntu-24.04]
         python-version: ["3.11", "3.12", "3.13"]
         include:
-          - os: windows-latest
+          - family: windows
+            image: windows-2022
             python-version: "3.13"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
 
@@ -42,7 +51,7 @@ jobs:
       # uv lock 为 universal lock，默认解析全部 extras，可一并覆盖 otel/crypto 等可选
       # 依赖的漏锁。仅在单个 Linux 矩阵跑一次，该步骤属于本 test 门禁 job，失败会阻塞合并。
       - name: Verify uv.lock is up to date
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.family == 'linux' && matrix.python-version == '3.12'
         run: uv lock --check
 
       - name: Install project (dev + llm + server + mcp + openapi + otel extras)
@@ -62,14 +71,14 @@ jobs:
   # 因此即使失败也不阻塞合并；但会在 PR 上可见，用于持续暴露纯函数在畸形输入下的问题。
   fuzz:
     name: fuzz (atheris / ubuntu py3.12)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       UV_PYTHON: "3.12"
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
       - name: Set up Python 3.12
@@ -88,14 +97,14 @@ jobs:
   # 证据链。非门禁：不在 ruleset 必需检查列表中，失败不阻塞合并。
   benchmark:
     name: router benchmark (artifact)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       UV_PYTHON: "3.12"
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
       - name: Set up Python 3.12
@@ -105,7 +114,7 @@ jobs:
       - name: Run offline router benchmark
         run: uv run python scripts/benchmark_router.py
       - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: router-benchmark
           path: benchmark_out/
@@ -116,14 +125,14 @@ jobs:
   # 无支撑断言"提供可复现证据。非门禁：不在 ruleset 必需检查列表，失败不阻塞合并。
   eval:
     name: agent eval (golden regression)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       UV_PYTHON: "3.12"
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
       - name: Set up Python 3.12
@@ -133,7 +142,7 @@ jobs:
       - name: Run end-to-end agent evaluation
         run: uv run python scripts/eval_agent.py
       - name: Upload eval artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-eval
           path: benchmark_out/eval_agent.json
