@@ -9,7 +9,7 @@
 | **跨语言接入**（接任意语言写的服务） | **✅ 已实现** | 经 **MCP Client** 与 **OpenAPI Discovery**，两者语言中立，有离线测试、线上在用（线上接 DeepWiki MCP） |
 | Python **同进程零配置内省** | **✅ 已实现** | `discover(host)` 用 `inspect` 自动生成 ToolSpec，**仅 Python** |
 | `ToolSpec` 中立数据 + `registry.register()` | **✅ 已实现** | 工具能力是数据，不绑定语言 |
-| **ToolSpec ↔ manifest JSON 序列化 + 文件 IO** | **✅ 已实现** | `to_manifest_dict` / `from_manifest_dict` + `tools/manifest.py`；composite / code 可完整移植并执行，native 类只导出声明 |
+| **ToolSpec ↔ manifest JSON 序列化 + 文件 IO** | **✅ 已实现** | `to_manifest_dict` / `from_manifest_dict` + `tools/manifest.py`；composite / code 可完整移植并执行，native 类只导出声明；治理声明（脱敏路径 / 审计提示 / 契约快照）随清单走，准入判定函数 `gate` 不随清单走 |
 | 非 Python 的**同进程零配置内省** | ❌ 不追求对等 | 静态语言无同等运行时元数据，需"注解 / 生成"一步（语言特性，非缺陷） |
 | 各语言注解 / 代码生成器（JVM APT、Rust proc-macro、`go:generate`、TS 提取） | 🛠 未做（路线） | 见 §4 |
 | 每语言 native exporter 探针 | 🛠 未做（路线） | 见 §4 |

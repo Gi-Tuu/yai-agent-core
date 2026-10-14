@@ -72,11 +72,15 @@ def to_manifest_dict(self) -> dict[str, Any]:
         ]
     if self.source == "code":
         manifest["code"] = self.code
+    governance = governance_to_manifest(self.governance)
+    if governance:
+        manifest["governance"] = governance
     return manifest
 ```
 - 组合工具：把每个 `CompositeStep`（dataclass）降成普通 dict 列表——dataclass 不能直接 `json.dumps`，转成 dict 才行；
 - 代码工具：`code` 本来就是字符串，原样携带（执行仍需宿主沙箱，manifest 不含执行器）；
-- **全程不碰 `handler`**：它是函数运行时对象，不可 JSON 化，也不可移植。
+- 治理声明：只带数据那三样（见第 5 节），**空声明时整个键省略**，未治理的清单与旧格式逐字节一致；
+- **全程不碰 `handler` 和 `governance.gate`**：它们都是运行时函数，不可 JSON 化，也不可移植。
 
 ## 3. `types.py` · `from_manifest_dict` 逐行（这是 classmethod）
 
@@ -126,11 +130,13 @@ def from_manifest_dict(cls, data: dict[str, Any]) -> ToolSpec:
         source=source,
         steps=steps,
         code=code,
+        governance=governance_from_manifest(name, data.get("governance")),
     )
 ```
 最后构造对象，**handler 写死 `None`**。这是"manifest 只搬运数据"的落点：
 - composite / code 靠 steps / code + 宿主沙箱就能跑；
-- 其余来源拿到的是"待绑定后端的声明"，不会假装可执行。
+- 其余来源拿到的是"待绑定后端的声明"，不会假装可执行；
+- 治理块走 `governance_from_manifest`：校验类型、拒绝不认识的键、`gate` 恒为 `None`（第 5 节）。
 
 ## 4. `tools/manifest.py`：批量打包 + 文件 IO
 
@@ -172,7 +178,51 @@ def read_manifest(path):
 文件 IO：父目录自动创建；`ensure_ascii=False` 让中文描述直接可读（不转成 `\uXXXX`），
 `indent=2` 让人眼能看；读写都显式 `encoding="utf-8"`（Windows 默认是 GBK，不写会乱码）。
 
-## 5. 为什么"不做调用通道"是对的
+## 5. 治理声明随清单走 —— 但 `gate` 永远不走
+
+`ToolSpec.governance` 里有四样东西，其中三样是**数据**，一样是**函数**：
+
+| 字段 | 随清单导出 | 导入后 | 为什么 |
+|---|---|---|---|
+| `sensitive`（脱敏路径） | ✅ | 立即生效 | 纯字符串数组，跨语言可读 |
+| `audit_sensitive` | ✅ | 立即生效 | 一个布尔提示 |
+| `acc`（外部契约声明快照） | ✅ | **惰性记录**，不产生行为 | 它是"别人怎么描述这个能力" |
+| `gate`（准入判定函数） | ❌ 丢弃 | `None` | 函数不可序列化，与 `handler` 同命 |
+
+```python
+spec.governance = ToolGovernance(
+    sensitive=("api_key",), audit_sensitive=True, acc={"version": 1, ...}
+)
+spec.to_manifest_dict()["governance"]
+# {"sensitive": ["api_key"], "audit_sensitive": True, "acc": {...}}  ← 没有 gate
+```
+
+反序列化侧 `governance_from_manifest(name, raw)` 做三件事，第三条最重要：
+
+1. **类型校验**：`sensitive` 必须是字符串数组且每项非空、`audit_sensitive` 必须是布尔、
+   `acc` 必须是 object 或 null——脏数据在进注册表前就被拦下；
+2. **不认识的键直接拒绝加载**。听起来苛刻，但静默忽略一个写错的 `sensitives`
+   等于"宿主声明了脱敏、内核其实没做"，比报错危险得多。要加字段就升 `MANIFEST_VERSION`；
+3. **绝不凭 `acc` 快照造 `gate`**。外来清单只是"那份服务说这个能力要求主体、要审批"，
+   准入逻辑必须由本地宿主显式绑定：
+
+```python
+from dataclasses import replace
+from yai_core.integrations.acc import build_gate, parse_declaration
+
+parsed = parse_declaration(moved.governance.acc)
+if parsed.valid and parsed.declaration is not None:
+    moved.governance = replace(
+        moved.governance, gate=build_gate(parsed.declaration, moved.input_schema)
+    )
+```
+
+方向要说全：不绑定 = 这份声明**不会**给本机工具加上闸门；同时也**不能**替本机
+已绑定的闸门放行——`gate` 只能被宿主在本机代码里换掉，清单里根本没有这个通道。
+对应契约测试：`test_foreign_acc_snapshot_never_builds_a_gate`、
+`test_host_rebinding_restores_the_gate`、`test_declared_paths_still_redact_after_transport`。
+
+## 6. 为什么"不做调用通道"是对的
 
 可能会想顺手加一个"manifest 里写个 endpoint，Core 用 JSON-RPC 调它"——**不要做**：
 - 那已经包含"列出工具（list）+ 调用工具（call）"两部分，正是 **MCP** 的核心；
@@ -182,10 +232,12 @@ manifest 的职责收敛为一件事：**让能力描述成为语言中立、可
 - 想跨语言真正调用 → 让对方暴露 MCP / OpenAPI（第 10 / 12 篇）；
 - 想移植工作流 / 代码工具定义 → 用本篇 manifest。
 
-## 6. 自检（读完应能回答）
+## 7. 自检（读完应能回答）
 
 1. 为什么 manifest 里没有 `handler`？导入后 `handler` 是什么？
 2. 哪几种工具导入后能直接（或在沙箱内）执行？为什么？
 3. 顶层 `manifest_version` 解决什么问题？
 4. 为什么不该在 manifest 之上再发明一套 JSON-RPC 调用？
 5. `write_manifest` 为什么要显式 `encoding="utf-8"` 和 `ensure_ascii=False`？
+6. `governance` 的四个字段里哪个不随清单走？为什么内核不肯凭 `acc` 快照自己造 gate？
+7. 治理块里出现不认识的键时为什么选择报错而不是忽略？

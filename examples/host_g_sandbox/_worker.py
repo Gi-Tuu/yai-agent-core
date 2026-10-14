@@ -109,9 +109,18 @@ class _SafetyChecker(ast.NodeVisitor):
 
 
 def _static_check(code: str) -> None:
-    """解析模型代码并做静态安全校验；语法错误 / 命中规则都抛异常交主流程回灌。"""
+    """解析模型代码并做静态安全校验；语法错误 / 命中规则都抛异常交主流程回灌。
+
+    深嵌套代码（如 600 段的属性链）能被 CPython 的 PEG 解析器接受，却会把
+    ``NodeVisitor`` 的递归撑爆——``RecursionError`` 必须在这里转成拒绝，
+    不能让它冒充"闸门坏了"逃出去：调用方只打算捕 ``_SafetyError`` 时，
+    漏出来的异常就等于漏放。宁可误拒，不可误放。
+    """
     tree = ast.parse(code, filename="<code-tool>")
-    _SafetyChecker().visit(tree)
+    try:
+        _SafetyChecker().visit(tree)
+    except RecursionError as exc:
+        raise _SafetyError("代码嵌套过深，静态校验无法完成，已拒绝执行") from exc
 
 
 class _CappedStream(io.StringIO):

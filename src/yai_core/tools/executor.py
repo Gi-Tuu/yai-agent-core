@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
+from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
@@ -330,10 +331,18 @@ class ToolExecutor:
         if not steps:
             return events, False, f"组合工具 {spec.name} 缺少步骤"
         step_names = [step.tool for step in steps]
+        # 对外副本按**组合工具自己的声明**脱敏（与 authorize 同一口径）：
+        # 宿主在清单上写了 sensitive，就不能因为这条路走了组合分支而失效。
+        # 执行用的 arguments 保持真值，脱敏只影响"别人看见什么"。
+        shown = redact_arguments(
+            arguments,
+            spec.governance.sensitive,
+            broad=spec.governance.audit_sensitive,
+        )
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,
-                {"tool": spec.name, "steps": step_names, "arguments": arguments},
+                {"tool": spec.name, "steps": step_names, "arguments": shown},
             )
         )
 
