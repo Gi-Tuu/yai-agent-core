@@ -95,6 +95,9 @@ class CoreConfig:
     # 成本 / 韧性。
     cost_aware: bool = True
     model_timeout: float | None = DEFAULT_MODEL_TIMEOUT
+    # 普通工具 handler 的墙上超时（None=关闭，默认关闭）。代码工具走沙箱自己的
+    # code_timeout，不在这个开关管辖内。
+    tool_timeout: float | None = None
     budget: Budget | None = None
 
     def validate(self) -> CoreConfig:
@@ -115,10 +118,14 @@ class CoreConfig:
             raise ValueError("context_compaction 只接受 False、True 或 CompactionPolicy")
         if self.budget is not None and not isinstance(self.budget, Budget):
             raise ValueError("budget 必须是 yai_core.Budget 实例或 None")
-        if self.model_timeout is not None and (
-            isinstance(self.model_timeout, bool) or self.model_timeout <= 0
+        for label, value in (
+            ("model_timeout", self.model_timeout),
+            ("tool_timeout", self.tool_timeout),
         ):
-            raise ValueError("model_timeout 必须是正数或 None")
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"{label} 必须是正数或 None")
         if self.auto_memory_recall and not self.long_memory:
             raise ValueError("auto_memory_recall=True 时必须同时启用 long_memory=True")
         if not _is_positive_int(self.auto_recall_k):

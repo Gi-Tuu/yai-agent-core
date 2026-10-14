@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.config import CoreConfig
@@ -96,6 +97,7 @@ class AgentCore:
         compaction_model: ModelProvider | None = None,
         cost_aware: bool = True,
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
+        tool_timeout: float | None = None,
         on_diagnostic: DiagnosticSink | None = None,
         budget: Budget | None = None,
         metrics: MetricsRecorder | None = None,
@@ -130,6 +132,7 @@ class AgentCore:
             context_compaction=context_compaction,
             cost_aware=cost_aware,
             model_timeout=model_timeout,
+            tool_timeout=tool_timeout,
             budget=budget,
         ).validate()
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
@@ -143,6 +146,7 @@ class AgentCore:
         self.max_clarify_rounds = max_clarify_rounds
         self.channel = channel or CollectChannel()
         self.memory = memory or InMemoryStore()
+        self.discovery = discovery
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
         # 路由模型注入：
         # - False（默认）：永不 LLM 分类，零额外模型调用、离线完全确定；
@@ -175,6 +179,7 @@ class AgentCore:
             sandbox=sandbox,
             code_manager=self.code_manager,
             result_char_limit=tool_result_char_limit,
+            handler_timeout=tool_timeout,
         )
         meta_tools: set[str] = set()
         # 组合工具能力：显式开启后注册 compose_tool meta-tool，模型可在运行时
@@ -241,6 +246,61 @@ class AgentCore:
         self.budget = budget
         # 运行指标收集器：默认零依赖收集（成本/健康可观测）；宿主可注入共享或自定义实现。
         self.metrics = metrics or MetricsRecorder()
+        # **本实例自己创建**、因此由本实例负责收尾的资源。宿主传进来的对象
+        # 默认不在这里——多个 core 常共享同一个模型 / 记忆 / 发现源，替别人关是误伤。
+        self._owned: list[Any] = []
+        if channel is None:
+            self._owned.append(self.channel)
+        if memory is None:
+            self._owned.append(self.memory)
+        if self.memory_vault is not None:
+            self._owned.append(self.memory_vault)
+        self._closed = False
+
+    # ---------- 生命周期 ----------
+
+    async def aclose(self, *, close_shared: bool = False) -> None:
+        """收尾：等在跑的任务结束后，关闭可关闭的资源。幂等，重复调用无副作用。
+
+        默认只关**本实例自建**的资源（未传 channel/memory 时的默认实现、
+        ``long_memory=True`` 时内核创建的记忆库）。``model`` / ``memory`` /
+        ``discovery`` / ``sandbox`` / ``channel`` 这些宿主传进来的对象**默认不动**。
+        进程退出前确实要连整张图一起收，传 ``close_shared=True``。
+
+        顺序固定为 channel → discovery → sandbox → memory → model：先断外部能力，
+        再断记忆与模型。任何单个资源关闭失败都不阻止其余收尾，但会在**全部尝试之后**
+        抛出汇总异常——收尾问题要能被运维看见，不能静默吞掉。
+
+        注意：本方法持有实例串行锁等待当前任务，若任务已卡死，请先取消它。
+        """
+        if self._closed:
+            return
+        targets: list[Any] = list(self._owned)
+        if close_shared:
+            for candidate in (
+                self.channel,
+                self.discovery,
+                self.executor.sandbox,
+                self.memory,
+                self.model,
+            ):
+                if candidate is not None and all(candidate is not seen for seen in targets):
+                    targets.append(candidate)
+        failures: list[str] = []
+        async with self._task_lock:
+            for resource in targets:
+                closer = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+                if closer is None:
+                    continue
+                try:
+                    outcome = closer()
+                    if inspect.isawaitable(outcome):
+                        await outcome
+                except Exception as exc:  # noqa: BLE001 - 一个关不掉不能挡住其余收尾
+                    failures.append(f"{type(resource).__name__}: {exc}")
+            self._closed = True
+        if failures:
+            raise RuntimeError("收尾时以下资源关闭失败：" + "；".join(failures))
 
     # ---------- 装配辅助 ----------
 

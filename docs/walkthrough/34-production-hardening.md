@@ -242,7 +242,54 @@ if hasattr(self.model, "on_diagnostic"):
 
 ---
 
-## F. 自检（读完应能回答）
+## F. 后续追加的两件：工具 handler 超时与 `AgentCore.aclose`
+
+模型侧有了硬超时之后，工具侧长期是裸的：一个不返回的 OpenAPI 调用能把整轮任务吊住，
+而宿主收尾时也没有一个"把这张图关干净"的入口。两件都在这里补上。
+
+**F-1 `handler_timeout`（默认 `None` = 关闭，零行为变化）**
+
+C 节讲的是模型超时，这里同一思路用在工具上，但两种 handler 的语义**不能一起承诺**：
+
+```python
+if inspect.iscoroutinefunction(handler):
+    return await asyncio.wait_for(handler(**arguments), timeout)   # 真取消：协程收到 CancelledError
+# 同步 handler：丢进线程池，但**不用 wait_for**
+future = loop.run_in_executor(None, functools.partial(handler, **arguments))
+done, _ = await asyncio.wait({future}, timeout=timeout)            # 到点没完成就立刻放弃
+```
+
+这里踩过一个具体的坑：`wait_for` 取消一个已在线程池里跑的 future 时，会 **await 那个 future**
+直到线程结束——实测一个睡 0.4s 的同步工具，配 0.05s 超时仍然要 0.4s 才回话。
+换成 `asyncio.wait` 才拿到"到点即回话"的行为（测试 `test_sync_handler_timeout_does_not_block_forever`
+量的就是 `execute` 的返回时刻，不是 `asyncio.run` 的返回时刻）。
+
+还有一条不粉饰的边界：被放弃的线程仍在循环默认线程池里，**事件循环收尾会 join 它**。
+所以同步工具的超时是"给模型的止损"，不是进程级立即脱身；可能长时间阻塞的能力应当写成 `async def`。
+超时回给模型的话术也分两种（异步说"已取消"，同步说"仍在后台、先确认状态再重试"），
+否则模型只会原样重试同一个调用。
+
+**F-2 `await core.aclose(*, close_shared=False)`**
+
+规则只有一句：**谁创建，谁负责关**。
+
+```python
+self._owned = []                      # __init__ 末尾记账
+if channel is None: self._owned.append(self.channel)     # 默认实现是 core 建的
+if memory is None:  self._owned.append(self.memory)
+if self.memory_vault is not None: self._owned.append(self.memory_vault)
+```
+
+默认只关 `_owned`；宿主传进来的 `model` / `memory` / `discovery` / `sandbox` / `channel`
+**默认一个都不碰**——多个 core 常共享同一个模型或发现源（并发会话的正确用法就是共享无状态模型），
+替别人关资源是误伤。确实要连整张图一起收才传 `close_shared=True`，顺序固定
+channel → discovery → sandbox → memory → model。三条细节：
+
+- 幂等（`_closed` 标记），可以放在 `finally` 里重复调；
+- 拿实例串行锁，所以**不会在当前任务跑到一半时把资源抽走**（要关先取消任务）；
+- 单个资源关不掉不阻止其余收尾，但会在全部尝试之后抛汇总异常——收尾故障要能被运维看见。
+
+## G. 自检（读完应能回答）
 
 1. 为什么一个 `AgentCore` 实例上要强制任务串行？共享的可变状态有哪几处？
 2. 想要多租户/多专员并发，正确的用法是什么？哪些部件可以共享、哪些必须随实例独立？
@@ -253,3 +300,5 @@ if hasattr(self.model, "on_diagnostic"):
 7. `emit()` 为什么要吞掉回调自身的异常？这体现了什么定位？
 8. 宿主只传一次 `on_diagnostic`，它是怎么到达内部 router 和 FallbackModelProvider 的？
 9. 哪两类失败**刻意不发**诊断，为什么？
+10. 同步 handler 为什么不能用 `asyncio.wait_for` 做超时？`asyncio.wait` 与它的行为差别在哪一处实测里？
+11. `aclose()` 默认为什么不关宿主传进来的 model / memory？什么情况下才该传 `close_shared=True`？

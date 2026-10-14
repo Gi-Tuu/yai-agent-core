@@ -15,6 +15,10 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     autoDeploy: true
+    # 显式钉住跟踪分支：不写时 Blueprint 用创建那一刻的默认分支，仓库默认分支若变过
+    # 或服务的源分支被改指向别的分支，push main 就再也触发不了重建（2026-10-14 实测
+    # main 两次合并后线上仍停在 09-14 的构建，故在此写死，排除这一种可修的原因）。
+    branch: main
     envVars:
       - key: OPENAI_API_KEY
         sync: false # Secret：首次部署时在控制台粘贴，不入库
