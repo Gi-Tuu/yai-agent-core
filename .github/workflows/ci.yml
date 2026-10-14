@@ -16,18 +16,23 @@ permissions:
 # v4/v5 时代的 node20 已被 GitHub 强制切到 24 并在日志里出弃用告警。
 jobs:
   test:
-    name: lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
+    # 作业名里只放 linux/windows 这种稳定别名，**不放 runner 镜像标签**：
+    # 分支保护的 required_status_checks 按作业名字符串匹配，名字一旦带 ubuntu-latest，
+    # 换镜像就等于把必需检查改成永远不会上报的名字，PR 会被静默卡成 BLOCKED。
+    name: lint & test (${{ matrix.family }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.image }}
     env:
       # 用矩阵解释器覆盖仓库里的 .python-version(3.13)，保证 uv sync/run 不擅自换版本
       UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04]
+        family: [linux]
+        image: [ubuntu-24.04]
         python-version: ["3.11", "3.12", "3.13"]
         include:
-          - os: windows-2022
+          - family: windows
+            image: windows-2022
             python-version: "3.13"
 
     steps:
@@ -46,7 +51,7 @@ jobs:
       # uv lock 为 universal lock，默认解析全部 extras，可一并覆盖 otel/crypto 等可选
       # 依赖的漏锁。仅在单个 Linux 矩阵跑一次，该步骤属于本 test 门禁 job，失败会阻塞合并。
       - name: Verify uv.lock is up to date
-        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        if: matrix.family == 'linux' && matrix.python-version == '3.12'
         run: uv lock --check
 
       - name: Install project (dev + llm + server + mcp + openapi + otel extras)
