@@ -3,7 +3,19 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 **内核本体始终保持零第三方硬依赖**（`pyproject.toml` 的 `dependencies = []`），真实模型、Web 服务、MCP、OpenAPI 等能力全部走可选 extras 与 SPI 契约懒加载。
 
-详细的版本说明源稿见 [`docs/releases/`](docs/releases/)。版本号与 GitHub Release / tag 由维护者拍板后发布。
+每个版本的说明就以本文件对应小节为准（[`docs/releases/`](docs/releases/) 只留早期长文草稿，不再逐版维护）。版本号与 GitHub Release / tag 由维护者拍板后发布；Release 正文由 `publish.yml` 从 PR 标题自动生成，人话版摘要写在下面的小节里。
+
+## [v0.10.0] - 2026-10-14
+
+本版主线是**"让内核能被安全地嵌进真实软件"**：能力声明能跨进程走了，超时与收尾有了统一入口，多了第二个真实模型后端，文件能力有了第 10 个契约，公网端点多了两道闸。全部新增默认不改变既有行为。
+
+- **能力声明跨进程**：`ToolGovernance` 的数据部分随 manifest 清单导出/导入，脱敏与审计收口在另一台机器上照样生效；`gate` 作为函数永不导出也永不凭快照重建——外来清单既加不了闸门，也没有摘闸门的通道。
+- **运行时保障补齐两处空白**：工具 handler 硬超时（`tool_timeout`，异步真取消、同步如实告知"可能仍在后台跑完"）与 `AgentCore.aclose()` 统一收尾（谁创建谁负责关，幂等）。
+- **第二个真实模型后端**：Anthropic 消息接口（`[anthropic]` extra），`ModelProvider` 契约与内核零改动。
+- **第 10 个 SPI**：资源契约 + 安全文件后端（两道路径闸、原子写、乐观并发、超限报错不截断）。
+- **外部能力契约（ACC）兼容层**：只声称 OpenAPI Binding Parser Profile，26 条官方向量逐字节入库校验；能力闸 + 宿主注入的可信主体让声明真正参与每一次调用，且**只能把闸门往上抬**。
+- **安全两条**：沙箱 AST 静态闸门深嵌套改为失败关闭（并加模糊测试 target）；host_e 跨进程工具口加本地令牌鉴权。
+- **限流加第二道闸**：`global_per_minute` 跨 IP 总配额（默认关闭），补上"每 IP 都没超但总量刷爆"的盲区。
 
 ## [Unreleased]
 
