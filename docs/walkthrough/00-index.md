@@ -136,7 +136,7 @@
 - 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
 - 19 · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
 - 20 · `discovery/scoring.py` + `spi/embedding.py` + `discovery/semantic.py`：双通道语义发现（词法打分 + 可选 embedding，本地 bge-m3 / 云端双后端，margin 防误召回）
-- 21 · `types.py`（ToolSpec 序列化）+ `tools/manifest.py`：能力清单交换（语言中立 manifest，composite / code 跨实例移植，不造调用通道）
+- 21 · `types.py`（ToolSpec 序列化）+ `tools/manifest.py`：能力清单交换（语言中立 manifest，composite / code 跨实例移植，治理声明随清单走但 `gate` 永不随清单走，不造调用通道）
 - 22 · `shell/desktop/`：原生桌面端（PySide6 + QML 灵动岛，内核与界面同进程，事件驱动动效与线程纪律）
 - 23 · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
 - 24 · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）

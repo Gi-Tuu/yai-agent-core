@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from yai_core import build_spec
+from yai_core.channels import CollectChannel
 from yai_core.policy import AllowlistPolicy
 from yai_core.policy.redact import redact_arguments
-from yai_core.tools import ToolExecutor, ToolRegistry
+from yai_core.tools import ToolExecutor, ToolRegistry, build_composite_spec
 from yai_core.types import EventType, ToolGovernance
 
 SECRET = "sk-live-abcdefghijklmnop"
@@ -157,3 +158,67 @@ def test_broad_hint_still_hides_declared_paths_from_approver() -> None:
     assert asked.data["arguments"]["api_key"].startswith("[redacted")
     assert channel.seen["api_key"].startswith("[redacted")
     assert asked.data["arguments"]["order_id"] == "A-1"
+
+
+# ---------- 组合工具：自己那份对外副本同样受声明约束 ----------
+
+def _run_composite(step_governance: ToolGovernance | None = None) -> tuple[list, object]:
+    """组合把入参 ``api_key`` 经占位符透传给内部 ``echo``，返回事件与执行痕迹。"""
+    seen: list[dict] = []
+
+    def echo(token: str) -> dict:
+        """回显收到的值。"""
+        seen.append({"token": token})
+        return {"token": token}
+
+    inner = build_spec(echo)
+    if step_governance is not None:
+        inner.governance = step_governance
+
+    composite = build_composite_spec(
+        "leak_chain",
+        "把密钥交给内部工具回显",
+        [{"tool": "echo", "args": {"token": "{{$input.api_key}}"}}],
+        input_schema={"type": "object", "properties": {"api_key": {"type": "string"}}},
+    )
+    composite.governance = ToolGovernance(sensitive=("api_key",))
+
+    registry = ToolRegistry()
+    registry.register(inner)
+    registry.register(composite)
+    executor = ToolExecutor(
+        registry, AllowlistPolicy((), mode="auto"), CollectChannel()
+    )
+    events, ok, _text = asyncio.run(
+        executor.execute("leak_chain", {"api_key": SECRET})
+    )
+    return events, (ok, seen)
+
+
+def test_composite_declared_path_redacts_its_own_event() -> None:
+    """声明了 sensitive 就不能因为走组合分支而失效：TOOL_COMPOSED 副本要糊掉。"""
+    events, (ok, seen) = _run_composite()
+    assert ok is True
+    composed = next(e for e in events if e.type == EventType.TOOL_COMPOSED)
+    assert SECRET not in str(composed.data)
+    assert composed.data["arguments"]["api_key"].startswith("[redacted")
+    # 执行链仍拿真值——脱敏只改变"别人看见什么"
+    assert seen == [{"token": SECRET}]
+
+
+def test_redaction_is_per_layer_not_taint_tracking() -> None:
+    """边界（如实记录，不假装保护）：密钥流进内部步骤后，按**那一步自己的**声明处理。
+
+    组合工具的声明只覆盖它自己那份 arguments；步骤参数名已经换了（``token``），
+    内核不做自动污点追踪。宿主想让这一步也收口，就给这一步也声明。
+    """
+    events, (ok, _seen) = _run_composite()
+    assert ok is True
+    step_call = next(e for e in events if e.type == EventType.TOOL_CALL)
+    assert SECRET in str(step_call.data)
+
+    covered, (ok2, _s2) = _run_composite(ToolGovernance(sensitive=("token",)))
+    assert ok2 is True
+    step_call2 = next(e for e in covered if e.type == EventType.TOOL_CALL)
+    assert SECRET not in str(step_call2.data)
+    assert step_call2.data["arguments"]["token"].startswith("[redacted")

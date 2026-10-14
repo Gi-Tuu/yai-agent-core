@@ -125,6 +125,92 @@ class ToolGovernance:
     gate: Callable[[dict[str, Any], Any], GateDecision] | None = None
 
 
+#: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
+#: :func:`governance_from_manifest` 的理由说明）。
+_GOVERNANCE_KEYS = ("sensitive", "audit_sensitive", "acc")
+
+
+def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
+    """把治理声明降成纯 JSON 数据；``gate`` 是函数，**不出现在输出里**。
+
+    空声明返回 ``{}``，调用方据此省略整个键——不给未治理的工具制造噪声字段。
+    """
+    out: dict[str, Any] = {}
+    if governance.sensitive:
+        out["sensitive"] = list(governance.sensitive)
+    if governance.audit_sensitive:
+        out["audit_sensitive"] = True
+    if governance.acc is not None:
+        out["acc"] = dict(governance.acc)
+    return out
+
+
+def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
+    """校验入站清单的治理块，返回 :class:`ToolGovernance`（``gate`` 恒为 None）。
+
+    三条硬规矩：
+
+    1. **不认识的键直接拒绝**。清单是数据交换格式，静默忽略一个写错的
+       ``sensitives``（本意要脱敏）就等于"声明了保护但内核没做"，比报错更危险；
+       真要加字段就升 ``MANIFEST_VERSION``，别靠老读者猜。
+    2. **只校验类型，不解释 ``acc`` 的内容**。声明快照在清单里是**惰性的记录**，
+       内核不据它改变任何行为，因此也无需在这里重跑契约校验。
+    3. **绝不凭 ``acc`` 造 gate**。外来清单只是"别人说这个工具有这些约束"，
+       准入逻辑必须由本地宿主显式绑定（``integrations/acc.build_gate``）；
+       否则一份外来 JSON 就能给本机工具加上或摘掉闸门。
+    """
+    if raw is None:
+        return ToolGovernance()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"工具 {name!r} 的 governance 必须是 object，得到 {type(raw)!r}"
+        )
+    unknown = sorted(set(raw) - set(_GOVERNANCE_KEYS))
+    if unknown:
+        raise ValueError(
+            f"工具 {name!r} 的 governance 含内核不认识的字段 {unknown}，"
+            f"合法字段只有 {list(_GOVERNANCE_KEYS)}；"
+            "静默忽略会让人以为脱敏/审计收口已生效，故拒绝加载"
+        )
+
+    sensitive: tuple[str, ...] = ()
+    if raw.get("sensitive") is not None:
+        items = raw["sensitive"]
+        if not isinstance(items, (list, tuple)):
+            raise ValueError(
+                f"工具 {name!r} 的 governance.sensitive 必须是字符串数组"
+            )
+        paths: list[str] = []
+        for item in items:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"工具 {name!r} 的 governance.sensitive 含空或非法路径: {item!r}"
+                )
+            paths.append(item.strip())
+        sensitive = tuple(paths)
+
+    audit_sensitive = raw.get("audit_sensitive", False)
+    if not isinstance(audit_sensitive, bool):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.audit_sensitive 必须是布尔值，"
+            f"得到 {audit_sensitive!r}"
+        )
+
+    acc = raw.get("acc")
+    if acc is not None and not isinstance(acc, dict):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.acc 必须是 object 或 null，"
+            f"得到 {type(acc)!r}"
+        )
+
+    return ToolGovernance(
+        sensitive=sensitive,
+        audit_sensitive=audit_sensitive,
+        acc=acc,
+        gate=None,
+    )
+
+
 @dataclass
 class ToolSpec:
     """统一工具规格。Native / OpenAPI / MCP / 组合工具在 Registry 中同构。"""
@@ -161,7 +247,11 @@ class ToolSpec:
 
         - composite：随清单携带 ``steps``（每步 {tool, args}），工作流即数据；
         - code：随清单携带 ``code`` 字符串（执行仍需宿主沙箱）；
-        - native/openapi/mcp：handler 是运行时对象、不可移植，只导出声明。
+        - native/openapi/mcp：handler 是运行时对象、不可移植，只导出声明；
+        - governance：导出 ``sensitive`` / ``audit_sensitive`` / ``acc`` 快照；
+          ``gate`` 是**函数**，与 handler 同命——不可序列化，导出即丢弃。
+
+        无治理声明时整个 ``governance`` 键都不写，保持清单与旧格式逐字节一致。
         """
         manifest: dict[str, Any] = {
             "name": self.name,
@@ -175,6 +265,9 @@ class ToolSpec:
             ]
         if self.source == "code":
             manifest["code"] = self.code
+        governance = governance_to_manifest(self.governance)
+        if governance:
+            manifest["governance"] = governance
         return manifest
 
     @classmethod
@@ -184,6 +277,23 @@ class ToolSpec:
         composite / code 的可执行信息（steps / code）随清单携带，注册后即可
         （在宿主沙箱内）执行；native/openapi/mcp 仅为能力声明，需另行绑定
         执行后端（跨语言接入请直接走 MCP / OpenAPI 集成，它们自带 handler）。
+
+        治理块同样随清单走（脱敏路径、宽口径审计、契约声明快照），但
+        ``governance.gate`` 与 handler 一样是运行时函数，**不可能来自清单**：
+        跨进程 / 跨语言导入后准入判定为空，要恢复准入必须由宿主显式重新绑定::
+
+            from dataclasses import replace
+            from yai_core.integrations.acc import build_gate, parse_declaration
+
+            parsed = parse_declaration(spec.governance.acc)
+            if parsed.valid and parsed.declaration is not None:
+                spec.governance = replace(
+                    spec.governance,
+                    gate=build_gate(parsed.declaration, spec.input_schema),
+                )
+
+        内核不会拿清单里的 ``acc`` 快照自动造 gate——外来清单不能给本机工具
+        加上或摘掉闸门。
         """
         if not isinstance(data, dict):
             raise TypeError(f"manifest 工具必须是 object，得到 {type(data)!r}")
@@ -226,6 +336,7 @@ class ToolSpec:
             source=source,
             steps=steps,
             code=code,
+            governance=governance_from_manifest(name, data.get("governance")),
         )
 
 
