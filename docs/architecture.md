@@ -179,7 +179,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
 |---|---|---|---|
-| ModelProvider | `achat(messages, tools, tier)` | OpenAICompatProvider（DeepSeek 等） | 接私有模型/本地模型 |
+| ModelProvider | `achat(messages, tools, tier)` | OpenAICompatProvider（DeepSeek 等）、AnthropicProvider（Claude） | 接私有模型/本地模型 |
 | Channel | `emit / ask / confirm` | CollectChannel、CliChannel | Web SSE、Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite、向量记忆 |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | 高危工具人工确认 |

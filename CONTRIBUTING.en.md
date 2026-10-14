@@ -20,7 +20,7 @@ No API key is required. Run these in order:
 git clone https://github.com/Gi-Tuu/yai-agent-core.git
 cd yai-agent-core
 uv venv
-uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi   # install everything at once
+uv sync --extra dev --extra llm --extra anthropic --extra server --extra mcp --extra openapi   # install everything at once
 uv run pytest                                   # ① the full offline suite should be all green
 uv run python scripts/smoke_test.py             # ② one kernel runs smoke scenarios across three hosts
 uv run python examples/host_e_sales_crm/standalone_cli.py   # ③ the native CRM menu without AI ("the app as it is")
@@ -52,7 +52,8 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv pip install -e ".[mcp]"          # only when developing/running the MCP Client integration
 uv pip install -e ".[openapi]"      # only when developing/running OpenAPI discovery (httpx + pyyaml)
-# Everything at once: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+uv pip install -e ".[anthropic]"    # only for Claude-family models (official SDK; tests use a fake module)
+# Everything at once: uv sync --extra dev --extra llm --extra anthropic --extra server --extra mcp --extra openapi
 
 # 3. Verify: offline tests and smoke, no API key at any point
 #    (with the venv active you can run pytest directly; otherwise use uv run pytest)

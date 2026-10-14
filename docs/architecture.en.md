@@ -208,7 +208,7 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 
 | Contract | Methods | Default implementation | When a host replaces it |
 |---|---|---|---|
-| ModelProvider | `achat(messages, tools, *, tier)` | OpenAICompatProvider (DeepSeek, etc.) | Private/local models |
+| ModelProvider | `achat(messages, tools, *, tier)` | OpenAICompatProvider (DeepSeek, etc.), AnthropicProvider (Claude) | Private/local models |
 | Channel | `emit / ask / confirm` | CollectChannel, CliChannel | Web SSE, Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite, vector memory |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | Human confirmation for risky tools |

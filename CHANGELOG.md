@@ -9,6 +9,11 @@
 
 ### Added
 
+- **Anthropic 模型接口（`llm/anthropic.py`，可选 `[anthropic]` extra）**：与 `OpenAICompatProvider` 并列的第二个真实模型后端，宿主仍然只是换一个 provider 对象，`ModelProvider` 契约与内核零改动；差异全在适配器里翻译。
+  - **四处线格式差异逐条落地**：`system` 从 messages 里抽出来走顶层参数（多条合并）；`max_tokens` 必填（显式参数 → `ANTHROPIC_MAX_TOKENS` → 默认 4096）；assistant 的 `tool_calls` 翻译成 `tool_use` 内容块；`role:"tool"` 的结果翻译成 **user 消息里的 `tool_result` 块**，并把相邻同角色合并（一次调用多个工具结果 = 一条 user 消息多个块），且不生成空 text 块。工具描述形状 `{"type":"function","function":{…}}` → `{"name","description","input_schema"}`。
+  - **响应解析**：`text` 块拼接、`tool_use` 块转 `ToolCallRequest`；思考块等非本层块类型忽略但保留 `raw`。`usage` 映射 `input_tokens/output_tokens`，后端不给 usage 时保持 `None`（内核不臆造 token 数，预算退回按次数兜底）。模型吐出的坏 JSON 参数按 `{}` 处理，不原样转发也不抛异常。
+  - **口径一致**：声明 `yai_live_router = True` 供 `llm_router="auto"` 识别；standard/strong 两档沿用内核机制（`ANTHROPIC_MODEL` / `ANTHROPIC_STRONG_MODEL`）；Key 只从参数或环境变量读；SDK 懒加载，未安装时抛带 `uv sync --extra anthropic` 指引的错误；重试交给 SDK 或外层 `FallbackModelProvider`。
+  - **边界写清**：不做流式、不做多模态输入（等消息层 `parts`）、不做厂商专有扩展（提示缓存 / thinking 参数）。新增 `tests/test_anthropic_provider.py`（17 例，假 SDK 注入，断言发出去的请求形状 + 一条端到端工具回路），逐行讲义第 45 篇；`.env.example` 与 `README` / `docs/architecture` / `CONTRIBUTING` 中英同步；内核 `dependencies` 仍为空。
 - **ACC v1 兼容层（`integrations/acc/`，可选、零硬依赖）**：新增能力声明契约的解析与决策原语，宿主可以读懂外部生态给一个操作贴的风险/审批/审计声明，而不必自己重贴一遍。
   - **`declaration.py` 零依赖校验器**：手写镜像 ACC v1 schema 的约束（必填 `version`/`enabled`/`scope`、枚举、正则、区间、长度），不引入 `jsonschema`；诊断严格分两类——整数主版本不认识给 `unsupported_version`，其余不合法（含缺 `version`）给 `invalid_declaration`；**未知字段一律忽略**并只进 `extensions` 扩展袋，不参与任何 allowlist/风险/审批/限流/审计判定。
   - **`evaluate.py` 决策原语**：`is_exposed`（enabled + 非空 scope + 路由允许 + 需要主体时有可信主体 + 绑定给了入参 schema）、`effective_risk`（显式风险 > 声明只读 > 绑定原生 GET 信号 > 兜底 `medium`，永不默认成 low）、`audit_sensitive`、`approval_outcome`（先按绑定 input schema 拒非法调用值，再校验条件路径已声明，`approval.required` 恒占优，`approval.when` 走 ANY）。九个算子全部按**严格 JSON 值模型**比较，不把字符串悄悄转成数字；**判不出来即失败关闭为拒绝**，绝不静默当"条件不匹配"放行。本层只做判定，不接管执行，也不替代宿主业务授权。

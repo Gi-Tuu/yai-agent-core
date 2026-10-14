@@ -89,6 +89,13 @@ from yai_core import OpenAICompatProvider
 model = OpenAICompatProvider()      # 读 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
 ```
 
+用 Claude 系列则换 `[anthropic]` extra（同一套 `ModelProvider` 契约，翻译在适配器里做完）：
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # 读 ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
+```
+
 **路线 B · 克隆仓库，跑全部宿主与测试**（离线，无需 Key）：
 
 ```bash

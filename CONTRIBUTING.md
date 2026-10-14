@@ -15,7 +15,7 @@
 git clone https://github.com/Gi-Tuu/yai-agent-core.git
 cd yai-agent-core
 uv venv
-uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi   # 一次装齐
+uv sync --extra dev --extra llm --extra anthropic --extra server --extra mcp --extra openapi   # 一次装齐
 uv run pytest                                   # ① 全量离线测试（当前 517 项），应全绿
 uv run python scripts/smoke_test.py             # ② 同一内核冒烟跑通三个宿主
 uv run python examples/host_e_sales_crm/standalone_cli.py   # ③ 不带 AI 的原生 CRM 菜单（看"软件本来的样子"）
@@ -43,7 +43,8 @@ uv venv
 uv pip install -e ".[dev,llm,server]"
 uv pip install -e ".[mcp]"          # 仅在开发/运行 MCP Client 集成时需要
 uv pip install -e ".[openapi]"      # 仅在开发/运行 OpenAPI 发现时需要（httpx + pyyaml）
-# 一次装齐（全量测试，当前 517 项）：uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi
+uv pip install -e ".[anthropic]"    # 仅在接 Claude 系列模型时需要（官方 SDK；测试用假模块，不需要装）
+# 一次装齐（全量测试，当前 517 项）：uv sync --extra dev --extra llm --extra anthropic --extra server --extra mcp --extra openapi
 
 # 3. 验证：离线测试与冒烟，全程不需要 API Key（激活 venv 后可直接用 pytest；未激活用 uv run pytest）
 uv run pytest                       # 当前 517 passed / 8 skipped，离线（extras 组合与 CI 一致时无 skip）；数字随版本增长，以实跑为准

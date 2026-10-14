@@ -97,6 +97,14 @@ from yai_core import OpenAICompatProvider
 model = OpenAICompatProvider()      # reads OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
 ```
 
+For Claude-family models use the `[anthropic]` extra (same `ModelProvider` contract; the
+Messages-API translation lives entirely in the adapter):
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # reads ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
+```
+
 **Path B · Clone the repo and run every host and test** (offline, no key needed):
 
 ```bash
