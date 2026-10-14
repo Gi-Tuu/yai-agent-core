@@ -126,10 +126,11 @@ uv run pytest                         # 全量测试，不需要 API Key
 | **端到端评测** | 内核自带离线 eval harness：ScriptedModel 真跑完整 Core，量化完成率、工具精确 / 召回、越权与无支撑断言；golden 回归基线 + 非门禁 CI |
 
 <details>
-<summary>展开：九个可替换 SPI 契约</summary>
+<summary>展开：十个可替换 SPI 契约</summary>
 
-`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher`
-——宿主可替换任意一个，Core 提供零配置默认实现（`StorageCipher` 为可选的落盘加密插槽）。内核本体始终零第三方硬依赖。
+`Model · Channel · Memory · Policy · Discovery · Sandbox · RouteSelector · Embedding · StorageCipher · Resource`
+——宿主可替换任意一个，Core 提供零配置默认实现（`StorageCipher` 为可选的落盘加密插槽；`Resource`
+是文件/资源访问插槽，内核本体不碰磁盘，内置实现见 `batteries/filesystem.py`）。内核本体始终零第三方硬依赖。
 
 </details>
 

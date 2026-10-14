@@ -9,6 +9,12 @@
 
 ### Added
 
+- **资源契约（第 10 个 SPI）与安全文件后端**：让 Agent 能读写文件，同时把可达范围钉死在一个根目录内。内核只定义**契约 + 纯路径策略**（`spi/resources.py`，零 IO），真正碰磁盘的实现在电池层（`batteries/filesystem.py`）——内核不会因为多了一个契约就获得读盘权限。
+  - **两道路径闸，缺一不可**：`normalize_relative()` 拒非法形状（`..` 上跳、绝对路径与 UNC、盘符与 NTFS 数据流的冒号、`~` 展开、Windows 保留设备名、段尾点号/空格、控制字符、超深超长、混用分隔符），**报错而不是清洗后放行**；`resolve_within_root()` 逐段拦符号链接与重解析点（Windows 无 `O_NOFOLLOW`，这一道必须自己走），再对 `realpath` 结果做归属复核（root 自身可能是链接）。测试证明：放开第一道的宽松策略仍拦得住逃逸。
+  - **写盘四口径**：写永远走 tmp + `fsync` + 原子替换，任何失败不留半截、临时文件清掉、原文件从未被就地改写；新建用 `os.link` 的"目标存在即失败"语义做独占创建（不支持硬链接的文件系统回退到"检查后替换"，窗口变宽但仍报冲突，回退分支有专门测试）；读/写/列举各有上限且**超限报错而非截断**（截断内容看起来是完整的，会让模型基于半份内容判断）；进程内一把写锁 + 跨进程靠指纹检测冲突，**明说不承诺跨进程严格互斥**（文件锁在 Windows/NFS 语义不一致）。
+  - **乐观并发给模型用**：`file_read` 返回 `sha256`，`file_patch` 必须带 `expected_sha256`，不匹配即冲突；"重读再改，不要硬写"写进工具 docstring（那就是模型看到的说明书）。返回值只给相对路径，绝不回绝对路径。
+  - **工具层零胶水**：`filesystem_capabilities(root)` 产出 `file_list/file_read/file_create/file_patch` 四个 **async** 闭包（真读写在 `asyncio.to_thread`，不卡事件循环），可直接交给 `AgentCore.auto` / `build_spec`；另有 `read_only=True` 只读挂载与非 UTF-8 明确拒绝。授权仍归权限闸与能力闸，契约本身不做授权。
+  - 新增 `tests/test_file_provider_security.py`（69 例，双平台可跑：符号链接用例在无权限环境自动跳过），讲义第 46 篇；README / `docs/architecture` / `docs/comparison` 中英的 SPI 计数由九改为十并补契约行；内核 `dependencies` 仍为空。
 - **Anthropic 模型接口（`llm/anthropic.py`，可选 `[anthropic]` extra）**：与 `OpenAICompatProvider` 并列的第二个真实模型后端，宿主仍然只是换一个 provider 对象，`ModelProvider` 契约与内核零改动；差异全在适配器里翻译。
   - **四处线格式差异逐条落地**：`system` 从 messages 里抽出来走顶层参数（多条合并）；`max_tokens` 必填（显式参数 → `ANTHROPIC_MAX_TOKENS` → 默认 4096）；assistant 的 `tool_calls` 翻译成 `tool_use` 内容块；`role:"tool"` 的结果翻译成 **user 消息里的 `tool_result` 块**，并把相邻同角色合并（一次调用多个工具结果 = 一条 user 消息多个块），且不生成空 text 块。工具描述形状 `{"type":"function","function":{…}}` → `{"name","description","input_schema"}`。
   - **响应解析**：`text` 块拼接、`tool_use` 块转 `ToolCallRequest`；思考块等非本层块类型忽略但保留 `raw`。`usage` 映射 `input_tokens/output_tokens`，后端不给 usage 时保持 `None`（内核不臆造 token 数，预算退回按次数兜底）。模型吐出的坏 JSON 参数按 `{}` 处理，不原样转发也不抛异常。

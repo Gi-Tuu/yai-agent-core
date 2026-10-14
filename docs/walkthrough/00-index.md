@@ -161,6 +161,7 @@
 - 43 · `policy/redact.py` + `policy/authorize.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）
 - 44 · `integrations/acc/` + `openapi/discovery.py` + `policy/authorize.py`：ACC v1 兼容层（零依赖声明校验器 + 严格 JSON 审批原语 + 官方 26 条参考向量 + OpenAPI 绑定按声明筛暴露面 + 能力闸与宿主注入的可信主体）
 - 45 · `llm/anthropic.py`：Claude 模型接口（system 走顶层、max_tokens 必填、tool_use/tool_result 块翻译、相邻同角色合并；同一 ModelProvider 契约，内核零改动）
+- 46 · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
 
 ## 5. 自检（读完本篇应能回答）
 
