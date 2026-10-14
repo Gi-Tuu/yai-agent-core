@@ -9,6 +9,10 @@
 
 ### Added
 
+- **限流全局兜底配额（`global_per_minute`，默认关闭）**：补上每 IP 维度的盲区——一万个赞不同的 IP、每个只发三次，`per_minute=30` 一次都不会触发，但 `/v1/agent/run` 每次都是真金白银的模型调用。现在 `YAI_RATE_LIMIT_GLOBAL_PER_MINUTE=120` 就给整实例加一道跨 IP 总闸；默认 `0` = 关闭，不配就等于行为与旧版逐字节一致。
+  - **不写第二套算法**：全局闸复用同一个 `SlidingWindowLimiter`（只是 `per_minute` 覆盖 + key 固定 `__global__`），两套窗口语义（恢复时机、`Retry-After` 口径）必须完全一致。判定顺序是**先全局后每 IP**——全局拒绝时不消耗该 IP 配额；代价是"全局放行但 IP 超限"会白扣一个全局名额，宁可多拦不可漏放。429 响应体新增 `scope: "global" | "ip"`，运维一眼看出哪道闸命中。
+  - **红线不动**：全局闸仍然只挂在 `POST /v1/agent/run` 白名单内，三个 GET 验证端点（`/health`、`/.well-known/*`、`/v1/tools`）任何超限状态下都无条件 200，有测试钉住。
+  - **说清"全局"到底有多大**：计数在**本进程内**，多实例部署时每个实例各算各的——它不是分布式限流，跨实例总闸需要先解决状态共享（Redis / 一致性计数）。`ratelimit.py` 的 `TODO(v0.4)` 就此关掉。新增 6 例测试（跨 IP 触发、判定顺序、不触达模型、GET 豁免、默认关闭、env 三态），讲义第 14 篇新增 G 节。
 - **治理声明随能力清单（manifest）一起走**：`to_manifest_dict` / `from_manifest_dict` 带上 `governance` 的三样数据（`sensitive` 脱敏路径、`audit_sensitive` 宽口径提示、`acc` 声明快照），跨进程 / 跨语言搬运后脱敏与审计收口照样生效；无治理声明的工具清单**逐字节不变**（整个键省略）。
   - **`gate` 与 handler 同命：不导出，也永不重建**。清单里的 `acc` 快照只是惰性记录——外来 JSON 不能给本机工具加上闸门，也不能替本机把闸门摘掉；要恢复准入必须由宿主本地重新绑定 `replace(spec.governance, gate=build_gate(...))`（示例写进 `from_manifest_dict` 的文档与讲义第 21 篇第 5 节）。两个方向各有契约测试：`test_foreign_acc_snapshot_never_builds_a_gate` / `test_host_rebinding_restores_the_gate`。
   - **入站只校验类型、不解释声明**：`sensitive` 必须是非空字符串数组、`audit_sensitive` 必须是布尔、`acc` 必须是 object 或 null；**出现内核不认识的治理键直接拒绝加载**——静默忽略一个写错的 `sensitives` 等于"宿主声明了脱敏而内核没做"，比报错危险。要加字段就升 `MANIFEST_VERSION`。
