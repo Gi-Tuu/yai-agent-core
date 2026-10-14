@@ -40,14 +40,14 @@ that runs inside your software's process**:
 
 | ✅ Good fit if you… | ⛔ Not a fit if you… |
 |---|---|
-| Already have working software and want to **add agent capability cheaply**, without platform lock-in | Want to **drag-and-drop agents** in a browser with no code (use Dify / Coze) |
+| Already have working software and want to **add agent capability cheaply**, without platform lock-in | Want to **drag-and-drop agents** in a browser with no code (use a visual agent platform) |
 | Want AI to call your software's **real functions**, not generic chit-chat | Want an out-of-the-box **cloud-hosted / team SaaS** agent |
 | Need a **self-hostable, embeddable** agent runtime with swappable parts | Want an unattended, fully autonomous **coding agent** (YAI asks for approval by design) |
 | Want to learn agent internals by building (auditable decisions, line-by-line walkthrough) | Expect a zero-config generic assistant — YAI's value is precisely in **binding to host capabilities** |
 
 ## How it differs from what you've heard of
 
-|  | Platforms<br>Dify / Coze | Frameworks<br>LangGraph · CrewAI · Agents SDK | **Embedded kernel · YAI** |
+|  | Platforms<br>visual agent platforms | Frameworks<br>orchestration · multi-agent frameworks | **Embedded kernel · YAI** |
 |---|---|---|---|
 | Form | Sign up, build inside the platform | Define agents / tools / orchestration yourself | **`import` into existing software** |
 | Agent code you write | — | A lot | **None** |
@@ -95,6 +95,14 @@ Using a real model is a one-line change (`[llm]` extra; OpenAI-compatible DeepSe
 ```python
 from yai_core import OpenAICompatProvider
 model = OpenAICompatProvider()      # reads OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
+```
+
+For Claude-family models use the `[anthropic]` extra (same `ModelProvider` contract; the
+Messages-API translation lives entirely in the adapter):
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # reads ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
 ```
 
 **Path B · Clone the repo and run every host and test** (offline, no key needed):

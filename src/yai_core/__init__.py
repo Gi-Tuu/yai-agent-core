@@ -28,6 +28,7 @@ from yai_core.kernel import (
     RouteDecision,
 )
 from yai_core.learning import ContextualBanditSelector
+from yai_core.llm.anthropic import AnthropicProvider
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
 from yai_core.llm.scripted import ScriptedModel
@@ -55,11 +56,14 @@ from yai_core.types import (
     ChatMessage,
     CompositeStep,
     EventType,
+    GateDecision,
     ModelResponse,
     RunResult,
     Strategy,
+    Subject,
     TokenUsage,
     ToolCallRequest,
+    ToolGovernance,
     ToolSpec,
 )
 
@@ -92,6 +96,7 @@ __all__ = [
     "REQUEST_CAPABILITY",
     "CompositeStep",
     "OpenAICompatProvider",
+    "AnthropicProvider",
     "FallbackModelProvider",
     "ScriptedModel",
     "build_spec",
@@ -107,11 +112,14 @@ __all__ = [
     "AgentEvent",
     "ChatMessage",
     "EventType",
+    "GateDecision",
     "ModelResponse",
     "RunResult",
     "Strategy",
+    "Subject",
     "TokenUsage",
     "ToolCallRequest",
+    "ToolGovernance",
     "ToolSpec",
     "__version__",
 ]

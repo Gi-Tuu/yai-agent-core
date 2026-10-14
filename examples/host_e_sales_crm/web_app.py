@@ -36,6 +36,7 @@ from runner_common import bootstrap, build_model, load_dotenv  # noqa: E402
 bootstrap()
 
 # 兼容历史导入：测试/脚本仍可从 web_app 取这些符号；唯一实现都在 agent_bridge。
+from host_e_sales_crm import tool_auth  # noqa: E402
 from host_e_sales_crm.agent_bridge import (  # noqa: E402,F401
     PERMISSION_MODES,
     AgentBridge,
@@ -244,7 +245,7 @@ class Workbench:
         return self.bridge.cancel(run_id)
 
 
-def make_handler(workbench: Workbench):
+def make_handler(workbench: Workbench, tool_token: str):
     class Handler(BaseHTTPRequestHandler):
         server_version = "YaiHostEWeb/0.1"
 
@@ -270,6 +271,13 @@ def make_handler(workbench: Workbench):
             except json.JSONDecodeError:
                 return None
 
+        # ---- 鉴权 ----
+        def _agent_authorized(self) -> bool:
+            """跨进程 Agent 口只认 Bearer 令牌（见 tool_auth 的边界声明）。"""
+            return tool_auth.token_matches(
+                self.headers.get("Authorization"), tool_token
+            )
+
         # ---- 路由 ----
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -285,6 +293,10 @@ def make_handler(workbench: Workbench):
                 return
             if path == "/api/agent/tools":
                 # 调试用：列出宿主对跨进程 Agent 开放的白名单工具。
+                # 白名单本身就是攻击面信息，因此同样要令牌。
+                if not self._agent_authorized():
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
                 self._send_json(200, {"tools": workbench.tool_service.describe()})
                 return
             if path == "/api/state":
@@ -321,6 +333,11 @@ def make_handler(workbench: Workbench):
                 return
             if path == "/api/agent/tool":
                 # 跨进程 Agent（桌面灵动岛销售专员）统一工具入口。
+                # 这里能执行宿主写操作，且审批在调用方完成：无令牌的调用必须拒，
+                # 否则同机任意进程都能绕过审批直接改业务数据。
+                if not self._agent_authorized():
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
                 name = str(payload.get("name", "")).strip()
                 arguments = payload.get("arguments", {})
                 if not isinstance(arguments, dict):
@@ -442,8 +459,10 @@ def make_handler(workbench: Workbench):
     return Handler
 
 
-def create_server(workbench: Workbench, host: str, port: int) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(workbench))
+def create_server(
+    workbench: Workbench, host: str, port: int, tool_token: str
+) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), make_handler(workbench, tool_token))
     server.daemon_threads = True
     return server
 
@@ -469,7 +488,16 @@ def main(argv: list[str] | None = None) -> None:
         "--permission", choices=PERMISSION_MODES, default="partial",
         help="初始权限挡位（默认 partial：读放行、写/新能力询问）",
     )
+    parser.add_argument(
+        "--tool-token", default=None,
+        help="跨进程工具口令牌；缺省读 YAI_TOOL_TOKEN 或本地令牌文件，"
+            "绑定非环回地址时必须显式提供",
+    )
     args = parser.parse_args(argv)
+
+    guard = tool_auth.startup_guard(args.host, args.tool_token)
+    if guard:
+        raise SystemExit(guard)
 
     load_dotenv()
     model, backend = build_model()
@@ -480,7 +508,8 @@ def main(argv: list[str] | None = None) -> None:
         core_enabled=args.core_on,
         permission_mode=args.permission,
     )
-    httpd = create_server(workbench, args.host, args.port)
+    tool_token = tool_auth.resolve_token(args.tool_token)
+    httpd = create_server(workbench, args.host, args.port, tool_token)
     url = f"http://{args.host}:{httpd.server_port}"
     print("=" * 60)
     print("host_e 销售 CRM · 网页工作台")
@@ -493,6 +522,8 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print("  形态     : 纯 CRM 业务系统（页面无 AI 界面）")
         print(f"  跨进程口 : POST {url}/api/agent/tool（灵动岛选销售专员经此操控）")
+        print(f"  工具令牌 : {tool_auth.TOKEN_ENV} 或 {tool_auth.TOKEN_FILE}"
+              "（同机其他用户/服务与误接客户端会被 401 拒绝）")
         print("  AI 由桌面灵动岛选「销售专员」跨进程操作本页；本页保持软件本来的样子。")
         print("  Ctrl+C 停止。")
     print("=" * 60)

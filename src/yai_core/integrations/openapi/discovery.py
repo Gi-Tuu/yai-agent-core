@@ -9,12 +9,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.integrations.acc.gate import build_gate
+from yai_core.integrations.acc.openapi import bind_operation, misplaced_declarations
 from yai_core.integrations.openapi.spec import (
     _HTTP_METHODS,
     _READ_ONLY_METHODS,
     OpenApiSpecConfig,
 )
 from yai_core.tools.schema import EMPTY_OBJECT_SCHEMA, sanitize_schema
+from yai_core.types import ToolGovernance
 
 
 @dataclass
@@ -32,6 +35,8 @@ class OperationPlan:
     body_wrapped: bool
     body_required: bool
     security: list[dict] = field(default_factory=list)
+    # 带 ACC 扩展的 operation 才有：治理元数据快照，交由 client 装进 ToolSpec。
+    governance: ToolGovernance | None = None
 
 
 def _camel_to_snake(segment: str) -> str:
@@ -172,8 +177,12 @@ def _plan_one_operation(
     config: OpenApiSpecConfig,
     used_names: set[str],
     notes: list[str],
-) -> OperationPlan:
-    """把单个 HTTP operation 翻译成一个 :class:`OperationPlan`（参数 / body / 命名 / schema）。"""
+) -> OperationPlan | None:
+    """把单个 HTTP operation 翻译成一个 :class:`OperationPlan`（参数 / body / 命名 / schema）。
+
+    带 ACC 扩展时多走一道绑定：声明不可用或不可暴露的操作**返回 None 并留诊断**，
+    绝不退化成"一个没有治理的同名工具"。
+    """
     properties, required, path_params, query_params = _collect_parameters(
         shared_parameters, operation
     )
@@ -202,6 +211,34 @@ def _plan_one_operation(
     if not properties:
         input_schema = dict(EMPTY_OBJECT_SCHEMA)
 
+    binding = bind_operation(
+        operation,
+        method=method_l.upper(),
+        tool_name=name,
+        input_schema=input_schema,
+        query_params=tuple(query_params),
+        body_fields=body_fields,
+        scope_policy=config.acc_scope_allowed,
+        trusted_subject=config.trusted_subject,
+    )
+    if binding.declared:
+        notes.extend(binding.diagnostics)
+        if not binding.exposed:
+            # 被跳过不该顺手吞掉一个工具名：否则后面的同名操作会被改名成 __2。
+            used_names.discard(name)
+            return None
+        tool_description = _with_guidance(tool_description, binding)
+
+    governance: ToolGovernance | None = None
+    if binding.declared and binding.declaration is not None:
+        governance = ToolGovernance(
+            audit_sensitive=binding.audit_sensitive,
+            acc=binding.raw,
+            # 声明参与准入的方式：编译成一个中性判定函数挂到 governance.gate 上，
+            # 执行器只认 GateDecision，不认识 ACC。
+            gate=build_gate(binding.declaration, input_schema),
+        )
+
     return OperationPlan(
         name=name,
         description=tool_description,
@@ -215,7 +252,23 @@ def _plan_one_operation(
         body_required=body_required,
         # operation 级 security 缺省回退全局 security。
         security=operation.get("security", spec.get("security")) or [],
+        governance=governance,
     )
+
+
+def _with_guidance(description: str, binding: Any) -> str:
+    """把 ACC 的 guidance 并进工具描述：它是给模型读的用法提示，不是安全策略。"""
+    declaration = binding.declaration
+    if declaration is None or declaration.guidance is None:
+        return description
+    parts = [
+        f"使用时机：{declaration.guidance.when_to_use}" if declaration.guidance.when_to_use else "",
+        f"返回：{declaration.guidance.returns}" if declaration.guidance.returns else "",
+    ]
+    extra = " ".join(part for part in parts if part)
+    if not extra:
+        return description
+    return f"{description} {extra}".strip()[:1000]
 
 
 def _plans_for_path(
@@ -243,26 +296,27 @@ def _plans_for_path(
             continue
         if config.read_only and method_l not in _READ_ONLY_METHODS:
             continue
-        plans.append(
-            _plan_one_operation(
-                method_l,
-                path,
-                operation,
-                spec,
-                shared_parameters,
-                config,
-                used_names,
-                notes,
-            )
+        plan = _plan_one_operation(
+            method_l,
+            path,
+            operation,
+            spec,
+            shared_parameters,
+            config,
+            used_names,
+            notes,
         )
+        if plan is not None:
+            plans.append(plan)
     return plans
 
 
 def plan_operations(
     spec: dict, config: OpenApiSpecConfig
 ) -> tuple[list[OperationPlan], list[str]]:
-    """遍历 paths，产出操作计划列表与 notes（read_only 过滤、截断都在这里）。"""
+    """遍历 paths，产出操作计划列表与 notes（read_only 过滤、ACC 跳过、截断都在这里）。"""
     notes: list[str] = []
+    notes.extend(misplaced_declarations(spec))
     plans: list[OperationPlan] = []
     used_names: set[str] = set()
 

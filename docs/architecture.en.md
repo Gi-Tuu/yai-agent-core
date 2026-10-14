@@ -208,7 +208,7 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 
 | Contract | Methods | Default implementation | When a host replaces it |
 |---|---|---|---|
-| ModelProvider | `achat(messages, tools, *, tier)` | OpenAICompatProvider (DeepSeek, etc.) | Private/local models |
+| ModelProvider | `achat(messages, tools, *, tier)` | OpenAICompatProvider (DeepSeek, etc.), AnthropicProvider (Claude) | Private/local models |
 | Channel | `emit / ask / confirm` | CollectChannel, CliChannel | Web SSE, Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite, vector memory |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | Human confirmation for risky tools |
@@ -263,7 +263,7 @@ the peer address; state is in-memory only and clears on restart; there is no glo
 
 ## 6. Differentiation from the ecosystem (honest comparison)
 
-- Claude/OpenAI Agents SDK, LangGraph: developer-builds-agent; tools/orchestration must be explicitly
+- Vendor-provided agent SDKs and graph orchestration frameworks: developer-builds-agent; tools/orchestration must be explicitly
   defined and they bind to their own ecosystems;
 - agentic-kernel (TS): a similar embedded-runtime idea, but TypeScript-only and without capability
   auto-discovery or adaptive strategy;

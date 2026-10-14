@@ -35,14 +35,14 @@ YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 
 
 | ✅ 适合你，如果…… | ⛔ 不适合你，如果…… |
 |---|---|
-| 已有一个能跑的软件，想**低成本加上 Agent 能力**，且不被平台锁定 | 想在网页上**拖拽搭 Agent**、完全不写代码（用 Dify / Coze） |
+| 已有一个能跑的软件，想**低成本加上 Agent 能力**，且不被平台锁定 | 想在网页上**拖拽搭 Agent**、完全不写代码（用可视化 Agent 平台） |
 | 想让 AI 调用你软件的**真实功能**，而不是通用闲聊 | 想要开箱即用的**云端托管 / 团队 SaaS** 智能体 |
 | 需要可**自托管、可内嵌**、各部件可替换的 Agent 运行时 | 想要无人值守、全自动的 **coding agent**（YAI 刻意默认要授权） |
 | 想边做边学 Agent 内部原理（每个决策可审计、有逐行讲义） | 期望零配置的通用助手——YAI 的价值恰恰在**绑定宿主能力** |
 
 ## 和你听过的东西有何不同
 
-|  | 平台<br>Dify / Coze | 框架<br>LangGraph · CrewAI · Agents SDK | **嵌入式内核 · YAI** |
+|  | 平台<br>可视化 Agent 平台 | 框架<br>编排框架 · 多智能体框架 | **嵌入式内核 · YAI** |
 |---|---|---|---|
 | 形态 | 注册账号，在平台里搭 | 自己定义 Agent / 工具 / 编排 | **`import` 进现有软件** |
 | 要写的 Agent 代码 | — | 多 | **无** |
@@ -87,6 +87,13 @@ print(asyncio.run(core.run("搜索周报并总结")).final_text)   # 本周周�
 ```python
 from yai_core import OpenAICompatProvider
 model = OpenAICompatProvider()      # 读 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
+```
+
+用 Claude 系列则换 `[anthropic]` extra（同一套 `ModelProvider` 契约，翻译在适配器里做完）：
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # 读 ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
 ```
 
 **路线 B · 克隆仓库，跑全部宿主与测试**（离线，无需 Key）：

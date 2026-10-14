@@ -51,7 +51,7 @@ from yai_core.tools import (
 )
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
-from yai_core.types import AgentEvent, RunResult, Strategy, ToolSpec
+from yai_core.types import AgentEvent, RunResult, Strategy, Subject, ToolSpec
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
 FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
@@ -356,13 +356,20 @@ class AgentCore:
 
     # ---------- 运行 ----------
 
-    async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
+    async def astream(
+        self, task: str, *, subject: Subject | None = None
+    ) -> AsyncIterator[AgentEvent]:
         """运行一个任务并流式产出事件。
 
         并发契约：实例内任意时刻只运行一个任务。并发调用 ``astream`` /
         :meth:`run` 会在实例锁上排队，而不会让两条任务在 await 点交错、互相
         污染共享的上下文、记忆、工具注册表与路由学习态。要并发处理多条相互
         独立的会话，请为每条会话实例化独立的 :class:`AgentCore`。
+
+        ``subject`` 是**宿主注入的可信操作主体**（``None`` = 本上下文没有主体）：
+        它随本次运行透传到权限闸，模型无法通过输出或工具参数伪造它——想要冒充身份，
+        只能拿到宿主进程本身。声明了 ``ToolGovernance.gate`` 的能力与
+        ``yai_subject_aware`` 的策略会读到它，其余策略按原签名调用。
 
         流式宿主若提前结束消费（``break`` 或丢弃迭代器），异步生成器被关闭时
         会自动释放该锁；请正常耗尽或显式关闭事件流，否则后续任务会一直等待。
@@ -377,7 +384,7 @@ class AgentCore:
             # 指标旁路：run 开始打点；任何异常都不允许反噬主流程。
             self._metrics_start()
             try:
-                async for event in self._loop.astream(task):
+                async for event in self._loop.astream(task, subject=subject):
                     await self.channel.emit(event)
                     events.append(event)
                     self._metrics_event(event)
@@ -398,11 +405,11 @@ class AgentCore:
                     chosen = strategy or self.router.classify(task, self.registry)
                     self._record_feedback(task, chosen, events)
 
-    async def run(self, task: str) -> RunResult:
+    async def run(self, task: str, *, subject: Subject | None = None) -> RunResult:
         events: list[AgentEvent] = []
         final_text = ""
         strategy: Strategy | None = None
-        async for event in self.astream(task):
+        async for event in self.astream(task, subject=subject):
             events.append(event)
             data = event.data
             if "strategy" in data:

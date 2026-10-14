@@ -49,11 +49,12 @@ def live_pair():
     """启动一个纯 CRM host_e（随机端口），返回 (宿主 CRM, 客户端, 清理函数)。"""
     crm = _crm()
     workbench = Workbench(model_factory=lambda: _NoopModel(), model_label="离线", crm=crm)
-    httpd = create_server(workbench, "127.0.0.1", 0)
+    token = "test-tool-token"
+    httpd = create_server(workbench, "127.0.0.1", 0, token)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_port}"
-    client = HostECrmClient(base_url=base, timeout=10.0)
+    client = HostECrmClient(base_url=base, timeout=10.0, token=token)
     yield crm, client
     httpd.shutdown()
     httpd.server_close()

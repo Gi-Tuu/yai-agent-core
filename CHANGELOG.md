@@ -7,7 +7,37 @@
 
 ## [Unreleased]
 
-（暂无；v0.9.0 之后的改动在此累积。）
+### Added
+
+- **Anthropic 模型接口（`llm/anthropic.py`，可选 `[anthropic]` extra）**：与 `OpenAICompatProvider` 并列的第二个真实模型后端，宿主仍然只是换一个 provider 对象，`ModelProvider` 契约与内核零改动；差异全在适配器里翻译。
+  - **四处线格式差异逐条落地**：`system` 从 messages 里抽出来走顶层参数（多条合并）；`max_tokens` 必填（显式参数 → `ANTHROPIC_MAX_TOKENS` → 默认 4096）；assistant 的 `tool_calls` 翻译成 `tool_use` 内容块；`role:"tool"` 的结果翻译成 **user 消息里的 `tool_result` 块**，并把相邻同角色合并（一次调用多个工具结果 = 一条 user 消息多个块），且不生成空 text 块。工具描述形状 `{"type":"function","function":{…}}` → `{"name","description","input_schema"}`。
+  - **响应解析**：`text` 块拼接、`tool_use` 块转 `ToolCallRequest`；思考块等非本层块类型忽略但保留 `raw`。`usage` 映射 `input_tokens/output_tokens`，后端不给 usage 时保持 `None`（内核不臆造 token 数，预算退回按次数兜底）。模型吐出的坏 JSON 参数按 `{}` 处理，不原样转发也不抛异常。
+  - **口径一致**：声明 `yai_live_router = True` 供 `llm_router="auto"` 识别；standard/strong 两档沿用内核机制（`ANTHROPIC_MODEL` / `ANTHROPIC_STRONG_MODEL`）；Key 只从参数或环境变量读；SDK 懒加载，未安装时抛带 `uv sync --extra anthropic` 指引的错误；重试交给 SDK 或外层 `FallbackModelProvider`。
+  - **边界写清**：不做流式、不做多模态输入（等消息层 `parts`）、不做厂商专有扩展（提示缓存 / thinking 参数）。新增 `tests/test_anthropic_provider.py`（17 例，假 SDK 注入，断言发出去的请求形状 + 一条端到端工具回路），逐行讲义第 45 篇；`.env.example` 与 `README` / `docs/architecture` / `CONTRIBUTING` 中英同步；内核 `dependencies` 仍为空。
+- **ACC v1 兼容层（`integrations/acc/`，可选、零硬依赖）**：新增能力声明契约的解析与决策原语，宿主可以读懂外部生态给一个操作贴的风险/审批/审计声明，而不必自己重贴一遍。
+  - **`declaration.py` 零依赖校验器**：手写镜像 ACC v1 schema 的约束（必填 `version`/`enabled`/`scope`、枚举、正则、区间、长度），不引入 `jsonschema`；诊断严格分两类——整数主版本不认识给 `unsupported_version`，其余不合法（含缺 `version`）给 `invalid_declaration`；**未知字段一律忽略**并只进 `extensions` 扩展袋，不参与任何 allowlist/风险/审批/限流/审计判定。
+  - **`evaluate.py` 决策原语**：`is_exposed`（enabled + 非空 scope + 路由允许 + 需要主体时有可信主体 + 绑定给了入参 schema）、`effective_risk`（显式风险 > 声明只读 > 绑定原生 GET 信号 > 兜底 `medium`，永不默认成 low）、`audit_sensitive`、`approval_outcome`（先按绑定 input schema 拒非法调用值，再校验条件路径已声明，`approval.required` 恒占优，`approval.when` 走 ANY）。九个算子全部按**严格 JSON 值模型**比较，不把字符串悄悄转成数字；**判不出来即失败关闭为拒绝**，绝不静默当"条件不匹配"放行。本层只做判定，不接管执行，也不替代宿主业务授权。
+  - **ACC v1 的 OpenAPI 绑定（`integrations/acc/openapi.py` + OpenAPI 桥）**：带 `x-agent-capability` 的 operation 现在按绑定语义接入——只认 **operation 级**扩展（贴到根节点或 pathItem 上不产生任何治理效果，只出"贴错位置"诊断）；声明格式错误、主版本不认识、`approval.when` 的条件参数在归一化输入 schema 里解析不出来或撞上"同名参数同时来自 query 与 body"的归一化歧义时**整条操作跳过并留诊断，绝不回退成一个没有治理的同名工具**；`enabled=false`、要求可信主体但当前上下文没有、scope 不在宿主路由白名单里的同样不暴露。没有该扩展的 operation 零行为变化。
+  - **两个宿主配置口**（`OpenApiSpecConfig`）：`acc_scopes`（空 = 不因 scope 拦截；尾部 `.*` 前缀匹配）与 `trusted_subject`（**默认 False**——主体必须由宿主在自己的信任边界上给，模型或参数里抄来的身份不算，因此带 `subject.required` 的操作在主体注入落地前一律不暴露）。
+  - **`ToolSpec.governance` 新增两个字段**：`audit_sensitive`（宽口径审计提示，来自 `audit.sensitive`；只把**审计事件**那份的顶层值整体收口，给审批人的副本仍按声明路径脱敏——规范义务范围是 logs，全糊掉会让人工批准失去判断依据）与 `acc`（已校验声明的原样快照，内核只透传不解释，解释在 `integrations/acc`）。`governance` 仍**不进 manifest 序列化**，等字段集稳定再谈跨进程传递。
+  - ACC 的 `guidance.when_to_use` / `returns` 并进工具描述（模型可读的用法提示，不是安全策略）；被跳过不暴露的操作不占用工具名，避免连带把后面的合法操作改名成 `__2`。新增 `tests/test_acc_openapi_binding.py`（19 例，spec 全内联、唯一网络走 MockTransport），讲义第 44 篇同步扩充；内核 `dependencies` 仍为空。
+- **能力闸与宿主注入的可信主体（`ToolGovernance.gate` + `Subject`）**：声明终于参与每一次调用，而且只有一个方向——**外部契约只能把闸门往上抬**。
+  - 内核新增中性类型 `GateDecision`（`reject` / `require_approval` / `reason` / `prompt`）与 `ToolGovernance.gate: (arguments, subject) -> GateDecision`：判定由宿主或集成层提供（`integrations/acc.build_gate(declaration, input_schema)` 编译一个闭包挂在 OpenAPI 工具上），**执行器只认这三种话、不 import 任何协议实现**，`integrations/acc` 因此仍是可选层；`governance.acc` 那份声明快照只做透明记录，本身不产生执行效果。
+  - `ToolExecutor.execute` 在参数快照之后、权限策略之前过闸：`reject` 非空时**不过策略、不发 `TOOL_CALL`、不碰 handler**，理由作为 `role="tool"` 消息回灌给模型（与权限 DENY 同形：审计链不出事件，模型不瞎）；`require_approval` 把策略的 **ALLOW 抬成人工确认**，但策略 DENY 永远优先——契约不能替宿主放行。审批话术里的 `{参数}` 占位符**用脱敏后的副本填充**，密钥不会顺着 prompt 漏进 UI。
+  - `AgentCore.run/astream(task, subject=Subject(...))` 由宿主注入可信主体，沿 loop → 执行器 → 授权闸逐次透传（不落在实例属性上，并发会话不会互相粘连）；`subject.required` 而本次运行没有主体时直接拒绝，**不沿用上一位的身份**。策略侧走能力旗标 `yai_subject_aware`：只有声明了它的策略才收到 `subject=` 关键字，旧的两参数签名一字不改照样跑。
+  - 新增 `tests/test_capability_gate.py`（18 例：三种闸话、抬闸后的事件顺序、DENY 占优、拒绝先于策略与 handler、prompt 走脱敏副本、组合工具逐步继承主体、同一 core 连续三次运行的主体不粘连、两个 core 并发各认各的主体）。讲义第 44 篇新增第 7 节。内核 `dependencies` 仍为空，`governance` 仍不进 manifest 序列化。
+- **官方一致性语料落地**：`tests/fixtures/acc/vectors.json` 逐字节收录上游 26 条参考向量（Apache-2.0，出处/commit/SHA-256 见同目录 `SOURCE.md`），`tests/test_acc_conformance.py` 把每条向量喂进上述公开接口并比对期望结果（键集也必须一致），另加语料元数据、kind 构成与"新增 kind 不许沉默通过"的栅栏；`tests/test_acc_declaration.py` + `tests/test_acc_evaluate.py` 补齐向量之外的边界（scope 正则与长度、bool 不当整数、timeout/rate_limit 区间与窗口格式、approval 条目校验、九算子矩阵、嵌套点号路径、`!=` 对缺失参数的命中、各类失败关闭）。逐行讲义第 44 篇。
+  - **口径与限制写进文档**：对外只声称 `ACC v1 OpenAPI Binding Parser Profile`；入参校验只实现 `type/required/properties/items` 四个关键字，`timeout_ms`/`rate_limit` 尚未映射到执行器策略，主体身份仍由调用方以布尔传入——把这些列为记录在册的限制，而不是含糊说"兼容 ACC"。内核 `dependencies` 仍为空。
+- **声明式参数脱敏（`ToolSpec.governance`）**：内核新增 `ToolGovernance` 元数据（宿主声明、模型不可改），首个字段 `sensitive` 声明需要脱敏的**参数路径**（dot-notation，如 `api_key`、`headers.Authorization`、`rows.0.token`）。声明后，审批事件、`Channel.confirm` 入参、`TOOL_CALL` 审计事件与追踪 span 里的对应值统一替换为 `[redacted:len=N]`，而**实际执行仍拿真值**（脱敏不得改变业务行为）。内核刻意不按字段名关键词猜"像不像密钥"——猜的规则既会漏也会误伤审批可读性，因此"未声明即不脱敏"是有意的边界。新增 `policy/redact.py` 与 `tests/test_redaction.py`。
+- **审批-执行-审计三方一致性（参数快照）**：`ToolExecutor.execute` 与两个过闸 meta-tool 在进入权限判定前对模型参数做深拷贝，`authorize_tool_call` 再为"给用户看的那一份"和"审计事件那一份"各持独立副本——通道或宿主在 `confirm()` 期间改写的只是它拿到的副本，改不动真正执行的参数，也污染不了审计链。补 `tests/test_argument_snapshot.py`（含"篡改审批后仍按批准值执行""拒绝后 handler 零调用且不发 `TOOL_CALL`"）。见讲义第 43 篇。
+
+### Changed
+
+- **对外文档改为"按类别"对比，不再点名同类项目**：`docs/comparison.md` / `.en.md` 重写为**类别描述**（通用框架 / 图编排运行时 / 多智能体框架 / 自托管平台 / 托管无代码平台），同时删除他方的自我宣传文案、星标数与指向他站的链接；README、`docs/architecture`、v0.6.0 发布说明、参赛材料里的同类项目名字一并改为中性类别说法。YAI 一侧的事实（零硬依赖、九契约、benchmark 数字、测试数、宿主数）逐条保留并复核，中英两份同步。**刻意保留**两类名字：我们实现/依赖的接口与库名（模型兼容接口、MCP、OpenAPI、PySide6 等），以及作为类比对象的嵌入式数据库名。已生成的 PDF 与参赛图 PNG 不在本轮重导（文本层已改，图里仍有旧名字，重导需另行确认）。
+
+### Security
+
+- **host_e 跨进程工具口加本地令牌鉴权**：`POST /api/agent/tool` 与 `GET /api/agent/tools` 此前**无任何鉴权**——由于权限三档的决策在调用方（桌面灵动岛）完成，同机任意进程都能绕过审批直接执行宿主写操作。现在两个端点只认 `Authorization: Bearer <token>`：令牌按 `--tool-token` → 环境变量 `YAI_TOOL_TOKEN` → 本地令牌文件（`data/host_e/tool_token`，首次启动自动生成）解析，比较用 `hmac.compare_digest`；**绑定非环回地址时必须显式提供令牌，否则拒绝启动**。诚实边界：能读到令牌文件的进程即被视为同一用户身份，这一层挡的是同机其他用户/服务与误接客户端，不防同一用户自己写的恶意本地进程（那需要 OS 级隔离）。新增 `examples/host_e_sales_crm/tool_auth.py`、`tests/test_host_e_tool_auth.py`（27 项，含 401 时零业务副作用、两侧令牌约定不漂移）。
 
 ## [v0.9.0] - 2026-10-12
 

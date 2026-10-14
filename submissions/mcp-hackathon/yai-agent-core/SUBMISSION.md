@@ -11,7 +11,7 @@
 
 ## 1. 解决什么真实问题
 
-市面上的 Agent 形态分两类：平台型（Dify/Coze，要把东西搬进别人的云）和框架型（LangGraph/OpenAI Agents SDK，开发者仍要自己定义 Agent、工具、编排）。
+市面上的 Agent 形态分两类：平台型（要把东西搬进别人的云）和框架型（开发者仍要自己定义 Agent、工具、编排）。
 大量已有软件（笔记应用、数据后台、陪伴 App）想要 Agent 能力，但不想重写、不想上云、也不想在业务代码里堆 Agent 胶水代码。
 
 YAI Agent Core 类比"Agent 世界的 SQLite"：以库的形式运行在宿主进程内，范式是 **host-declares-capability / core-adapts**：

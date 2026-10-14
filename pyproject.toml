@@ -30,6 +30,8 @@ Documentation = "https://github.com/Gi-Tuu/yai-agent-core/blob/main/docs/archite
 [project.optional-dependencies]
 # 真实模型接入（OpenAI 兼容：DeepSeek / 通义千问 / OpenAI 等）
 llm = ["openai>=1.40"]
+# Anthropic Messages API（Claude 系列）：与 llm 并列的可选模型后端，内核本体不依赖
+anthropic = ["anthropic>=0.40"]
 # FastAPI Battery：在线 API、健康端点、X-Agent 部署验证端点
 server = [
     "fastapi>=0.115",

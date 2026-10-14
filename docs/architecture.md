@@ -179,7 +179,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
 |---|---|---|---|
-| ModelProvider | `achat(messages, tools, tier)` | OpenAICompatProvider（DeepSeek 等） | 接私有模型/本地模型 |
+| ModelProvider | `achat(messages, tools, tier)` | OpenAICompatProvider（DeepSeek 等）、AnthropicProvider（Claude） | 接私有模型/本地模型 |
 | Channel | `emit / ask / confirm` | CollectChannel、CliChannel | Web SSE、Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite、向量记忆 |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | 高危工具人工确认 |
@@ -230,7 +230,7 @@ v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗�
 
 ## 6. 与生态的差异化（诚实对比，用于比赛材料）
 
-- Claude/OpenAI Agents SDK、LangGraph：developer-builds-agent，工具/编排需显式定义，且绑定自家生态；
+- 模型厂商自带的 Agent SDK、图编排框架：developer-builds-agent，工具/编排需显式定义，且常绑定自家生态；
 - agentic-kernel（TS）：嵌入式运行时理念相近，但仅 TypeScript 且无能力自发现/策略自适应；
 - MCP：工具互操作**协议**，不是运行时；YAI 是 MCP 的消费者（v0.2 Client）而非竞争者；
 - YAI：host-declares-capability、Python 进程内、模型/通道/存储全无关、自适应过程可观测。

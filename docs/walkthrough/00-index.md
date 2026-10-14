@@ -158,6 +158,9 @@
 - 40 · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
 - 41 · `tools/executor.py` + `tools/registry.py`：上下文轻量治理（三类工具结果回灌前统一按 16000 字符"头+尾"有界收口并打 `truncated` 标记；喂模型的工具目录 / schema 按名确定性排序以稳定提示缓存前缀；内部存储顺序不变）
 - 42 · `kernel/compaction.py` + `kernel/loop.py` + `core.py`：摘要压缩省钱与水位便捷构造（C2 `compaction_model` 让摘要改走便宜小模型、`None` 完全回归主模型、不进 CoreConfig 也不计预算；C3 `CompactionPolicy.from_context_window(chars)` 按 0.6/0.4 比例算高/低水位，`from_context_window(40000)` 恰等于默认策略，字符口径不引 tokenizer）
+- 43 · `policy/redact.py` + `policy/authorize.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）
+- 44 · `integrations/acc/` + `openapi/discovery.py` + `policy/authorize.py`：ACC v1 兼容层（零依赖声明校验器 + 严格 JSON 审批原语 + 官方 26 条参考向量 + OpenAPI 绑定按声明筛暴露面 + 能力闸与宿主注入的可信主体）
+- 45 · `llm/anthropic.py`：Claude 模型接口（system 走顶层、max_tokens 必填、tool_use/tool_result 块翻译、相邻同角色合并；同一 ModelProvider 契约，内核零改动）
 
 ## 5. 自检（读完本篇应能回答）
 

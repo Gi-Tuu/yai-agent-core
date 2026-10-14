@@ -25,7 +25,7 @@ from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
 from yai_core.kernel.tiering import STANDARD, STRONG, TierPolicy
-from yai_core.policy.authorize import authorize_tool_call
+from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
 from yai_core.spi import (
     Channel,
     MemoryStore,
@@ -46,6 +46,7 @@ from yai_core.types import (
     EventType,
     ModelResponse,
     Strategy,
+    Subject,
     ToolCallRequest,
     ToolSpec,
 )
@@ -278,7 +279,13 @@ class AgentLoop:
             tracker.record_model_call(resp)
         return resp
 
-    async def astream(self, task: str, *, _clarify_depth: int = 0) -> AsyncIterator[AgentEvent]:
+    async def astream(
+        self,
+        task: str,
+        *,
+        _clarify_depth: int = 0,
+        subject: Subject | None = None,
+    ) -> AsyncIterator[AgentEvent]:
         """任务执行的统一入口：路由一次，按策略分发，最后落记忆并发 DONE。
 
         流程为 ``aclassify`` 得到策略（来源/理由/档位随事件流出，可审计）→
@@ -330,7 +337,7 @@ class AgentLoop:
 
         if strategy == Strategy.CLARIFY:
             # 反问补信息后累积重路由；空回答体面收尾，绝不无限反问。
-            async for ev in self._run_clarify(task, _clarify_depth):
+            async for ev in self._run_clarify(task, _clarify_depth, subject):
                 yield ev
             return
 
@@ -379,6 +386,7 @@ class AgentLoop:
                 strategy=strategy,
                 tier_policy=self.tier_policy,
                 tier_counts=tier_counts,
+                subject=subject,
             ):
                 yield ev
                 if ev.type == EventType.MODEL_MESSAGE:
@@ -470,7 +478,9 @@ class AgentLoop:
                 async for ev in self._discover_tools(decision.missing_capability, task):
                     yield ev
 
-    async def _run_clarify(self, task: str, depth: int) -> AsyncIterator[AgentEvent]:
+    async def _run_clarify(
+        self, task: str, depth: int, subject: Subject | None = None
+    ) -> AsyncIterator[AgentEvent]:
         """向用户反问并累积补充后重新路由；空回答体面收尾，绝不无限反问。"""
         preview = task.strip()
         if len(preview) > _CLARIFY_TASK_PREVIEW_CHARS:
@@ -495,7 +505,9 @@ class AgentLoop:
             return
         # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的乒乓。
         merged = f"{task}\n补充信息：{answer}"
-        async for ev in self.astream(merged, _clarify_depth=depth + 1):
+        async for ev in self.astream(
+            merged, _clarify_depth=depth + 1, subject=subject
+        ):
             yield ev
 
     def _discoverable_catalog(self) -> list[dict[str, str]] | None:
@@ -695,6 +707,7 @@ class AgentLoop:
         strategy: Strategy = Strategy.REACT,
         tier_policy: TierPolicy | None = None,
         tier_counts: dict[str, int] | None = None,
+        subject: Subject | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """核心 ReAct 循环：模型调用 ↔ 工具执行，直到模型不再调工具或触达迭代上限。
 
@@ -789,6 +802,7 @@ class AgentLoop:
                 replanned,
                 tier_policy,
                 tier_counts,
+                subject,
             ):
                 yield ev
 
@@ -837,6 +851,7 @@ class AgentLoop:
         replanned: list[int],
         tier_policy: TierPolicy | None,
         tier_counts: dict[str, int] | None,
+        subject: Subject | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """顺序执行本轮工具：meta-tool 由内核直接处理，普通工具走执行器。
 
@@ -854,6 +869,7 @@ class AgentLoop:
                     replanned,
                     tier_policy,
                     tier_counts,
+                    subject,
                 ):
                     yield ev
                     if ev.type == EventType.TOOL_DISCOVERED:
@@ -865,7 +881,9 @@ class AgentLoop:
             # 超限直接冒泡到 astream 统一熔断，该工具不会被执行、不产生副作用。
             if self._active_budget is not None:
                 self._active_budget.before_tool_call()
-            tool_events, ok, result_text = await self.executor.execute(call.name, call.arguments)
+            tool_events, ok, result_text = await self.executor.execute(
+                call.name, call.arguments, subject=subject
+            )
             if self._active_budget is not None:
                 self._active_budget.record_tool_call()
             for tool_event in tool_events:
@@ -951,14 +969,15 @@ class AgentLoop:
         replanned: list[int] | None = None,
         tier_policy: TierPolicy | None = None,
         tier_counts: dict[str, int] | None = None,
+        subject: Subject | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """分发内核 meta-tool；未知 meta-tool 优雅降级为工具结果错误。"""
         if call.name == REQUEST_CAPABILITY:
-            async for ev in self._handle_request_capability(call, ctx, task):
+            async for ev in self._handle_request_capability(call, ctx, task, subject):
                 yield ev
             return
         if call.name == CREATE_CODE_TOOL:
-            async for ev in self._handle_create_code_tool(call, ctx):
+            async for ev in self._handle_create_code_tool(call, ctx, subject):
                 yield ev
             return
         if call.name == REPLAN:
@@ -982,11 +1001,21 @@ class AgentLoop:
         call: ToolCallRequest,
         ctx: Context,
         task: str,
+        subject: Subject | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """执行中"请求发现新能力"：授权 -> 发缺口事件 -> 发现注册 -> 回灌结果。"""
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        # meta-tool 同样先快照：审批看到的与内核实际执行的必须是同一份参数
+        arguments = (
+            snapshot_arguments(call.arguments)
+            if isinstance(call.arguments, dict)
+            else {}
+        )
         auth_events, approved, reason = await authorize_tool_call(
-            self.executor.policy, self.channel, REQUEST_CAPABILITY, arguments
+            self.executor.policy,
+            self.channel,
+            REQUEST_CAPABILITY,
+            arguments,
+            subject=subject,
         )
         for ev in auth_events:
             yield ev
@@ -1043,15 +1072,25 @@ class AgentLoop:
         self,
         call: ToolCallRequest,
         ctx: Context,
+        subject: Subject | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """执行中创建代码工具：授权 -> 校验 -> 注册（TTL 生命周期）-> 回灌结果。
 
         创建是敏感动作，除"无需审批"档外都要先授权；真正执行该工具时
         ToolExecutor 还会再走一次权限闸（创建与首次执行双重授权）。
         """
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        # meta-tool 同样先快照：审批看到的与内核实际执行的必须是同一份参数
+        arguments = (
+            snapshot_arguments(call.arguments)
+            if isinstance(call.arguments, dict)
+            else {}
+        )
         auth_events, approved, reason = await authorize_tool_call(
-            self.executor.policy, self.channel, CREATE_CODE_TOOL, arguments
+            self.executor.policy,
+            self.channel,
+            CREATE_CODE_TOOL,
+            arguments,
+            subject=subject,
         )
         for ev in auth_events:
             yield ev

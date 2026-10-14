@@ -4,7 +4,7 @@ import inspect
 import json
 from typing import Any
 
-from yai_core.policy.authorize import authorize_tool_call
+from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
@@ -88,19 +88,46 @@ class ToolExecutor:
         return bound_tool_result(text, self.result_char_limit)
 
     async def execute(
-        self, name: str, arguments: dict[str, Any]
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        subject: Any = None,
     ) -> tuple[list[AgentEvent], bool, str]:
-        """返回 (过程事件列表, 是否成功, 文本结果)，永不向 Agent Loop 抛异常。"""
+        """返回 (过程事件列表, 是否成功, 文本结果)，永不向 Agent Loop 抛异常。
+
+        ``subject`` 是宿主注入的可信操作主体（``None`` = 本上下文没有主体）；
+        它只交给声明了 ``yai_subject_aware`` 的策略，以及带能力声明的工具做准入。
+        """
         events: list[AgentEvent] = []
         if not self.registry.has(name):
             return events, False, f"工具 {name!r} 不存在"
 
         spec = self.registry.get(name)
+        # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
+        arguments = snapshot_arguments(arguments)
+
+        # 准入判定在权限闸之前：工具自带的 gate 说这次调用不该到达业务操作时，
+        # 连"要不要问人"都不必问；内核不认识判定来自哪个协议。
+        gate_fn = spec.governance.gate
+        decision = gate_fn(arguments, subject) if gate_fn is not None else None
+        if decision is not None and decision.reject:
+            return events, False, decision.reject
+
         if spec.source == "composite" and spec.steps:
-            return await self._execute_composite(spec, arguments)
+            return await self._execute_composite(spec, arguments, subject)
 
         auth_events, approved, reason = await authorize_tool_call(
-            self.policy, self.channel, name, arguments
+            self.policy,
+            self.channel,
+            name,
+            arguments,
+            sensitive_paths=spec.governance.sensitive,
+            audit_sensitive=spec.governance.audit_sensitive,
+            subject=subject,
+            require_approval=decision.require_approval if decision else False,
+            approval_reason=decision.reason if decision else "",
+            approval_prompt=decision.prompt if decision else "",
         )
         events.extend(auth_events)
         if not approved:
@@ -209,7 +236,7 @@ class ToolExecutor:
         return events, True, text
 
     async def _execute_composite(
-        self, spec: ToolSpec, arguments: dict[str, Any]
+        self, spec: ToolSpec, arguments: dict[str, Any], subject: Any = None
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -243,7 +270,9 @@ class ToolExecutor:
                 )
                 return events, False, f"组合工具 {spec.name} 第 {index + 1} 步参数解析失败: {exc}"
 
-            sub_events, ok, sub_text = await self.execute(step.tool, resolved)
+            sub_events, ok, sub_text = await self.execute(
+                step.tool, resolved, subject=subject
+            )
             events.extend(sub_events)
             if not ok:
                 events.append(
