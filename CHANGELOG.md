@@ -3,7 +3,7 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 **内核本体始终保持零第三方硬依赖**（`pyproject.toml` 的 `dependencies = []`），真实模型、Web 服务、MCP、OpenAPI 等能力全部走可选 extras 与 SPI 契约懒加载。
 
-每个版本的说明就以本文件对应小节为准（[`docs/releases/`](docs/releases/) 只留早期长文草稿，不再逐版维护）。版本号与 GitHub Release / tag 由维护者拍板后发布；Release 正文由 `publish.yml` 从 PR 标题自动生成，人话版摘要写在下面的小节里。
+每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
 ## [Unreleased]
 
