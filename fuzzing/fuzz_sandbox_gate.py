@@ -93,7 +93,9 @@ def _verdict(module: ModuleType, code: str) -> str:
 
 def TestOneInput(data: bytes) -> None:
     fdp = atheris.FuzzedDataProvider(data)
-    seed = fdp.PickValueInArray(list(_SEEDS))
+    # 只用 CI 里已验证存在的 FDP 方法（ConsumeIntInRange / ConsumeUnicodeNoSurrogates）；
+    # PickValueInArray 这类 libFuzzer C++ 接口在本版 atheris 上没有，会直接把 target 炸掉。
+    seed = _SEEDS[fdp.ConsumeIntInRange(0, len(_SEEDS) - 1)]
     tail = fdp.ConsumeUnicodeNoSurrogates(fdp.ConsumeIntInRange(0, 1200))
     code = f"{seed}{tail}"
 
