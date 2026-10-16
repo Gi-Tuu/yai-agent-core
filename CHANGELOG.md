@@ -9,6 +9,18 @@
 
 ### Added
 
+- **原生参数级审批 `ToolGovernance.approval`：不接任何外部协议也能说"超过这条线就要人确认"**。参数级审批的语义（严格 JSON 值比较、判不出来失败关闭、四步判定顺序）本来跟 ACC 一点关系都没有，却一直住在 `integrations/acc/evaluate.py` 里——结果是宿主只想给自家工具加个金额门槛，也得先学会一个外部契约、或者自己手写一个 `gate` 函数（函数进不了清单、跨不了语言、每家还各抄一遍"超过"怎么算）。现在判定整块搬进内核 `policy/approval.py`，宿主只写数据：
+  ```python
+  ToolGovernance(approval=ApprovalPolicy(
+      prompt="退款 {amount} 元，确认吗？",
+      when=(ApprovalRule("amount", ">", 1000, label="金额超限"),),
+  ))
+  ```
+  - **`approval` 是数据，所以跟着能力清单走**：`governance_to_manifest` / `governance_from_manifest` 逐字段严校验（算子必须落在 `APPROVAL_OPS`、未知键拒绝加载），导入即生效。它敢导入即生效是因为**只会加严**——"要多问一个人"和"这次参数不合法别碰业务"，做不到替宿主放行；而放松的那条路（函数级 `gate`）依旧绝不凭清单重建。清单形状上"没给值"与"值就是 null"靠 **`value` 键的存在与否**区分（`exists` 不出键，`== null` 出 `"value": null`）。
+  - **执行器两条新接线**：① 没有 `gate` 时用 `approval` 自己判；② 两者都在时**取更严地合并**（两边理由都进审批事件、只问一次人）——"有 gate 就当 approval 不存在"等于声明了的保护内核没做。组合工具分支不过 `authorize_tool_call`，但**它自己声明**的审批要求会真的问一次（只 `confirm`、不替黑盒名字跑策略），人不批一步都不跑。
+  - **`integrations/acc` 就此降级为互操作层（shim）**：`evaluate.py` 只剩 ACC 自己的三个派生量（`is_exposed` / `effective_risk` / `audit_sensitive`）加一个 `to_approval_policy` 翻译器；`AccApprovalCondition` 变成 `ApprovalRule` 的别名（九个算子一字不差，再养一个同构数据类只会制造"两个模型谁说了算"）。判定只剩一份，由 `test_native_and_acc_reach_the_same_decision`（12 组含失败关闭）钉住两条路径结论一字不差。
+  - **踩出来的两个真坑**：① `from __future__ import annotations` 让函数注解变成字符串，而内省把解不开的字符串一律当成 `string` ——审批要按绑定 schema 校验入参，于是**每次合法调用都被判成非法**。`build_spec` 现在先走 `get_type_hints`，解不开才退回原兜底。② 手写 `ApprovalRule("amount", ">", 1000)` 时 `has_value` 默认 `False`，导出的清单会把阈值丢掉、导入后变成"每次都拒"——`__post_init__` 见到非 None 的值就把它补上。
+  - **一处话术变更要说明**：审批结论的 reason 文案改用内核中文口径（"该能力要求每次调用都人工确认"），不再带 `approval.required` 这种协议术语。有两条测试原本钉的是术语而不是行为，已改成断言行为；官方向量与 `test_acc_*` 判定结果全绿。新增 `tests/test_native_approval.py`（53 例，含依赖方向探针：子进程里只 import 内核模块，`sys.modules` 不许出现 `yai_core.integrations`）与 `tests/test_introspect.py` 增 2 例。讲义第 21 篇第 5 节、第 43 篇第 4 节、第 44 篇第 1/4/7/8/9 节同步改写。
 - **资源作用域闸 `filesystem_gate`：把授权点从"模型写来的字符串"移到"解析后的落点"**。文件系统两道路径闸只管"**出不出根目录**"，管不了"根目录内的哪一块"；而宿主想说的恰恰是"只能碰 `notes/`"。按原始字符串匹配白名单是假的——`notes/a.txt`、`./notes/a.txt`、`notes//a.txt`、`notes/./a.txt` 是同一目标的四种写法，而且人工审批看到的正是这个原始串。
   - **归一化用与 handler 完全相同的 `normalize_relative`**，所以"批准目标 == 执行目标"是构造上成立、不靠约定；`write=True` 而 `prefixes` 为空 = 拒绝一切写（失败关闭）；非法形状（`..`、绝对路径、盘符冒号、空、非字符串）在闸口就拒并把理由回灌给模型。
   - **`GateDecision` 新增 `target` 字段**，与上一步的 `risk`/`scope` 同一条路落进 `PERMISSION_ASKED` 与 `TOOL_CALL`：审批人第一次能看到"这次究竟要写哪个文件"，而不是模型原样写来的串。

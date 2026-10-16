@@ -180,27 +180,39 @@ def read_manifest(path):
 
 ## 5. 治理声明随清单走 —— 但 `gate` 永远不走
 
-`ToolSpec.governance` 里有四样东西，其中三样是**数据**，一样是**函数**：
+`ToolSpec.governance` 里有五样东西，其中四样是**数据**，一样是**函数**：
 
 | 字段 | 随清单导出 | 导入后 | 为什么 |
 |---|---|---|---|
 | `sensitive`（脱敏路径） | ✅ | 立即生效 | 纯字符串数组，跨语言可读 |
 | `audit_sensitive` | ✅ | 立即生效 | 一个布尔提示 |
+| `approval`（原生审批要求） | ✅ | **立即生效** | 它是数据，且只会把闸门往上抬 |
 | `acc`（外部契约声明快照） | ✅ | **惰性记录**，不产生行为 | 它是"别人怎么描述这个能力" |
 | `gate`（准入判定函数） | ❌ 丢弃 | `None` | 函数不可序列化，与 `handler` 同命 |
 
 ```python
 spec.governance = ToolGovernance(
-    sensitive=("api_key",), audit_sensitive=True, acc={"version": 1, ...}
+    sensitive=("api_key",),
+    audit_sensitive=True,
+    approval=ApprovalPolicy(when=(ApprovalRule("amount", ">", 1000),)),
+    acc={"version": 1, ...},
 )
 spec.to_manifest_dict()["governance"]
-# {"sensitive": ["api_key"], "audit_sensitive": True, "acc": {...}}  ← 没有 gate
+# {"sensitive": ["api_key"], "audit_sensitive": True,
+#  "approval": {"when": [{"param": "amount", "op": ">", "value": 1000}]},
+#  "acc": {...}}                                        ← 没有 gate
 ```
+
+`approval` 的清单形状有两处刻意：**没写值的算子（`exists`）不出 `value` 键**，而
+`== null` 会写出 `"value": null`——"没给值"与"值就是 null"是两种语义，靠键的存在与否区分，
+比多带一个布尔字段更难写错。反方向上，`ApprovalRule` 见到非 None 的值会把 `has_value` 补成
+真：手写规则时忘填这个布尔只是省事，不该因此让导出的清单把阈值丢掉、导入后变成"每次都拒"。
 
 反序列化侧 `governance_from_manifest(name, raw)` 做三件事，第三条最重要：
 
 1. **类型校验**：`sensitive` 必须是字符串数组且每项非空、`audit_sensitive` 必须是布尔、
-   `acc` 必须是 object 或 null——脏数据在进注册表前就被拦下；
+   `acc` 必须是 object 或 null、`approval` 逐字段严校验（算子必须落在 `APPROVAL_OPS` 里，
+   因为它**会真的参与准入**）——脏数据在进注册表前就被拦下；
 2. **不认识的键直接拒绝加载**。听起来苛刻，但静默忽略一个写错的 `sensitives`
    等于"宿主声明了脱敏、内核其实没做"，比报错危险得多。要加字段就升 `MANIFEST_VERSION`；
 3. **绝不凭 `acc` 快照造 `gate`**。外来清单只是"那份服务说这个能力要求主体、要审批"，
@@ -217,10 +229,13 @@ if parsed.valid and parsed.declaration is not None:
     )
 ```
 
-方向要说全：不绑定 = 这份声明**不会**给本机工具加上闸门；同时也**不能**替本机
+方向要说全：不绑定 = 这份声明**不会**给本机工具加上**函数级**闸门；同时也**不能**替本机
 已绑定的闸门放行——`gate` 只能被宿主在本机代码里换掉，清单里根本没有这个通道。
+`approval` 为什么敢导入即生效？因为它能说的只有两句话："这次要多问一个人"和"这次参数不合法，
+别碰业务"。外来数据**加严**是安全的，**放松**才危险，而放松的那条路（函数级 `gate`）不给。
 对应契约测试：`test_foreign_acc_snapshot_never_builds_a_gate`、
-`test_host_rebinding_restores_the_gate`、`test_declared_paths_still_redact_after_transport`。
+`test_host_rebinding_restores_the_gate`、`test_declared_paths_still_redact_after_transport`、
+`test_approval_survives_manifest_round_trip`、`test_manifest_rejects_unknown_approval_fields_and_ops`。
 
 ## 6. 为什么"不做调用通道"是对的
 
@@ -239,5 +254,6 @@ manifest 的职责收敛为一件事：**让能力描述成为语言中立、可
 3. 顶层 `manifest_version` 解决什么问题？
 4. 为什么不该在 manifest 之上再发明一套 JSON-RPC 调用？
 5. `write_manifest` 为什么要显式 `encoding="utf-8"` 和 `ensure_ascii=False`？
-6. `governance` 的四个字段里哪个不随清单走？为什么内核不肯凭 `acc` 快照自己造 gate？
+6. `governance` 的五个字段里哪个不随清单走？为什么内核不肯凭 `acc` 快照自己造 gate？
 7. 治理块里出现不认识的键时为什么选择报错而不是忽略？
+8. `approval` 导入即生效，`gate` 却不许凭清单重建——为什么"外来数据"一个放行一个拦？

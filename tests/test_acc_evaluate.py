@@ -164,8 +164,9 @@ def test_unconditional_requirement_is_dominant() -> None:
     raw = {"approval": {"required": True, "when": [{"param": "amount", "op": ">", "value": 1000}]}}
     outcome = approval_outcome(_decl(scope="refund.create", **raw), {"amount": 1}, _AMOUNT_SCHEMA)
     assert outcome.decision == DECISION_APPROVAL_REQUIRED
+    # 不命中任何 when，也必须照样要问人。
     assert outcome.matched == ()
-    assert "approval.required" in outcome.reason
+    assert "人工确认" in outcome.reason
 
 
 def test_empty_when_creates_no_intent() -> None:

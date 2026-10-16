@@ -47,10 +47,14 @@ def snapshot_arguments(arguments: dict) -> dict:
         return arguments
 
 
-def _fill_prompt(template: str, shown: dict) -> str:
+def fill_prompt(template: str, shown: dict) -> str:
     """把 ``{参数名}`` 占位符填进审批话术，**只用对外副本里的值**。
 
     未知占位符原样留着（模板与参数不匹配是宿主的事，不该把审批整条吞掉）。
+
+    公开给执行器复用：组合工具自己声明审批时走的是 :meth:`Channel.confirm`
+    而不是这里（组合名是黑盒，策略那一步不该跑），但话术口径必须一致——
+    同一份声明在两条路径上不能给出两种问法。
     """
     text = template
     for key, value in (shown or {}).items():
@@ -131,7 +135,7 @@ async def authorize_tool_call(
             payload["approval_required"] = True
             payload["reason"] = approval_reason
             if approval_prompt:
-                payload["prompt"] = _fill_prompt(approval_prompt, asked)
+                payload["prompt"] = fill_prompt(approval_prompt, asked)
         events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
         approved = await channel.confirm(
             name, redact_arguments(arguments, sensitive_paths)

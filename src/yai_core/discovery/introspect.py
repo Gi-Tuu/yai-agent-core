@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import types
-from typing import Any, get_args, get_origin
+from typing import Any, get_args, get_origin, get_type_hints
 
 from yai_core.types import ToolSpec
 
@@ -36,19 +36,33 @@ def _annotation_to_json_type(annotation: Any) -> tuple[str, bool]:
     return _PY_TO_JSON.get(annotation, "string"), False
 
 
+def _type_hints(fn: Any) -> dict[str, Any]:
+    """解析 PEP 563 的字符串注解；解不开就交回原注解（继续走"认不出就 string"的兜底）。
+
+    ``from __future__ import annotations`` 让 ``param.annotation`` 变成字面量 ``"float"``，
+    而查表当然查不到 —— 于是**所有参数都退化成 string**。这不只影响文档好不好看：
+    审批条件要按绑定 schema 校验入参，"期望 string"会把每一次合法调用都判成非法。
+    """
+    try:
+        return dict(get_type_hints(fn))
+    except Exception:  # noqa: BLE001 - 前向引用解不开时不能连累工具注册
+        return {}
+
+
 def build_spec(fn: Any, *, name: str | None = None, source: str = "native") -> ToolSpec:
     """把一个 Python 可调用对象转换成 ToolSpec。"""
     if not callable(fn):
         raise TypeError(f"build_spec 需要可调用对象，得到 {type(fn)!r}")
 
     sig = inspect.signature(fn)
+    hints = _type_hints(fn)
     properties: dict[str, Any] = {}
     required: list[str] = []
 
     for param_name, param in sig.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
-        json_type, nullable = _annotation_to_json_type(param.annotation)
+        json_type, nullable = _annotation_to_json_type(hints.get(param_name, param.annotation))
         prop: dict[str, Any] = {"type": json_type}
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
