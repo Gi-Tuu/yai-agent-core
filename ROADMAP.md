@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-16（对应已发布版本 **v0.10.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-16（对应已发布版本 **v0.11.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -73,7 +73,7 @@
 - **结构化 tracing**：外侧订阅事件流的 OpenTelemetry 桥接（一次 run 一个 root span，工具调用是子 span，库内不初始化 Provider）
 - 远程发现源按 need 双通道收窄（词法始终可用、语义可选、不中则回退全量）
 
-### v0.10 — 让"嵌进真实软件"这件事安全（tag 2026-10-14，当前发布版本）
+### v0.10 — 让"嵌进真实软件"这件事安全（tag 2026-10-14）
 
 - **治理声明随能力清单跨进程**：脱敏路径 / 宽口径审计提示 / 外部契约快照随 manifest 走；`gate` 是函数，**不导出也绝不凭快照重建**
 - **运行时保障补两处空白**：工具 handler 硬超时 `tool_timeout`（异步真取消、同步如实说明"中断不了、可能仍在后台产生副作用"）、`await AgentCore.aclose()` 统一收尾（谁创建谁负责关、幂等）
@@ -85,9 +85,18 @@
 - **安全纠错**：沙箱 AST 静态闸门深嵌套改为失败关闭并加模糊测试 target；CI runner 钉版本与分支保护解耦
 - 对外文档改为按类别对比，不再点名同类产品
 
+### v0.11 — 把"外部契约的治理"翻译回原生（tag 2026-10-16，当前发布版本）
+
+- **原生参数级审批**：判定原语（严格 JSON 值、判不出来失败关闭、四步顺序）从 ACC 层搬进内核 `policy/approval.py`；宿主写数据就能要"超过这条线要人确认"，`approval` 随能力清单走且**导入即生效**（只会加严，永不替宿主放行）
+- **ACC 降级为互操作层（shim）**：`integrations/acc` 只保留声明校验、三个 ACC 特有派生量与 `to_approval_policy` 翻译器；判定只剩一份，两条路径的结论由 parity 测试钉死；对外仍只声称 `ACC v1 OpenAPI Binding Parser Profile`
+- **准入判定不再算出来就扔**：`risk` / `scope` / `target` 随 `PERMISSION_ASKED` 与 `TOOL_CALL` 发出（空值不写键，未治理工具的事件形状逐字不变）
+- **资源作用域闸 `filesystem_gate`**：用与 handler **同一个** `normalize_relative` 规范化，"批准目标 == 执行目标"构造成立；`write=True` 配空白名单 = 拒绝一切写
+- **两处真实纠错**：PEP 563 下 `build_spec` 把所有参数退化成 `string`（进而让审批把每次合法调用判成非法）改为先解析字符串注解；清单导出丢审批阈值改为 `__post_init__` 补齐
+- **语料分发口径**：上游 Apache-2.0 的 26 条一致性向量不再随 sdist 分发（源码仓库与 CI 仍全量跑），缺文件时相关测试整模块 `skip`
+
 ## 下一步
 
-### v0.11 — 候选（未排序，等维护者拍板）
+### v0.12 — 候选（未排序，等维护者拍板）
 
 - **多模态消息 parts**：让图片 / 文件片段进入消息与记忆链路。**会改 SQLite 持久化格式**（v1→v2 迁移有先例），因此单独立项。
 - **ACC Runtime Profile 补齐**：把 `execution.timeout_ms` / `rate_limit` 真正映射到执行器策略，并补"模型文本改不动治理"的对抗性集成证据。
