@@ -2,7 +2,7 @@
 
 > English: [deployment-scaling.en.md](deployment-scaling.en.md)
 
-> 事实基线：yai-agent-core **v0.10.0**，最后核实 **2026-10-14**（本地仓库实测）。
+> 事实基线：yai-agent-core **v0.11.0**，最后核实 **2026-10-16**（本地仓库实测）。
 > 单实例公网部署（Render / VPS + Caddy）见 [`docs/competitions/deployment.md`](competitions/deployment.md)；
 > 本文回答更进一步的三个问题：**内核为什么能水平扩展、多租户怎么隔离、生产形态怎么搭。**
 >

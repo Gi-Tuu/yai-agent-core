@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-10-16
+
+本版主线是**把"外部契约的治理"翻译回 YAI 原生治理**：参数级审批不再需要先学会一个外部契约，准入判定算出来的风险 / 作用域 / 实际落点第一次真的进人工确认与审计事件，文件能力补上"根目录之内还要分块"的授权闸。路线来源是一份外部工程任务书（要求"移除 ACC 兼容层、建原生治理"）——逐条核实现状后的结论是：内核早就不依赖 ACC，真缺的是**判定归属**与**资源作用域授权**两件事，三步都已落地。
+
+**没有破坏性变更**：`approval` 不声明即无行为，`filesystem_gate` 由宿主自己挂载，未治理工具的 `TOOL_CALL` / `PERMISSION_ASKED` 事件形状逐字不变；`import` 方式与 v0.10.0 一致。一处**审批话术**变化见 Fixed。
+
+### Fixed
+
+- **`from __future__ import annotations` 让工具 schema 骗人，进而把每次合法调用判成非法**。函数内省过去只查"注解对象"，而 PEP 563 下注解全是字符串：`amount: float` 被看成 `"float"`、查表不中，于是**所有参数一律退化成 JSON `string`**。表面看只是文档难看，实际后果是审批按绑定 schema 校验入参时"期望 string、实到 number"——合法调用全被拒在业务操作之前。`build_spec` 现在先走 `get_type_hints` 解析字符串注解，解不开（前向引用指向不存在的名字）才退回原来的"认不出就 string"兜底。
+  - **为什么以前没人发现**：ACC 的既有测试都手交了正确的 schema 给 `build_gate`，绕过了 `build_spec`；而真实宿主拿到的正是这份退化 schema。新增 `test_build_spec_resolves_string_annotation` 与 `test_future_annotations_do_not_poison_the_bound_schema` 两条钉住。
+- **能力清单导出不再会悄悄丢掉审批阈值**。手写 `ApprovalRule("amount", ">", 1000)` 时 `has_value` 默认 `False`，而导出按"没给值就不写 `value` 键"处理——导出的清单里阈值消失，导入端变成"`>` 遇到没有值的条件"，于是**每一次调用都被拒**。`ApprovalRule.__post_init__` 现在见到非 None 的值就把 `has_value` 补成真：忘填这个布尔只是省事，不该因此改变语义。
+- **SECURITY 漏洞联系邮箱纠错**：中英两份此前写的 Gmail 尾号与仓库 git 身份差一位（疑为手误），任何按它投递的报告都到不了维护者手里。现改为维护者确认的 163 地址，并新增 `tests/test_security_policy_parity.py` 钉住中英两份的事实性字段不漂移。
+- **一处对外话术变化（不改变判定，只改变措辞）**：审批结论的 reason 不再输出 `approval.required` / `approval.when` 这类协议术语，改为内核中文口径（"该能力要求每次调用都人工确认"、"命中审批条件：…"）。判定语义逐条不变，官方向量与全部既有测试的 decision 断言仍然全绿；原本有两条测试钉的是术语字符串而非行为，已改为钉行为。依赖日志文案做正则匹配的宿主需要注意这一处。
+
 ### Added
 
 - **原生参数级审批 `ToolGovernance.approval`：不接任何外部协议也能说"超过这条线就要人确认"**。参数级审批的语义（严格 JSON 值比较、判不出来失败关闭、四步判定顺序）本来跟 ACC 一点关系都没有，却一直住在 `integrations/acc/evaluate.py` 里——结果是宿主只想给自家工具加个金额门槛，也得先学会一个外部契约、或者自己手写一个 `gate` 函数（函数进不了清单、跨不了语言、每家还各抄一遍"超过"怎么算）。现在判定整块搬进内核 `policy/approval.py`，宿主只写数据：
@@ -30,7 +44,7 @@
   - **不改变决策语义**：`risk` / `scope` 仍是描述性信息，放行与否只看策略的 DENY/ASK/ALLOW 与 `require_approval`；内核依旧不按风险自动升降档（那是宿主的权限模型）。
   - **未治理工具的事件形状逐字不变**：空值不写键，`test_ungoverned_tool_events_keep_their_old_shape` 钉住 `set(data) == {"tool", "arguments"}`。
 - **上游 ACC 一致性语料不再随包分发**：`tests/fixtures/acc/`（Apache-2.0 的 26 条官方向量 + `SOURCE.md`）此前随 sdist 一起发布——**合规**（出处与许可证都在），但那是别人的测试数据集，我们没有对外分发它的必要。现在 `pyproject.toml` 的 sdist `exclude` 排掉该目录，缺文件时 `tests/test_acc_conformance.py` 整模块 `skip`。
-  - 验证过两条：构建出的 sdist 里 `fixtures/acc` 命中 **0**、`tests/` 仍有 92 个文件；把 sdist 解包后跑那个测试文件得到 **`1 skipped`**（不是报错）。源码仓库里跑仍全量执行，CI 就在源码仓库里跑。讲义第 44 篇第 5 节同步说明。
+  - 验证过两条：构建出的 sdist 里 `fixtures/acc` 命中 **0**、`tests/` 仍有 93 个文件（发版前对 `0.11.0` 产物重测）；把 sdist 解包后跑那个测试文件得到 **`1 skipped`**（不是报错）。源码仓库里跑仍全量执行，CI 就在源码仓库里跑。讲义第 44 篇第 5 节同步说明。
 
 ## [v0.10.0] - 2026-10-14
 
