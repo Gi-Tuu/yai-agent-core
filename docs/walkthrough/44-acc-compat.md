@@ -108,6 +108,12 @@ approval_outcome(decl, args, parameter_schema)
 `tests/fixtures/acc/vectors.json` 是上游一致性语料的**逐字节副本**，测试里用 SHA-256 锁死，
 改动会先红在 `test_corpus_bytes_are_the_vendored_revision`，这样"改的是实现还是语料"分得开。
 
+**这份语料不随包分发**：它是别人的 Apache-2.0 测试数据集，我们用它证明兼容层跑得对，
+但没有对外分发副本的必要——`pyproject.toml` 的 sdist `exclude` 里排掉了
+`tests/fixtures/acc`，缺文件时本模块整模块 `skip`（从 sdist 跑测试的人拿到的是
+"这条证据不在这里"，不是报错）。**源码仓库里跑仍然是全量 26 条**，CI 就在源码仓库里跑。
+出处、commit、许可证与哈希见同目录 `SOURCE.md`。
+
 | profile | kind | 条数 |
 |---|---|---|
 | parser | declaration | 5 |
@@ -196,8 +202,10 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
    oracle 给 `low`。绑定文本说"显式声明优先"，取更保守的那一档；向量没有覆盖这个组合。
 3. `timeout_ms` / `rate_limit` **只解析、不执行**，还没映射到执行器的超时与限流。
 4. **闸只覆盖审批意图与主体准入**：`approval.required` / 命中的 `approval.when` /
-   `subject.required` 已经接进每一次调用；风险等级 (`effective_risk`) 只是随
-   `GateDecision` 带出来给宿主与诊断看，内核**没有**按风险自动升降档（那是宿主的权限模型）。
+   `subject.required` 已经接进每一次调用；风险等级 (`effective_risk`) 与 `scope` 是
+   **描述性**字段——它们会随 `GateDecision` 带出、并落到 `PERMISSION_ASKED` 与
+   `TOOL_CALL` 事件载荷里（审批人看得见"这是高影响写"，事后能按风险检索），
+   但内核**没有**按风险自动升降档（那是宿主的权限模型）。
 5. **主体是"注入 + 透传 + 准入"，不是"认证"**：内核不验签、不发 token、不做跨跳主体连续性，
    `Subject` 的可信性完全来自宿主在自己的信任边界上给不给。规范 §4.5 也明令这一点。
 6. **清单里 `acc` 快照跟着走、`gate` 永远不跟着走**：`to_manifest_dict` 会导出 `governance`

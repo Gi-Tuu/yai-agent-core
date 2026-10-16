@@ -28,6 +28,15 @@ FIXTURE = Path(__file__).parent / "fixtures" / "acc" / "vectors.json"
 # 上游 conformance/v1/vectors.json @ b5c48f6（Apache-2.0，规范版本 1.0.5），逐字节锁定。
 FIXTURE_SHA256 = "c3d3943362aade6d4bbf5599edd2300895d1b7bee8cedec5604bff127a01db71"
 
+if not FIXTURE.exists():  # pragma: no cover - 只在"从 sdist 跑测试"时走到
+    # 上游语料是 Apache-2.0 数据集，已随 pyproject 的 sdist exclude 停止对外分发；
+    # 缺文件不是失败，是"这份证据不在这里"。源码仓库里跑仍然全量执行。
+    pytest.skip(
+        "上游 ACC 一致性语料未随包分发（见 pyproject 的 sdist exclude）；"
+        "在源码仓库中运行本测试即可获得该证据",
+        allow_module_level=True,
+    )
+
 CORPUS = json.loads(FIXTURE.read_text(encoding="utf-8"))
 VECTORS: list[dict[str, Any]] = CORPUS["vectors"]
 

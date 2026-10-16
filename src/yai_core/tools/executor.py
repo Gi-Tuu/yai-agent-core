@@ -203,6 +203,8 @@ class ToolExecutor:
             require_approval=decision.require_approval if decision else False,
             approval_reason=decision.reason if decision else "",
             approval_prompt=decision.prompt if decision else "",
+            risk=decision.risk if decision else "",
+            scope=decision.scope if decision else "",
         )
         events.extend(auth_events)
         if not approved:
