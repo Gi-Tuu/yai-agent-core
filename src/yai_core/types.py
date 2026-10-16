@@ -103,6 +103,49 @@ class GateDecision:
     target: str = ""
 
 
+#: 参数级审批支持的算子（严格 JSON 值语义，见 :mod:`yai_core.policy.approval`）。
+APPROVAL_OPS = (">", ">=", "<", "<=", "==", "!=", "in", "contains", "exists")
+
+
+@dataclass(frozen=True)
+class ApprovalRule:
+    """一条参数级审批条件：命中就把这次调用抬成"要人确认"。
+
+    这是 **YAI 原生**的声明单元，不来自任何外部协议：``param`` 是点号路径，
+    ``op`` 必须落在 :data:`APPROVAL_OPS` 里，比较一律走严格 JSON 值语义
+    （``"100" != 100``、``true != 1``），判不出来就失败关闭为拒绝。
+
+    ``has_value`` 说清"声明里到底带没带值"：``exists`` 本来没有值，而 ``== null`` 的值是
+    货真价实的 JSON null，两者不能靠 ``value is None`` 区分。手写规则时最容易忘 ——
+    所以 ``__post_init__`` 见到非 None 的值就把它补上：忘了写只是省事，不是想改语义。
+    """
+
+    param: str
+    op: str
+    value: Any = None
+    has_value: bool = False
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.value is not None and not self.has_value:
+            object.__setattr__(self, "has_value", True)
+
+
+@dataclass(frozen=True)
+class ApprovalPolicy:
+    """宿主给一个工具写的审批要求。
+
+    与 :attr:`ToolGovernance.gate` 的区别：``gate`` 是**函数**（宿主自己算，不可序列化），
+    ``approval`` 是**数据**（可随能力清单走，导入端无需任何外部协议就能恢复强制）。
+    两者都只能把闸门往上抬——``required`` 与命中的 ``when`` 只会把"允许"变成"要问人"，
+    永远压不过权限策略的 DENY。
+    """
+
+    required: bool = False
+    prompt: str = ""
+    when: tuple[ApprovalRule, ...] = ()
+
+
 @dataclass(frozen=True)
 class ToolGovernance:
     """宿主声明的工具治理元数据。
@@ -121,17 +164,127 @@ class ToolGovernance:
     - ``gate``：工具自带的**准入判定函数** ``(arguments, subject) -> GateDecision``，
       由宿主或集成层提供（``integrations/acc`` 用已校验的声明造一个）。每次调用现场算，
       用当时的参数与当时的主体；内核不 import 任何协议实现，只按 :class:`GateDecision` 行动。
+    - ``approval``：**YAI 原生**的参数级审批要求（数据，不是函数）。宿主不接任何外部
+      协议也能表达"超过这个条件就要人确认"；它是数据，所以能随能力清单走、导入端
+      无需外部协议即可恢复强制。判定语义见 :mod:`yai_core.policy.approval`。
     """
 
     sensitive: tuple[str, ...] = ()
     audit_sensitive: bool = False
     acc: Mapping[str, Any] | None = None
+    # 放在最后（而不是紧跟 acc）：`gate` 一直是第 4 个位置参数，新字段插在它前面
+    # 会让既有位置写法的 ToolGovernance(..., acc, my_gate) 把闸门关到 approval 上——
+    # 静默改变绑定对象，比多一个换行贵得多。
     gate: Callable[[dict[str, Any], Any], GateDecision] | None = None
+    approval: ApprovalPolicy | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
 #: :func:`governance_from_manifest` 的理由说明）。
-_GOVERNANCE_KEYS = ("sensitive", "audit_sensitive", "acc")
+_GOVERNANCE_KEYS = ("sensitive", "audit_sensitive", "acc", "approval")
+
+_APPROVAL_KEYS = ("required", "prompt", "when")
+_APPROVAL_RULE_KEYS = ("param", "op", "value", "label")
+
+
+def _approval_to_manifest(policy: ApprovalPolicy) -> dict[str, Any]:
+    """审批策略降成纯数据；``value`` 只在"声明里确实带了值"时才出键。
+
+    ``exists`` 不需要比较值，而 ``== null`` 的值是货真价实的 JSON null。用键的**存在与否**
+    区分这两者，比多写一个 ``has_value`` 布尔更接近手写清单的样子，也更不容易自相矛盾
+    （``{"op": "exists", "value": 3}`` 这种组合根本表达不出来）。
+    """
+    rules: list[dict[str, Any]] = []
+    for rule in policy.when:
+        item: dict[str, Any] = {"param": rule.param, "op": rule.op}
+        if rule.has_value:
+            item["value"] = rule.value
+        if rule.label:
+            item["label"] = rule.label
+        rules.append(item)
+    out: dict[str, Any] = {}
+    if policy.required:
+        out["required"] = True
+    if policy.prompt:
+        out["prompt"] = policy.prompt
+    if rules:
+        out["when"] = rules
+    return out
+
+
+def _approval_from_manifest(name: str, raw: Any) -> ApprovalPolicy | None:
+    """校验入站清单的 ``governance.approval``（外来数据，逐字段严校验）。
+
+    入站校验必须比出站更严：这份数据来自别的进程/别的语言，而它**会真的改变执行行为**
+    （抬闸门、拒调用）。特别是算子必须落在 :data:`APPROVAL_OPS` 里——放一个拼错的算子
+    进来，判定会失败关闭成"每次都拒"，看起来像安全，其实只是把工具搞瘫。
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.approval 必须是 object，得到 {type(raw)!r}"
+        )
+    unknown = sorted(set(raw) - set(_APPROVAL_KEYS))
+    if unknown:
+        raise ValueError(
+            f"工具 {name!r} 的 governance.approval 含内核不认识的字段 {unknown}，"
+            f"合法字段只有 {list(_APPROVAL_KEYS)}；静默忽略会让审批要求落空，故拒绝加载"
+        )
+
+    required = raw.get("required", False)
+    if not isinstance(required, bool):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.approval.required 必须是布尔值，得到 {required!r}"
+        )
+    prompt = raw.get("prompt", "")
+    if not isinstance(prompt, str):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.approval.prompt 必须是字符串，得到 {prompt!r}"
+        )
+    raw_when = raw.get("when", [])
+    if not isinstance(raw_when, (list, tuple)):
+        raise ValueError(
+            f"工具 {name!r} 的 governance.approval.when 必须是数组，得到 {type(raw_when)!r}"
+        )
+    rules: list[ApprovalRule] = []
+    for index, item in enumerate(raw_when):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"工具 {name!r} 的 approval.when 第 {index + 1} 条必须是 object"
+            )
+        bad = sorted(set(item) - set(_APPROVAL_RULE_KEYS))
+        if bad:
+            raise ValueError(
+                f"工具 {name!r} 的 approval.when 第 {index + 1} 条含未知字段 {bad}，"
+                f"合法字段只有 {list(_APPROVAL_RULE_KEYS)}"
+            )
+        param = item.get("param")
+        if not isinstance(param, str) or not param.strip():
+            raise ValueError(
+                f"工具 {name!r} 的 approval.when 第 {index + 1} 条缺少合法 param"
+            )
+        op = item.get("op")
+        if op not in APPROVAL_OPS:
+            raise ValueError(
+                f"工具 {name!r} 的 approval.when 第 {index + 1} 条算子非法：{op!r}，"
+                f"合法算子 {list(APPROVAL_OPS)}"
+            )
+        label = item.get("label", "")
+        if not isinstance(label, str):
+            raise ValueError(
+                f"工具 {name!r} 的 approval.when 第 {index + 1} 条 label 必须是字符串"
+            )
+        rules.append(
+            ApprovalRule(
+                param=param.strip(),
+                op=op,
+                value=item.get("value"),
+                has_value="value" in item,
+                label=label,
+            )
+        )
+    return ApprovalPolicy(required=required, prompt=prompt, when=tuple(rules))
 
 
 def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
@@ -146,6 +299,10 @@ def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
         out["audit_sensitive"] = True
     if governance.acc is not None:
         out["acc"] = dict(governance.acc)
+    if governance.approval is not None:
+        approval = _approval_to_manifest(governance.approval)
+        if approval:
+            out["approval"] = approval
     return out
 
 
@@ -157,11 +314,13 @@ def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
     1. **不认识的键直接拒绝**。清单是数据交换格式，静默忽略一个写错的
        ``sensitives``（本意要脱敏）就等于"声明了保护但内核没做"，比报错更危险；
        真要加字段就升 ``MANIFEST_VERSION``，别靠老读者猜。
-    2. **只校验类型，不解释 ``acc`` 的内容**。声明快照在清单里是**惰性的记录**，
-       内核不据它改变任何行为，因此也无需在这里重跑契约校验。
-    3. **绝不凭 ``acc`` 造 gate**。外来清单只是"别人说这个工具有这些约束"，
-       准入逻辑必须由本地宿主显式绑定（``integrations/acc.build_gate``）；
+    2. **``acc`` 只校验形状，不解释内容**；``approval`` 反过来，逐字段严校验，
+       因为它**会真的参与准入判定**（见 :func:`_approval_from_manifest`）。
+    3. **绝不凭清单造 ``gate``**。外来清单只是"别人说这个工具有这些约束"，
+       函数级的准入逻辑必须由本地宿主显式绑定（``integrations/acc.build_gate``）；
        否则一份外来 JSON 就能给本机工具加上或摘掉闸门。
+       清单里的 ``approval`` 确实会生效，但它只能**抬闸门**（要多问人、要拒这次调用），
+       永远不能替宿主放行——所以"外来数据带上来的强制"在这个方向上是安全的。
     """
     if raw is None:
         return ToolGovernance()
@@ -211,6 +370,7 @@ def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
         sensitive=sensitive,
         audit_sensitive=audit_sensitive,
         acc=acc,
+        approval=_approval_from_manifest(name, raw.get("approval")),
         gate=None,
     )
 
@@ -252,8 +412,9 @@ class ToolSpec:
         - composite：随清单携带 ``steps``（每步 {tool, args}），工作流即数据；
         - code：随清单携带 ``code`` 字符串（执行仍需宿主沙箱）；
         - native/openapi/mcp：handler 是运行时对象、不可移植，只导出声明；
-        - governance：导出 ``sensitive`` / ``audit_sensitive`` / ``acc`` 快照；
-          ``gate`` 是**函数**，与 handler 同命——不可序列化，导出即丢弃。
+        - governance：导出 ``sensitive`` / ``audit_sensitive`` / ``acc`` 快照 /
+          ``approval`` 审批策略（都是数据）；``gate`` 是**函数**，与 handler 同命——
+          不可序列化，导出即丢弃。
 
         无治理声明时整个 ``governance`` 键都不写，保持清单与旧格式逐字节一致。
         """
@@ -282,9 +443,9 @@ class ToolSpec:
         （在宿主沙箱内）执行；native/openapi/mcp 仅为能力声明，需另行绑定
         执行后端（跨语言接入请直接走 MCP / OpenAPI 集成，它们自带 handler）。
 
-        治理块同样随清单走（脱敏路径、宽口径审计、契约声明快照），但
+        治理块同样随清单走（脱敏路径、宽口径审计、契约声明快照、原生审批要求），但
         ``governance.gate`` 与 handler 一样是运行时函数，**不可能来自清单**：
-        跨进程 / 跨语言导入后准入判定为空，要恢复准入必须由宿主显式重新绑定::
+        跨进程 / 跨语言导入后函数级准入判定为空，要恢复必须由宿主显式重新绑定::
 
             from dataclasses import replace
             from yai_core.integrations.acc import build_gate, parse_declaration
@@ -297,7 +458,9 @@ class ToolSpec:
                 )
 
         内核不会拿清单里的 ``acc`` 快照自动造 gate——外来清单不能给本机工具
-        加上或摘掉闸门。
+        加上或摘掉**函数级**闸门。清单里的 ``approval`` 则导入即生效：它是数据、
+        且只会把闸门往上抬（要多问人 / 要拒这次调用），不存在"外来 JSON 替宿主放行"
+        这条路。
         """
         if not isinstance(data, dict):
             raise TypeError(f"manifest 工具必须是 object，得到 {type(data)!r}")

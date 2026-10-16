@@ -1,22 +1,25 @@
-# 逐行讲解 44 · ACC v1 兼容层：零依赖声明校验 + 严格 JSON 审批原语
+# 逐行讲解 44 · ACC v1 互操作层：零依赖声明校验 + 把声明翻译进原生审批
 
 > 这一篇讲的是 `src/yai_core/integrations/acc/`。**先说清楚它不是什么**：
-> 它不把 YAI 变成"ACC 应用"，不引入任何第三方依赖，不接管事件流，也不在运行时强制执行什么。
-> 它是**可选兼容层**：外部生态用 ACC（Agent Capability Contract v1，一个能力声明契约规范）描述一个
+> 它不把 YAI 变成"ACC 应用"，不引入任何第三方依赖，不接管事件流，也不在运行时强制执行什么，
+> **而且它不再自带一套审批判定**——参数级审批的语义是 YAI 原生的，住在
+> `policy/approval.py`（第 43 篇第 4 节），这里只做"外部声明 → 原生策略"的翻译。
+> 它是**可选互操作层（shim）**：外部生态用 ACC（Agent Capability Contract v1，一个能力声明契约规范）描述一个
 > 操作的风险、审批意图与审计敏感性，YAI 负责把那份声明**读懂、判准**，再决定要不要接进执行器。
 > 规范原文与语料都是 Apache-2.0，出处与逐字节锁定的哈希见 `tests/fixtures/acc/SOURCE.md`。
 
 ## 0. 为什么要接一个外部规范
 
-YAI 自己的工具治理是 `ToolSpec` + `PermissionPolicy` + `Channel.confirm`：**宿主声明能力，内核决定怎么用**。
+YAI 自己的工具治理是 `ToolSpec` + `PermissionPolicy` + `Channel.confirm` + 原生 `approval`：
+**宿主声明能力，内核决定怎么用**。
 问题是宿主之外的世界也在给自己的 API 贴治理标签。如果一个 CRM 厂商已经在 OpenAPI 描述里写了
 "这个操作要人工确认、那个字段是敏感的"，YAI 要么视而不见（自己重贴一遍标签），要么读得懂它。
 后者才谈得上生态，所以有了这个包。三条硬约束来自项目红线：
 
 | 约束 | 落地方式 |
 |---|---|
-| 内核零第三方硬依赖 | 手写 schema 子集校验器，不装 `jsonschema`；整个包只用 `re` / `dataclasses` / `math` |
-| ACC 是可选兼容层 | 只有宿主主动去解析声明时才会 import 这个包；`ToolSpec` 内核字段不因它改变语义 |
+| 内核零第三方硬依赖 | 手写 schema 子集校验器，不装 `jsonschema`；整个包只用 `re` / `dataclasses` |
+| ACC 是可选互操作层 | 只有宿主主动去解析声明时才会 import 这个包；`ToolSpec` 内核字段不因它改变语义，内核也**不 import 它** |
 | 不做业务授权 | ACC 只决定**能力可达（reach）**；"这个主体到底能不能做这件事"永远归宿主业务层 |
 
 ## 1. 两层分工：校验归校验，决策归决策
@@ -26,8 +29,9 @@ YAI 自己的工具治理是 `ToolSpec` + `PermissionPolicy` + `Channel.confirm`
    └─ declaration.parse_declaration()          【校验层：只回答"合不合法"】
         ├─ valid=False → diagnostic + errors    （绝不抛异常，绝不"尽力解释"）
         └─ AccDeclaration（强类型、可选字段留 None）
-              └─ evaluate.is_exposed / effective_risk / audit_sensitive / approval_outcome
-                 【决策层：纯函数，给结论 + 人类可读 reason，不做 IO】
+              └─ evaluate.is_exposed / effective_risk / audit_sensitive   【ACC 特有派生量】
+              └─ evaluate.to_approval_policy → policy.approval.evaluate_approval
+                 【审批：翻译成原生策略，判定由内核做，本层不做 IO】
 ```
 
 分开是有原因的：**校验失败与决策拒绝是两种性质不同的事件**。声明格式错 = 这条能力根本不该被暴露；
@@ -78,15 +82,23 @@ effective_risk(decl, http_method="POST")   # 显式 risk.level > execution.reado
 默认值顺序按规范"安全默认"来：没写风险时，声明只读 → `low`，其余 → `medium`，
 **永远不会默认成 low**。GET 是 OpenAPI 绑定给的原生只读信号，只在风险与 `readonly` 都没声明时才用。
 
-## 4. 决策层之二：`approval` 的严格 JSON 值模型
+## 4. 审批：判定在内核，这一层只翻译
 
-这是整个包里最容易写错的地方，所以官方的 14 条审批向量全都跑在这一段上。
+这一段曾经是包里最容易写错的地方，所以官方的 14 条审批向量全都跑在它上面。现在
+**判定逻辑整块搬进了 `policy/approval.py`**，`approval_outcome()` 只做三步：
+把声明组装成 `ApprovalPolicy`（`to_approval_policy`）、交给 `evaluate_approval`、把结论原样交回。
+搬的理由很朴素：这套语义（严格 JSON 值、失败关闭、判定顺序）跟 ACC 没关系，任何宿主都要用；
+留在兼容层里，就意味着"不接 ACC 的宿主"得自己再抄一遍，而两份抄的东西迟早漂移。
+顺带一提，`AccApprovalCondition` 现在就是 `ApprovalRule` 的别名——九个算子一字不差，
+再养一个同构数据类只会制造"两个模型哪个说了算"的问题。
+
+内核里的判定顺序（顺序是语义的一部分）：
 
 ```
-approval_outcome(decl, args, parameter_schema)
+evaluate_approval(policy, args, input_schema)
   1) 有条件时先按绑定 input schema 校验调用值   不兼容 → reject_invalid_arguments
-  2) 每条 approval.when 的 param 必须在 schema 里声明   没有 → reject_invalid_arguments
-  3) approval.required 为真          → approval_required（条件永远不能削弱它）
+  2) 每条 when 的 param 必须在 schema 里声明；没绑 schema 也算没声明 → reject_invalid_arguments
+  3) required 为真                  → approval_required（条件永远不能削弱它）
   4) 逐条比较，ANY 语义              → 命中即 approval_required，没命中才 allow
 ```
 
@@ -102,6 +114,9 @@ approval_outcome(decl, args, parameter_schema)
 而不是"匹配失败 → allow"。方向只有一个：**宁可多问一次人工确认，不静默放行**。
 
 唯一的例外是 `!=`：路径缺失时 `!=` 判为命中（多要一次确认），这与参考 oracle 一致。
+
+同一条声明走 ACC 路径与走原生路径必须给出**一字不差**的结论，这条由
+`test_native_and_acc_reach_the_same_decision` 钉住（九个算子 + 失败关闭组合）。
 
 ## 5. 官方向量怎么跑
 
@@ -182,6 +197,9 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
 要让声明参与准入就得附上 gate（OpenAPI 桥用 `build_gate(declaration, input_schema)` 造一个）。
 判定发生在每次调用现场，用当时的参数与当时的主体。
 
+同一工具如果**既**挂了 gate **又**声明了原生 `approval`（数据），执行器不会"有 gate 就当
+approval 不存在"：两份结论取更严地合并，两边的理由都进审批事件、只问一次人（第 43 篇第 4 节）。
+
 **主体（`Subject`）**：宿主经 `core.run(task, subject=...)` / `astream(...)` 注入，
 沿 loop → 执行器 → 授权闸一路透传，不落在任何实例属性上，所以并发跑两条会话不会互相粘连。
 两个消费点：
@@ -210,10 +228,14 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
 5. **主体是"注入 + 透传 + 准入"，不是"认证"**：内核不验签、不发 token、不做跨跳主体连续性，
    `Subject` 的可信性完全来自宿主在自己的信任边界上给不给。规范 §4.5 也明令这一点。
 6. **清单里 `acc` 快照跟着走、`gate` 永远不跟着走**：`to_manifest_dict` 会导出 `governance`
-   的数据部分（含 `acc` 快照），但函数 `gate` 与 handler 同命——不导出，也绝不凭快照重建。
-   跨进程拿到清单的宿主必须**本地重新绑定**才有准入（第 21 篇第 5 节给了代码），
-   否则那份声明只是一条记录。方向是有意的：外来 JSON 既不能给本机工具加闸门，
-   也没有通道替本机把已绑定的闸门摘掉。
+   的数据部分（含 `acc` 快照与原生 `approval`），但函数 `gate` 与 handler 同命——不导出，
+   也绝不凭快照重建。跨进程拿到清单的宿主必须**本地重新绑定**才有函数级准入（第 21 篇第 5 节
+   给了代码），否则那份声明只是一条记录。方向是有意的：外来 JSON 既不能给本机工具加**函数级**
+   闸门，也没有通道替本机把已绑定的闸门摘掉。
+   清单里的 `approval` 则**导入即生效**——它只能加严（要多问人、要拒这次调用），
+   做不到替宿主放行，所以"外来数据带来的强制"在这个方向上是安全的（第 21 篇第 5 节）。
+   想要 ACC 声明也享受这条通道，就把 `approval.required` / `approval.when` 抄进 `approval`，
+   或者直接重新绑定 gate。
 
 因此对外口径只有一句：**Implements the ACC v1 OpenAPI Binding Parser Profile**
 （读扩展、校验、按绑定决定暴露与否、出诊断）。Runtime Profile 还缺三块证据：超时/限流映射、
@@ -227,3 +249,4 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
 3. `approval.when` 判不出来时，allow 和 reject 哪个才是对的？为什么？
 4. 契约的 `require_approval` 能把策略的 DENY 抬成"要人工确认"吗？方向为什么是单向的？
 5. 为什么内核吃 `governance.gate` 这个 callable，而不是直接 import ACC 判定？
+6. 参数级审批的判定为什么搬进内核？搬走之后这个包还剩下哪几件事是它自己做的？

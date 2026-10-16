@@ -53,6 +53,8 @@ from yai_core.tools import (
 )
 from yai_core.types import (
     AgentEvent,
+    ApprovalPolicy,
+    ApprovalRule,
     ChatMessage,
     CompositeStep,
     EventType,
@@ -110,6 +112,8 @@ __all__ = [
     "SandboxResult",
     "StorageCipher",
     "AgentEvent",
+    "ApprovalPolicy",
+    "ApprovalRule",
     "ChatMessage",
     "EventType",
     "GateDecision",

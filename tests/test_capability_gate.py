@@ -203,7 +203,8 @@ def test_gate_approval_escalates_an_allow_policy() -> None:
     assert types == [EventType.PERMISSION_ASKED, EventType.TOOL_CALL, EventType.TOOL_RESULT]
     asked = events[0]
     assert asked.data["approval_required"] is True
-    assert "approval.required" in asked.data["reason"]
+    # 话术来自内核原生判定（ACC 只是把它翻译出来），断言行为不钉协议术语。
+    assert "人工确认" in asked.data["reason"]
     assert channel.confirms and channel.confirms[0][0] == "refund"
 
 

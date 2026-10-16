@@ -17,6 +17,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.types import APPROVAL_OPS as _APPROVAL_OPS
+from yai_core.types import ApprovalRule
+
 ACC_MAJOR_VERSION = 1
 ACC_EXTENSION_KEY = "x-agent-capability"
 
@@ -27,18 +30,11 @@ _SCOPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _WINDOW_RE = re.compile(r"^[1-9][0-9]*(s|m|h|d)$")
 
 _RISK_LEVELS = ("low", "medium", "high")
-_APPROVAL_OPS = (">", ">=", "<", "<=", "==", "!=", "in", "contains", "exists")
 
-
-@dataclass(frozen=True)
-class AccApprovalCondition:
-    """``approval.when`` 的一条参数级确认规则（ANY 语义下的一个候选）。"""
-
-    param: str
-    op: str
-    value: Any = None
-    has_value: bool = False
-    label: str = ""
+#: ACC 的 ``approval.when`` 条目与 YAI 原生审批规则**逐字段同构**（9 个算子一字不差），
+#: 所以这里不再另造一个数据类：声明解析直接产出 :class:`yai_core.types.ApprovalRule`。
+#: 别名只为兼容既有 import 路径，新代码请直接使用原生类型。
+AccApprovalCondition = ApprovalRule
 
 
 @dataclass(frozen=True)

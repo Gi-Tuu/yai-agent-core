@@ -1,4 +1,4 @@
-# 逐行讲解 43 · 治理三件套：令牌鉴权、参数快照、声明式脱敏
+# 逐行讲解 43 · 治理三件套：令牌鉴权、参数快照、声明式脱敏（＋原生参数级审批）
 
 > 第 22/23 篇把员工做成了原生桌面端、一座岛管多个专员。本篇补的是**跨进程之后
 > 才暴露出来的安全缺口**：当"审批在灵动岛侧、执行在宿主侧"变成两个进程，
@@ -91,11 +91,58 @@ spec.governance = ToolGovernance(sensitive=("api_key", "headers.Authorization"))
 
 ### 3.2 声明会跟着能力清单走
 
-`governance` 的**数据部分**（`sensitive` / `audit_sensitive` / `acc` 快照）随
-manifest 一起导出、导入后继续生效；`gate` 是函数，与 `handler` 同命——不导出、
+`governance` 的**数据部分**（`sensitive` / `audit_sensitive` / `acc` 快照 / `approval` 审批要求）
+随 manifest 一起导出、导入后继续生效；`gate` 是函数，与 `handler` 同命——不导出、
 也不从清单重建，跨进程后由宿主本地重新绑定（第 21 篇）。
 
-## 4. 自检
+## 4. 原生参数级审批：`governance.approval`
+
+第 44 篇的 ACC 声明能写出"退款超过 1000 要人确认"。但宿主不接 ACC 时，以前只有一条路：
+自己写一个 `gate` 函数。函数进不了清单、跨不了语言，而且每家都要把"超过"这个词重新实现一遍
+——判定语义散在宿主代码里，写法不同结论就不同。现在这套语义住进内核
+（`src/yai_core/policy/approval.py`，纯函数、零依赖），宿主只写**数据**：
+
+```python
+spec.governance = ToolGovernance(
+    approval=ApprovalPolicy(
+        prompt="退款 {amount} 元，确认吗？",
+        when=(ApprovalRule("amount", ">", 1000, label="金额超限"),),
+    )
+)
+```
+
+判定顺序本身就是语义的一部分，换一步就换结论：
+
+1. **入参先于条件**：带条件时先按绑定 input schema 校验调用值，不兼容直接**拒**，
+   handler 不许跑——拿一个类型都不对的值去比大小，结论没有意义；
+2. **条件路径必须已声明**：`param` 不在绑定 schema 里 → **拒**；压根没绑 schema 也 → **拒**。
+   放过去的后果不是"松一点"，是拼错的路径在 `==` 下永远不命中、条件静默失效；
+3. **`required` 占优**：为真时每次都要问，命中的条件不得削弱它；
+4. **`when` 取 ANY**：命中一条就要问，全部不中才是"这层没意见"。
+
+比较一律严格 JSON 值：`"1000" != 1000`、`True != 1`；数值比较遇到 NaN/Infinity、
+`contains` 遇到标量、算子不认识 —— **判不出来就拒**，绝不"当没命中"放行。
+
+三条与三件套同源的纪律：
+
+- **只抬不放**。`allow` 只代表"这层不要求问人"，放行与否仍归 `PermissionPolicy`；
+  策略 DENY 时连问都不问（`test_permission_deny_still_beats_the_approval_requirement`）。
+- **判定只有一份**。ACC 层现在只做翻译（`to_approval_policy`），不再自带一套比较逻辑——
+  两份"看起来一样"的判定迟早漂移，而漂移的那份没人测。
+- **两个来源取更严**。同一个工具既挂 `gate`（函数）又写 `approval`（数据）时合并而不是覆盖，
+  两边理由都进审批事件、只问一次（`test_gate_and_approval_are_merged_not_overwritten`）。
+  "有 gate 就当 approval 不存在"等于声明了的保护内核没做。
+- **组合工具不例外**。组合分支不过 `authorize_tool_call`（权限落到每一步），但组合工具
+  **自己声明**的审批要求会真的问一次：只走 `Channel.confirm`、不替黑盒名字跑策略，
+  人不批就一步都不跑（`test_composite_can_declare_its_own_approval`）。
+
+还有一条踩出来的坑值得记：`from __future__ import annotations` 会让函数注解变成字符串，
+而内省曾经把解不开的字符串一律当成 `string`。审批要按绑定 schema 校验入参，于是
+"期望 string、实到 number" 把**每次合法调用**都判成非法。现在 `build_spec` 先走
+`get_type_hints`，解不开才退回原兜底（第 3 篇，测试
+`test_future_annotations_do_not_poison_the_bound_schema`）。
+
+## 5. 自检
 
 1. 为什么权限决策在调用方（灵动岛）完成时，服务端反而**必须**鉴权？
 2. 三份参数副本各自的作用是什么？少了"审批展示副本"会出什么问题？
@@ -103,3 +150,6 @@ manifest 一起导出、导入后继续生效；`gate` 是函数，与 `handler`
 4. 为什么内核不按字段名关键词自动脱敏？这条边界的代价是什么？
 5. 组合工具的 `sensitive` 声明管到哪一层为止？为什么不做污点追踪？
 6. 令牌文件方案挡住了谁、挡不住谁？要挡后者该换什么机制？
+7. 参数级审批为什么做成**数据**（`approval`）而不是只留一个 `gate` 函数？
+8. 同一个工具既挂了 `gate` 又写了 `approval`，为什么合并要取更严的那个，而不是 gate 优先？
+9. "条件路径没在绑定 schema 里声明"为什么判**拒**而不是判"不命中"？

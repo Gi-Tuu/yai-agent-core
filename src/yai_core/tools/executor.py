@@ -7,13 +7,18 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
+from yai_core.policy.approval import (
+    DECISION_APPROVAL_REQUIRED,
+    DECISION_REJECT_INVALID_ARGUMENTS,
+    evaluate_approval,
+)
+from yai_core.policy.authorize import authorize_tool_call, fill_prompt, snapshot_arguments
 from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
 from yai_core.tools.registry import ToolRegistry
-from yai_core.types import AgentEvent, EventType, ToolSpec
+from yai_core.types import AgentEvent, EventType, GateDecision, ToolSpec
 
 #: 代码工具在沙箱里的最长执行秒数（默认值，可由宿主覆盖）。
 DEFAULT_CODE_TIMEOUT = 10.0
@@ -76,6 +81,51 @@ def _check_timeout(value: Any, label: str) -> None:
         return
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ValueError(f"{label} 必须是正数或 None")
+
+
+def _native_approval(spec: ToolSpec, arguments: dict[str, Any]) -> GateDecision | None:
+    """宿主只写了数据（``governance.approval``）时，由内核自己判一次要不要问人。
+
+    没声明审批就返回 ``None``（"这层没意见"），事件形状与加了这块功能之前一字不差；
+    ``allow`` 同样折回 ``None``，不让"声明了但没命中"污染审计载荷。
+    """
+    policy = spec.governance.approval
+    if policy is None:
+        return None
+    outcome = evaluate_approval(policy, arguments, spec.input_schema)
+    if outcome.decision == DECISION_REJECT_INVALID_ARGUMENTS:
+        return GateDecision(reject=f"调用被审批闸拒绝：{outcome.reason}", reason=outcome.reason)
+    if outcome.decision == DECISION_APPROVAL_REQUIRED:
+        return GateDecision(
+            require_approval=True, reason=outcome.reason, prompt=outcome.prompt
+        )
+    return None
+
+
+def _tighten(
+    gate: GateDecision | None, native: GateDecision | None
+) -> GateDecision | None:
+    """合并同一工具的函数级闸（``gate``）与数据级闸（``approval``），**取更严的那个**。
+
+    两个来源都可能同时存在：``gate`` 由宿主/集成层现场算，``approval`` 是随清单走的声明。
+    谁都不比谁弱，所以不能"有 gate 就当 approval 不存在"——那等于声明了的保护内核没做。
+    合并只会让闸门更严：拒绝取并、要问人取或、话术与描述性字段先到先得。
+    """
+    if gate is None:
+        return native
+    if native is None:
+        return gate
+    rejects = [text for text in (gate.reject, native.reject) if text]
+    reasons = [text for text in (gate.reason, native.reason) if text]
+    return GateDecision(
+        reject="；".join(dict.fromkeys(rejects)),
+        require_approval=gate.require_approval or native.require_approval,
+        reason="；".join(dict.fromkeys(reasons)),
+        prompt=gate.prompt or native.prompt,
+        risk=gate.risk or native.risk,
+        scope=gate.scope or native.scope,
+        target=gate.target or native.target,
+    )
 
 
 class ToolExecutor:
@@ -182,15 +232,16 @@ class ToolExecutor:
         # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
         arguments = snapshot_arguments(arguments)
 
-        # 准入判定在权限闸之前：工具自带的 gate 说这次调用不该到达业务操作时，
+        # 准入判定在权限闸之前：工具自带的 gate 或 approval 说这次调用不该到达业务操作时，
         # 连"要不要问人"都不必问；内核不认识判定来自哪个协议。
         gate_fn = spec.governance.gate
         decision = gate_fn(arguments, subject) if gate_fn is not None else None
+        decision = _tighten(decision, _native_approval(spec, arguments))
         if decision is not None and decision.reject:
             return events, False, decision.reject
 
         if spec.source == "composite" and spec.steps:
-            return await self._execute_composite(spec, arguments, subject)
+            return await self._execute_composite(spec, arguments, subject, decision)
 
         auth_events, approved, reason = await authorize_tool_call(
             self.policy,
@@ -322,12 +373,21 @@ class ToolExecutor:
         return events, True, text
 
     async def _execute_composite(
-        self, spec: ToolSpec, arguments: dict[str, Any], subject: Any = None
+        self,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        subject: Any = None,
+        decision: GateDecision | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
         组合工具本身不产生新原始能力，因此不再对组合名做一次权限检查
         （那会让用户看到一个黑盒名字）；权限精确落到每一步的内部工具上。
+
+        例外：**组合工具自己声明了审批要求**（``gate`` 或 ``approval`` 抬出来的
+        ``require_approval``）。那是宿主写明"这整条工作流开工前要问一次"，
+        不是黑盒——所以这一步真的去问，绝不静默丢掉这份保护。问的时候只走
+        :meth:`Channel.confirm`，不再跑一遍策略（策略对黑盒名字的判断仍然不做）。
         """
         events: list[AgentEvent] = []
         steps = spec.steps
@@ -342,6 +402,27 @@ class ToolExecutor:
             spec.governance.sensitive,
             broad=spec.governance.audit_sensitive,
         )
+        if decision is not None and decision.require_approval:
+            asked = redact_arguments(arguments, spec.governance.sensitive)
+            payload: dict[str, Any] = {
+                "tool": spec.name,
+                "arguments": asked,
+                "steps": step_names,
+                "approval_required": True,
+                "reason": decision.reason,
+            }
+            if decision.prompt:
+                payload["prompt"] = fill_prompt(decision.prompt, asked)
+            for key, value in (
+                ("risk", decision.risk),
+                ("scope", decision.scope),
+                ("target", decision.target),
+            ):
+                if value:
+                    payload[key] = value
+            events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
+            if not await self.channel.confirm(spec.name, asked):
+                return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,

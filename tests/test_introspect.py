@@ -1,8 +1,9 @@
 """introspect 边界测试：类型映射（含 Optional / Union / X|None）、可变参数跳过、
-非可调用拒绝、模块/实例发现、无 docstring 回退、摘要取首段。
+非可调用拒绝、模块/实例发现、无 docstring 回退、摘要取首段、字符串注解解析。
 
-注意：本文件**不使用** ``from __future__ import annotations``，否则函数注解会变成
-字符串（PEP 563），而 introspect 当前只内省真实类型对象、不 eval 字符串注解。
+注意：本文件**不使用** ``from __future__ import annotations``。内省现在会先试
+``get_type_hints`` 把字符串注解（PEP 563 或手写引号）解析成真实类型，解不开才退回
+"认不出就 string"；把整份文件的注解都字符串化会让上面这些用例测不到它们声称的东西。
 """
 
 import inspect
@@ -69,6 +70,27 @@ def test_build_spec_no_docstring_falls_back_name() -> None:
 
     spec = build_spec(fn, name="custom_name")
     assert spec.description == "custom_name"
+
+
+def test_build_spec_resolves_string_annotation() -> None:
+    """引号里的注解（等价于 PEP 563 下的一切）必须解析成真实类型。
+
+    退化成 string 不只是 schema 难看：审批条件按绑定 schema 校验入参，
+    "期望 string" 会把每次合法调用都判成非法，工具直接瘫掉。
+    """
+
+    def fn(count: "int") -> None:
+        """文档。"""
+
+    assert build_spec(fn).input_schema["properties"]["count"]["type"] == "integer"
+
+
+def test_build_spec_unresolvable_annotation_still_falls_back() -> None:
+    def fn(value: "TotallyUnknownHere") -> None:  # noqa: F821 - 故意引用不存在的名字
+        """文档。"""
+
+    spec = build_spec(fn)
+    assert spec.input_schema["properties"]["value"]["type"] == "string"
 
 
 def test_build_spec_docstring_first_paragraph() -> None:
