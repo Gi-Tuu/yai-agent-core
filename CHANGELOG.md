@@ -9,6 +9,11 @@
 
 ### Added
 
+- **资源作用域闸 `filesystem_gate`：把授权点从"模型写来的字符串"移到"解析后的落点"**。文件系统两道路径闸只管"**出不出根目录**"，管不了"根目录内的哪一块"；而宿主想说的恰恰是"只能碰 `notes/`"。按原始字符串匹配白名单是假的——`notes/a.txt`、`./notes/a.txt`、`notes//a.txt`、`notes/./a.txt` 是同一目标的四种写法，而且人工审批看到的正是这个原始串。
+  - **归一化用与 handler 完全相同的 `normalize_relative`**，所以"批准目标 == 执行目标"是构造上成立、不靠约定；`write=True` 而 `prefixes` 为空 = 拒绝一切写（失败关闭）；非法形状（`..`、绝对路径、盘符冒号、空、非字符串）在闸口就拒并把理由回灌给模型。
+  - **`GateDecision` 新增 `target` 字段**，与上一步的 `risk`/`scope` 同一条路落进 `PERMISSION_ASKED` 与 `TOOL_CALL`：审批人第一次能看到"这次究竟要写哪个文件"，而不是模型原样写来的串。
+  - **三条边界照实写**：前缀匹配是**字面**的（`NOTES/a.txt` 在 `notes/` 下会被误拒——宁可误拒，要放宽宿主自己规范化）；它**不替代**逐段拦链接与 realpath 复核（批准与写入之间被换成链接仍是 fail closed）；它**不做授权**（`PermissionPolicy` 的 DENY 永远优先）。
+  - 11 例测试，含一条**反"假绿"对照**：`test_without_the_gate_the_same_write_succeeds`——不挂闸时同一次越界写会成功落盘，证明"作用域"确实是闸在管而不是电池碰巧拦住。写这条之前我先踩了一遍：闸只挂在 `file_patch` 上、测试却调 `file_create`，"拒绝"那条就假绿了。讲义第 46 篇新增第 5 节。
 - **准入判定的描述性字段终于落到审计上（`risk` / `scope` 进事件）**：`GateDecision` 一直带着 `effective_risk` 与声明的 `scope`，但执行器只用了 `reject / require_approval / reason / prompt`——**算出来就扔了**，结果审计链上看不出"这次是高影响写、作用域是什么"，事后无法按风险检索。现在两者随 `PERMISSION_ASKED`（审批人要判断该不该批）与 `TOOL_CALL`（事后审计）一起发出。
   - **不改变决策语义**：`risk` / `scope` 仍是描述性信息，放行与否只看策略的 DENY/ASK/ALLOW 与 `require_approval`；内核依旧不按风险自动升降档（那是宿主的权限模型）。
   - **未治理工具的事件形状逐字不变**：空值不写键，`test_ungoverned_tool_events_keep_their_old_shape` 钉住 `set(data) == {"tool", "arguments"}`。

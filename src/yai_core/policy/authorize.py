@@ -88,6 +88,7 @@ async def authorize_tool_call(
     approval_prompt: str = "",
     risk: str = "",
     scope: str = "",
+    target: str = "",
 ) -> tuple[list[AgentEvent], bool, str]:
     """对一次工具调用做权限判定，返回（要追加的事件，是否放行，拒绝原因）。
 
@@ -107,9 +108,10 @@ async def authorize_tool_call(
     ``approval.when``）：**它只能把闸门往上抬**——策略 DENY 仍然优先，策略 ALLOW
     也会被抬成人工确认；反过来说，契约永远不能替策略放行。
 
-    ``risk`` / ``scope`` 是准入判定算出来的**描述性**信息（不参与放行决策，决策
-    只看 DENY / ASK / ALLOW 与 require_approval）。它们必须落到事件里，否则
-    "这次是高影响写、作用域是什么"在审计链上根本看不出来——事后无法按风险检索。
+    ``risk`` / ``scope`` / ``target`` 是准入判定算出来的**描述性**信息（不参与放行
+    决策，决策只看 DENY / ASK / ALLOW 与 require_approval）。它们必须落到事件里，
+    否则"这次是高影响写、作用域是什么、真正要碰哪个资源"在审计链上根本看不出来——
+    事后无法按风险检索，审批人也只能凭模型原样写来的参数串做判断。
     空串表示"这一层没意见"，此时**不写进载荷**，保持未治理工具的既有事件形状。
     """
     events: list[AgentEvent] = []
@@ -117,8 +119,10 @@ async def authorize_tool_call(
     if decision == PermissionDecision.DENY:
         return events, False, f"权限策略拒绝执行工具 {name}"
 
-    # 描述性字段：有值才带，避免给未声明治理的工具凭空多出两个键。
-    descriptor = {k: v for k, v in (("risk", risk), ("scope", scope)) if v}
+    # 描述性字段：有值才带，避免给未声明治理的工具凭空多出几个键。
+    descriptor = {
+        k: v for k, v in (("risk", risk), ("scope", scope), ("target", target)) if v
+    }
 
     if decision == PermissionDecision.ASK or require_approval:
         asked = redact_arguments(arguments, sensitive_paths)

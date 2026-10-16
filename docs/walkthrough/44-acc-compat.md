@@ -202,9 +202,10 @@ pathItem 上时，绑定**不读它**（不能让它产生任何治理效果）�
    oracle 给 `low`。绑定文本说"显式声明优先"，取更保守的那一档；向量没有覆盖这个组合。
 3. `timeout_ms` / `rate_limit` **只解析、不执行**，还没映射到执行器的超时与限流。
 4. **闸只覆盖审批意图与主体准入**：`approval.required` / 命中的 `approval.when` /
-   `subject.required` 已经接进每一次调用；风险等级 (`effective_risk`) 与 `scope` 是
-   **描述性**字段——它们会随 `GateDecision` 带出、并落到 `PERMISSION_ASKED` 与
-   `TOOL_CALL` 事件载荷里（审批人看得见"这是高影响写"，事后能按风险检索），
+   `subject.required` 已经接进每一次调用；风险等级 (`effective_risk`)、`scope`，以及
+   宿主自定义的 `target`（这次实际要碰哪个资源，见第 46 篇第 5 节）都是**描述性**字段——
+   它们会随 `GateDecision` 带出、并落到 `PERMISSION_ASKED` 与 `TOOL_CALL` 事件载荷里
+   （审批人看得见"这是高影响写、要动哪个文件"，事后能按风险检索），
    但内核**没有**按风险自动升降档（那是宿主的权限模型）。
 5. **主体是"注入 + 透传 + 准入"，不是"认证"**：内核不验签、不发 token、不做跨跳主体连续性，
    `Subject` 的可信性完全来自宿主在自己的信任边界上给不给。规范 §4.5 也明令这一点。

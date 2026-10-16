@@ -88,7 +88,10 @@ class GateDecision:
     - ``require_approval``：要人工确认——**只能把闸门往上抬**，权限策略的 DENY 永远优先；
     - 两者皆假：这一层对这次调用没有意见。
 
-    ``risk`` / ``scope`` 是附带信息（进诊断与宿主 UI 用），不参与内核决策。
+    ``risk`` / ``scope`` / ``target`` 是附带信息（进诊断、审批话术与审计事件，
+    见 :func:`yai_core.policy.authorize.authorize_tool_call`），不参与内核决策。
+    其中 ``target`` 专门用来把"这次调用**实际会碰哪个资源**"说清楚：审批人看到的
+    应当是解析后的落点，而不是模型原样写来的字符串。
     """
 
     reject: str = ""
@@ -97,6 +100,7 @@ class GateDecision:
     prompt: str = ""
     risk: str = ""
     scope: str = ""
+    target: str = ""
 
 
 @dataclass(frozen=True)
