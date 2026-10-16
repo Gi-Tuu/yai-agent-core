@@ -89,8 +89,12 @@ include = [
     "SECURITY.md",
     "LICENSE",
 ]
-# hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录：
-exclude = ["inbox"]
+# hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录。
+# tests/fixtures/acc：上游 Agent Capability Contract 的官方一致性语料（Apache-2.0，
+# 出处与 SHA-256 见同目录 SOURCE.md）。它是**别人的测试数据集**，我们只在源码仓库里
+# 用它证明兼容层跑得对，不对外分发副本；缺该文件时 tests/test_acc_conformance.py
+# 整模块 skip，从 sdist 跑测试的人不会因此报错。
+exclude = ["inbox", "tests/fixtures/acc"]
 
 [tool.ruff]
 line-length = 100

@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **准入判定的描述性字段终于落到审计上（`risk` / `scope` 进事件）**：`GateDecision` 一直带着 `effective_risk` 与声明的 `scope`，但执行器只用了 `reject / require_approval / reason / prompt`——**算出来就扔了**，结果审计链上看不出"这次是高影响写、作用域是什么"，事后无法按风险检索。现在两者随 `PERMISSION_ASKED`（审批人要判断该不该批）与 `TOOL_CALL`（事后审计）一起发出。
+  - **不改变决策语义**：`risk` / `scope` 仍是描述性信息，放行与否只看策略的 DENY/ASK/ALLOW 与 `require_approval`；内核依旧不按风险自动升降档（那是宿主的权限模型）。
+  - **未治理工具的事件形状逐字不变**：空值不写键，`test_ungoverned_tool_events_keep_their_old_shape` 钉住 `set(data) == {"tool", "arguments"}`。
+- **上游 ACC 一致性语料不再随包分发**：`tests/fixtures/acc/`（Apache-2.0 的 26 条官方向量 + `SOURCE.md`）此前随 sdist 一起发布——**合规**（出处与许可证都在），但那是别人的测试数据集，我们没有对外分发它的必要。现在 `pyproject.toml` 的 sdist `exclude` 排掉该目录，缺文件时 `tests/test_acc_conformance.py` 整模块 `skip`。
+  - 验证过两条：构建出的 sdist 里 `fixtures/acc` 命中 **0**、`tests/` 仍有 92 个文件；把 sdist 解包后跑那个测试文件得到 **`1 skipped`**（不是报错）。源码仓库里跑仍全量执行，CI 就在源码仓库里跑。讲义第 44 篇第 5 节同步说明。
+
 ## [v0.10.0] - 2026-10-14
 
 本版主线是**"让内核能被安全地嵌进真实软件"**：能力声明能跨进程走了，超时与收尾有了统一入口，多了第二个真实模型后端，文件能力有了第 10 个契约，公网端点多了两道闸。全部新增默认不改变既有行为。

@@ -491,3 +491,45 @@ def test_concurrent_cores_keep_their_own_subjects() -> None:
     asyncio.run(main())
     assert [row["subject"].subject_id for row in policy_a.seen] == ["张三"]
     assert [row["subject"].subject_id for row in policy_b.seen] == ["李四"]
+
+
+# --- 决策的描述性字段必须落到审计上 -----------------------------------------
+
+
+def test_risk_and_scope_reach_the_audit_events() -> None:
+    """risk / scope 此前算出来就扔了：审计链看不出"这是高影响写、作用域是什么"。"""
+    gate = _gate(
+        {
+            "version": 1,
+            "enabled": True,
+            "scope": "refund.create",
+            "risk": {"level": "high"},
+            "approval": {"required": True, "prompt": "确认退款 {amount} 元？"},
+        },
+        {
+            "type": "object",
+            "properties": {"amount": {"type": "number"}},
+            "required": ["amount"],
+        },
+    )
+    executor = _executor(
+        _spec(refund, ToolGovernance(gate=gate)), _Policy(), _Channel()
+    )
+    events, ok, _text = asyncio.run(
+        executor.execute("refund", {"amount": 50}, subject=Subject(subject_id="u-1"))
+    )
+    assert ok is True
+    asked = next(e for e in events if e.type == EventType.PERMISSION_ASKED)
+    called = next(e for e in events if e.type == EventType.TOOL_CALL)
+    # 审批人那份与审计那份都要带：前者让人判断该不该批，后者让事后能按风险检索
+    assert (asked.data["risk"], asked.data["scope"]) == ("high", "refund.create")
+    assert (called.data["risk"], called.data["scope"]) == ("high", "refund.create")
+
+
+def test_ungoverned_tool_events_keep_their_old_shape() -> None:
+    """没声明就不许多出键——未治理工具的事件形状必须与从前逐字一致。"""
+    executor = _executor(_spec(refund, ToolGovernance()), _Policy(), _Channel())
+    events, ok, _ = asyncio.run(executor.execute("refund", {"amount": 1}))
+    assert ok is True
+    called = next(e for e in events if e.type == EventType.TOOL_CALL)
+    assert set(called.data) == {"tool", "arguments"}
