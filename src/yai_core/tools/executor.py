@@ -205,6 +205,7 @@ class ToolExecutor:
             approval_prompt=decision.prompt if decision else "",
             risk=decision.risk if decision else "",
             scope=decision.scope if decision else "",
+            target=decision.target if decision else "",
         )
         events.extend(auth_events)
         if not approved:

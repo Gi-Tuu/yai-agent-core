@@ -39,9 +39,11 @@ from yai_core.spi.resources import (
     ResourceNotFoundError,
     ResourcePolicy,
     ResourceTooLargeError,
+    normalize_relative,
     resolve_within_root,
     sha256_text,
 )
+from yai_core.types import GateDecision
 
 _REPARSE = getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 
@@ -295,6 +297,86 @@ def filesystem_capabilities(
     return [file_list, file_read, file_create, file_patch]
 
 
+def _scope_prefix(prefix: str) -> str:
+    """把宿主写的作用域前缀收敛成"目录前缀"形状（``notes`` 与 ``notes/`` 同义）。"""
+    cleaned = normalize_relative(prefix) if prefix.strip() else ""
+    return cleaned + "/" if cleaned and not cleaned.endswith("/") else cleaned
+
+
+def _in_scope(relative: str, prefix: str) -> bool:
+    if not prefix:                      # 空前缀 = 整个根目录
+        return True
+    if relative == prefix.rstrip("/"):  # 直接命中目录本身（list 场景）
+        return True
+    return relative.startswith(prefix)
+
+
+def filesystem_gate(
+    *,
+    prefixes: tuple[str, ...] = (),
+    write: bool = False,
+    risk: str | None = None,
+) -> Callable[[dict[str, Any], Any], GateDecision]:
+    """给 ``file_*`` 工具挂的**资源作用域闸**：把授权点从"模型写来的字符串"
+    移到"解析后的落点"。
+
+    为什么需要它：``ToolExecutor`` 的准入判定与人工审批看到的都是模型原样给的
+    ``path``，真正落点要等 handler 里 ``normalize_relative`` + ``resolve_within_root``
+    才算出来。宿主想表达"只有 ``notes/`` 能写"，若按原始串匹配，``./notes/a.txt``、
+    ``notes//a.txt``、``notes/./a.txt`` 就是**同一目标的三种写法**，白名单形同虚设。
+
+    三件事：
+
+    1. 用**与 handler 完全相同的** :func:`normalize_relative` 规范化——"批准的目标
+       == 执行的目标"是**构造上成立**，不是靠约定；
+    2. 按前缀白名单判作用域；``write=True`` 而 ``prefixes`` 为空 = **拒绝一切写**
+       （失败关闭，不默认放行）；
+    3. 把规范化后的落点放进 :attr:`GateDecision.target`，让它进审批话术与审计事件。
+
+    边界（照实说，别当成完整沙箱）：
+
+    - 前缀匹配是**字面**的。Windows/macOS 大小写不敏感、8.3 短名这类"同一文件多个
+      名字"不在这里解决——``NOTES/a.txt`` 在 ``notes/`` 白名单下会被**误拒**，
+      这是有意的（宁可误拒不可误放），要放宽请宿主自己显式规范化；
+    - 它**不替代**文件系统那两道闸（逐段拦链接 + realpath 复核）。符号链接在**打开时**
+      仍由 handler 拦，所以"批准与写入之间被换成链接"这种竞态是 fail closed，
+      不是"闸看住了"；
+    - 它**不做授权**：能不能调用 ``file_patch`` 仍由 ``PermissionPolicy`` 决定，
+      闸只能把闸门往上抬，永远不能替宿主放行。
+    """
+    scope = ",".join(_scope_prefix(p) for p in prefixes) or ("*" if not write else "")
+    declared_risk = "high" if write else (risk or "")
+    kind = "写" if write else "读"
+
+    def gate(arguments: dict[str, Any], subject: Any = None) -> GateDecision:
+        raw = (arguments or {}).get("path", "")
+        if write and (not isinstance(raw, str) or not raw.strip()):
+            return GateDecision(
+                reject=f"写操作必须给出非空的 path，得到 {raw!r}", risk=declared_risk, scope=scope
+            )
+        if not write and isinstance(raw, str) and not raw.strip():
+            # file_list 的默认值就是"根目录"，读根目录不需要作用域白名单之外的事
+            return GateDecision(target="", risk=declared_risk, scope=scope)
+        try:
+            relative = normalize_relative(raw)
+        except ResourceError as exc:
+            # 非法形状在这里就拒，不等 handler——理由要回灌给模型，它才知道怎么改
+            return GateDecision(
+                reject=f"{kind}资源路径非法，已拒绝：{exc}", risk=declared_risk, scope=scope
+            )
+        if not any(_in_scope(relative, _scope_prefix(p)) for p in prefixes):
+            return GateDecision(
+                reject=(
+                    f"{relative!r} 不在允许的{kind}作用域 {sorted(prefixes)} 内，已拒绝"
+                ),
+                risk=declared_risk,
+                scope=scope,
+            )
+        return GateDecision(target=relative, risk=declared_risk, scope=scope)
+
+    return gate
+
+
 __all__ = [
     "FileSystemResources",
     "PathEscapeError",
@@ -304,4 +386,5 @@ __all__ = [
     "ResourcePolicy",
     "ResourceTooLargeError",
     "filesystem_capabilities",
+    "filesystem_gate",
 ]
