@@ -183,8 +183,8 @@ def test_schema_version_baseline_and_future_guard(tmp_path) -> None:
     store.close()
 
     conn = sqlite3.connect(db)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
-    conn.execute("PRAGMA user_version = 3")  # 模拟"未来版本"数据库
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    conn.execute("PRAGMA user_version = 4")  # 模拟"未来版本"数据库
     conn.commit()
     conn.close()
 

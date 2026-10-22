@@ -20,7 +20,7 @@ from yai_core.diagnostics import (
     emit,
 )
 from yai_core.kernel.context import Context
-from yai_core.types import AgentEvent, ChatMessage, EventType
+from yai_core.types import AgentEvent, ChatMessage, EventType, parts_to_text
 
 #: 摘要器的系统指令：只保留对后续任务有用的信息，去掉寒暄与重复。
 _SUMMARY_SYSTEM = (
@@ -109,7 +109,11 @@ def select_compaction_range(
 
 
 def render_for_summary(messages: list[ChatMessage], start: int, end: int) -> str:
-    """把 ``[start, end)`` 的消息渲染成供摘要的纯文本（含工具结果，保留事实）。"""
+    """把 ``[start, end)`` 的消息渲染成供摘要的纯文本（含工具结果，保留事实）。
+
+    多模态片段会被渲染成**明说"模型看不到"**的占位文本——摘要器是纯文本模型，
+    静默丢掉图片引用会让摘要里凭空少掉一条事实（例如"用户发来截图，结论是…"）。
+    """
     lines: list[str] = []
     for m in messages[start:end]:
         if m.role == "user":
@@ -126,6 +130,9 @@ def render_for_summary(messages: list[ChatMessage], start: int, end: int) -> str
             lines.append(f"工具结果：{m.content}")
         else:
             lines.append(m.content)
+        parts_text = parts_to_text(getattr(m, "parts", None))
+        if parts_text:
+            lines.append(parts_text)
     return "\n".join(lines)
 
 

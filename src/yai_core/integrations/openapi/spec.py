@@ -41,6 +41,11 @@ class OpenApiSpecConfig:
     acc_scopes: tuple[str, ...] = ()
     #: 当前调用上下文里有没有**可信操作主体**（ACC ``subject.required`` 的判定输入）。
     #: 默认 False：主体必须由宿主在自己的信任边界上注入，模型/参数里抄来的身份不算。
+    #:
+    #: 这是**注册期**的一次判断，不是运行期的保证：真正的强制点在**调用期**——能力闸
+    #: 每次调用都看当时的主体，没有可信主体就拒绝这次调用。所以把它设成 True 不会
+    #: 让"没有主体"的调用蒙混过关（闸会拒）；它的真实含义是"本宿主保证每次调用都
+    #: 带得上主体，因此不必因缺主体而隐藏能力"。
     trusted_subject: bool = False
 
     def acc_scope_allowed(self, scope: str) -> bool:

@@ -34,10 +34,10 @@ from yai_core.memory.retention import (
     ttl_cut,
     utc_now,
 )
-from yai_core.types import ChatMessage
+from yai_core.types import ChatMessage, parts_from_references
 
 # 当前代码支持的 schema 版本；_ensure_schema 用它判断"未来版本数据库"并拒绝打开。
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # 建表语句整体作为一个脚本执行；PRAGMA user_version 不能参数化，必须写字面量。
 _SCHEMA_SQL = """
@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS history (
     tool_calls   TEXT,
     tool_call_id TEXT,
     name         TEXT,
+    parts        TEXT,
     created_at   TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 CREATE INDEX IF NOT EXISTS idx_history_scope_id ON history(scope, id);
@@ -62,7 +63,7 @@ CREATE TABLE IF NOT EXISTS kv (
     PRIMARY KEY (scope, key)
 );
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 """
 
 # v1 → v2 迁移：kv 增加可空 expires_at（NULL = 永不过期）；history 表不动。
@@ -70,6 +71,35 @@ PRAGMA user_version = 2;
 _MIGRATE_v1_v2_SQL = """
 ALTER TABLE kv ADD COLUMN expires_at TEXT;
 PRAGMA user_version = 2;
+"""
+
+# v2 → v3 迁移：history 增加可空 parts 列（多模态片段的**引用形态**）。
+# 只存引用与元数据，**不存图片字节**——历史里不该长期驻留大块二进制。
+#
+# 迁移**不写成一段裸 SQL**：老库可能根本没有 history 表（手工造过残缺库），
+# 那种情况下 ALTER TABLE 会直接炸。两条路分开走：
+#   - 表不存在 → 按 v3 建表；
+#   - 表在但缺列 → ALTER 补列。
+# 两种情况都不丢已有数据。
+_MIGRATE_v2_v3_SQL = """
+ALTER TABLE history ADD COLUMN parts TEXT;
+PRAGMA user_version = 3;
+"""
+
+#: v3 的 history 表（建表脚本单独成份，好让迁移路径复用同一份定义）。
+_CREATE_HISTORY_V3_SQL = """
+CREATE TABLE IF NOT EXISTS history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT NOT NULL DEFAULT 'default',
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL DEFAULT '',
+    tool_calls   TEXT,
+    tool_call_id TEXT,
+    name         TEXT,
+    parts        TEXT,
+    created_at   TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+CREATE INDEX IF NOT EXISTS idx_history_scope_id ON history(scope, id);
 """
 
 _DB_PATH_ENV = "YAI_DB_PATH"
@@ -152,23 +182,53 @@ class SqliteStore:
         return cls(raw, max_messages=max_messages, ttl_seconds=ttl_seconds)
 
     def _ensure_schema(self) -> None:
-        """建表（版本 0）或核对版本；版本高于本代码支持值时直接报错，拒绝乱开。"""
+        """建表（版本 0）或核对版本；版本高于本代码支持值时直接报错，拒绝乱开。
+
+        迁移是**逐级**的：一条老库可能连跨两级（v1 → v2 → v3），单次 if/elif 只走一级
+        会把库停在中间版本上——下次打开还得再迁一次，而"停在中间"这件事没人会发现。
+        """
         with self._lock:
             conn = self._require_conn_locked()
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            if version == 0:
-                conn.executescript(_SCHEMA_SQL)
-                conn.commit()
-            elif version == 1:
-                # 老库（v1）升级到 v2：kv 补 expires_at，数据原样保留。
-                conn.executescript(_MIGRATE_v1_v2_SQL)
-                conn.commit()
-            elif version > _SCHEMA_VERSION:
+            if version > _SCHEMA_VERSION:
                 raise RuntimeError(
                     f"数据库 schema 版本 {version} 高于本代码支持的 {_SCHEMA_VERSION}，"
                     "请升级 yai-agent-core"
                 )
+            if version == 0:
+                conn.executescript(_SCHEMA_SQL)
+                conn.commit()
+                return
+            while version < _SCHEMA_VERSION:
+                if version == 1:
+                    # v1 → v2：kv 补 expires_at，数据原样保留。
+                    conn.executescript(_MIGRATE_v1_v2_SQL)
+                    version = 2
+                elif version == 2:
+                    # v2 → v3：history 补 parts 列（多模态片段的引用形态）。
+                    self._migrate_v2_to_v3(conn)
+                    version = 3
+                else:  # pragma: no cover - 未来版本号分支，当前到 3 为止
+                    break
+                conn.commit()
             # version == _SCHEMA_VERSION：幂等，什么都不做（重复初始化不报错、不丢数据）
+
+    def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
+        """v2 → v3：history 补 parts 列（多模态片段的引用形态）。
+
+        两种老库都要照顾到：
+
+        - **表根本不存在**（手工造过的残缺库）→ 按 v3 建表；
+        - **表在但缺列** → ``ALTER TABLE`` 补列。
+
+        两种情况都不丢已有数据；``user_version`` 一律落到 3。
+        """
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(history)")}
+        if not columns:
+            conn.executescript(_CREATE_HISTORY_V3_SQL)
+        elif "parts" not in columns:
+            conn.execute("ALTER TABLE history ADD COLUMN parts TEXT")
+        conn.execute("PRAGMA user_version = 3")
 
     def _require_conn_locked(self) -> sqlite3.Connection:
         """关闭后任何方法都给统一错误；调用方必须已持有 self._lock。"""
@@ -184,6 +244,18 @@ class SqliteStore:
             if message.tool_calls is None
             else json.dumps(message.tool_calls, ensure_ascii=False, default=str)
         )
+        # 多模态片段：只存**引用形态**（元数据 + 引用），不落图片字节——
+        # 历史里不该长期驻留大块二进制；读回时图片会退化成"模型看不到"的占位。
+        raw_parts = getattr(message, "parts", None)
+        parts_json = (
+            None
+            if not raw_parts
+            else json.dumps(
+                [part.to_reference() for part in raw_parts],
+                ensure_ascii=False,
+                default=str,
+            )
+        )
         # created_at 用注入时钟在 Python 侧写：与 InMemoryStore 的时间戳同口径，
         # TTL 才能用假时钟做确定性测试；列默认 CURRENT_TIMESTAMP 仍兜底外部插入。
         created_at = self._clock().strftime(_TS_FORMAT)
@@ -191,7 +263,7 @@ class SqliteStore:
             conn = self._require_conn_locked()
             conn.execute(
                 "INSERT INTO history(scope, role, content, tool_calls, tool_call_id,"
-                " name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " name, parts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     self._scope,
                     message.role,
@@ -199,6 +271,7 @@ class SqliteStore:
                     tool_calls,
                     message.tool_call_id,
                     message.name,
+                    parts_json,
                     created_at,
                 ),
             )
@@ -214,7 +287,7 @@ class SqliteStore:
         with self._lock:
             conn = self._require_conn_locked()
             rows = conn.execute(
-                "SELECT role, content, tool_calls, tool_call_id, name FROM history"
+                "SELECT role, content, tool_calls, tool_call_id, name, parts FROM history"
                 " WHERE scope = ? ORDER BY id ASC",
                 (self._scope,),
             ).fetchall()
@@ -222,6 +295,14 @@ class SqliteStore:
         for row in rows:
             raw_calls = row["tool_calls"]
             tool_calls = json.loads(raw_calls) if raw_calls is not None else None
+            raw_parts = row["parts"] if "parts" in row.keys() else None
+            parts = None
+            if raw_parts:
+                try:
+                    parts = parts_from_references(json.loads(raw_parts))
+                except (TypeError, ValueError):
+                    # 片段列损坏不该让整段历史都读不出来：丢掉片段，文本仍在。
+                    parts = None
             messages.append(
                 ChatMessage(
                     role=row["role"],
@@ -229,6 +310,7 @@ class SqliteStore:
                     tool_calls=tool_calls,
                     tool_call_id=row["tool_call_id"],
                     name=row["name"],
+                    parts=parts,
                 )
             )
         return messages
