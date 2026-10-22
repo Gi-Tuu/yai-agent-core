@@ -51,7 +51,7 @@ class DemoNotes:
     def __init__(self) -> None:
         self._notes = {
             "周报": ["Core 骨架", "薄壳原生端"],
-            "复盘": ["杭州未入围", "改做完整产品"],
+            "复盘": ["首轮未入围", "改做完整产品"],
         }
 
     def search_notes(self, keyword: str) -> list[str]:
