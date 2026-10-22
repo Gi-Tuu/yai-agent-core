@@ -4,6 +4,9 @@ import asyncio
 import functools
 import inspect
 import json
+import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -169,8 +172,49 @@ class ToolExecutor:
         # 普通工具 handler 的墙上超时（None=关闭，默认关闭以保证零行为变化）。
         # 代码工具的超时走 code_timeout + 沙箱，两者是不同链路。
         self.handler_timeout = handler_timeout
+        # 每工具的频率上限闸（进程内滑动窗口）：key=工具名 → 时间戳队列。
+        # 只在工具自己声明了 rate_limit 时才用得上，未声明的工具零开销。
+        self._rate_hits: dict[str, deque[float]] = {}
+        self._rate_lock = threading.Lock()
 
-    async def _invoke_handler(self, handler: Callable[..., Any], arguments: dict) -> Any:
+    def _effective_timeout(self, spec: ToolSpec) -> float | None:
+        """这次调用的实际上墙超时：全局 ``handler_timeout`` 与工具自声明的更严一档。
+
+        工具自声明（外部能力契约 ``execution.timeout_ms``）只会**收紧**不会放宽——
+        放宽属于"放松"，而治理数据只能加严。
+        """
+        declared = spec.governance.timeout_ms
+        if declared is None:
+            return self.handler_timeout
+        per_tool = declared / 1000.0
+        if self.handler_timeout is None:
+            return per_tool
+        return min(self.handler_timeout, per_tool)
+
+    def _rate_limit_exceeded(self, name: str, hint: Any) -> bool:
+        """按工具自声明的频率上限判定本次调用是否超限（超限 = 不执行）。
+
+        进程内滑动窗口（多实例部署要跨实例总闸，那需要状态共享，不在这一层）。
+        窗口串认不出来时**不拦**（提示无法执行不等于授权执行——但反过来也不该
+        悄悄当成"没限"；这里选择不拦并让宿主从声明里看到原文）。
+        """
+        seconds = hint.window_seconds()
+        if seconds is None:
+            return False
+        now = time.monotonic()
+        cutoff = now - seconds
+        with self._rate_lock:
+            hits = self._rate_hits.setdefault(name, deque())
+            while hits and hits[0] <= cutoff:
+                hits.popleft()
+            if len(hits) >= hint.count:
+                return True
+            hits.append(now)
+            return False
+
+    async def _invoke_handler(
+        self, handler: Callable[..., Any], arguments: dict, timeout: float | None = None
+    ) -> Any:
         """调用 handler；只有配了 ``handler_timeout`` 才包上超时，默认路径与从前一字不差。
 
         两种形状的区别必须说清楚，不能一起承诺：
@@ -185,7 +229,7 @@ class ToolExecutor:
         所以"同步工具超时"是**给模型的止损**，不是进程级立即脱身；
         真正可能长时间阻塞的能力应当实现成 ``async def``。
         """
-        timeout = self.handler_timeout
+        timeout = self.handler_timeout if timeout is None else timeout
         if inspect.iscoroutinefunction(handler):
             if timeout is None:
                 return await handler(**arguments)
@@ -275,6 +319,26 @@ class ToolExecutor:
         if spec.source == "composite" and spec.steps:
             return await self._execute_composite(spec, arguments, subject, decision)
 
+        # 频率上限闸：超限的调用**不执行**（不进 handler，也不发 TOOL_CALL）。
+        #
+        # 放在**授权之前**：被频率闸拦下的调用既不该先问人要批准（问了也白问，
+        # 它不会执行），也不该留下 TOOL_CALL 审计记录（它没发生）。口径是 ACC 的
+        # "窗口内最大调用次数"——按**尝试**计，所以被权限策略拒绝的调用也算一次
+        # （它确实消耗了系统的处理能力）；这也让"刷量"本身被这道闸挡住。
+        rate_hint = spec.governance.rate_limit
+        if rate_hint is not None and self._rate_limit_exceeded(name, rate_hint):
+            message = (
+                f"工具 {name} 超出调用频率上限"
+                f"（{rate_hint.count} 次 / {rate_hint.window}），本次未执行"
+            )
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": name, "ok": False, "error": message, "rate_limited": True},
+                )
+            )
+            return events, False, message
+
         auth_events, approved, reason = await authorize_tool_call(
             self.policy,
             self.channel,
@@ -301,7 +365,9 @@ class ToolExecutor:
         if handler is None:
             return events, False, f"工具 {name} 没有可执行 handler"
         try:
-            result = await self._invoke_handler(handler, arguments)
+            result = await self._invoke_handler(
+                handler, arguments, timeout=self._effective_timeout(spec)
+            )
             text = json.dumps(result, ensure_ascii=False, default=str)
         except ToolTimeoutError as exc:
             # 超时单独成支：给模型的话术要说明"这次没做成、且可能仍在后台跑完"，

@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.integrations.acc.evaluate import to_execution_policy
 from yai_core.integrations.acc.gate import build_gate
 from yai_core.integrations.acc.openapi import bind_operation, misplaced_declarations
 from yai_core.integrations.openapi.spec import (
@@ -234,12 +235,16 @@ def _plan_one_operation(
 
     governance: ToolGovernance | None = None
     if binding.declared and binding.declaration is not None:
+        timeout_ms, rate_limit = to_execution_policy(binding.declaration)
         governance = ToolGovernance(
             audit_sensitive=binding.audit_sensitive,
             acc=binding.raw,
             # 声明参与准入的方式：编译成一个中性判定函数挂到 governance.gate 上，
             # 执行器只认 GateDecision，不认识 ACC。
             gate=build_gate(binding.declaration, input_schema),
+            # 执行提示（超时 / 频率）翻译成内核原生的执行策略，由执行器真的强制。
+            timeout_ms=timeout_ms,
+            rate_limit=rate_limit,
         )
 
     return OperationPlan(

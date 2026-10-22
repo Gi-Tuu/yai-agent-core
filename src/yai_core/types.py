@@ -149,6 +149,59 @@ class ApprovalPolicy:
 
 
 @dataclass(frozen=True)
+class RateLimitHint:
+    """单个工具的调用频率上限（进程内执行器强制）。
+
+    - ``count``：窗口内最多调用次数；
+    - ``window``：窗口长度（``30s`` / ``1m`` / ``2h`` / ``1d``）。
+
+    这是"外部契约声明的频率上限真正变成约束"的那一层：ACC ``execution.rate_limit``
+    声明的频率，在这里变成执行器里的一条真实闸门——超限的调用**不会到达 handler**。
+    它是**进程内**的（多实例部署要跨实例总闸，那需要状态共享，不在这一层）。
+    """
+
+    count: int
+    window: str
+
+    def window_seconds(self) -> int | None:
+        """把窗口串解析成秒；格式不认识时返回 None（= 这条提示无法执行）。"""
+        return parse_window_seconds(self.window)
+
+    def to_reference(self) -> dict[str, Any]:
+        return {"count": self.count, "window": self.window}
+
+    @classmethod
+    def from_reference(cls, data: Any) -> RateLimitHint:
+        if not isinstance(data, dict):
+            raise ValueError(f"rate_limit 必须是 object，得到 {type(data)!r}")
+        count = data.get("count")
+        window = data.get("window")
+        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            raise ValueError(f"rate_limit.count 必须是正整数，得到 {count!r}")
+        if not isinstance(window, str) or not window.strip():
+            raise ValueError(f"rate_limit.window 必须是非空字符串，得到 {window!r}")
+        return cls(count=count, window=window.strip())
+
+
+def parse_window_seconds(window: str) -> int | None:
+    """解析 ``30s`` / ``1m`` / ``2h`` / ``1d`` 这类窗口串；不认识返回 None。"""
+    text = (window or "").strip().lower()
+    if not text:
+        return None
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    unit = text[-1]
+    if unit not in units:
+        return None
+    try:
+        value = int(text[:-1])
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value * units[unit]
+
+
+@dataclass(frozen=True)
 class ToolGovernance:
     """宿主声明的工具治理元数据。
 
@@ -179,11 +232,24 @@ class ToolGovernance:
     # 静默改变绑定对象，比多一个换行贵得多。
     gate: Callable[[dict[str, Any], Any], GateDecision] | None = None
     approval: ApprovalPolicy | None = None
+    # 执行策略提示（同样放最后，别动既有位置写法的绑定关系）：
+    # - timeout_ms：这个工具的调用硬超时（与全局 handler_timeout 取更严的一档）；
+    # - rate_limit：这个工具的调用频率上限（进程内滑动窗口，超限不执行）。
+    # 两者都是**数据**，随能力清单跨进程走；执行器读它们并真的强制。
+    timeout_ms: int | None = None
+    rate_limit: RateLimitHint | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
 #: :func:`governance_from_manifest` 的理由说明）。
-_GOVERNANCE_KEYS = ("sensitive", "audit_sensitive", "acc", "approval")
+_GOVERNANCE_KEYS = (
+    "sensitive",
+    "audit_sensitive",
+    "acc",
+    "approval",
+    "timeout_ms",
+    "rate_limit",
+)
 
 _APPROVAL_KEYS = ("required", "prompt", "when")
 _APPROVAL_RULE_KEYS = ("param", "op", "value", "label")
@@ -334,6 +400,10 @@ def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
         approval = _approval_to_manifest(governance.approval)
         if approval:
             out["approval"] = approval
+    if governance.timeout_ms is not None:
+        out["timeout_ms"] = int(governance.timeout_ms)
+    if governance.rate_limit is not None:
+        out["rate_limit"] = governance.rate_limit.to_reference()
     return out
 
 
@@ -399,12 +469,29 @@ def governance_from_manifest(
             f"得到 {type(acc)!r}"
         )
 
+    timeout_ms = raw.get("timeout_ms")
+    if timeout_ms is not None:
+        if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
+            raise ValueError(
+                f"工具 {name!r} 的 governance.timeout_ms 必须是正整数，"
+                f"得到 {timeout_ms!r}"
+            )
+
+    rate_limit = raw.get("rate_limit")
+    if rate_limit is not None:
+        try:
+            rate_limit = RateLimitHint.from_reference(rate_limit)
+        except ValueError as exc:
+            raise ValueError(f"工具 {name!r} 的 governance.rate_limit 非法：{exc}") from exc
+
     return ToolGovernance(
         sensitive=sensitive,
         audit_sensitive=audit_sensitive,
         acc=acc,
         approval=_approval_from_manifest(name, raw.get("approval"), input_schema),
         gate=None,
+        timeout_ms=timeout_ms,
+        rate_limit=rate_limit,
     )
 
 
