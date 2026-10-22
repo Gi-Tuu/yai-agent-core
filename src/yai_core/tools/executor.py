@@ -12,7 +12,13 @@ from yai_core.policy.approval import (
     DECISION_REJECT_INVALID_ARGUMENTS,
     evaluate_approval,
 )
-from yai_core.policy.authorize import authorize_tool_call, fill_prompt, snapshot_arguments
+from yai_core.policy.authorize import (
+    approval_context,
+    authorize_tool_call,
+    channel_wants_approval_context,
+    fill_prompt,
+    snapshot_arguments,
+)
 from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
@@ -421,7 +427,23 @@ class ToolExecutor:
                 if value:
                     payload[key] = value
             events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
-            if not await self.channel.confirm(spec.name, asked):
+            # 与 authorize_tool_call 同一个口径：通道声明了旗标才递第三个参数。
+            shown_for_channel = redact_arguments(arguments, spec.governance.sensitive)
+            context = approval_context(
+                spec.name,
+                require_approval=True,
+                reason=decision.reason,
+                prompt=payload.get("prompt", ""),
+                risk=decision.risk,
+                scope=decision.scope,
+                target=decision.target,
+            )
+            approved = (
+                await self.channel.confirm(spec.name, shown_for_channel, context)
+                if channel_wants_approval_context(self.channel)
+                else await self.channel.confirm(spec.name, shown_for_channel)  # noqa: B009
+            )
+            if not approved:
                 return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
         events.append(
             AgentEvent(

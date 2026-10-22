@@ -78,6 +78,54 @@ async def _check(
     return await policy.check(name, arguments)
 
 
+async def _confirm(
+    channel: Channel, name: str, shown: dict, context: dict[str, Any]
+) -> bool:
+    """向通道要一次人工确认；**只有通道自己声明愿意收审批上下文，才多传第三个参数**。
+
+    用能力旗标而不是探签名：宿主写的通道可能有 `**kwargs`，鸭子探测会把"能收"猜成
+    "不能收"或反过来——猜错的那一次就是审批人少看了一个字段。
+    """
+    aware = getattr(channel, "yai_approval_context_aware", False)
+    if aware:
+        return bool(await channel.confirm(name, shown, context))
+    return bool(await channel.confirm(name, shown))
+
+
+def approval_context(
+    name: str,
+    *,
+    require_approval: bool = False,
+    reason: str = "",
+    prompt: str = "",
+    risk: str = "",
+    scope: str = "",
+    target: str = "",
+) -> dict[str, Any]:
+    """组装递给通道的审批上下文：**有值才带**，空字段不占位。
+
+    公开给执行器复用：组合工具分支不经过 :func:`authorize_tool_call`（权限落到每一步），
+    但它自己声明的审批要求走的是同一个通道口径——两条路必须给审批人看一样的东西，
+    也共用同一个旗标规则（`_confirm` 是内部实现，这里显式查一次）。
+    """
+    context: dict[str, Any] = {"tool": name}
+    for key, value in (("risk", risk), ("scope", scope), ("target", target)):
+        if value:
+            context[key] = value
+    if require_approval:
+        context["approval_required"] = True
+        if reason:
+            context["reason"] = reason
+        if prompt:
+            context["prompt"] = prompt
+    return context
+
+
+def channel_wants_approval_context(channel: object) -> bool:
+    """通道是否声明愿意收审批上下文（旗标缺失即视为"只要两个参数"）。"""
+    return bool(getattr(channel, "yai_approval_context_aware", False))
+
+
 async def authorize_tool_call(
     policy: PermissionPolicy,
     channel: Channel,
@@ -117,6 +165,13 @@ async def authorize_tool_call(
     否则"这次是高影响写、作用域是什么、真正要碰哪个资源"在审计链上根本看不出来——
     事后无法按风险检索，审批人也只能凭模型原样写来的参数串做判断。
     空串表示"这一层没意见"，此时**不写进载荷**，保持未治理工具的既有事件形状。
+
+    **同一个描述性上下文还要交给审批人本身**：事件是在 ``confirm()`` 返回之后才由
+    loop 投出去的，卡片弹出的那一刻那条事件还在半路上，所以界面不能靠事件读这些字段
+    ——必须由这里顺通道调用一起递过去。只有声明了 ``yai_approval_context_aware``
+    的通道会收到第三个参数，其余实现一字不改照样跑；送出去的**只有描述性字段**
+    （理由、填好的话术、风险、作用域、落点），参数值仍走下面那份脱敏副本——
+    宿主写的 prompt 模板里如果本来就有明文参数，那是宿主的决定，内核不替它扩散。
     """
     events: list[AgentEvent] = []
     decision = await _check(policy, name, arguments, subject)
@@ -131,14 +186,23 @@ async def authorize_tool_call(
     if decision == PermissionDecision.ASK or require_approval:
         asked = redact_arguments(arguments, sensitive_paths)
         payload: dict[str, Any] = {"tool": name, "arguments": asked, **descriptor}
+        # 给审批人的上下文：与事件同源、同样"有值才带"，但不含参数值本身
+        # （参数走 confirm 的第二个位置，那份是给通道的独立副本）。
+        context = approval_context(name, require_approval=require_approval, **descriptor)
         if require_approval:
             payload["approval_required"] = True
             payload["reason"] = approval_reason
+            context["approval_required"] = True
+            context["reason"] = approval_reason
             if approval_prompt:
-                payload["prompt"] = fill_prompt(approval_prompt, asked)
+                filled = fill_prompt(approval_prompt, asked)
+                payload["prompt"] = filled
+                context["prompt"] = filled
         events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
-        approved = await channel.confirm(
-            name, redact_arguments(arguments, sensitive_paths)
+        # 通道拿的是**另一份**脱敏副本：它若在 confirm 里改自己那份，改不动
+        # 已经发出的事件载荷，也改不动执行（见 tests/test_argument_snapshot.py）。
+        approved = await _confirm(
+            channel, name, redact_arguments(arguments, sensitive_paths), context
         )
         if not approved:
             return events, False, f"用户/宿主拒绝执行工具 {name}"

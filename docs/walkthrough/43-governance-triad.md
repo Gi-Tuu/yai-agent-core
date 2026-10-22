@@ -158,7 +158,39 @@ spec.governance = ToolGovernance(
 要挡"蓄意刷免费额度"，得靠鉴权（`YAI_SERVER_TOKEN`，或 host_e 那套本地令牌），
 不是这一层。文档与对外帖子都不许把这条闸写成额度保护。
 
-## 5. 自检
+## 5. 审批人到底看见了什么：上下文随 `confirm()` 一起递
+
+第 4 节让内核算出了 `reason / prompt / risk / scope / target`，第 21 节把它们写进了事件。
+但**事件到不了正在弹出的那张卡片**：`authorize_tool_call` 必须先把"批不批"拿到手才返回，
+而事件是它返回之后才由 `AgentLoop` 统一 yield 的——卡片弹出来的那一刻，那条
+`PERMISSION_ASKED` 还在半路上。所以这些字段得**随通道调用递出去**：
+
+```python
+class QtChannel:
+    yai_approval_context_aware = True          # 通道自己声明愿意收
+
+    async def confirm(self, tool_name, arguments, context=None):
+        ...                                     # context 只有描述性字段
+```
+
+三条口径：
+
+- **能力旗标，不是探签名**。没声明的通道仍只收到两个参数，宿主自写的 CLI / HTTP / Flutter
+  通道一字不改照样跑；用 `getattr` 探参数形状会被宿主的 `**kwargs` 猜错，猜错那一次的代价
+  是审批人少看一个字段——与策略侧的 `yai_subject_aware` 同一个约定。
+- **上下文里没有未脱敏的参数值**。它只带 `tool` 与算出来的描述性字段；`arguments`
+  那一份仍是按声明脱敏的对外副本。唯一的例外是宿主自己写的 `prompt` 模板：模板里
+  本来就写了 `{amount}`，填进去就是宿主的选择，内核不替它扩散别的字段。
+- **有值才带**。策略自己 ASK（没有任何审批意图）时，上下文就只有 `{"tool": ...}`；
+  界面按"有什么显示什么"渲染，标题靠 `approval_required` 与 `risk` 分档：
+  参数级审批 / 高影响写操作待确认 / 新能力授权请求。
+
+对应测试：`tests/test_approval_context_channel.py`——含一条**时序探针**（`confirm` 被调用时
+通道收到的事件数是 0）和一条老通道断言（只收到两个位置参数）。桌面端的落点在
+`shell/desktop/channel.py`（把字段并进卡片负载）与 `qml/Panel.qml` 的 `pendingSummary`：
+先说为什么问，再说动哪个资源，最后才是参数串。
+
+## 6. 自检
 
 1. 为什么权限决策在调用方（灵动岛）完成时，服务端反而**必须**鉴权？
 2. 三份参数副本各自的作用是什么？少了"审批展示副本"会出什么问题？
@@ -169,3 +201,5 @@ spec.governance = ToolGovernance(
 7. 参数级审批为什么做成**数据**（`approval`）而不是只留一个 `gate` 函数？
 8. 同一个工具既挂了 `gate` 又写了 `approval`，为什么合并要取更严的那个，而不是 gate 优先？
 9. "条件路径没在绑定 schema 里声明"为什么判**拒**而不是判"不命中"？
+10. 界面为什么不能从 `PERMISSION_ASKED` 事件里读落点来渲染审批卡？
+11. 审批上下文为什么用能力旗标决定传不传，而不是探测通道签名？
