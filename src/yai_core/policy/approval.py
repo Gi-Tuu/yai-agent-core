@@ -25,6 +25,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.paths import schema_at_path, value_candidates
 from yai_core.types import APPROVAL_OPS, ApprovalPolicy, ApprovalRule
 
 #: 三种结论。``ALLOW`` 只代表"这一层不产生审批意图"，不等于放行——放行看权限策略。
@@ -50,28 +51,19 @@ class ApprovalError(ValueError):
 
 
 def value_at_path(args: Any, path: str) -> Any:
-    """按点号路径取调用值；只寻址 JSON object 成员，取不到返回 :data:`MISSING`。"""
+    """按点号路径取**单个**调用值；只寻址 JSON object 成员，取不到返回 :data:`MISSING`。
+
+    这是"取单值"的窄解析器（历史契约，保留给只需要一个值的调用方）。**审批判定走
+    :func:`yai_core.paths.value_candidates`**：候选集解析与 schema 侧下钻语义一致，
+    数组元素（``rows.0.amount`` / ``rows.amount``）也能寻址——两套解析器各说各话时，
+    条件会"schema 说已声明、取值说取不到"，于是永远不命中，护栏静默失效。
+    """
     current: Any = args
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
             return MISSING
         current = current[part]
     return current
-
-
-def schema_at_path(schema: Any, path: str) -> dict[str, Any] | None:
-    """按点号路径在输入 schema 里找对应子 schema；数组路径自动下钻到 ``items``。"""
-    current: Any = schema
-    for part in path.split("."):
-        if not isinstance(current, dict):
-            return None
-        if current.get("type") == "array" and isinstance(current.get("items"), dict):
-            current = current["items"]
-        properties = current.get("properties")
-        if not isinstance(properties, dict):
-            return None
-        current = properties.get(part)
-    return current if isinstance(current, dict) else None
 
 
 def same_json_value(left: Any, right: Any) -> bool:
@@ -165,36 +157,65 @@ def argument_errors(args: Any, parameter_schema: Any) -> list[str]:
 
 
 def rule_matches(rule: ApprovalRule, args: Any) -> bool:
-    """判定单条规则是否命中；语义上判不出来时抛 :class:`ApprovalError`。"""
-    actual = value_at_path(args, rule.param)
+    """判定单条规则是否命中；语义上判不出来时抛 :class:`ApprovalError`。
+
+    取值走**候选集**（:func:`yai_core.paths.value_candidates`）：数组内嵌参数同样能寻址
+    （``rows.0.amount`` 与 ``rows.amount`` 都行），判定语义是 ANY——命中任一候选即命中，
+    宁可多问一次人，不可漏问。
+
+    "这次调用没给这个值"时，各算子的处理**沿用既有口径不变**（不放松也不收紧）：
+    数值比较与 ``contains`` 判不出来 → 失败关闭（拒绝）；``==`` / ``in`` / ``exists``
+    不命中；``!=`` 命中（"不等于期望安全值"却拿不到值，本身就该问人）。
+    """
+    candidates = value_candidates(args, rule.param)
     if rule.op == "exists":
-        return actual is not MISSING and actual is not None
+        return any(candidate is not None for candidate in candidates)
     if rule.op in _NUMERIC_OPS:
-        if not is_json_number(actual):
-            raise ApprovalError(f"数值比较要求 JSON number：{rule.param}")
         if not is_json_number(rule.value):
             raise ApprovalError(f"数值比较的 value 必须是有限 number：{rule.param}")
-        if rule.op == ">":
-            return bool(actual > rule.value)
-        if rule.op == ">=":
-            return bool(actual >= rule.value)
-        if rule.op == "<":
-            return bool(actual < rule.value)
-        return bool(actual <= rule.value)
+        if not candidates:
+            raise ApprovalError(f"数值比较要求 JSON number：{rule.param}")
+        for actual in candidates:
+            if not is_json_number(actual):
+                raise ApprovalError(f"数值比较要求 JSON number：{rule.param}")
+            if rule.op == ">" and actual > rule.value:
+                return True
+            if rule.op == ">=" and actual >= rule.value:
+                return True
+            if rule.op == "<" and actual < rule.value:
+                return True
+            if rule.op == "<=" and actual <= rule.value:
+                return True
+        return False
     if rule.op == "==":
-        return same_json_value(actual, rule.value)
+        return any(same_json_value(candidate, rule.value) for candidate in candidates)
     if rule.op == "!=":
-        return not same_json_value(actual, rule.value)
+        # 拿不到值也算"不等于期望值"：条件形同虚设比多问一次人危险。
+        if not candidates:
+            return True
+        return any(not same_json_value(candidate, rule.value) for candidate in candidates)
     if rule.op == "in":
         if not isinstance(rule.value, list):
             raise ApprovalError(f"in 条件的 value 必须是 array：{rule.param}")
-        return any(same_json_value(actual, candidate) for candidate in rule.value)
+        return any(
+            same_json_value(candidate, item)
+            for candidate in candidates
+            for item in rule.value
+        )
     if rule.op == "contains":
-        if isinstance(actual, str) and isinstance(rule.value, str):
-            return rule.value in actual
-        if isinstance(actual, list):
-            return any(same_json_value(item, rule.value) for item in actual)
-        raise ApprovalError(f"contains 只适用于 string 或 array 参数：{rule.param}")
+        if not candidates:
+            raise ApprovalError(f"contains 只适用于 string 或 array 参数：{rule.param}")
+        for actual in candidates:
+            if isinstance(actual, str) and isinstance(rule.value, str):
+                if rule.value in actual:
+                    return True
+                continue
+            if isinstance(actual, list):
+                if any(same_json_value(item, rule.value) for item in actual):
+                    return True
+                continue
+            raise ApprovalError(f"contains 只适用于 string 或 array 参数：{rule.param}")
+        return False
     raise ApprovalError(f"不支持的比较算子：{rule.op}")
 
 

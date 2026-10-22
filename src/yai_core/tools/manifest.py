@@ -32,7 +32,15 @@ from typing import Any
 from yai_core.types import ToolSpec
 
 #: manifest 文件格式版本（顶层包装）；不兼容升级时递增。
-MANIFEST_VERSION = 1
+#:
+#: v2 起把**治理语义**（脱敏路径 / 宽口径审计 / 审批要求）纳入格式契约：v1 允许老
+#: reader 静默忽略 ``governance`` 块，于是"跨进程导入"会把脱敏与审批要求**悄悄丢掉**
+#: ——旧 reader 不报错、新环境以为护栏还在。v2 让老 reader 直接拒（版本不匹配即失败
+#: 关闭），宁可不导，也不带着失效的安全语义跑。
+MANIFEST_VERSION = 2
+
+#: 本实现仍能读取的历史版本（v1 无治理契约，但本 reader 照样解析 governance 块）。
+_SUPPORTED_MANIFEST_VERSIONS = (1, 2)
 
 
 def specs_to_manifest(specs: Iterable[ToolSpec]) -> dict[str, Any]:
@@ -47,10 +55,10 @@ def specs_from_manifest(data: dict[str, Any]) -> list[ToolSpec]:
     """解析 manifest dict，返回工具规格（handler 均为 None）。"""
     if not isinstance(data, dict):
         raise TypeError(f"manifest 必须是 object，得到 {type(data)!r}")
-    if data.get("manifest_version") != MANIFEST_VERSION:
+    if data.get("manifest_version") not in _SUPPORTED_MANIFEST_VERSIONS:
         raise ValueError(
             f"不支持的 manifest_version: {data.get('manifest_version')!r}，"
-            f"期望 {MANIFEST_VERSION}"
+            f"期望 {_SUPPORTED_MANIFEST_VERSIONS}"
         )
     tools = data.get("tools")
     if not isinstance(tools, list):

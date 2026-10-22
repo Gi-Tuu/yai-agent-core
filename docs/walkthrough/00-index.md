@@ -162,6 +162,7 @@
 - 44 · `integrations/acc/` + `openapi/discovery.py` + `policy/authorize.py`：ACC v1 互操作层（零依赖声明校验器 + 声明→原生审批的翻译 + 官方 26 条参考向量 + OpenAPI 绑定按声明筛暴露面 + 能力闸与宿主注入的可信主体）
 - 45 · `llm/anthropic.py`：Claude 模型接口（system 走顶层、max_tokens 必填、tool_use/tool_result 块翻译、相邻同角色合并；同一 ModelProvider 契约，内核零改动）
 - 46 · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
+- 47 · `paths.py` + `policy/approval.py` + `batteries/filesystem.py` + `tools/executor.py`：安全加固第二批（路径语义收敛成单一真源、空前缀失败关闭、结果侧也脱敏、manifest 治理语义与版本号绑定）
 
 ## 5. 自检（读完本篇应能回答）
 
