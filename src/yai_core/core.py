@@ -12,7 +12,7 @@ import functools
 import inspect
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from yai_core.channels import CollectChannel
 from yai_core.config import CoreConfig
@@ -144,7 +144,10 @@ class AgentCore:
         self.on_feedback = on_feedback
         self.max_iters = max_iters
         self.max_clarify_rounds = max_clarify_rounds
-        self.channel = channel or CollectChannel()
+        # 没传通道就用收集型默认实现。`cast` 只给类型检查器收窄：Protocol 是结构化的，
+        # mypy 不会自己把 `Channel | CollectChannel` 收成 `Channel`，于是下游每一处
+        # 都要重复解释同一句话。运行时行为一字不变。
+        self.channel = cast("Channel", channel or CollectChannel())
         self.memory = memory or InMemoryStore()
         self.discovery = discovery
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from yai_core.types import ChatMessage
+from yai_core.types import ChatMessage, parts_to_text
 
 
 class Context:
@@ -22,8 +22,16 @@ class Context:
         self.enforce_budget()
 
     def total_chars(self) -> int:
-        """当前全部消息的字符总量（朴素口径，用于触发压缩/裁剪）。"""
-        return sum(len(m.content) for m in self.messages)
+        """当前全部消息的字符总量（朴素口径，用于触发压缩/裁剪）。
+
+        多模态片段按它们的**文本渲染长度**计入：图片与资源引用渲染成占位文本，
+        长度很小——但"图片在上下文里"这件事本身不会让预算失控，所以这个口径是够用的。
+        """
+        total = sum(len(m.content) for m in self.messages)
+        total += sum(
+            len(parts_to_text(m.parts)) for m in self.messages if getattr(m, "parts", None)
+        )
+        return total
 
     def replace_range(self, start: int, end: int, summary: ChatMessage) -> None:
         """用一条摘要消息替换半开区间 ``[start, end)``。

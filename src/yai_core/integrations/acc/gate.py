@@ -34,6 +34,13 @@ def build_gate(
 
     def gate(arguments: dict[str, Any], subject: Any = None) -> GateDecision:
         scope = declaration.scope
+        if not declaration.enabled:
+            # 声明说"这个能力不开放"，闸就必须拦——不能只靠暴露层过滤：
+            # 宿主手工用 enabled=false 的声明造闸时，这里是最后一道兜底。
+            return GateDecision(
+                reject=f"该能力声明为未开放（scope {scope}），已拒绝执行",
+                scope=scope,
+            )
         if declaration.subject_required and subject is None:
             return GateDecision(
                 reject=(

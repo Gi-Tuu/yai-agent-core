@@ -26,7 +26,7 @@ import os
 import stat as stat_module
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -102,12 +102,21 @@ class FileSystemResources:
             raise ResourceNotFoundError(f"文件不存在：{path}")
         if target.is_dir():
             raise ResourceError(f"{path} 是目录，不能当文件读；请用 file_list")
-        size = target.stat().st_size
-        if size > self.policy.max_read_bytes:
+        # 有界读取：只读"上限 + 1"字节，靠**实际读到的字节数**判定超限。
+        # 先 stat 再 read 会留一个窗口——文件在两步之间变大，就会真的读进超限内容
+        # （限额是内存与带宽的护栏，不能只在"恰好没变"时成立）。
+        limit = self.policy.max_read_bytes
+        try:
+            with target.open("rb") as handle:
+                raw = handle.read(limit + 1)
+        except OSError as exc:
+            raise ResourceError(f"读取失败：{path}（{type(exc).__name__}）") from exc
+        if len(raw) > limit:
             raise ResourceTooLargeError(
-                f"文件 {size} 字节，超过读取上限 {self.policy.max_read_bytes} 字节"
+                f"文件 {path} 超过读取上限 {limit} 字节，已拒绝整读"
             )
-        return target.read_bytes()
+        return raw
+
 
     def _decode(self, path: str, raw: bytes) -> ResourceContent:
         try:
@@ -156,7 +165,12 @@ class FileSystemResources:
             _discard(tmp_name)
             raise
 
-    def _sync_list(self, candidate: Any) -> list[ResourceEntry]:
+    def _sync_list(self, candidate: Any) -> tuple[Sequence[ResourceEntry], bool]:
+        """列出目录内容，返回 (条目, 是否被截断)。
+
+        内部多取一条用来判定"确实被截断"：条目数**恰好等于**上限时并没有东西被丢掉，
+        标记成 truncated 是假的（会让调用方以为少看了内容）。
+        """
         relative = "" if str(candidate).strip() in ("", ".", "/") else str(candidate)
         target = self.root if relative == "" else self._resolve(relative)
         if not target.exists():
@@ -168,17 +182,26 @@ class FileSystemResources:
         for child in sorted(target.iterdir(), key=lambda item: item.name):
             link = _is_reparse(child)
             is_dir = child.is_dir() and not link
+            # 大小用 lstat 取：不跟随符号链接，否则会**泄漏根目录外**文件的真实大小；
+            # 断链（stat 抛错）按 0 计，不让一次列举整体失败。
+            size = 0
+            if not is_dir and not link:
+                try:
+                    size = child.lstat().st_size
+                except OSError:
+                    size = 0
             entries.append(
                 ResourceEntry(
                     name=child.name,
                     path=_relative(child, self.root),
                     is_dir=is_dir,
-                    size=0 if is_dir else child.stat().st_size,
+                    size=size,
                 )
             )
             if len(entries) > cap:
+                # 多取一条用来告诉调用方"确实被截断了"。
                 break
-        return entries[:cap]
+        return entries[:cap], len(entries) > cap
 
     def _sync_read(self, candidate: str) -> ResourceContent:
         target = self._resolve(candidate)
@@ -215,6 +238,16 @@ class FileSystemResources:
     # ---------- 契约方法 ----------
 
     async def list(self, path: str = "") -> list[ResourceEntry]:
+        entries, _truncated = await self.list_with_flag(path)
+        # 用解包而不是 list(...)：类里有个叫 list 的方法，类作用域会把内置名遮住。
+        return [*entries]
+
+    async def list_with_flag(self, path: str = "") -> tuple[Sequence[ResourceEntry], bool]:
+        """列出目录内容，并额外给出"是否被条数上限截断"的标志。
+
+        契约里的 ``list()`` 只能返回条目（≤ 上限），所以"有没有被截断"需要单独一条
+        出口——否则调用方只能用"长度 == 上限"去猜，恰好等于上限时会误报。
+        """
         return await asyncio.to_thread(self._sync_list, path)
 
     async def read(self, path: str) -> ResourceContent:
@@ -245,13 +278,13 @@ def filesystem_capabilities(
 
         path 是相对目录，空字符串表示根目录。超过条目上限时 truncated 为真。
         """
-        entries = await backend.list(path)
+        entries, truncated = await backend.list_with_flag(path)
         cap = backend.policy.max_list_entries
         return {
             "path": path or "/",
             "count": len(entries),
-            "truncated": len(entries) >= cap,
-            "entries": [dataclasses.asdict(entry) for entry in entries],
+            "truncated": truncated,
+            "entries": [dataclasses.asdict(entry) for entry in entries[:cap]],
         }
 
     async def file_read(path: str) -> dict:
@@ -304,11 +337,28 @@ def _scope_prefix(prefix: str) -> str:
 
 
 def _in_scope(relative: str, prefix: str) -> bool:
-    if not prefix:                      # 空前缀 = 整个根目录
-        return True
+    if not prefix:
+        # 空前缀 = **没有任何作用域**（失败关闭）。绝不等于"整个根目录"——
+        # 那会让 ("",) 这样的配置悄悄把根目录整片变成可写。
+        return False
     if relative == prefix.rstrip("/"):  # 直接命中目录本身（list 场景）
         return True
     return relative.startswith(prefix)
+
+
+#: 风险等级序：用于"取更严的一档"，避免调用方声明的风险被默认值静默覆盖。
+_RISK_RANK = {"": -1, "low": 0, "medium": 1, "high": 2}
+
+
+def _stricter_risk(*values: str) -> str:
+    """返回若干风险等级里**最严**的一个（未知等级按原样保留但不参与比较）。"""
+    best = ""
+    for value in values:
+        if not value:
+            continue
+        if best not in _RISK_RANK or _RISK_RANK.get(value, -1) > _RISK_RANK.get(best, -1):
+            best = value
+    return best
 
 
 def filesystem_gate(
@@ -330,7 +380,8 @@ def filesystem_gate(
     1. 用**与 handler 完全相同的** :func:`normalize_relative` 规范化——"批准的目标
        == 执行的目标"是**构造上成立**，不是靠约定；
     2. 按前缀白名单判作用域；``write=True`` 而 ``prefixes`` 为空 = **拒绝一切写**
-       （失败关闭，不默认放行）；
+       （失败关闭，不默认放行）；**白名单里出现空字符串前缀同样按"什么都不许"处理**，
+       并在构造时直接报错——空串一旦被当成"整个根目录"，根目录整片就静默变成可写；
     3. 把规范化后的落点放进 :attr:`GateDecision.target`，让它进审批话术与审计事件。
 
     边界（照实说，别当成完整沙箱）：
@@ -338,14 +389,24 @@ def filesystem_gate(
     - 前缀匹配是**字面**的。Windows/macOS 大小写不敏感、8.3 短名这类"同一文件多个
       名字"不在这里解决——``NOTES/a.txt`` 在 ``notes/`` 白名单下会被**误拒**，
       这是有意的（宁可误拒不可误放），要放宽请宿主自己显式规范化；
-    - 它**不替代**文件系统那两道闸（逐段拦链接 + realpath 复核）。符号链接在**打开时**
-      仍由 handler 拦，所以"批准与写入之间被换成链接"这种竞态是 fail closed，
-      不是"闸看住了"；
+    - 它**不替代**文件系统那两道闸（逐段拦链接 + realpath 复核）。真正的兜底是
+      "**每次调用都重新判定**"：路径在**解析时**与**打开时**各判一次。解析与打开
+      之间仍有窗口（POSIX 有 ``O_NOFOLLOW`` 兜底，**Windows 没有**），所以这是
+      "把窗口收窄"，不是"零竞态"——别把它当成"闸看住了链接"。
     - 它**不做授权**：能不能调用 ``file_patch`` 仍由 ``PermissionPolicy`` 决定，
       闸只能把闸门往上抬，永远不能替宿主放行。
     """
     scope = ",".join(_scope_prefix(p) for p in prefixes) or ("*" if not write else "")
-    declared_risk = "high" if write else (risk or "")
+    # 构造期就拒掉空串前缀：它是"整个根目录"与"什么都不许"之间最危险的一个歧义。
+    for raw_prefix in prefixes:
+        if not str(raw_prefix).strip():
+            raise ValueError(
+                "filesystem_gate 的作用域前缀不能是空字符串："
+                "空串既不是'整个根目录'也不是'某个目录'，按失败关闭处理"
+            )
+    # 风险取"更严的一档"：写操作默认 high，但不能把调用方显式声明的 risk 静默丢掉
+    # （审计链上的风险等级必须与真实声明一致）。
+    declared_risk = _stricter_risk(risk or "", "high" if write else "")
     kind = "写" if write else "读"
 
     def gate(arguments: dict[str, Any], subject: Any = None) -> GateDecision:

@@ -32,12 +32,28 @@ Item {
 
     readonly property string pendingSummary: {
         if (workbench.activePendingKind === "ask") return String(panel.pending.question || "");
-        var args = panel.pending.arguments || {};
+        var p = panel.pending;
+        // 先说"为什么要问"，再说"要动哪里"，最后才是参数：审批人的判断顺序就是这个顺序。
+        var head = p.prompt ? String(p.prompt) : (p.reason ? String(p.reason) : "");
+        var args = p.arguments || {};
         var keys = Object.keys(args);
         var parts = [];
         for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + args[keys[i]]);
-        return String(panel.pending.tool || "") +
-               (parts.length ? "（" + parts.join(" · ") + "）" : "");
+        var line = String(p.tool || "") + (parts.length ? "（" + parts.join(" · ") + "）" : "");
+        var tags = [];
+        if (p.target) tags.push("落点 " + p.target);
+        if (p.risk) tags.push("风险 " + p.risk);
+        if (p.scope) tags.push("作用域 " + p.scope);
+        var out = head ? head + "\n" + line : line;
+        return tags.length ? out + "\n" + tags.join(" · ") : out;
+    }
+
+    // 卡片标题跟着"是谁在问"变：新能力授权是高危那档，参数级审批只是要人点个头。
+    readonly property string pendingTitle: {
+        if (workbench.activePendingKind === "ask") return "数字员工要澄清";
+        var p = panel.pending;
+        if (p.approval_required) return "参数级审批";
+        return String(p.risk || "") === "high" ? "高影响写操作待确认" : "新能力授权请求";
     }
 
     // 用户主动点开面板时聚焦输入框，展开即可直接打字（由 main.qml 在动画后调用）。
@@ -193,8 +209,7 @@ Item {
                         }
                     }
                     Text {
-                        text: workbench.activePendingKind === "ask"
-                              ? "数字员工要澄清" : "新能力授权请求"
+                        text: panel.pendingTitle
                         color: Theme.warn
                         font.pixelSize: 12
                         font.bold: true
@@ -214,9 +229,10 @@ Item {
                         text: panel.pendingSummary
                         color: Theme.text
                         font.pixelSize: 12
-                        font.family: workbench.activePendingKind === "confirm"
-                                     ? Theme.fontMono
-                                     : Qt.application.font.family
+                        font.family: (workbench.activePendingKind === "confirm"
+                                      && !panel.pending.prompt && !panel.pending.reason)
+                                     ? Theme.fontMono   // 只剩代码/参数串：等宽更好读
+                                     : Qt.application.font.family  //  prose 打头就别用等宽
                         wrapMode: Text.WordWrap
                     }
                 }

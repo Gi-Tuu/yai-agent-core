@@ -96,7 +96,7 @@ def test_sqlite_v1_to_v2_migration_preserves_kv(tmp_path) -> None:
     conn.close()
 
     clock = FakeClock(datetime(2026, 1, 1, 12, 0, 0))
-    store = SqliteStore(db, clock=clock)  # 打开即自动迁移 v1→v2
+    store = SqliteStore(db, clock=clock)  # 打开即自动迁移 v1→v2→v3
 
     # 旧数据原样保留、可读（无 TTL）
     assert run(store.get("legacy")) == "kept"
@@ -108,14 +108,16 @@ def test_sqlite_v1_to_v2_migration_preserves_kv(tmp_path) -> None:
     assert run(store.get("legacy")) == "kept"  # 老键不受影响
     store.close()
 
-    # 迁移确实落库：版本=2、kv 含 expires_at 列
+    # 迁移确实落库：版本=3、kv 含 expires_at 列、history 含 parts 列
     chk = sqlite3.connect(db)
-    assert int(chk.execute("PRAGMA user_version").fetchone()[0]) == 2
+    assert int(chk.execute("PRAGMA user_version").fetchone()[0]) == 3
     cols = [r[1] for r in chk.execute("PRAGMA table_info(kv)")]
     assert "expires_at" in cols
+    history_cols = [r[1] for r in chk.execute("PRAGMA table_info(history)")]
+    assert "parts" in history_cols
     chk.close()
 
-    # 再次打开为 v2，幂等不报错、数据仍在
+    # 再次打开为 v3，幂等不报错、数据仍在
     store2 = SqliteStore(db, clock=clock)
     assert run(store2.get("legacy")) == "kept"
     store2.close()

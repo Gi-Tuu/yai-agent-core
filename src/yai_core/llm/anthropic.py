@@ -27,7 +27,12 @@ _DEFAULT_MAX_TOKENS = 4096
 
 
 def _as_text(content: Any) -> str:
-    """把内核上下文里的 content 收成纯文本（多模态 parts 尚未接入）。"""
+    """把单条消息的 content 折成纯文本（静态 parts 尚未接入多模态）。
+
+    既有契约：只有带 ``text`` 的 part 会被折进文本，其余 part（图片、文档等）
+    **被跳过**——内核的消息契约当前是纯文本（``ChatMessage.content: str``），
+    多模态 part 尚无落地路径。
+    """
     if isinstance(content, str):
         return content
     if content is None:
@@ -37,6 +42,66 @@ def _as_text(content: Any) -> str:
             str(part.get("text", "")) for part in content if isinstance(part, dict)
         )
     return str(content)
+
+
+
+def _content_blocks(content: Any) -> list[dict[str, Any]]:
+    """把一条消息的 content 转成 Anthropic 内容块（支持图片）。
+
+    内核内部的消息形态是 **OpenAI 兼容**的内容数组（``ChatMessage.to_llm_dict()``
+    的产物）：``{"type":"text"}`` / ``{"type":"image_url","image_url":{"url":"data:..."}}``。
+    这里把 ``image_url`` 的 data URI 拆成 Claude 的
+    ``{"type":"image","source":{"type":"base64",...}}``——**图片因此真的能被模型看到**，
+    而不是被压平成一句空文本。
+
+    认不出的块一律降级成文字块（保留它携带的 text），不静默丢。
+    """
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return [{"type": "text", "text": str(content)}]
+    blocks: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind == "text":
+            text = str(part.get("text", ""))
+            if text:
+                blocks.append({"type": "text", "text": text})
+            continue
+        if kind == "image_url":
+            image = part.get("image_url")
+            url = str(image.get("url", "")) if isinstance(image, dict) else ""
+            if url.startswith("data:") and ";base64," in url:
+                header, payload = url.split(";base64,", 1)
+                media_type = header[len("data:") :] or "image/png"
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": payload,
+                        },
+                    }
+                )
+            else:
+                # 非内联引用：内核不替宿主抓取外部 URL，降级成明说"看不到"的文字块。
+                blocks.append(
+                    {
+                        "type": "text",
+                        "text": f"[图片引用未内联：{url or '（无引用）'} —— 模型看不到这张图]",
+                    }
+                )
+            continue
+        text = str(part.get("text", ""))
+        blocks.append(
+            {"type": "text", "text": text} if text else {"type": "text", "text": "[未知片段]"}
+        )
+    return blocks
 
 
 def split_system(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
@@ -105,8 +170,7 @@ def to_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]
             ]
             role = "user"
         else:
-            text = _as_text(message.get("content"))
-            blocks = [{"type": "text", "text": text}] if text else []
+            blocks = _content_blocks(message.get("content"))
         if not blocks:
             continue
         if converted and converted[-1]["role"] == role:

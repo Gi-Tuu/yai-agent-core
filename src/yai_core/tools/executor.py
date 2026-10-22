@@ -12,7 +12,13 @@ from yai_core.policy.approval import (
     DECISION_REJECT_INVALID_ARGUMENTS,
     evaluate_approval,
 )
-from yai_core.policy.authorize import authorize_tool_call, fill_prompt, snapshot_arguments
+from yai_core.policy.authorize import (
+    approval_context,
+    authorize_tool_call,
+    channel_wants_approval_context,
+    fill_prompt,
+    snapshot_arguments,
+)
 from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
@@ -212,6 +218,32 @@ class ToolExecutor:
     def _bound(self, text: str) -> tuple[str, bool, int]:
         return bound_tool_result(text, self.result_char_limit)
 
+    def _event_preview(self, spec: ToolSpec, payload: Any, text: str) -> str:
+        """给 ``TOOL_RESULT`` 事件用的**预览**：按治理声明脱敏后的前 200 字符。
+
+        为什么不能直接用 ``text[:200]``：工具常常把入参原样回显（调试工具、HTTP 客户端
+        回显请求头、``echo``），于是**密钥会随结果原样进入事件流 / 追踪 span**——
+        入参侧脱敏了、结果侧没有，等于只堵了半个口子。
+
+        口径：
+
+        - ``audit_sensitive``（宽口径审计提示）→ 结果整体折叠成"已折叠 + 字符数"；
+        - 声明了 ``sensitive`` 路径且结果是对象 → 按同一批路径脱敏后再取前 200 字符；
+        - 没有声明 → 保持原样（内核不按字段名猜密钥，"未声明即不脱敏"是刻意的边界）。
+
+        注意：这只影响**对外事件副本**；返回给模型的正文仍是真实结果。
+        """
+        governance = spec.governance
+        if governance.audit_sensitive:
+            return f"[敏感结果已折叠：{len(text)} 字符]"
+        if governance.sensitive and isinstance(payload, dict):
+            try:
+                redacted = redact_arguments(payload, governance.sensitive)
+                return json.dumps(redacted, ensure_ascii=False, default=str)[:200]
+            except Exception:  # noqa: BLE001 - 脱敏失败不能反噬主流程
+                return f"[结果预览不可用：{len(text)} 字符]"
+        return text[:200]
+
     async def execute(
         self,
         name: str,
@@ -295,7 +327,7 @@ class ToolExecutor:
                 {
                     "tool": name,
                     "ok": True,
-                    "preview": text[:200],
+                    "preview": self._event_preview(spec, result, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },
@@ -364,7 +396,7 @@ class ToolExecutor:
                 {
                     "tool": spec.name,
                     "ok": True,
-                    "preview": text[:200],
+                    "preview": self._event_preview(spec, sb.output, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },
@@ -421,7 +453,23 @@ class ToolExecutor:
                 if value:
                     payload[key] = value
             events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
-            if not await self.channel.confirm(spec.name, asked):
+            # 与 authorize_tool_call 同一个口径：通道声明了旗标才递第三个参数。
+            shown_for_channel = redact_arguments(arguments, spec.governance.sensitive)
+            context = approval_context(
+                spec.name,
+                require_approval=True,
+                reason=decision.reason,
+                prompt=payload.get("prompt", ""),
+                risk=decision.risk,
+                scope=decision.scope,
+                target=decision.target,
+            )
+            approved = (
+                await self.channel.confirm(spec.name, shown_for_channel, context)
+                if channel_wants_approval_context(self.channel)
+                else await self.channel.confirm(spec.name, shown_for_channel)  # noqa: B009
+            )
+            if not approved:
                 return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
         events.append(
             AgentEvent(
@@ -476,7 +524,7 @@ class ToolExecutor:
                 {
                     "tool": spec.name,
                     "ok": True,
-                    "preview": text[:200],
+                    "preview": self._event_preview(spec, final, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },

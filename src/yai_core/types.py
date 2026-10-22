@@ -507,6 +507,139 @@ class ToolSpec:
         )
 
 
+@dataclass(frozen=True)
+class TextPart:
+    """纯文本片段（多模态消息里的文本块）。"""
+
+    text: str
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        return {"type": "text", "text": self.text}
+
+    def to_text(self) -> str:
+        return self.text
+
+    def to_reference(self) -> dict[str, Any]:
+        return {"type": "text", "text": self.text}
+
+
+@dataclass(frozen=True)
+class ImagePart:
+    """图片片段。
+
+    两条路径，**互斥择一**：
+
+    - ``data``：宿主在信任边界上解析好的内联 base64（可带 ``data:`` 前缀直接用）；
+    - ``ref``：宿主签发的引用（``ref`` 由宿主自己解析，内核**不替它取**任何外部 URL）。
+
+    只有内联的那条能被模型真正看到；只有引用的那条会渲染成**明说"模型看不到"的文字
+    占位**——绝不静默丢图，否则模型会在缺资料的情况下照常回答，看起来成功、其实答错。
+    """
+
+    media_type: str = "image/png"
+    data: str = ""
+    ref: str = ""
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        if self.data:
+            url = self.data
+            if not url.startswith("data:"):
+                url = f"data:{self.media_type};base64,{self.data}"
+            return {"type": "image_url", "image_url": {"url": url}}
+        return {"type": "text", "text": self.to_text()}
+
+    def to_text(self) -> str:
+        if self.data:
+            return f"[图片：{self.media_type}]"
+        return f"[图片引用：{self.ref or '（无引用）'} —— 未内联，模型看不到这张图]"
+
+    def to_reference(self) -> dict[str, Any]:
+        """持久化形态：**只留元数据与引用，不落图片字节**。"""
+        return {"type": "image", "media_type": self.media_type, "ref": self.ref}
+
+
+@dataclass(frozen=True)
+class ResourcePart:
+    """资源引用片段（宿主签发的文件 / 对象引用）。
+
+    内核**不解析、不抓取**任何外部资源：引用只是"告诉模型有这么个东西存在"，
+    真正的读取由宿主在授权边界内完成。落盘时只保留引用与元数据。
+    """
+
+    uri: str
+    media_type: str = "application/octet-stream"
+    name: str = ""
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        return {"type": "text", "text": self.to_text()}
+
+    def to_text(self) -> str:
+        label = self.name or self.uri
+        return f"[资源引用：{label}（{self.media_type}）—— 内容由宿主提供，内核未内联]"
+
+    def to_reference(self) -> dict[str, Any]:
+        return {
+            "type": "resource",
+            "uri": self.uri,
+            "media_type": self.media_type,
+            "name": self.name,
+        }
+
+
+#: 多模态消息片段的联合类型。
+ContentPart = TextPart | ImagePart | ResourcePart
+
+
+def parts_to_text(parts: Any) -> str:
+    """把消息片段渲染成纯文本（给不支持多模态的模型、上下文摘要、降级路径用）。
+
+    渲染**逐字保留信息量**：图片与资源会带上"模型看不到它"的明说，不做静默丢弃。
+    """
+    if not parts:
+        return ""
+    chunks: list[str] = []
+    for part in parts:
+        if isinstance(part, (TextPart, ImagePart, ResourcePart)):
+            chunks.append(part.to_text())
+        else:  # 宿主自造的部分：能取文本就取，取不到就明说
+            text = getattr(part, "text", None)
+            chunks.append(str(text) if text is not None else "[未知片段]")
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def parts_from_references(raw: Any) -> list[ContentPart] | None:
+    """从持久化形态（``to_reference`` 的产物）还原消息片段。
+
+    还原出来的图片**没有内联数据**（字节不落盘），因此它们在下游会渲染成
+    "模型看不到"的占位——这是刻意的：历史里的图片字节不长期驻留。
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    parts: list[ContentPart] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind == "text":
+            parts.append(TextPart(text=str(item.get("text", ""))))
+        elif kind == "image":
+            parts.append(
+                ImagePart(
+                    media_type=str(item.get("media_type", "image/png")),
+                    ref=str(item.get("ref", "")),
+                )
+            )
+        elif kind == "resource":
+            parts.append(
+                ResourcePart(
+                    uri=str(item.get("uri", "")),
+                    media_type=str(item.get("media_type", "application/octet-stream")),
+                    name=str(item.get("name", "")),
+                )
+            )
+    return parts or None
+
+
 @dataclass
 class ChatMessage:
     role: Role
@@ -515,9 +648,20 @@ class ChatMessage:
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    #: 多模态片段（图片 / 资源引用等）。**默认 None = 纯文本消息**，与旧行为逐字一致；
+    #: 有片段时 ``to_llm_dict()`` 输出 OpenAI 兼容的内容数组形态。
+    parts: list[ContentPart] | None = None
 
     def to_llm_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"role": self.role, "content": self.content}
+        d: dict[str, Any] = {"role": self.role}
+        if self.parts:
+            blocks: list[dict[str, Any]] = []
+            if self.content:
+                blocks.append({"type": "text", "text": self.content})
+            blocks.extend(part.to_openai_dict() for part in self.parts)
+            d["content"] = blocks
+        else:
+            d["content"] = self.content
         if self.tool_calls:
             d["tool_calls"] = self.tool_calls
         if self.tool_call_id:

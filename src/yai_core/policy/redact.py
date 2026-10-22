@@ -57,6 +57,14 @@ def _redact_at(root: Any, parts: list[str]) -> None:
             return
 
 
+def _safe_copy(value: Any) -> Any:
+    """尽量深拷贝单个值；不可拷贝时保留原值（顶层已是新 dict，不会写回执行链）。"""
+    try:
+        return deepcopy(value)
+    except Exception:  # noqa: BLE001 - 含不可拷贝值时不能崩链路
+        return value
+
+
 def redact_arguments(arguments: dict, paths: Any, *, broad: bool = False) -> dict:
     """返回 ``arguments`` 的脱敏深拷贝；``paths`` 为声明的敏感参数路径序列。
 
@@ -66,12 +74,14 @@ def redact_arguments(arguments: dict, paths: Any, *, broad: bool = False) -> dic
     参数值整体收口。它只该用在进审计/日志的那一份上——给审批人的副本如果全糊掉，
     人工批准就没有判断依据了。
     """
+    if not isinstance(arguments, dict):
+        return arguments
     try:
         copy = deepcopy(arguments)
-    except Exception:  # noqa: BLE001 - 含不可拷贝值时退回原对象，宁可不脱敏也不崩链路
-        copy = arguments
-    if not isinstance(copy, dict):
-        return copy
+    except Exception:  # noqa: BLE001 - 含不可拷贝值时退回逐值拷贝
+        # 关键：顶层必须是**新 dict**。直接退回原对象等于把权威参数交给通道，
+        # 通道改一下就等于改了执行参数——"对外副本"的不变式就没了。
+        copy = {key: _safe_copy(value) for key, value in arguments.items()}
     for path in paths or ():
         parts = [piece for piece in str(path).split(".") if piece]
         if parts:

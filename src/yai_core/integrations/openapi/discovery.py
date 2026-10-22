@@ -256,19 +256,51 @@ def _plan_one_operation(
     )
 
 
+def _sanitize_guidance(text: str) -> str:
+    """把声明里的 guidance 文本清成"可安全放进模型提示"的样子。
+
+    ACC 的 ``guidance`` 本来就是**给模型看的**（when_to_use / returns），所以它一定会
+    进入提示词。问题在于它的来源可能不可信：OpenAPI 描述常来自第三方 API——一份被
+    污染的 spec 就能借 guidance 往模型提示里塞任意指令文本。
+
+    这里做的是**净化**而不是"禁止"（ACC 明确要求 guidance 模型可读）：去掉控制字符
+    （换行与制表保留，它们是正常排版）、零宽字符与双向覆盖符（后者能在界面上骗过
+    人眼），其余字符**逐字保留**——净化不得改写声明本身的意思。
+    """
+    cleaned = []
+    for char in text:
+        code = ord(char)
+        if char in ("\n", "\t"):
+            cleaned.append(char)
+            continue
+        if code < 0x20 or code == 0x7F:      # 其余控制字符
+            continue
+        if code in (0x200B, 0x200C, 0x200D, 0xFEFF):   # 零宽字符
+            continue
+        if 0x202A <= code <= 0x202E or 0x2066 <= code <= 0x2069:  # 双向覆盖
+            continue
+        cleaned.append(char)
+    return "".join(cleaned)
+
+
 def _with_guidance(description: str, binding: Any) -> str:
-    """把 ACC 的 guidance 并进工具描述：它是给模型读的用法提示，不是安全策略。"""
+    """把 ACC 的 guidance 追加到工具描述尾部（声明"什么时候用""返回什么"）。"""
     declaration = binding.declaration
     if declaration is None or declaration.guidance is None:
         return description
     parts = [
-        f"使用时机：{declaration.guidance.when_to_use}" if declaration.guidance.when_to_use else "",
-        f"返回：{declaration.guidance.returns}" if declaration.guidance.returns else "",
+        f"使用时机：{_sanitize_guidance(declaration.guidance.when_to_use)}"
+        if declaration.guidance.when_to_use
+        else "",
+        f"返回：{_sanitize_guidance(declaration.guidance.returns)}"
+        if declaration.guidance.returns
+        else "",
     ]
     extra = " ".join(part for part in parts if part)
     if not extra:
         return description
     return f"{description} {extra}".strip()[:1000]
+
 
 
 def _plans_for_path(
