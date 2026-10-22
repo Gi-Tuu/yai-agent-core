@@ -273,9 +273,14 @@ def evaluate_approval(
                 reason=f"审批条件没有可校验的绑定 input schema，已失败关闭：{rule.param}",
             )
         if schema_at_path(input_schema, rule.param) is None:
+            declared = sorted((input_schema.get("properties") or {}).keys())
             return ApprovalOutcome(
                 decision=DECISION_REJECT_INVALID_ARGUMENTS,
-                reason=f"审批条件路径未在绑定 schema 中声明：{rule.param}",
+                reason=(
+                    f"审批条件路径未在绑定 schema 中声明：{rule.param}；"
+                    f"已声明的参数：{', '.join(declared) or '（无）'}。"
+                    "路径写错会让这次调用被永久拒绝，请核对拼写"
+                ),
             )
 
     if policy.required:

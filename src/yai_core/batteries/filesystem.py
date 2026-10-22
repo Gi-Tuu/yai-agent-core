@@ -102,12 +102,21 @@ class FileSystemResources:
             raise ResourceNotFoundError(f"文件不存在：{path}")
         if target.is_dir():
             raise ResourceError(f"{path} 是目录，不能当文件读；请用 file_list")
-        size = target.stat().st_size
-        if size > self.policy.max_read_bytes:
+        # 有界读取：只读"上限 + 1"字节，靠**实际读到的字节数**判定超限。
+        # 先 stat 再 read 会留一个窗口——文件在两步之间变大，就会真的读进超限内容
+        # （限额是内存与带宽的护栏，不能只在"恰好没变"时成立）。
+        limit = self.policy.max_read_bytes
+        try:
+            with target.open("rb") as handle:
+                raw = handle.read(limit + 1)
+        except OSError as exc:
+            raise ResourceError(f"读取失败：{path}（{type(exc).__name__}）") from exc
+        if len(raw) > limit:
             raise ResourceTooLargeError(
-                f"文件 {size} 字节，超过读取上限 {self.policy.max_read_bytes} 字节"
+                f"文件 {path} 超过读取上限 {limit} 字节，已拒绝整读"
             )
-        return target.read_bytes()
+        return raw
+
 
     def _decode(self, path: str, raw: bytes) -> ResourceContent:
         try:
@@ -380,9 +389,10 @@ def filesystem_gate(
     - 前缀匹配是**字面**的。Windows/macOS 大小写不敏感、8.3 短名这类"同一文件多个
       名字"不在这里解决——``NOTES/a.txt`` 在 ``notes/`` 白名单下会被**误拒**，
       这是有意的（宁可误拒不可误放），要放宽请宿主自己显式规范化；
-    - 它**不替代**文件系统那两道闸（逐段拦链接 + realpath 复核）。符号链接在**打开时**
-      仍由 handler 拦，所以"批准与写入之间被换成链接"这种竞态是 fail closed，
-      不是"闸看住了"；
+    - 它**不替代**文件系统那两道闸（逐段拦链接 + realpath 复核）。真正的兜底是
+      "**每次调用都重新判定**"：路径在**解析时**与**打开时**各判一次。解析与打开
+      之间仍有窗口（POSIX 有 ``O_NOFOLLOW`` 兜底，**Windows 没有**），所以这是
+      "把窗口收窄"，不是"零竞态"——别把它当成"闸看住了链接"。
     - 它**不做授权**：能不能调用 ``file_patch`` 仍由 ``PermissionPolicy`` 决定，
       闸只能把闸门往上抬，永远不能替宿主放行。
     """

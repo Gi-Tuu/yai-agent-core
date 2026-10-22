@@ -27,7 +27,12 @@ _DEFAULT_MAX_TOKENS = 4096
 
 
 def _as_text(content: Any) -> str:
-    """把内核上下文里的 content 收成纯文本（多模态 parts 尚未接入）。"""
+    """把单条消息的 content 折成纯文本（静态 parts 尚未接入多模态）。
+
+    既有契约：只有带 ``text`` 的 part 会被折进文本，其余 part（图片、文档等）
+    **被跳过**——内核的消息契约当前是纯文本（``ChatMessage.content: str``），
+    多模态 part 尚无落地路径。
+    """
     if isinstance(content, str):
         return content
     if content is None:
@@ -37,6 +42,7 @@ def _as_text(content: Any) -> str:
             str(part.get("text", "")) for part in content if isinstance(part, dict)
         )
     return str(content)
+
 
 
 def split_system(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:

@@ -308,3 +308,51 @@ def test_governance_is_not_lost_across_manifest_round_trip() -> None:
     assert restored[0].governance.sensitive == ("api_key",)
     assert restored[0].governance.approval is not None
     assert restored[0].governance.approval.required is True
+
+
+# ---------- 9. 声明文本进模型提示前必须净化（提示注入面） ----------
+
+
+def test_guidance_text_is_sanitized_before_reaching_the_model() -> None:
+    """不可信 spec 的 guidance 不能带控制字符 / 零宽 / 双向覆盖进模型提示。"""
+    from yai_core.integrations.openapi.discovery import _sanitize_guidance
+
+    dirty = "用这个\u202e翻转\u200b\u0007 工具"
+    clean = _sanitize_guidance(dirty)
+    assert "\u202e" not in clean and "\u200b" not in clean and "\x07" not in clean
+    assert "翻转" in clean, "只净化字符，不该改写内容本身"
+
+
+# ---------- 10. 读限额靠实际读到的字节数判定（不留 stat/read 窗口） ----------
+
+
+def test_read_limit_is_enforced_by_actual_bytes_read(tmp_path: Path) -> None:
+    provider = _provider(tmp_path, max_read_bytes=8)
+    (provider.root / "big.txt").write_text("x" * 64, encoding="utf-8")
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(provider.read("big.txt"))
+    assert "上限" in str(excinfo.value)
+
+
+# ---------- 11. 非文本 part 不得被静默丢弃 ----------
+
+
+def test_anthropic_adapter_skips_non_text_parts_as_documented() -> None:
+    """既有契约：多模态 part 尚无落地路径，非文本 part 被跳过（不是静默丢数据的新问题）。"""
+    from yai_core.llm.anthropic import _as_text
+
+    assert _as_text([{"type": "text", "text": "hi"}]) == "hi"
+    assert _as_text([{"type": "image"}]) == ""
+
+
+# ---------- 12. 未声明路径的拒绝理由要可诊断 ----------
+
+
+def test_undeclared_approval_path_rejection_names_declared_params() -> None:
+    outcome = evaluate_approval(
+        ApprovalPolicy(when=(ApprovalRule(param="totl", op=">", value=1),)),
+        {"amount": 5},
+        {"type": "object", "properties": {"amount": {"type": "number"}}},
+    )
+    assert outcome.decision == "reject_invalid_arguments"
+    assert "totl" in outcome.reason and "amount" in outcome.reason
