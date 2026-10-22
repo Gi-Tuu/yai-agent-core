@@ -646,6 +646,18 @@ class TextPart:
         return {"type": "text", "text": self.text}
 
 
+#: 内联图片的**字节上限**（按 base64 载荷估）。不是"建议"——超了直接拒：
+#: 图片会整块进模型请求，超大载荷既烧钱又可能把请求撑爆。
+MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def _estimate_base64_bytes(payload: str) -> int:
+    """估算 base64 载荷的字节数（去掉 data: 前缀与换行，按 4 字符 → 3 字节）。"""
+    text = payload.split(",", 1)[1] if payload.startswith("data:") and "," in payload else payload
+    text = "".join(text.split())
+    return (len(text) * 3) // 4
+
+
 @dataclass(frozen=True)
 class ImagePart:
     """图片片段。
@@ -657,11 +669,23 @@ class ImagePart:
 
     只有内联的那条能被模型真正看到；只有引用的那条会渲染成**明说"模型看不到"的文字
     占位**——绝不静默丢图，否则模型会在缺资料的情况下照常回答，看起来成功、其实答错。
+
+    内联载荷有**硬上限**（:data:`MAX_INLINE_IMAGE_BYTES`）：图片整块进模型请求，
+    超大载荷既烧钱又可能把请求撑爆，所以超限在构造时就拒，而不是等请求失败。
     """
 
     media_type: str = "image/png"
     data: str = ""
     ref: str = ""
+
+    def __post_init__(self) -> None:
+        if self.data:
+            size = _estimate_base64_bytes(self.data)
+            if size > MAX_INLINE_IMAGE_BYTES:
+                raise ValueError(
+                    f"内联图片约 {size} 字节，超过上限 {MAX_INLINE_IMAGE_BYTES} 字节；"
+                    "请改用宿主签发的引用（ref）由宿主在授权边界内解析"
+                )
 
     def to_openai_dict(self) -> dict[str, Any]:
         if self.data:
@@ -687,18 +711,40 @@ class ResourcePart:
 
     内核**不解析、不抓取**任何外部资源：引用只是"告诉模型有这么个东西存在"，
     真正的读取由宿主在授权边界内完成。落盘时只保留引用与元数据。
+
+    四个字段把"引用"这件事的语义钉死（都是**声明**，不是执行）：
+
+    - ``uri``：引用本身（宿主内部可解析的句柄，如 ``res://host/42``）；
+    - ``media_type``：资源类型（提示用）；
+    - ``scope``：**授权范围提示**——这条引用允许被谁用（宿主自己的判据，内核不解释）；
+    - ``expires_at``：**失效时刻**（ISO 8601）。过期后引用不再有效；内核只把它
+      如实写进渲染文本，**是否已过期由宿主判定**（内核没有时钟真相）。
+
+    为什么把这些都做成字段而不是注释：引用的"生命周期、授权范围、访问方式、失效
+    行为"如果只存在于文档里，宿主各写各的，跨进程传递时更没人知道它们。
     """
 
     uri: str
     media_type: str = "application/octet-stream"
     name: str = ""
+    scope: str = ""
+    expires_at: str = ""
 
     def to_openai_dict(self) -> dict[str, Any]:
         return {"type": "text", "text": self.to_text()}
 
     def to_text(self) -> str:
         label = self.name or self.uri
-        return f"[资源引用：{label}（{self.media_type}）—— 内容由宿主提供，内核未内联]"
+        extra = []
+        if self.scope:
+            extra.append(f"作用域 {self.scope}")
+        if self.expires_at:
+            extra.append(f"{self.expires_at} 失效")
+        suffix = ("，" + "，".join(extra)) if extra else ""
+        return (
+            f"[资源引用：{label}（{self.media_type}）{suffix}"
+            "—— 内容由宿主提供，内核未内联]"
+        )
 
     def to_reference(self) -> dict[str, Any]:
         return {
@@ -706,6 +752,8 @@ class ResourcePart:
             "uri": self.uri,
             "media_type": self.media_type,
             "name": self.name,
+            "scope": self.scope,
+            "expires_at": self.expires_at,
         }
 
 
@@ -758,6 +806,8 @@ def parts_from_references(raw: Any) -> list[ContentPart] | None:
                     uri=str(item.get("uri", "")),
                     media_type=str(item.get("media_type", "application/octet-stream")),
                     name=str(item.get("name", "")),
+                    scope=str(item.get("scope", "")),
+                    expires_at=str(item.get("expires_at", "")),
                 )
             )
     return parts or None
