@@ -509,6 +509,9 @@ class ToolSpec:
     # 仅 source == "code" 时使用：模型生成、需在宿主沙箱里执行的 Python 代码。
     # 内核不内置任何代码执行器（见 ToolSandbox SPI），handler 保持 None。
     code: str | None = None
+    #: 版本标记（可选，纯数据）。组合工具用它标出"这套流程是 v1 / v2"；
+    #: 随能力清单跨进程走，老读者不认识这个键就当没有（向后兼容）。
+    version: str = ""
     # 宿主声明的治理元数据（脱敏、风险等）；默认空声明 = 行为与从前一致。
     governance: ToolGovernance = field(default_factory=ToolGovernance)
 
@@ -550,6 +553,8 @@ class ToolSpec:
             ]
         if self.source == "code":
             manifest["code"] = self.code
+        if self.version:
+            manifest["version"] = self.version
         governance = governance_to_manifest(self.governance)
         if governance:
             manifest["governance"] = governance
@@ -615,6 +620,7 @@ class ToolSpec:
                 )
 
         code = data.get("code") if source == "code" else None
+        version = str(data.get("version", "") or "").strip()
         input_schema = dict(data.get("input_schema") or {})
         return cls(
             name=name,
@@ -624,6 +630,7 @@ class ToolSpec:
             source=source,
             steps=steps,
             code=code,
+            version=version,
             governance=governance_from_manifest(
                 name, data.get("governance"), input_schema
             ),

@@ -249,6 +249,17 @@ class AgentLoop:
             {"count": len(event_items), "items": event_items},
         )
 
+    def _model_messages(self, ctx: Context) -> list[dict]:
+        """产出给模型的消息：后端不支持多模态时自动降级成纯文本。
+
+        降级口径在 :meth:`Context.llm_messages` 里：图片与资源引用换成"模型看不到
+        它"的占位文本。后端没声明 ``yai_multimodal`` 时按"不支持"处理——发一个
+        后端不认的数组，比明说缺资料更糟。
+        """
+        return ctx.llm_messages(
+            multimodal=bool(getattr(self.model, "yai_multimodal", False))
+        )
+
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
 
@@ -617,7 +628,7 @@ class AgentLoop:
         plan_tier = tier_policy.for_planning().tier if tier_policy is not None else tier
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self._model_chat(ctx.llm_messages(), None, tier=plan_tier)
+        resp = await self._model_chat(self._model_messages(ctx), None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
@@ -763,7 +774,7 @@ class AgentLoop:
             if tier_counts is not None:
                 tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
-                resp = await self._model_chat(ctx.llm_messages(), tools_schema, tier=tier)
+                resp = await self._model_chat(self._model_messages(ctx), tools_schema, tier=tier)
             except BudgetExceeded:
                 # 预算熔断冒泡到 astream 统一收尾，不能被下面的"模型失败体面 return"吞掉。
                 raise
@@ -955,7 +966,7 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
-        resp = await self._model_chat(ctx.llm_messages(), None, tier=STANDARD)
+        resp = await self._model_chat(self._model_messages(ctx), None, tier=STANDARD)
         yield AgentEvent(
             EventType.MODEL_MESSAGE,
             {"text": resp.content.strip(), "tier": STANDARD},
@@ -1175,7 +1186,7 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self._model_chat(ctx.llm_messages(), None, tier=plan_tier)
+        resp = await self._model_chat(self._model_messages(ctx), None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]

@@ -22,7 +22,9 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from yai_core.paths import schema_at_path, value_candidates
@@ -117,7 +119,17 @@ def _matches_json_type(value: Any, type_name: str, path: str) -> bool:
 
 
 def _check_value(value: Any, schema: Any, path: str, errors: list[str]) -> None:
-    """最小 JSON Schema 子集：``type`` / ``required`` / ``properties`` / ``items``。"""
+    """最小 JSON Schema 子集。
+
+    实现的键：``type`` / ``required`` / ``properties`` / ``items``（结构与类型），
+    以及 ``enum`` / ``pattern`` / ``minimum`` / ``maximum`` / ``minLength`` /
+    ``maxLength`` / ``minItems`` / ``maxItems`` / ``format``（取值域）。
+
+    范围是**故意有限**的：多实现几个键就多几分"看起来很严"，但没实现的键会让人
+    误以为已经校验过。仍未实现（记录在册的限制）：``anyOf`` / ``oneOf`` /
+    ``allOf`` / ``$ref`` / ``additionalProperties`` / ``exclusiveMinimum`` /
+    ``exclusiveMaximum`` / ``multipleOf`` / ``uniqueItems`` / ``const``。
+    """
     if not isinstance(schema, dict):
         return
     declared = schema.get("type")
@@ -128,6 +140,7 @@ def _check_value(value: Any, schema: Any, path: str, errors: list[str]) -> None:
         ):
             errors.append(f"{path} 类型不符：期望 {declared}")
             return
+    _check_value_domain(value, schema, path, errors)
     if isinstance(value, dict):
         required = schema.get("required")
         if isinstance(required, list):
@@ -144,6 +157,92 @@ def _check_value(value: Any, schema: Any, path: str, errors: list[str]) -> None:
         if isinstance(items, dict):
             for index, item in enumerate(value):
                 _check_value(item, items, f"{path}[{index}]", errors)
+
+
+def _check_value_domain(value: Any, schema: dict, path: str, errors: list[str]) -> None:
+    """校验**取值域**（与结构校验分开）：enum / 范围 / 长度 / 格式。
+
+    口径：
+
+    - ``enum``：严格 JSON 相等（``"1" != 1``，``True != 1``）——沿用
+      :func:`same_json_value`，不为了"宽容"而做跨类型相等；
+    - ``pattern``：用 ``re.search``（JSON Schema 语义是"部分匹配"，不是整串匹配）；
+      模式本身非法时**跳过**（不因此拒绝调用——声明写错不该让业务操作被拦，但
+      也不该假装校验过，所以只在错误清单里留一句提示？→ 这里选择跳过并保持静默，
+      与"未实现的键一律不参与判定"的口径一致）；
+    - ``minimum`` / ``maximum``：仅当值是 JSON number 时才比（字符串不比大小）；
+    - ``format``：只实现 ``date-time`` 与 ``date`` 两种（能可靠判定的那两种），
+      其余格式**不参与判定**（JSON Schema 的 format 默认是注解而非断言）。
+    """
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        if not any(same_json_value(value, item) for item in enum):
+            errors.append(f"{path} 不在允许取值范围内：{enum}")
+
+    pattern = schema.get("pattern")
+    if isinstance(pattern, str) and pattern and isinstance(value, str):
+        try:
+            if re.search(pattern, value) is None:
+                errors.append(f"{path} 不满足格式约束 {pattern!r}")
+        except re.error:
+            pass  # 声明里的模式本身非法：不参与判定，也不因此拒绝调用
+
+    minimum = schema.get("minimum")
+    if isinstance(minimum, (int, float)) and not isinstance(minimum, bool):
+        if is_json_number(value) and value < minimum:
+            errors.append(f"{path} 小于下限 {minimum}")
+    maximum = schema.get("maximum")
+    if isinstance(maximum, (int, float)) and not isinstance(maximum, bool):
+        if is_json_number(value) and value > maximum:
+            errors.append(f"{path} 大于上限 {maximum}")
+
+    if isinstance(value, str):
+        min_length = schema.get("minLength")
+        if isinstance(min_length, int) and not isinstance(min_length, bool):
+            if len(value) < min_length:
+                errors.append(f"{path} 长度小于 {min_length}")
+        max_length = schema.get("maxLength")
+        if isinstance(max_length, int) and not isinstance(max_length, bool):
+            if len(value) > max_length:
+                errors.append(f"{path} 长度大于 {max_length}")
+    elif isinstance(value, list):
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and not isinstance(min_items, bool):
+            if len(value) < min_items:
+                errors.append(f"{path} 元素少于 {min_items}")
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and not isinstance(max_items, bool):
+            if len(value) > max_items:
+                errors.append(f"{path} 元素多于 {max_items}")
+
+    fmt = schema.get("format")
+    if isinstance(fmt, str) and isinstance(value, str):
+        if fmt == "date-time" and not _looks_like_datetime(value):
+            errors.append(f"{path} 不是 ISO 8601 日期时间")
+        elif fmt == "date" and not _looks_like_date(value):
+            errors.append(f"{path} 不是 ISO 8601 日期")
+
+
+def _looks_like_datetime(text: str) -> bool:
+    """粗判 ISO 8601 日期时间（``YYYY-MM-DDTHH:MM`` 开头，允许 Z / 偏移 / 秒）。"""
+    if len(text) < 16 or text[10] not in ("T", "t", " "):
+        return False
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _looks_like_date(text: str) -> bool:
+    """粗判 ISO 8601 日期（``YYYY-MM-DD``）。"""
+    if len(text) < 10:
+        return False
+    try:
+        datetime.strptime(text[:10], "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
 
 
 def argument_errors(args: Any, parameter_schema: Any) -> list[str]:

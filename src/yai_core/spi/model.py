@@ -18,6 +18,10 @@ class ModelProvider(Protocol):
 
     - ``yai_live_router = True``：真实联网模型后端声明该标记后，
       ``AgentCore(llm_router="auto")`` 才会启用 LLM 路由；
+    - ``yai_multimodal = True``：后端**能吃内容数组**（OpenAI 兼容 / Anthropic 都
+      能）。没声明（``getattr`` 默认 False）时，消息里的图片与资源引用会被**降级成
+      纯文本占位**再发出——宁可让模型明知道自己缺资料，也不要发一个后端不认的数组。
+      离线/脚本模型按需声明。
     - 离线/脚本模型不声明（``getattr`` 默认 False），auto 下走规则路由，
       保证离线测试零网络调用、完全确定。禁止用类名字符串嗅探模型类型。
     """

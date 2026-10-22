@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from yai_core.tools.registry import ToolRegistry
@@ -86,6 +87,124 @@ def build_composite_spec(
         source="composite",
         steps=parsed,
     )
+
+
+@dataclass(frozen=True)
+class CompositeVersion:
+    """组合工具的一个版本快照（纯数据）。
+
+    快照里**只有步骤**（工具名 + 参数），没有 handler——组合工具本来就是"已有工具的
+    编排"，它的可执行性来自被引用的工具，而不是这份数据。
+    """
+
+    name: str
+    version: str
+    description: str = ""
+    steps: tuple[CompositeStep, ...] = ()
+
+    def to_manifest_steps(self) -> list[dict[str, Any]]:
+        return [{"tool": step.tool, "args": dict(step.args)} for step in self.steps]
+
+
+@dataclass
+class CompositeWorkflowStore:
+    """组合工具的**版本仓库**：可命名、可回滚、可比对。
+
+    为什么需要它：组合工具就是"一段工作流"，而工作流会改。没有版本的时候，
+    "上周那套流程到底长什么样"没人答得上来；改了之后想退回，也只能凭记忆手改回去。
+
+    口径：
+
+    - 存的是**步骤快照**（数据），不存 handler、不存运行时状态；
+    - ``save`` 同一 (name, version) 会**覆盖**（版本号是作者自己取的，重取即重定义）；
+    - ``diff`` 给出结构化差异（增/删/改的步骤），供人看，不自动合并；
+    - ``restore`` 造出可注册的 :class:`ToolSpec`（handler 仍为 None，组合工具的
+      handler 由执行器按 composite 分支跑，不需要绑定）。
+    """
+
+    _versions: dict[str, dict[str, CompositeVersion]] = field(default_factory=dict)
+
+    def save(self, spec: ToolSpec, *, version: str) -> CompositeVersion:
+        """保存一个组合工具的版本快照；返回存下来的记录。"""
+        label = (version or "").strip()
+        if not label:
+            raise ValueError("版本号不能为空")
+        if spec.source != "composite":
+            raise ValueError(f"只有组合工具可以存版本，收到 source={spec.source!r}")
+        record = CompositeVersion(
+            name=spec.name,
+            version=label,
+            description=spec.description,
+            steps=tuple(spec.steps or ()),
+        )
+        self._versions.setdefault(spec.name, {})[label] = record
+        return record
+
+    def versions(self, name: str) -> list[str]:
+        """列出某个组合工具的版本号（按创建顺序）。"""
+        return list(self._versions.get(name, {}))
+
+    def get(self, name: str, version: str) -> CompositeVersion:
+        """取某个版本；不存在抛 KeyError。"""
+        try:
+            return self._versions[name][version]
+        except KeyError as exc:
+            raise KeyError(
+                f"组合工具 {name!r} 没有版本 {version!r}（现有：{self.versions(name)}）"
+            ) from exc
+
+    def latest(self, name: str) -> str | None:
+        """最近保存的版本号（没有则 None）。"""
+        versions = self.versions(name)
+        return versions[-1] if versions else None
+
+    def diff(self, name: str, old: str, new: str) -> dict[str, Any]:
+        """比对两个版本：给出步骤层面的增 / 删 / 改。
+
+        改动的判定是"同一位置的步骤内容不同"（工具名或参数不同）——**按位置**比，
+        因为工作流的语义就是顺序敏感：把第 2 步和第 3 步换位，对结果的影响可能
+        远大于"改了一个参数"。
+        """
+        before = self.get(name, old)
+        after = self.get(name, new)
+        before_steps = before.to_manifest_steps()
+        after_steps = after.to_manifest_steps()
+        added: list[dict[str, Any]] = []
+        removed: list[dict[str, Any]] = []
+        changed: list[dict[str, Any]] = []
+        for index in range(max(len(before_steps), len(after_steps))):
+            old_step = before_steps[index] if index < len(before_steps) else None
+            new_step = after_steps[index] if index < len(after_steps) else None
+            if old_step == new_step:
+                continue
+            if old_step is None:
+                added.append(new_step or {})
+            elif new_step is None:
+                removed.append(old_step)
+            else:
+                changed.append({"index": index, "old": old_step, "new": new_step})
+        return {
+            "name": name,
+            "old": old,
+            "new": new,
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "identical": not (added or removed or changed),
+        }
+
+    def restore(self, name: str, version: str) -> ToolSpec:
+        """把某个版本还原成可注册的 :class:`ToolSpec`（供宿主回滚用）。"""
+        record = self.get(name, version)
+        return ToolSpec(
+            name=record.name,
+            description=record.description,
+            input_schema={"type": "object", "properties": {}},
+            handler=None,
+            source="composite",
+            steps=list(record.steps),
+            version=record.version,
+        )
 
 
 def build_composer_tool(registry: ToolRegistry) -> ToolSpec:

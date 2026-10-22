@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **入参校验的 schema 子集从 4 个关键字扩到 13 个**：此前只校验结构（`type` / `required` / `properties` / `items`），取值域一律不看——声明写 `minimum: 100`，调用传 `1` 照样通过。现在支持 `enum` / `pattern` / `minimum` / `maximum` / `minLength` / `maxLength` / `minItems` / `maxItems` / `format`（只实现 `date-time` 与 `date`）。`enum` 用严格 JSON 相等（`"1" != 1`），`pattern` 用 `re.search`，模式本身非法时跳过而不拒绝调用；仍未实现的键（`anyOf` / `$ref` / `additionalProperties` / `exclusive*` / `multipleOf` / `uniqueItems` / `const`）**记录在册**——多实现几个键就多几分"看起来很严"，但没实现的键会让人误以为已经校验过。
+- **多模态的三处落地**：① 图片按**真实成本口径**计入上下文预算（此前按占位文本长度计，等于"图片不占预算"），新增 `IMAGE_CONTEXT_COST_CHARS`（保守代理，宿主可调）；② 新增可选能力标记 `yai_multimodal`（沿用 `yai_live_router` 的约定：类属性、不进协议强制结构），**没声明的后端按"不支持多模态"处理**，片段自动降级成纯文本占位（不丢信息、不发后端不认的数组）；③ 新增示例宿主 `examples/host_k_multimodal/`：**模型只能选句柄，宿主负责解析、判作用域、判有效期、判大小**（授权与生命周期都在宿主，内核不抓取任何外部资源）。
+- **组合工具的版本管理**：新增 `CompositeWorkflowStore`（纯数据、标准库）——`save` 存步骤快照、`versions`/`latest`/`get`、`diff` 按**位置**比对（工作流顺序敏感）、`restore` 还原成可注册的 `ToolSpec`。版本号是 `ToolSpec.version`（可选字段），随能力清单跨进程走，老读者不认识就当没有。
+- **跨层对抗性证据**：补到三层——spec 里的 `guidance` 默认进不了模型提示、即使打开也改不动闸门判定；模型参数里的 `subject` 不算可信主体（主体只来自宿主运行期上下文）；模型参数里的 `approval`/`governance` 不被采纳；清单里的 `gate` 不会被重建。
+
+### Fixed
+
+- **符号链接竞态窗口在 POSIX 上关进内核层**：读路径改用 `O_NOFOLLOW` 打开（新增 `spi/resources.py::open_no_follow`），"路径校验 → 真正打开"之间被换成链接时内核直接拒绝（`ELOOP`）。**平台差异如实写明**：`O_NOFOLLOW` 是 POSIX 扩展，**Windows 没有**——那边窗口只能收窄、不能根除（对应测试在 Windows 上是 skip，不是"通过"）。
+- **清单新增字段不改变安全语义**：`ToolSpec.version` 等新增字段与 `governance` 声明一起进清单时，旧读者会**静默忽略**不认识的键——这与"清单治理语义与版本号绑定"的既有约定一致（新字段不改变安全语义），故不升版本号。
+
 ## [v0.12.0] - 2026-10-22
 
 本版主线是**把"看起来有护栏、实际没生效"的那几处补上**，顺带把外部能力契约的
@@ -278,9 +290,9 @@
 - 澄清循环死锁：意图不清时追问最多两轮、上下文累积合并、空回答体面收尾，重置会先终止卡住的任务。
 - 无 `[local-embed]` 环境下 `LocalBgeEmbedder` 缺模型时先抛 `ModuleNotFoundError: numpy` 而非设计的 `RuntimeError("bge-m3…")`：调整为先 `_load()` 完成模型/依赖检查再 `import numpy`，并用 `sys.modules['numpy']=None` 加回归测试锁定顺序，修复 CI 四矩阵失败。
 
-## [v0.5.0-hangzhou]
+## [v0.5.0 早期赛事快照]
 
-- 2026 AI 杭州·码动未来"超级智能体"赛道提交版本（tag 指向该比赛快照）：MCP Client、LLM 路由器（规则兜底）、SQLite 持久化记忆（opt-in）、OpenAPI 发现、FastAPI 在线 API、多宿主 demo、容器化与 PaaS 部署。
+- 早期赛事快照版本（tag 指向该快照，版本内容保持原样）：MCP Client、LLM 路由器（规则兜底）、SQLite 持久化记忆（opt-in）、OpenAPI 发现、FastAPI 在线 API、多宿主 demo、容器化与 PaaS 部署。
 
 ## [v0.1]
 

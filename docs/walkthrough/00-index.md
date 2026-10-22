@@ -164,6 +164,7 @@
 - 46 · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
 - 47 · `paths.py` + `policy/approval.py` + `batteries/filesystem.py` + `tools/executor.py`：安全加固第二批（路径语义收敛成单一真源、空前缀失败关闭、结果侧也脱敏、manifest 治理语义与版本号绑定）
 - 48 · `types.py` + `llm/anthropic.py` + `memory/sqlite_store.py`：多模态消息契约（`ChatMessage.parts` 可选扩展、图片内联/引用两条路径、落盘只存引用不存字节、摘要与降级渲染）
+- 49 · policy/approval.py + kernel/context.py + 	ools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
 
 ## 5. 自检（读完本篇应能回答）
 

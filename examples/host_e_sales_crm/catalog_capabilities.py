@@ -22,7 +22,6 @@ _WEATHER_TABLE: dict[str, dict] = {
     "北京": {"weather": "晴", "temp_c": 22, "rain": False},
     "广州": {"weather": "阵雨", "temp_c": 26, "rain": True},
     "深圳": {"weather": "雷阵雨", "temp_c": 27, "rain": True},
-    "杭州": {"weather": "阴", "temp_c": 23, "rain": False},
     "南京": {"weather": "多云", "temp_c": 22, "rain": False},
     "成都": {"weather": "小雨", "temp_c": 21, "rain": True},
 }
