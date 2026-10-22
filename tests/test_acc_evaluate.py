@@ -369,7 +369,13 @@ def test_unconditional_requirement_without_schema_still_asks() -> None:
 # --- 入参子集校验器 -----------------------------------------------------------
 
 
-def test_invocation_subset_validator_covers_structural_keywords() -> None:
+def test_invocation_subset_validator_covers_structural_and_domain_keywords() -> None:
+    """入参校验现在同时覆盖**结构关键字**与**取值域关键字**。
+
+    结构：type / required / properties / items；
+    取值域：enum / pattern / minimum / maximum / minLength / maxLength /
+    minItems / maxItems / format(date-time, date)。
+    """
     schema = {
         "type": "object",
         "properties": {
@@ -379,10 +385,16 @@ def test_invocation_subset_validator_covers_structural_keywords() -> None:
         },
         "required": ["ids"],
     }
-    assert invocation_errors({"ids": [1, 2], "note": "hello"}, schema) == []
+    # 结构问题：类型不符
     errors = invocation_errors({"ids": [1, "two"], "kind": "zzz"}, schema)
-    assert len(errors) == 1
+    assert len(errors) == 2
     assert "ids[1]" in errors[0]
+    # 取值域问题：enum 不符（"zzz" 不在 ["a","b"] 里）
+    assert "kind" in errors[1]
+    # 取值域问题：长度超限
+    length_errors = invocation_errors({"ids": [1], "note": "hello"}, schema)
+    assert length_errors and "长度" in length_errors[0]
+    # 必填缺失
     assert invocation_errors({"note": "x"}, schema)
 
 

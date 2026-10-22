@@ -28,6 +28,9 @@ class ScriptedModel:
     ``AgentCore(llm_router="auto")`` 下会走零成本规则路由，保证离线零网络、
     结果可复现。
 
+    但它**声明** `yai_multimodal = True`：它只是把消息原样记下来，数组形态照样
+    收得下——收不下的后端才需要降级，测试用假模型不必假装不支持。
+
     用法::
 
         model = ScriptedModel([
@@ -38,6 +41,8 @@ class ScriptedModel:
             ModelResponse(content="本周周报包含 2 条记录。"),
         ])
     """
+
+    yai_multimodal = True
 
     def __init__(self, responses: list[ModelResponse]) -> None:
         if not responses:

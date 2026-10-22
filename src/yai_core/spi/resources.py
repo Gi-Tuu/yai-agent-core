@@ -115,6 +115,26 @@ def _has_reserved_segment(parts: list[str]) -> str | None:
     return None
 
 
+def open_no_follow(path: Path, *, mode: str = "rb") -> int:
+    """打开文件，且**不跟随最后一段符号链接**（POSIX 有效）。
+
+    为什么需要它：路径校验（逐段 ``lstat`` + ``realpath`` 复核）与真正 ``open`` 之间
+    存在窗口——攻击者可以在校验之后、打开之前把最后一段换成指向别处的链接。
+    ``O_NOFOLLOW`` 把这个窗口在**内核层**关掉：目标是链接时直接失败（``ELOOP``）。
+
+    **平台差异（必须知道）**：``O_NOFOLLOW`` 是 POSIX 扩展，**Windows 没有**
+    （``os.O_NOFOLLOW`` 不存在），那边只能靠"打开前后各判一次"把窗口收窄，
+    不能根除。跨平台一致的安全承诺因此只到"POSIX 上无窗口、Windows 上窗口被收窄"。
+    """
+    flags = os.O_RDONLY
+    if any(token in mode for token in ("w", "a", "+", "x")):
+        flags = os.O_WRONLY | os.O_CREAT
+    if "x" in mode:
+        flags |= os.O_EXCL
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags | nofollow)
+
+
 def normalize_relative(candidate: Any) -> str:
     """把工具入参收敛成 root 内的相对路径字符串；非法形状直接抛 :class:`PathEscapeError`。
 

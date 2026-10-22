@@ -256,6 +256,8 @@ class AnthropicProvider:
 
     # 真实联网模型后端：供 llm_router="auto" 识别（离线脚本模型不声明此标记）。
     yai_live_router = True
+    #: 本后端能吃多模态（Claude 的 text / image 块）。
+    yai_multimodal = True
 
     def __init__(
         self,

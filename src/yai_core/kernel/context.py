@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from yai_core.types import ChatMessage, parts_to_text
+from typing import Any
+
+from yai_core.types import ChatMessage, ImagePart, ResourcePart
+
+#: 一张图片在上下文里的**估算成本**（字符口径）。图片的真实 token 成本远高于它
+#: 渲染出来的占位文本长度——按占位长度计账，等于"图片不占预算"，长会话里会被
+#: 悄悄塞满。这个值是**保守代理**（不是精确计费）：一张图约 1k–4k token 量级。
+IMAGE_CONTEXT_COST_CHARS = 4000
 
 
 class Context:
@@ -13,8 +20,15 @@ class Context:
       保留要点，经 :meth:`replace_range` 替换。
     """
 
-    def __init__(self, system_prompt: str, *, max_chars: int = 24000) -> None:
+    def __init__(
+        self,
+        system_prompt: str,
+        *,
+        max_chars: int = 24000,
+        image_cost_chars: int = IMAGE_CONTEXT_COST_CHARS,
+    ) -> None:
         self.max_chars = max_chars
+        self.image_cost_chars = image_cost_chars
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system_prompt)]
 
     def add(self, message: ChatMessage) -> None:
@@ -24,13 +38,22 @@ class Context:
     def total_chars(self) -> int:
         """当前全部消息的字符总量（朴素口径，用于触发压缩/裁剪）。
 
-        多模态片段按它们的**文本渲染长度**计入：图片与资源引用渲染成占位文本，
-        长度很小——但"图片在上下文里"这件事本身不会让预算失控，所以这个口径是够用的。
+        多模态片段按**真实成本口径**计入：图片按 :data:`IMAGE_CONTEXT_COST_CHARS`
+        记（而不是它那段占位文本的长度——那会让"图片不占预算"），文本片段按实际
+        长度，资源引用按其元数据长度（很小）。
         """
         total = sum(len(m.content) for m in self.messages)
-        total += sum(
-            len(parts_to_text(m.parts)) for m in self.messages if getattr(m, "parts", None)
-        )
+        for message in self.messages:
+            parts = getattr(message, "parts", None)
+            if not parts:
+                continue
+            for part in parts:
+                if isinstance(part, ImagePart):
+                    total += self.image_cost_chars
+                elif isinstance(part, ResourcePart):
+                    total += len(part.uri) + len(part.name)
+                else:
+                    total += len(getattr(part, "text", ""))
         return total
 
     def replace_range(self, start: int, end: int, summary: ChatMessage) -> None:
@@ -70,5 +93,35 @@ class Context:
             return
         self.messages = [self.messages[0], *self.messages[aligned:]]
 
-    def llm_messages(self) -> list[dict]:
-        return [m.to_llm_dict() for m in self.messages]
+    def llm_messages(self, *, multimodal: bool = True) -> list[dict]:
+        """产出 OpenAI 兼容的消息字典列表。
+
+        ``multimodal=False`` 时（后端不支持内容数组）**把片段降级成纯文本**：
+        文本块原样保留，图片与资源引用换成一���说明"模型看不到它"的占位——
+        宁可让模型明知道自己缺资料，也不要发一个后端不认的数组。
+        """
+        out: list[dict] = []
+        for message in self.messages:
+            payload = message.to_llm_dict()
+            if not multimodal and isinstance(payload.get("content"), list):
+                payload["content"] = _flatten_content_blocks(payload["content"])
+            out.append(payload)
+        return out
+
+
+def _flatten_content_blocks(blocks: list[Any]) -> str:
+    """把内容数组压成纯文本（降级给不支持多模态的后端）。"""
+    chunks: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = str(block.get("text", ""))
+            if text:
+                chunks.append(text)
+            continue
+        if block.get("type") == "image_url":
+            chunks.append("[图片：当前后端不支持多模态，模型看不到这张图]")
+            continue
+        chunks.append("[未知片段：当前后端不支持多模态]")
+    return "\n".join(chunks)

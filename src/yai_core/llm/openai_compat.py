@@ -12,6 +12,8 @@ from yai_core.types import ModelResponse, TokenUsage, ToolCallRequest
 class OpenAICompatProvider:
     # 真实联网模型后端：供 llm_router="auto" 识别（离线脚本模型不声明此标记）。
     yai_live_router = True
+    #: 本后端能吃 OpenAI 兼容的内容数组（多模态）。
+    yai_multimodal = True
 
     def __init__(
         self,

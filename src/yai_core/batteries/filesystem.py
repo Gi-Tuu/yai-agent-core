@@ -40,6 +40,7 @@ from yai_core.spi.resources import (
     ResourcePolicy,
     ResourceTooLargeError,
     normalize_relative,
+    open_no_follow,
     resolve_within_root,
     sha256_text,
 )
@@ -107,7 +108,13 @@ class FileSystemResources:
         # （限额是内存与带宽的护栏，不能只在"恰好没变"时成立）。
         limit = self.policy.max_read_bytes
         try:
-            with target.open("rb") as handle:
+            # 用 O_NOFOLLOW 打开：路径校验与真正打开之间若被换成符号链接，
+            # POSIX 上内核会直接拒绝（ELOOP），把这个窗口在**内核层**关掉。
+            fd = open_no_follow(target, mode="rb")
+        except OSError as exc:
+            raise ResourceError(f"读取失败：{path}（{type(exc).__name__}）") from exc
+        try:
+            with os.fdopen(fd, "rb") as handle:
                 raw = handle.read(limit + 1)
         except OSError as exc:
             raise ResourceError(f"读取失败：{path}（{type(exc).__name__}）") from exc
