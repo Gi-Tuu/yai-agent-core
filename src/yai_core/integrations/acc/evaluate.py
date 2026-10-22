@@ -40,7 +40,7 @@ from yai_core.policy.approval import (
     schema_at_path,
     value_at_path,
 )
-from yai_core.types import ApprovalPolicy
+from yai_core.types import ApprovalPolicy, RateLimitHint
 from yai_core.types import ApprovalRule as AccApprovalCondition
 
 RISK_LOW = "low"
@@ -106,12 +106,36 @@ def audit_sensitive(declaration: AccDeclaration) -> bool:
 
 
 def to_approval_policy(declaration: AccDeclaration) -> ApprovalPolicy:
-    """把声明里的审批意图搬进原生策略；条件条目本来就是 :class:`ApprovalRule`，无需逐条转换。"""
+    """把声明里的审批意图翻译成内核原生的审批策略（数据，不是回调）。"""
     return ApprovalPolicy(
         required=declaration.approval_required,
         prompt=declaration.approval_prompt,
         when=declaration.approval_when,
     )
+
+
+def to_execution_policy(
+    declaration: AccDeclaration,
+) -> tuple[int | None, RateLimitHint | None]:
+    """把声明里的执行提示翻译成内核原生的执行策略（超时 + 频率上限）。
+
+    ACC 的 ``execution.timeout_ms`` / ``execution.rate_limit`` 在此之前**只解析、
+    不执行**——声明里写着"每次调用 10 秒""每分钟 30 次"，内核却当它不存在。
+    现在它们变成 :class:`ToolGovernance` 上的数据，由执行器真的强制：
+
+    - 超时：与全局 ``handler_timeout`` **取更严的一档**（治理数据只能加严）；
+    - 频率：进程内滑动窗口，超限的调用**不执行**（多实例总闸需要状态共享，不在这层）。
+
+    翻译是"一跳"的：ACC 声明 → 原生数据，判定逻辑仍只有内核这一份。
+    """
+    timeout_ms = declaration.timeout_ms
+    rate_limit: RateLimitHint | None = None
+    if declaration.rate_limit is not None:
+        rate_limit = RateLimitHint(
+            count=declaration.rate_limit.count, window=declaration.rate_limit.window
+        )
+    return timeout_ms, rate_limit
+
 
 
 def invocation_errors(args: Any, parameter_schema: Any) -> list[str]:

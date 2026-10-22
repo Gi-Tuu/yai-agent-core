@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from yai_core.kernel.compaction import render_for_summary
 from yai_core.kernel.context import Context
 from yai_core.llm.anthropic import to_anthropic_messages
@@ -216,3 +218,43 @@ def test_parts_json_is_stable_for_manifest_style_serialization() -> None:
     """引用形态是纯 JSON 数据：能进清单、能跨进程，不含不可序列化对象。"""
     payload = [part.to_reference() for part in [ImagePart(ref="res://x")]]
     assert json.loads(json.dumps(payload)) == payload
+
+
+# ---------- 内联图片有硬上限 ----------
+
+
+def test_oversized_inline_image_is_rejected_at_construction() -> None:
+    """图片整块进模型请求：超大载荷既烧钱又可能撑爆请求，所以在构造时就拒。"""
+    import base64
+
+    from yai_core.types import MAX_INLINE_IMAGE_BYTES
+
+    # 上限按**解码后字节**算，所以载荷要用真实 base64 构造（字符数是字节数的 4/3）。
+    huge = base64.b64encode(b"x" * (MAX_INLINE_IMAGE_BYTES + 1)).decode()
+    with pytest.raises(ValueError, match="超过上限"):
+        ImagePart(media_type="image/png", data=huge)
+    # 正常大小不受影响
+    assert ImagePart(media_type="image/png", data=PNG).data == PNG
+
+
+# ---------- 资源引用的生命周期语义被写进数据 ----------
+
+
+def test_resource_part_carries_scope_and_expiry() -> None:
+    part = ResourcePart(
+        uri="res://host/42",
+        name="report.pdf",
+        scope="tenant:a",
+        expires_at="2026-12-31T00:00:00+08:00",
+    )
+    text = part.to_text()
+    assert "tenant:a" in text
+    assert "2026-12-31" in text
+    # 落盘形态保留这两个字段（跨进程不丢语义）
+    reference = part.to_reference()
+    assert reference["scope"] == "tenant:a"
+    assert reference["expires_at"].startswith("2026-12-31")
+    restored = parts_from_references([reference])
+    assert restored is not None
+    assert isinstance(restored[0], ResourcePart)
+    assert restored[0].scope == "tenant:a"

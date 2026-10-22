@@ -86,8 +86,28 @@ def test_valid_declaration_lands_on_plan_governance() -> None:
     assert plan.governance is not None
     assert plan.governance.audit_sensitive is False
     assert plan.governance.acc["guidance"]["when_to_use"] == "用户问订单状态时"
+    # 默认**不**把 guidance 喂给模型：它的来源可能是第三方 spec。
+    assert "用户问订单状态时" not in plan.description
+    # 声明原文仍完整保留在 governance.acc 里，宿主要展示自己取。
+    assert "订单状态" in plan.governance.acc["guidance"]["returns"]
+
+
+def test_guidance_reaches_the_model_only_when_the_host_opts_in() -> None:
+    """宿主显式打开（``include_guidance=True``）时，guidance 才进工具描述。"""
+    spec = _spec(
+        {
+            "a": {
+                "operationId": "getA",
+                "x-agent-capability": {
+                    **ORDER_READ,
+                    "guidance": {"when_to_use": "用户问订单状态时", "returns": "订单状态"},
+                },
+            }
+        }
+    )
+    plan = plan_operations(spec, OpenApiSpecConfig(include_guidance=True))[0][0]
     assert "用户问订单状态时" in plan.description
-    assert "返回：订单状态" in plan.description
+    assert "订单状态" in plan.description
 
 
 def test_audit_sensitive_hint_maps_to_governance() -> None:
@@ -147,12 +167,36 @@ def test_disabled_capability_is_not_exposed() -> None:
 # --- 主体与路由 ---------------------------------------------------------------
 
 
-def test_subject_required_needs_trusted_subject() -> None:
+def test_subject_required_is_enforced_at_call_time_not_at_registration() -> None:
+    """主体要求**不再在注册期隐藏能力**：强制点是执行期的能力闸。
+
+    理由：主体是宿主在**运行期**注入的，注册期无从知道这次运行会不会有主体；
+    用一个静态布尔"提前隐藏"，等于让宿主注入的主体在注册期就失效。
+
+    于是：能力照样暴露（模型看得见），但**没有主体的那次调用会被能力闸拒**。
+    """
     declaration = {**ORDER_READ, "subject": {"required": True}}
-    hidden = _bind(declaration=declaration)
-    assert hidden.exposed is False and "可信主体" in hidden.diagnostics[0]
+    binding = _bind(declaration=declaration)
+    assert binding.exposed is True
+    assert binding.subject_required is True
+    assert "可信主体" in binding.diagnostics[0]
+
+    # 宿主声明能提供主体时，同样暴露，且不再有提醒。
     shown = _bind(declaration=declaration, trusted_subject=True)
     assert shown.exposed is True
+    assert shown.diagnostics == ()
+
+
+def test_subject_required_capability_is_rejected_by_the_gate_without_a_subject() -> None:
+    """注册期放行 ≠ 调用期放行：没有可信主体时，能力闸当场拒绝这次调用。"""
+    from yai_core.integrations.acc.gate import build_gate
+
+    binding = _bind(declaration={**ORDER_READ, "subject": {"required": True}})
+    assert binding.declaration is not None
+    gate = build_gate(binding.declaration, binding.input_schema)
+    decision = gate({}, None)
+    assert decision.reject, "没有可信主体时，这次调用必须被拒"
+    assert "主体" in decision.reject
 
 
 def test_scope_allowlist_filters_exposure() -> None:

@@ -387,15 +387,28 @@ def test_translator_maps_every_approval_field() -> None:
 # --- 清单往返（数据就得能走） --------------------------------------------------
 
 
-def _manifest_round_trip(governance: ToolGovernance) -> dict[str, Any]:
+def _manifest_round_trip(
+    governance: ToolGovernance, input_schema: dict[str, Any] | None = None
+) -> dict[str, Any]:
     spec = ToolSpec(
         name="refund",
         description="退款",
-        input_schema=AMOUNT_SCHEMA,
+        input_schema=input_schema if input_schema is not None else AMOUNT_SCHEMA,
         handler=None,
         governance=governance,
     )
     return ToolSpec.from_manifest_dict(spec.to_manifest_dict()).governance
+
+
+#: 声明了全部被条件引用的参数（导入期会拿它交叉校验条件路径）。
+_FULL_REFUND_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "amount": {"type": "number"},
+        "memo": {"type": "string"},
+        "assignee": {"type": "string"},
+    },
+}
 
 
 def test_approval_survives_manifest_round_trip() -> None:
@@ -408,8 +421,22 @@ def test_approval_survives_manifest_round_trip() -> None:
             ApprovalRule(param="assignee", op="==", value=None, has_value=True),
         ),
     )
-    restored = _manifest_round_trip(ToolGovernance(approval=policy))
+    restored = _manifest_round_trip(
+        ToolGovernance(approval=policy), input_schema=_FULL_REFUND_SCHEMA
+    )
     assert restored.approval == policy
+
+
+def test_manifest_rejects_approval_path_not_declared_in_schema() -> None:
+    """导入期就拒"条件路径未声明"：拼错的参数会让工具在**每次调用**都被判非法。
+
+    旧行为是"导入放行、运行期每次拒绝"——错误发生在别的进程里，排查成本极高。
+    """
+    policy = ApprovalPolicy(
+        when=(ApprovalRule(param="totl", op=">", value=1000),),  # totl 是 amount 的笔误
+    )
+    with pytest.raises(ValueError, match="未在 input_schema 中声明"):
+        _manifest_round_trip(ToolGovernance(approval=policy))
 
 
 def test_trivial_approval_writes_no_key() -> None:

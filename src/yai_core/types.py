@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from yai_core.paths import schema_at_path
+
 Role = Literal["system", "user", "assistant", "tool"]
 
 
@@ -147,6 +149,59 @@ class ApprovalPolicy:
 
 
 @dataclass(frozen=True)
+class RateLimitHint:
+    """单个工具的调用频率上限（进程内执行器强制）。
+
+    - ``count``：窗口内最多调用次数；
+    - ``window``：窗口长度（``30s`` / ``1m`` / ``2h`` / ``1d``）。
+
+    这是"外部契约声明的频率上限真正变成约束"的那一层：ACC ``execution.rate_limit``
+    声明的频率，在这里变成执行器里的一条真实闸门——超限的调用**不会到达 handler**。
+    它是**进程内**的（多实例部署要跨实例总闸，那需要状态共享，不在这一层）。
+    """
+
+    count: int
+    window: str
+
+    def window_seconds(self) -> int | None:
+        """把窗口串解析成秒；格式不认识时返回 None（= 这条提示无法执行）。"""
+        return parse_window_seconds(self.window)
+
+    def to_reference(self) -> dict[str, Any]:
+        return {"count": self.count, "window": self.window}
+
+    @classmethod
+    def from_reference(cls, data: Any) -> RateLimitHint:
+        if not isinstance(data, dict):
+            raise ValueError(f"rate_limit 必须是 object，得到 {type(data)!r}")
+        count = data.get("count")
+        window = data.get("window")
+        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            raise ValueError(f"rate_limit.count 必须是正整数，得到 {count!r}")
+        if not isinstance(window, str) or not window.strip():
+            raise ValueError(f"rate_limit.window 必须是非空字符串，得到 {window!r}")
+        return cls(count=count, window=window.strip())
+
+
+def parse_window_seconds(window: str) -> int | None:
+    """解析 ``30s`` / ``1m`` / ``2h`` / ``1d`` 这类窗口串；不认识返回 None。"""
+    text = (window or "").strip().lower()
+    if not text:
+        return None
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    unit = text[-1]
+    if unit not in units:
+        return None
+    try:
+        value = int(text[:-1])
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value * units[unit]
+
+
+@dataclass(frozen=True)
 class ToolGovernance:
     """宿主声明的工具治理元数据。
 
@@ -177,14 +232,53 @@ class ToolGovernance:
     # 静默改变绑定对象，比多一个换行贵得多。
     gate: Callable[[dict[str, Any], Any], GateDecision] | None = None
     approval: ApprovalPolicy | None = None
+    # 执行策略提示（同样放最后，别动既有位置写法的绑定关系）：
+    # - timeout_ms：这个工具的调用硬超时（与全局 handler_timeout 取更严的一档）；
+    # - rate_limit：这个工具的调用频率上限（进程内滑动窗口，超限不执行）。
+    # 两者都是**数据**，随能力清单跨进程走；执行器读它们并真的强制。
+    timeout_ms: int | None = None
+    rate_limit: RateLimitHint | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
 #: :func:`governance_from_manifest` 的理由说明）。
-_GOVERNANCE_KEYS = ("sensitive", "audit_sensitive", "acc", "approval")
+_GOVERNANCE_KEYS = (
+    "sensitive",
+    "audit_sensitive",
+    "acc",
+    "approval",
+    "timeout_ms",
+    "rate_limit",
+)
 
 _APPROVAL_KEYS = ("required", "prompt", "when")
 _APPROVAL_RULE_KEYS = ("param", "op", "value", "label")
+
+
+def _check_manifest_param_path(
+    name: str, param: str, input_schema: dict[str, Any] | None, index: int
+) -> None:
+    """交叉校验审批条件的参数路径：清单声明的路径必须在同一份 ``input_schema`` 里存在。
+
+    为什么要在**导入期**就拒：路径拼错（如 ``totl`` 其实是 ``amount``）在运行期表现为
+    "每一次调用都被判参数不合法"，工具 100% 不可用——而错误发生在**别的进程**里，
+    排查成本极高（本地看起来"工具坏了"，远端日志里只是一行拒绝理由）。导入期拒掉，
+    错在数据进入的那一刻就被看见。
+
+    只在 schema **带 properties** 时才校验：没有可校验的 schema（例如 native 工具
+    还没绑定后端）不代表路径写错了，交给运行期失败关闭即可，不在导入期误杀。
+    """
+    if not isinstance(input_schema, dict):
+        return
+    properties = input_schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return
+    if schema_at_path(input_schema, param) is None:
+        raise ValueError(
+            f"工具 {name!r} 的 approval.when 第 {index} 条参数路径未在 input_schema 中声明："
+            f"{param!r}；已声明的参数：{', '.join(sorted(properties))}。"
+            "路径写错会让该工具在每次调用时都被判参数不合法，故拒绝加载"
+        )
 
 
 def _approval_to_manifest(policy: ApprovalPolicy) -> dict[str, Any]:
@@ -212,7 +306,9 @@ def _approval_to_manifest(policy: ApprovalPolicy) -> dict[str, Any]:
     return out
 
 
-def _approval_from_manifest(name: str, raw: Any) -> ApprovalPolicy | None:
+def _approval_from_manifest(
+    name: str, raw: Any, input_schema: dict[str, Any] | None = None
+) -> ApprovalPolicy | None:
     """校验入站清单的 ``governance.approval``（外来数据，逐字段严校验）。
 
     入站校验必须比出站更严：这份数据来自别的进程/别的语言，而它**会真的改变执行行为**
@@ -275,6 +371,7 @@ def _approval_from_manifest(name: str, raw: Any) -> ApprovalPolicy | None:
             raise ValueError(
                 f"工具 {name!r} 的 approval.when 第 {index + 1} 条 label 必须是字符串"
             )
+        _check_manifest_param_path(name, param.strip(), input_schema, index + 1)
         rules.append(
             ApprovalRule(
                 param=param.strip(),
@@ -303,10 +400,16 @@ def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
         approval = _approval_to_manifest(governance.approval)
         if approval:
             out["approval"] = approval
+    if governance.timeout_ms is not None:
+        out["timeout_ms"] = int(governance.timeout_ms)
+    if governance.rate_limit is not None:
+        out["rate_limit"] = governance.rate_limit.to_reference()
     return out
 
 
-def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
+def governance_from_manifest(
+    name: str, raw: Any, input_schema: dict[str, Any] | None = None
+) -> ToolGovernance:
     """校验入站清单的治理块，返回 :class:`ToolGovernance`（``gate`` 恒为 None）。
 
     三条硬规矩：
@@ -366,12 +469,29 @@ def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
             f"得到 {type(acc)!r}"
         )
 
+    timeout_ms = raw.get("timeout_ms")
+    if timeout_ms is not None:
+        if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
+            raise ValueError(
+                f"工具 {name!r} 的 governance.timeout_ms 必须是正整数，"
+                f"得到 {timeout_ms!r}"
+            )
+
+    rate_limit = raw.get("rate_limit")
+    if rate_limit is not None:
+        try:
+            rate_limit = RateLimitHint.from_reference(rate_limit)
+        except ValueError as exc:
+            raise ValueError(f"工具 {name!r} 的 governance.rate_limit 非法：{exc}") from exc
+
     return ToolGovernance(
         sensitive=sensitive,
         audit_sensitive=audit_sensitive,
         acc=acc,
-        approval=_approval_from_manifest(name, raw.get("approval")),
+        approval=_approval_from_manifest(name, raw.get("approval"), input_schema),
         gate=None,
+        timeout_ms=timeout_ms,
+        rate_limit=rate_limit,
     )
 
 
@@ -495,15 +615,18 @@ class ToolSpec:
                 )
 
         code = data.get("code") if source == "code" else None
+        input_schema = dict(data.get("input_schema") or {})
         return cls(
             name=name,
             description=str(data.get("description", "")),
-            input_schema=dict(data.get("input_schema") or {}),
+            input_schema=input_schema,
             handler=None,
             source=source,
             steps=steps,
             code=code,
-            governance=governance_from_manifest(name, data.get("governance")),
+            governance=governance_from_manifest(
+                name, data.get("governance"), input_schema
+            ),
         )
 
 
@@ -523,6 +646,18 @@ class TextPart:
         return {"type": "text", "text": self.text}
 
 
+#: 内联图片的**字节上限**（按 base64 载荷估）。不是"建议"——超了直接拒：
+#: 图片会整块进模型请求，超大载荷既烧钱又可能把请求撑爆。
+MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def _estimate_base64_bytes(payload: str) -> int:
+    """估算 base64 载荷的字节数（去掉 data: 前缀与换行，按 4 字符 → 3 字节）。"""
+    text = payload.split(",", 1)[1] if payload.startswith("data:") and "," in payload else payload
+    text = "".join(text.split())
+    return (len(text) * 3) // 4
+
+
 @dataclass(frozen=True)
 class ImagePart:
     """图片片段。
@@ -534,11 +669,23 @@ class ImagePart:
 
     只有内联的那条能被模型真正看到；只有引用的那条会渲染成**明说"模型看不到"的文字
     占位**——绝不静默丢图，否则模型会在缺资料的情况下照常回答，看起来成功、其实答错。
+
+    内联载荷有**硬上限**（:data:`MAX_INLINE_IMAGE_BYTES`）：图片整块进模型请求，
+    超大载荷既烧钱又可能把请求撑爆，所以超限在构造时就拒，而不是等请求失败。
     """
 
     media_type: str = "image/png"
     data: str = ""
     ref: str = ""
+
+    def __post_init__(self) -> None:
+        if self.data:
+            size = _estimate_base64_bytes(self.data)
+            if size > MAX_INLINE_IMAGE_BYTES:
+                raise ValueError(
+                    f"内联图片约 {size} 字节，超过上限 {MAX_INLINE_IMAGE_BYTES} 字节；"
+                    "请改用宿主签发的引用（ref）由宿主在授权边界内解析"
+                )
 
     def to_openai_dict(self) -> dict[str, Any]:
         if self.data:
@@ -564,18 +711,40 @@ class ResourcePart:
 
     内核**不解析、不抓取**任何外部资源：引用只是"告诉模型有这么个东西存在"，
     真正的读取由宿主在授权边界内完成。落盘时只保留引用与元数据。
+
+    四个字段把"引用"这件事的语义钉死（都是**声明**，不是执行）：
+
+    - ``uri``：引用本身（宿主内部可解析的句柄，如 ``res://host/42``）；
+    - ``media_type``：资源类型（提示用）；
+    - ``scope``：**授权范围提示**——这条引用允许被谁用（宿主自己的判据，内核不解释）；
+    - ``expires_at``：**失效时刻**（ISO 8601）。过期后引用不再有效；内核只把它
+      如实写进渲染文本，**是否已过期由宿主判定**（内核没有时钟真相）。
+
+    为什么把这些都做成字段而不是注释：引用的"生命周期、授权范围、访问方式、失效
+    行为"如果只存在于文档里，宿主各写各的，跨进程传递时更没人知道它们。
     """
 
     uri: str
     media_type: str = "application/octet-stream"
     name: str = ""
+    scope: str = ""
+    expires_at: str = ""
 
     def to_openai_dict(self) -> dict[str, Any]:
         return {"type": "text", "text": self.to_text()}
 
     def to_text(self) -> str:
         label = self.name or self.uri
-        return f"[资源引用：{label}（{self.media_type}）—— 内容由宿主提供，内核未内联]"
+        extra = []
+        if self.scope:
+            extra.append(f"作用域 {self.scope}")
+        if self.expires_at:
+            extra.append(f"{self.expires_at} 失效")
+        suffix = ("，" + "，".join(extra)) if extra else ""
+        return (
+            f"[资源引用：{label}（{self.media_type}）{suffix}"
+            "—— 内容由宿主提供，内核未内联]"
+        )
 
     def to_reference(self) -> dict[str, Any]:
         return {
@@ -583,6 +752,8 @@ class ResourcePart:
             "uri": self.uri,
             "media_type": self.media_type,
             "name": self.name,
+            "scope": self.scope,
+            "expires_at": self.expires_at,
         }
 
 
@@ -635,6 +806,8 @@ def parts_from_references(raw: Any) -> list[ContentPart] | None:
                     uri=str(item.get("uri", "")),
                     media_type=str(item.get("media_type", "application/octet-stream")),
                     name=str(item.get("name", "")),
+                    scope=str(item.get("scope", "")),
+                    expires_at=str(item.get("expires_at", "")),
                 )
             )
     return parts or None
