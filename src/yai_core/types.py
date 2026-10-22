@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from yai_core.paths import schema_at_path
+
 Role = Literal["system", "user", "assistant", "tool"]
 
 
@@ -187,6 +189,32 @@ _APPROVAL_KEYS = ("required", "prompt", "when")
 _APPROVAL_RULE_KEYS = ("param", "op", "value", "label")
 
 
+def _check_manifest_param_path(
+    name: str, param: str, input_schema: dict[str, Any] | None, index: int
+) -> None:
+    """交叉校验审批条件的参数路径：清单声明的路径必须在同一份 ``input_schema`` 里存在。
+
+    为什么要在**导入期**就拒：路径拼错（如 ``totl`` 其实是 ``amount``）在运行期表现为
+    "每一次调用都被判参数不合法"，工具 100% 不可用——而错误发生在**别的进程**里，
+    排查成本极高（本地看起来"工具坏了"，远端日志里只是一行拒绝理由）。导入期拒掉，
+    错在数据进入的那一刻就被看见。
+
+    只在 schema **带 properties** 时才校验：没有可校验的 schema（例如 native 工具
+    还没绑定后端）不代表路径写错了，交给运行期失败关闭即可，不在导入期误杀。
+    """
+    if not isinstance(input_schema, dict):
+        return
+    properties = input_schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return
+    if schema_at_path(input_schema, param) is None:
+        raise ValueError(
+            f"工具 {name!r} 的 approval.when 第 {index} 条参数路径未在 input_schema 中声明："
+            f"{param!r}；已声明的参数：{', '.join(sorted(properties))}。"
+            "路径写错会让该工具在每次调用时都被判参数不合法，故拒绝加载"
+        )
+
+
 def _approval_to_manifest(policy: ApprovalPolicy) -> dict[str, Any]:
     """审批策略降成纯数据；``value`` 只在"声明里确实带了值"时才出键。
 
@@ -212,7 +240,9 @@ def _approval_to_manifest(policy: ApprovalPolicy) -> dict[str, Any]:
     return out
 
 
-def _approval_from_manifest(name: str, raw: Any) -> ApprovalPolicy | None:
+def _approval_from_manifest(
+    name: str, raw: Any, input_schema: dict[str, Any] | None = None
+) -> ApprovalPolicy | None:
     """校验入站清单的 ``governance.approval``（外来数据，逐字段严校验）。
 
     入站校验必须比出站更严：这份数据来自别的进程/别的语言，而它**会真的改变执行行为**
@@ -275,6 +305,7 @@ def _approval_from_manifest(name: str, raw: Any) -> ApprovalPolicy | None:
             raise ValueError(
                 f"工具 {name!r} 的 approval.when 第 {index + 1} 条 label 必须是字符串"
             )
+        _check_manifest_param_path(name, param.strip(), input_schema, index + 1)
         rules.append(
             ApprovalRule(
                 param=param.strip(),
@@ -306,7 +337,9 @@ def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
     return out
 
 
-def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
+def governance_from_manifest(
+    name: str, raw: Any, input_schema: dict[str, Any] | None = None
+) -> ToolGovernance:
     """校验入站清单的治理块，返回 :class:`ToolGovernance`（``gate`` 恒为 None）。
 
     三条硬规矩：
@@ -370,7 +403,7 @@ def governance_from_manifest(name: str, raw: Any) -> ToolGovernance:
         sensitive=sensitive,
         audit_sensitive=audit_sensitive,
         acc=acc,
-        approval=_approval_from_manifest(name, raw.get("approval")),
+        approval=_approval_from_manifest(name, raw.get("approval"), input_schema),
         gate=None,
     )
 
@@ -495,15 +528,18 @@ class ToolSpec:
                 )
 
         code = data.get("code") if source == "code" else None
+        input_schema = dict(data.get("input_schema") or {})
         return cls(
             name=name,
             description=str(data.get("description", "")),
-            input_schema=dict(data.get("input_schema") or {}),
+            input_schema=input_schema,
             handler=None,
             source=source,
             steps=steps,
             code=code,
-            governance=governance_from_manifest(name, data.get("governance")),
+            governance=governance_from_manifest(
+                name, data.get("governance"), input_schema
+            ),
         )
 
 

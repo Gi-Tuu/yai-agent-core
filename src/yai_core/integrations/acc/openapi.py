@@ -47,10 +47,17 @@ class AccOperationBinding:
     #: operation 上有没有 ACC 扩展；False 表示这条与 ACC 无关，调用方应原样处理。
     declared: bool
     #: 是否允许暴露给模型（declared=False 时恒为 True，交回原逻辑）。
+    #:
+    #: **主体要求不在这里生效**：``subject.required`` 的能力照样暴露（exposed=True），
+    #: 强制点是**执行期**的能力闸——没有可信主体时那次调用会被拒。理由：主体是宿主
+    #: 在**运行期**注入的，注册期无从知道这次运行会不会有主体；用静态布尔"提前隐藏"
+    #: 等于让宿主注入的主体在注册期就失效（能力缺失却看不出为什么）。
     exposed: bool
     tool_name: str = ""
     scope: str = ""
     declaration: AccDeclaration | None = None
+    #: 该能力是否要求可信操作主体（执行期能力闸据此逐次判定）。
+    subject_required: bool = False
     #: 供决策用的绑定输入视图（YAI 归一化后的 JSON Schema）。
     input_schema: dict[str, Any] = field(default_factory=dict)
     effective_risk: str = ""
@@ -140,6 +147,32 @@ def bind_operation(
         trusted_subject=trusted_subject,
         has_input_schema=True,
     )
+    if (
+        not exposed
+        and declaration.subject_required
+        and not trusted_subject
+        and declaration.enabled
+        and scope_allowed
+    ):
+        # 唯一被挡住的理由是"要主体"：此时**照样暴露**，把强制留给执行期能力闸。
+        # 静态布尔只说明"宿主此刻没有声明能提供主体"，不代表这次运行没有主体。
+        risk = _effective_risk(declaration, http_method=method)
+        return AccOperationBinding(
+            declared=True,
+            exposed=True,
+            subject_required=True,
+            tool_name=tool_name,
+            scope=declaration.scope,
+            declaration=declaration,
+            input_schema=input_schema,
+            effective_risk=risk,
+            audit_sensitive=_audit_sensitive(declaration),
+            diagnostics=(
+                f"{tool_name}：该能力要求可信操作主体；当前宿主未声明能提供主体，"
+                "调用时若无可信主体将被能力闸拒绝（强制点在执行期，不在注册期）",
+            ),
+            raw=dict(raw),
+        )
     if not exposed:
         if not declaration.enabled:
             reason = "enabled=false"

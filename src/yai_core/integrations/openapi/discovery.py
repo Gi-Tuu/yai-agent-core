@@ -227,7 +227,10 @@ def _plan_one_operation(
             # 被跳过不该顺手吞掉一个工具名：否则后面的同名操作会被改名成 __2。
             used_names.discard(name)
             return None
-        tool_description = _with_guidance(tool_description, binding)
+        if config.include_guidance:
+            # 默认**不**把 guidance 喂给模型（来源可能是第三方 spec）；宿主要展示
+            # 可自行从 ToolSpec.governance.acc 里取原文。
+            tool_description = _with_guidance(tool_description, binding)
 
     governance: ToolGovernance | None = None
     if binding.declared and binding.declaration is not None:

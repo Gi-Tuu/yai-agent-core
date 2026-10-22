@@ -47,6 +47,14 @@ class OpenApiSpecConfig:
     #: 让"没有主体"的调用蒙混过关（闸会拒）；它的真实含义是"本宿主保证每次调用都
     #: 带得上主体，因此不必因缺主体而隐藏能力"。
     trusted_subject: bool = False
+    #: 是否把 ACC 声明里的 ``guidance``（when_to_use / returns）拼进**给模型看的**工具描述。
+    #:
+    #: 默认 **False**。理由：guidance 的来源是 OpenAPI 描述，而描述常常来自第三方 API
+    #: ——一份被污染的 spec 就能借 guidance 往模型提示里塞任意指令文本。声明原文
+    #: 仍完整保留在 ``ToolSpec.governance.acc`` 里，宿主要展示（工具目录面板、审计）
+    #: 自己取即可；只是**默认不喂给模型**。打开时仍会先净化（去控制字符 / 零宽 /
+    #: 双向覆盖符），净化不改变声明本身的意思。
+    include_guidance: bool = False
 
     def acc_scope_allowed(self, scope: str) -> bool:
         """按 ``acc_scopes`` 判断某个能力 scope 是否允许暴露。"""
