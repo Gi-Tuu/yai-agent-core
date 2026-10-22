@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+## [v0.13.0] - 2026-10-22
+
+本版主线是**把"还差点"的五处补到能上线**，另加一批**从外部契约到内核原生**的
+治理收紧。全部分支的默认行为不变；新增能力一律 opt-in。
+
 ### Added
 
 - **入参校验的 schema 子集从 4 个关键字扩到 13 个**：此前只校验结构（`type` / `required` / `properties` / `items`），取值域一律不看——声明写 `minimum: 100`，调用传 `1` 照样通过。现在支持 `enum` / `pattern` / `minimum` / `maximum` / `minLength` / `maxLength` / `minItems` / `maxItems` / `format`（只实现 `date-time` 与 `date`）。`enum` 用严格 JSON 相等（`"1" != 1`），`pattern` 用 `re.search`，模式本身非法时跳过而不拒绝调用；仍未实现的键（`anyOf` / `$ref` / `additionalProperties` / `exclusive*` / `multipleOf` / `uniqueItems` / `const`）**记录在册**——多实现几个键就多几分"看起来很严"，但没实现的键会让人误以为已经校验过。
@@ -18,6 +23,10 @@
 
 - **符号链接竞态窗口在 POSIX 上关进内核层**：读路径改用 `O_NOFOLLOW` 打开（新增 `spi/resources.py::open_no_follow`），"路径校验 → 真正打开"之间被换成链接时内核直接拒绝（`ELOOP`）。**平台差异如实写明**：`O_NOFOLLOW` 是 POSIX 扩展，**Windows 没有**——那边窗口只能收窄、不能根除（对应测试在 Windows 上是 skip，不是"通过"）。
 - **清单新增字段不改变安全语义**：`ToolSpec.version` 等新增字段与 `governance` 声明一起进清单时，旧读者会**静默忽略**不认识的键——这与"清单治理语义与版本号绑定"的既有约定一致（新字段不改变安全语义），故不升版本号。
+
+### Changed
+
+- **清除杭州相关材料与引用**：赛事材料（`docs/competitions/hangzhou*`）已从仓库删除，示例演示数据、上海演示脚本、`.gitignore` 规则与发布说明里的相关引用一并清理；GitHub 上以该赛事命名的 Release 也已删除（**tag 仍留在 git 历史里**——历史不可改，也不该改）。
 
 ## [v0.12.0] - 2026-10-22
 
