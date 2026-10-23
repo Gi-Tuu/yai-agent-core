@@ -1,13 +1,36 @@
 from __future__ import annotations
 
-from typing import Any
-
-from yai_core.types import ChatMessage, ImagePart, ResourcePart
+from yai_core.types import (
+    ChatMessage,
+    ImagePart,
+    ResourcePart,
+    flatten_content_blocks,
+)
 
 #: 一张图片在上下文里的**估算成本**（字符口径）。图片的真实 token 成本远高于它
 #: 渲染出来的占位文本长度——按占位长度计账，等于"图片不占预算"，长会话里会被
 #: 悄悄塞满。这个值是**保守代理**（不是精确计费）：一张图约 1k–4k token 量级。
 IMAGE_CONTEXT_COST_CHARS = 4000
+
+
+def message_cost(
+    message: ChatMessage, *, image_cost_chars: int = IMAGE_CONTEXT_COST_CHARS
+) -> int:
+    """一条消息在上下文预算里的成本（字符口径）。
+
+    总量、硬裁剪扣减、摘要压缩选区必须共用这一个函数：只让总量计入 parts，
+    裁剪与压缩却还按 ``content`` 计算，会让长片段"看起来不占预算"——图片被
+    无谓多删、纯文本片段则可能永远触发不了摘要。
+    """
+    total = len(message.content)
+    for part in getattr(message, "parts", None) or ():
+        if isinstance(part, ImagePart):
+            total += image_cost_chars
+        elif isinstance(part, ResourcePart):
+            total += len(part.uri) + len(part.name)
+        else:
+            total += len(getattr(part, "text", ""))
+    return total
 
 
 class Context:
@@ -42,19 +65,10 @@ class Context:
         记（而不是它那段占位文本的长度——那会让"图片不占预算"），文本片段按实际
         长度，资源引用按其元数据长度（很小）。
         """
-        total = sum(len(m.content) for m in self.messages)
-        for message in self.messages:
-            parts = getattr(message, "parts", None)
-            if not parts:
-                continue
-            for part in parts:
-                if isinstance(part, ImagePart):
-                    total += self.image_cost_chars
-                elif isinstance(part, ResourcePart):
-                    total += len(part.uri) + len(part.name)
-                else:
-                    total += len(getattr(part, "text", ""))
-        return total
+        return sum(
+            message_cost(message, image_cost_chars=self.image_cost_chars)
+            for message in self.messages
+        )
 
     def replace_range(self, start: int, end: int, summary: ChatMessage) -> None:
         """用一条摘要消息替换半开区间 ``[start, end)``。
@@ -81,7 +95,9 @@ class Context:
         total = self.total_chars()
         i = 1
         while total > self.max_chars and i < len(self.messages) - 1:
-            total -= len(self.messages[i].content)
+            total -= message_cost(
+                self.messages[i], image_cost_chars=self.image_cost_chars
+            )
             i += 1
         if i <= 1:
             return
@@ -104,24 +120,6 @@ class Context:
         for message in self.messages:
             payload = message.to_llm_dict()
             if not multimodal and isinstance(payload.get("content"), list):
-                payload["content"] = _flatten_content_blocks(payload["content"])
+                payload["content"] = flatten_content_blocks(payload["content"])
             out.append(payload)
         return out
-
-
-def _flatten_content_blocks(blocks: list[Any]) -> str:
-    """把内容数组压成纯文本（降级给不支持多模态的后端）。"""
-    chunks: list[str] = []
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            text = str(block.get("text", ""))
-            if text:
-                chunks.append(text)
-            continue
-        if block.get("type") == "image_url":
-            chunks.append("[图片：当前后端不支持多模态，模型看不到这张图]")
-            continue
-        chunks.append("[未知片段：当前后端不支持多模态]")
-    return "\n".join(chunks)

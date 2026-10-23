@@ -74,6 +74,9 @@ class CoreConfig:
     auto_approve_tools: bool = True
     llm_router: bool | Literal["auto"] = False
     composition: bool = False
+    #: direct 策略下模型若仍返回 tool_calls：默认沿用旧行为（执行），
+    #: 开启后失败关闭（不执行、发 ERROR、保留文字回答）。
+    strict_direct: bool = False
     # 代码工具与长期记忆。
     code_storage: Path | str | None = None
     long_memory: bool = False
@@ -114,6 +117,8 @@ class CoreConfig:
             raise ValueError("tool_result_char_limit 必须是正整数或 None")
         if self.llm_router not in (True, False, "auto"):
             raise ValueError('llm_router 只接受 True、False 或 "auto"')
+        if not isinstance(self.strict_direct, bool):
+            raise ValueError("strict_direct 必须是布尔值")
         if not isinstance(self.context_compaction, (bool, CompactionPolicy)):
             raise ValueError("context_compaction 只接受 False、True 或 CompactionPolicy")
         if self.budget is not None and not isinstance(self.budget, Budget):

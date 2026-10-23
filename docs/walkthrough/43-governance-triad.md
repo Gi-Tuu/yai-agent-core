@@ -177,7 +177,9 @@ class QtChannel:
 
 - **能力旗标，不是探签名**。没声明的通道仍只收到两个参数，宿主自写的 CLI / HTTP / Flutter
   通道一字不改照样跑；用 `getattr` 探参数形状会被宿主的 `**kwargs` 猜错，猜错那一次的代价
-  是审批人少看一个字段——与策略侧的 `yai_subject_aware` 同一个约定。
+  是审批人少看一个字段——与策略侧的 `yai_subject_aware` 同一个约定。类型层面也拆成两层：
+  基础 `Channel.confirm(name, arguments)` 是稳定下限，第三个参数属于可选的
+  `ApprovalContextChannel`，不再用 `cast` 把两参数实现"伪装"成三参数契约。
 - **上下文里没有未脱敏的参数值**。它只带 `tool` 与算出来的描述性字段；`arguments`
   那一份仍是按声明脱敏的对外副本。唯一的例外是宿主自己写的 `prompt` 模板：模板里
   本来就写了 `{amount}`，填进去就是宿主的选择，内核不替它扩散别的字段。
@@ -187,8 +189,11 @@ class QtChannel:
 
 对应测试：`tests/test_approval_context_channel.py`——含一条**时序探针**（`confirm` 被调用时
 通道收到的事件数是 0）和一条老通道断言（只收到两个位置参数）。桌面端的落点在
-`shell/desktop/channel.py`（把字段并进卡片负载）与 `qml/Panel.qml` 的 `pendingSummary`：
-先说为什么问，再说动哪个资源，最后才是参数串。
+`shell/desktop/channel.py`（把 `approval_required` 与描述性字段并进卡片负载）与
+`qml/Panel.qml` 的 `pendingSummary`：先说为什么问，再说动哪个资源，最后才是参数串；
+对象/数组参数用 `JSON.stringify` 渲染，不再显示 `[object Object]`。高风险但非参数级审批
+的标题改为“高影响操作待确认”——宿主没有提供动作类型，不能把读操作写成写操作。
+对应桌面测试 `tests/test_desktop_pending_summary.py` 用 QJSEngine 直接执行这些绑定。
 
 ## 6. 自检
 

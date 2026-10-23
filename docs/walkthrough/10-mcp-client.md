@@ -50,6 +50,8 @@ from yai_core.types import ToolSpec
 ```python
 _SCHEMA_KEYS = frozenset({"type", "properties", "required", "items", "enum", ...})
 
+# OpenAPI 3.0 的 nullable 在清洗时会归一成 type: [T, "null"]，
+# 而不是直接丢掉（丢掉会让全局入参校验误拒合法的 null）。
 def sanitize_schema(schema: Any) -> Any:
     if isinstance(schema, dict):
         cleaned: dict[str, Any] = {}

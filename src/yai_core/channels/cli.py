@@ -52,6 +52,14 @@ class CliChannel:
             value = (context or {}).get(key)
             if value:
                 lines.append(f"  ↳ {label}: {value}")
+        preview = (context or {}).get("preview")
+        if isinstance(preview, dict):
+            summary = str(preview.get("summary", "")).strip()
+            diff = str(preview.get("diff", "")).strip()
+            if summary:
+                lines.append(f"  ↳ 变更预览: {summary}")
+            if diff:
+                lines.append(f"  ↳ 差异:\n{diff}")
         head = "\n".join(lines)
         question = f"  [确认] 允许执行 {tool_name}({arguments})? [y/N] "
         answer = await asyncio.to_thread(input, f"{head}\n{question}" if lines else question)

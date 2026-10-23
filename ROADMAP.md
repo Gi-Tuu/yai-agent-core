@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-22（对应已发布版本 **v0.13.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-23（对应已发布版本 **v0.14.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -117,7 +117,7 @@
   **默认不再进模型描述**（来源可能是第三方 spec），原文仍留在 `governance.acc` 供宿主取用。
 - **依赖**：certifi 升到 2026.10.19，修掉 emSign 中间 CA 私钥泄露（Critical / CVSS 9.1）。
 
-### v0.13 — 把"还差点"的补到能上线（tag 2026-10-22，当前发布版本）
+### v0.13 — 把"还差点"的补到能上线（tag 2026-10-22）
 
 - **入参校验的 schema 子集从 4 个关键字扩到 13 个**：此前只看结构、不看取值域
   （声明写 `minimum: 100`，传 `1` 照样通过）。新增 `enum` / `pattern` / `minimum` /
@@ -137,13 +137,34 @@
 - **清除杭州相关材料与引用**（赛事材料 5 个文件、示例演示数据、文档引用；GitHub 上
   同名 Release 已删，**tag 留在 git 历史里**）。
 
+### v0.14 — 把执行边界与审批可信度补到可运营（tag 2026-10-23，当前发布版本）
+
+- **执行约束覆盖全部路径**：组合工具按真实步骤计入预算，频控在组合分支前判定，
+  工作流级超时覆盖整条组合；代码工具声明超时收紧沙箱；同步 handler 返回 awaitable
+  仍受剩余超时约束。
+- **入参校验成为所有调用的共同下限**：schema 子集对每次调用生效；泛型容器注解递归
+  生成 schema；`anyOf` / `oneOf` / `$ref` 遇到时跳过以免误拒；OpenAPI `nullable`
+  归一为标准 type union。
+- **direct 严格模式（opt-in）**：`strict_direct=True` 时 direct 下拒绝模型自带的结构化
+  tool_calls；模型把 XML tool-call 写进正文时失败关闭，不再伪装成最终答案。
+- **能力接入体检**：`check_tool_specs()` / `AgentCore.capability_health()` 静态检查
+  未实现 schema 键、非法频控、审批路径、组合步骤、代码工具沙箱等。
+- **可信变更预览**：`ChangePreview` + `ToolGovernance.preview`；审批前展示宿主渲染的
+  diff，确认后执行前复核 token，失效即拒绝；host_e 与桌面销售通过只读 HTTP 端点共用
+  同一预览逻辑；stale 后立即终止，不再让模型补救。
+- **执行收据与进程内幂等**：`ExecutionReceipt` 区分 not_started / succeeded / failed /
+  unknown / partial；`call_id` 透传；宿主 `idempotency_key` 存在时同 key 重试不再进
+  handler（进程内缓存，跨进程仍归宿主）。
+
 ## 下一步
 
-### v0.14 — 候选（未排序，等维护者拍板）
+### v0.15 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。
 - **组合工具的可视化编排**（宿主侧；版本管理已在 v0.13 落地内核侧）。
+- **预览 token 收窄**：当前 host_e 预览按全库数据哈希；可按工具目标收窄，减少无关
+  业务变化造成的误 stale。
 - **公网实例的暴露面收口**：线上实例目前无鉴权 + 每 IP 限流（身份取 `X-Forwarded-For` 最左项，可伪造）+ 全局总闸默认关 ⇒ 事实上是开放的免费额度中转；收口方案（开 `YAI_API_KEY` / 只读演示模式 / 打开全局总闸）待定。
 - **多模态的落地跟进**：多模态的**真机**验证（当前只有离线形态校验与一个 `--live` 脚本）、图片在真实后端的真实 token 成本口径、资源引用的宿主侧解析器推广到更多宿主。
 

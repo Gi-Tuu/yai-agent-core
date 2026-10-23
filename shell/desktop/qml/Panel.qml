@@ -38,14 +38,29 @@ Item {
         var args = p.arguments || {};
         var keys = Object.keys(args);
         var parts = [];
-        for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + args[keys[i]]);
+        function readable(value) {
+            if (value === null) return "null";
+            if (typeof value === "object") {
+                try { return JSON.stringify(value); } catch (e) { return String(value); }
+            }
+            return String(value);
+        }
+        for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + readable(args[keys[i]]));
         var line = String(p.tool || "") + (parts.length ? "（" + parts.join(" · ") + "）" : "");
         var tags = [];
         if (p.target) tags.push("落点 " + p.target);
         if (p.risk) tags.push("风险 " + p.risk);
         if (p.scope) tags.push("作用域 " + p.scope);
         var out = head ? head + "\n" + line : line;
-        return tags.length ? out + "\n" + tags.join(" · ") : out;
+        if (tags.length) out += "\n" + tags.join(" · ");
+        var preview = p.preview || null;
+        if (preview) {
+            var previewText = String(preview.summary || "");
+            if (preview.diff) previewText += (previewText ? "\n" : "") + String(preview.diff);
+            if (preview.target) previewText += (previewText ? "\n" : "") + "落点 " + String(preview.target);
+            if (previewText) out += "\n变更预览：" + previewText;
+        }
+        return out;
     }
 
     // 卡片标题跟着"是谁在问"变：新能力授权是高危那档，参数级审批只是要人点个头。
@@ -53,7 +68,7 @@ Item {
         if (workbench.activePendingKind === "ask") return "数字员工要澄清";
         var p = panel.pending;
         if (p.approval_required) return "参数级审批";
-        return String(p.risk || "") === "high" ? "高影响写操作待确认" : "新能力授权请求";
+        return String(p.risk || "") === "high" ? "高影响操作待确认" : "新能力授权请求";
     }
 
     // 用户主动点开面板时聚焦输入框，展开即可直接打字（由 main.qml 在动画后调用）。

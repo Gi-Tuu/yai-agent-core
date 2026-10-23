@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
+from host_e_sales_crm.agent_bridge import (  # noqa: E402
+    WRITE_TOOL_NAMES,
+    attach_write_previews,
+    build_write_preview,
+)
 from host_e_sales_crm.crm_app import SalesCrm  # noqa: E402
 from host_e_sales_crm.standalone_cli import main as cli_main  # noqa: E402
 from yai_core import (  # noqa: E402
@@ -57,6 +62,40 @@ class ScriptedModel:
 
 def _run(core, task):
     return asyncio.run(core.run(task))
+
+
+def test_write_preview_reads_real_crm_state_and_changes_token() -> None:
+    crm = _crm()
+    customer = crm.list_customers()[0]["name"]
+    preview = build_write_preview(crm, "add_followup")
+    args = {"customer": customer, "content": "回访确认"}
+    first = preview(args, None)
+    assert customer in first.summary
+    assert "回访确认" in first.diff
+    assert first.target == f"customer/{customer}"
+    assert preview(args, None).token == first.token
+
+    crm.add_followup(customer, "回访确认")
+    assert preview(args, None).token != first.token, "数据变了，审批依据必须失效"
+
+
+def test_write_preview_rejects_invalid_business_target() -> None:
+    crm = _crm()
+    preview = build_write_preview(crm, "add_followup")
+    with pytest.raises(ValueError, match="不存在"):
+        preview({"customer": "不存在的人", "content": "x"}, None)
+
+
+def test_attach_write_previews_only_touches_write_tools() -> None:
+    crm = _crm()
+    core = AgentCore.auto(
+        crm, ScriptedModel([ModelResponse(content="ok")])
+    )
+    attach_write_previews(core, crm)
+    for name in WRITE_TOOL_NAMES:
+        if core.registry.has(name):
+            assert core.registry.get(name).governance.preview is not None
+    assert core.registry.get("list_customers").governance.preview is None
 
 
 # ---------- 业务层 ----------

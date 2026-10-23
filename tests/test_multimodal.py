@@ -18,7 +18,11 @@ import json
 
 import pytest
 
-from yai_core.kernel.compaction import render_for_summary
+from yai_core.kernel.compaction import (
+    CompactionPolicy,
+    render_for_summary,
+    select_compaction_range,
+)
 from yai_core.kernel.context import Context
 from yai_core.llm.anthropic import to_anthropic_messages
 from yai_core.memory.sqlite_store import SqliteStore
@@ -107,6 +111,34 @@ def test_context_counts_parts_in_budget() -> None:
     context = Context("系统提示")
     context.add(ChatMessage(role="user", content="看图", parts=[ImagePart(ref="res://x")]))
     assert context.total_chars() > len("系统提示") + len("看图")
+
+
+def test_image_cost_is_used_when_trimming_not_just_when_counting() -> None:
+    """硬裁剪必须按与总量相同的成本扣减，否则一超预算就会多删整轮。"""
+    context = Context("s", max_chars=8500)
+    for index in range(3):
+        context.add(
+            ChatMessage(role="user", content=str(index), parts=[ImagePart(ref="x")])
+        )
+        context.add(ChatMessage(role="assistant", content="a"))
+
+    users = [m.content for m in context.messages if m.role == "user"]
+    assert users == ["1", "2"], "两轮图片仍在预算内（约 8005 字符），不该删到只剩最后一轮"
+
+
+def test_text_parts_can_trigger_compaction() -> None:
+    """片段只计入 total 却不计入压缩阈值，会让长附件永远触发不了摘要。"""
+    messages = [ChatMessage(role="system", content="s")]
+    for _ in range(3):
+        messages.append(
+            ChatMessage(role="user", parts=[TextPart(text="x" * 6000)])
+        )
+        messages.append(ChatMessage(role="assistant", content="a"))
+
+    rng = select_compaction_range(
+        messages, CompactionPolicy(hard_max_chars=10000, keep_recent_rounds=1)
+    )
+    assert rng is not None, "18000 字符的片段必须触发 10000 阈值的摘要选区"
 
 
 def test_compaction_render_mentions_parts() -> None:

@@ -7,6 +7,101 @@
 
 ## [Unreleased]
 
+## [v0.14.0] - 2026-10-23
+
+### Added
+
+- **多模态内核核对脚本**：新增 `scripts/check_multimodal_core.py`，把图片放进
+  `AgentCore` 会话历史并走完整内核链路；与只核对出站格式的
+  `check_multimodal_wire.py` 分工不同。默认使用 `docs/assets/desktop-panel.png`。
+- **`strict_direct`（opt-in）**：`CoreConfig` / `AgentCore` 新增布尔开关，默认 `False`
+  保持旧兼容。开启后，`direct` 策略下模型若仍返回 `tool_calls`，内核不执行任何工具，
+  发 `ERROR` 并保留模型的文字回答；没有文字时给出诚实收尾。之所以不默认开启：现有
+  多个宿主依赖"路由判 direct、模型自行补调工具"的兜底，默认收紧会直接破坏它们。
+- **能力接入体检**：新增 `check_tool_specs()` 与 `AgentCore.capability_health()`。
+  不执行 handler，静态列出未实现的 schema 键、非法/未执行的频控窗口、找不到路径的
+  审批条件、组合步骤缺工具、代码工具缺沙箱等问题；`CapabilityHealth.to_text()` /
+  `to_dict()` 可直接给宿主展示或落日志。
+- **schema 兼容性回归**：遇到 `anyOf` / `oneOf` / `$ref` 这类可能放宽取值域的键时，
+  入参校验整段跳过该子 schema（能力体检会标“未校验”），避免把合法调用误拒；
+  `additionalProperties` 等只收紧的键不影响顶层类型校验。
+- **可信变更预览**：`ChangePreview` + `ToolGovernance.preview`（宿主函数，不随清单
+  导出）。审批前宿主生成 `summary / diff / target / token`，随 `PERMISSION_ASKED`、
+  `Channel.confirm` 上下文与 `TOOL_CALL` 一起展示；确认后执行前重新生成并比较 token，
+  变了就 `preview_stale` 拒绝执行，生成失败则 `preview_failed` 失败关闭。组合工具
+  自己的审批走同一规则；CLI/桌面/QML 已接入展示。host_e 示例已接真实 preview
+  provider：写工具审批卡展示从当前 CRM 数据渲染的 diff，token 同样用于执行前复核。
+  host_e 新增只读 `/api/agent/preview`，桌面销售专员通过同一端点在确认卡展示真实
+  diff；桌面端不再复制一套业务预览规则，执行前 token 复核仍由内核完成。
+- **执行收据与进程内幂等**：新增 `ExecutionReceipt`（`not_started` / `succeeded` /
+  `failed` / `unknown` / `partial`），随 `TOOL_RESULT` 事件流出；`call_id` 从模型
+  工具调用透传，组合步骤用“父 id:下标”。超时/同步放弃/handler 异常/沙箱异常记
+  `unknown`，组合前几步成功后续失败记 `partial`，不会被误当成可安全重试。
+  新增宿主幂等键 `ToolGovernance.idempotency_key`（不随清单导出）；提供非空 key 时，
+  执行器进程内缓存结果（默认 256 条），同一 key 重试不再进入 handler，事件标
+  `replayed=True`。跨进程/多实例去重仍由宿主负责。
+
+### Fixed
+
+- **桌面销售的内部 preview 方法不再被注册成工具**：`AgentCore.auto()` 会内省公开
+  方法，`HostECrmClient.preview` 曾因此出现在模型工具列表里，模型失败后会去调用
+  一个并不存在的业务工具。现改为 `_preview`，审批链路仍然使用它，但模型不可见。
+- **审批预览失效后立即终止本次任务**：此前 `preview_stale` 被当成普通工具失败，
+  模型会继续调 `list_customers` / `preview` / `request_capability` 试图补救，
+  在免费模型上很容易触发 429。现在失效即收尾，不再发起后续模型调用。
+- **模型把工具调用写成正文时不再伪装成最终答案**：部分兼容模型会把
+  `<tool_call>` / `<arg_key>` / `<function_call>` 写进普通 content，而不是返回结构化
+  `tool_calls`。内核现在识别这种形状后失败关闭：不执行、不把原始 XML 放进最终答复，
+  发 `ERROR(stage=model_protocol)` 并给出可读说明，避免用户看到一个"假工具调用"气泡。
+- **执行约束覆盖所有真实路径**：组合工具此前在预算、频率上限与声明超时之前提前分流，
+  导致"一次组合 = 多次业务操作"绕过 `max_tool_calls`、组合声明的 `rate_limit` 不生效、
+  `timeout_ms` 只管到单个步骤；现在预算按组合的每个真实步骤计数，频率闸在组合分支之前，
+  工作流级 `timeout_ms` 覆盖整条组合（超时文案明确"已完成步骤不会回滚"）。代码工具的
+  `timeout_ms` 也会收紧传给宿主沙箱的超时；同步函数返回 awaitable 时，剩余超时额度仍然生效。
+- **入参 schema 校验成为所有调用的共同下限**：此前只有挂了条件审批的调用才会校验取值域，
+  普通工具声明 `minimum` 后传越界值仍会执行。现在每次调用都校验已实现的 schema 子集；
+  有条件审批时仍保留更具体的"审批闸拒绝"话术。
+- **`format: date` 不再放过尾部垃圾**：此前只检查前 10 位，`2026-10-23junk` 也会通过；
+  现在整串必须是 `YYYY-MM-DD`。
+- **泛型容器注解不再退化成 `string`**：`list[dict[str, Any]]`、`dict[str, int]`、`set` /
+  `tuple` / `Literal` 等注解现在递归生成数组、对象、枚举 schema。此前所有泛型容器都被
+  映射成 `string`，模型按声明传入数组时会被校验/审批误判非法——这是宿主写工具（如
+  Actual 的 `categorize_transactions`）在严格校验下暴露出的真实缺陷。
+- **组合版本快照真正不可变**：`save` 深拷贝步骤，`to_manifest_steps` / `restore` 返回
+  独立副本；版本记录同时保存 `input_schema` 与可序列化治理（脱敏、审批、执行提示），
+  恢复时不再丢失这些约束。`gate` 是函数，按设计不进快照、也不会被凭数据重建。
+  `latest` 改为记录**最近一次 save**——覆盖旧版本不会改变字典插入顺序，此前重存 `v1`
+  后仍会返回 `v2`。
+- **OpenAPI `nullable` 归一为标准 JSON Schema**：`nullable: true` 清洗时转成
+  `type: [T, "null"]`（枚举补 `null`），不再被静默丢掉；否则全局入参校验会把
+  可选参数的 `null` 误判为类型不符。
+- **审批卡标题不再把高风险读操作叫成写操作**：高风险且无参数级审批时显示
+  “高影响操作待确认”，不再固定写“写操作”。
+- **评测不再把"工具失败但声称拿到凭证"判成通过**：新增 `failed_must_tools`，工具召回也
+  改按**成功结果**计算；只要任务期望工具或实际发生过工具调用，最终答复里的凭证就必须能
+  在成功结果里找到。纯 direct 且不期望工具的任务仍跳过出处核验。
+- **多模态降级与预算口径对齐**：故障切换包装按实际尝试的子后端逐次降级（视觉后端收
+  内容数组，纯文本后端收占位字符串），不再在包装层提前丢图；上下文硬裁剪与摘要压缩
+  选区也改用与 `total_chars` 相同的 `message_cost`，图片不会因只按 `content` 扣减而被
+  多删，长文本片段也能触发摘要。
+- **Token 预算不再重复累计**：后端只给 prompt/completion、不给 total 时，改用本次增量
+  兜底（10、20、30），不会把前几次 token 反复相加（10、30、60）而提前熔断。
+- **路由反馈记回最初决策**：澄清链中原任务先判 `clarify`、补充信息后才判 `react` 时，
+  反馈现在奖励最初那次 `clarify`，而不是把功劳记到后续策略上。
+- **桌面审批展示**：`QtChannel` 透传 `approval_required`，参数级审批不再被标题误判成
+  "新能力授权请求"；`Panel.qml` 对对象/数组参数使用 JSON 渲染，不再显示 `[object Object]`。
+- **通道类型契约拆分**：基础 `Channel` 恢复两参数 `confirm`，审批上下文进入可选的
+  `ApprovalContextChannel` 扩展；旧的两参数通道在运行时与静态类型层面都合法，不再依赖
+  `cast` 遮掩不兼容。
+- **host_k 资源读取有界**：不再"先 stat 再无界 `read_text`"，改为最多读取 `max_bytes+1`
+  并检查实际读取量；文件在检查后增长也突破不了上限。
+
+### Changed
+
+- `ToolExecutor.execute` 新增可选 `budget` 参数；普通执行错误仍回灌给模型，唯一向上冒泡的
+  是任务级 `BudgetExceeded`（硬熔断必须由 Agent Loop 统一收尾）。
+- `Context` 新增 `message_cost()`，上下文总量、硬裁剪与摘要压缩共用同一成本函数。
+
 ## [v0.13.0] - 2026-10-22
 
 本版主线是**把"还差点"的五处补到能上线**，另加一批**从外部契约到内核原生**的

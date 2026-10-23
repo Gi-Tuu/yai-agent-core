@@ -20,14 +20,22 @@ Core 开关（``enabled``）：关闭时桥接不启动任何 Agent 任务，前
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import queue
 import threading
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from host_e_sales_crm.catalog_capabilities import build_catalog, catalog_summary
-from yai_core import AgentCore, ContextualBanditSelector, EventType, discover
+from yai_core import (
+    AgentCore,
+    ChangePreview,
+    ContextualBanditSelector,
+    EventType,
+    discover,
+)
 from yai_core.policy import AllowlistPolicy
 
 # 交互式授权/澄清的等待上限：超时按"拒绝/空回答"处理，避免任务永久挂起。
@@ -54,6 +62,158 @@ READ_TOOLS = [
     "list_orders", "sum_amount", "list_opportunities",
     "list_followups", "customers_due_followup", "list_todos", "daily_brief",
 ]
+WRITE_TOOL_NAMES = {
+    "add_customer", "update_customer", "add_followup",
+    "create_order", "create_opportunity", "update_opportunity_stage",
+    "create_todo", "complete_todo",
+    "delete_todo", "delete_order", "delete_opportunity", "delete_customer",
+}
+
+
+def _revision(crm, arguments: dict) -> str:
+    """预览 token：当前 CRM 全量数据 + 参数；任何一侧变化都会换 token。"""
+    # 这是示例宿主，直接读取业务对象；真实系统应调用自己的 revision/事务快照。
+    raw = json.dumps(
+        {"data": crm._data, "arguments": arguments},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _require_customer(crm, ref: object, *, company: bool = False) -> dict:
+    text = str(ref or "").strip()
+    if not text:
+        raise ValueError("客户不能为空")
+    found = crm._resolve_customer(text) if company else crm._find_customer(text)
+    if found is None:
+        raise ValueError(f"客户 {text!r} 不存在")
+    return found
+
+
+def _render_write_preview(crm, tool_name: str, arguments: dict) -> ChangePreview:
+    """宿主侧真实预览：读当前业务对象，渲染这次写操作会造成什么变化。"""
+    args = dict(arguments or {})
+    token = _revision(crm, args)
+    target = ""
+    if tool_name == "add_followup":
+        customer = _require_customer(crm, args.get("customer"))
+        content = str(args.get("content", "")).strip()
+        if not content:
+            raise ValueError("跟进内容不能为空")
+        summary = f"为 {customer['name']} 新增一条跟进"
+        diff = (
+            f"+ 跟进内容：{content}\n"
+            f"最近跟进：{customer['last_followup']} -> {crm._clock().isoformat()}"
+        )
+        target = f"customer/{customer['name']}"
+    elif tool_name == "create_todo":
+        title = str(args.get("title", "")).strip()
+        if not title:
+            raise ValueError("待办标题不能为空")
+        due = str(args.get("due", "")).strip()
+        summary = f"新增待办：{title}"
+        diff = f"+ 待办：{title}\n  截止：{due or '无'}"
+        target = f"todo/{title}"
+    elif tool_name == "add_customer":
+        name = str(args.get("name", "")).strip()
+        if not name:
+            raise ValueError("客户姓名不能为空")
+        if crm._find_customer(name) is not None:
+            raise ValueError(f"客户 {name!r} 已存在")
+        summary = f"新增客户：{name}"
+        diff = (
+            f"+ 姓名：{name}\n+ 公司：{args.get('company', '')}\n"
+            f"+ 等级：{args.get('level', '普通')}\n+ 状态：潜在"
+        )
+        target = f"customer/{name}"
+    elif tool_name == "update_customer":
+        customer = _require_customer(crm, args.get("name"))
+        changes = []
+        for key in ("company", "level", "phone", "status"):
+            value = str(args.get(key, "") or "").strip()
+            if value:
+                changes.append(f"  {key}: {customer.get(key, '')} -> {value}")
+        if not changes:
+            raise ValueError("没有需要更新的字段")
+        summary = f"编辑客户：{customer['name']}"
+        diff = "\n".join(changes)
+        target = f"customer/{customer['name']}"
+    elif tool_name == "create_order":
+        customer = _require_customer(crm, args.get("customer"), company=True)
+        summary = f"为 {customer['company']} 录入订单"
+        diff = (
+            f"+ 客户：{customer['company']}\n"
+            f"+ 品类：{args.get('category', '')}\n"
+            f"+ 金额：¥{args.get('amount', '')}\n"
+            f"+ 区域：{args.get('region', '') or '未填'}"
+        )
+        target = f"order/new/{customer['company']}"
+    elif tool_name == "create_opportunity":
+        customer = _require_customer(crm, args.get("customer"), company=True)
+        summary = f"新建商机：{args.get('title', '')}"
+        diff = (
+            f"+ 商机：{args.get('title', '')}\n+ 客户：{customer['company']}\n"
+            f"+ 金额：¥{args.get('amount', '')}\n+ 阶段：{args.get('stage', '初步接触')}"
+        )
+        target = f"opportunity/{args.get('title', '')}"
+    elif tool_name == "update_opportunity_stage":
+        title = str(args.get("title", "")).strip()
+        old = next((o for o in crm._data["opportunities"] if title in o["title"]), None)
+        if old is None:
+            raise ValueError(f"没有找到标题包含 {title!r} 的商机")
+        summary = f"推进商机：{old['title']}"
+        diff = f"  阶段：{old['stage']} -> {args.get('stage', '')}"
+        target = f"opportunity/{old['title']}"
+    elif tool_name == "complete_todo":
+        title = str(args.get("title", "")).strip()
+        todo = next(
+            (t for t in crm._data["todos"] if not t["done"] and title in t["title"]),
+            None,
+        )
+        if todo is None:
+            raise ValueError(f"没有找到标题包含 {title!r} 的未完成待办")
+        summary = f"完成待办：{todo['title']}"
+        diff = "  完成状态：未完成 -> 已完成"
+        target = f"todo/{todo['title']}"
+    elif tool_name in ("delete_todo", "delete_order"):
+        key = "todos" if tool_name == "delete_todo" else "orders"
+        field = "title" if tool_name == "delete_todo" else "order"
+        wanted = str(args.get(field, "")).strip()
+        row = next((x for x in crm._data[key] if wanted in str(x.get(field, ""))), None)
+        if row is None:
+            raise ValueError(f"没有找到匹配的{ '待办' if key == 'todos' else '订单' }")
+        summary = f"删除{ '待办' if key == 'todos' else '订单' }：{row.get(field)}"
+        diff = f"- {json.dumps(row, ensure_ascii=False, sort_keys=True)}"
+        target = f"{key}/{row.get(field)}"
+    else:
+        summary = f"执行写操作：{tool_name}"
+        diff = json.dumps(args, ensure_ascii=False, sort_keys=True)
+    return ChangePreview(summary=summary, token=token, diff=diff, target=target)
+
+
+def render_write_preview(crm, tool_name: str, arguments: dict) -> ChangePreview:
+    """公开的预览渲染入口：网页/桌面跨进程调用与本地闭包共用同一份逻辑。"""
+    return _render_write_preview(crm, tool_name, arguments)
+
+
+def build_write_preview(crm, tool_name: str):
+    """构造某写工具的 preview 闭包（可单测，不需要启动 AgentBridge）。"""
+
+    def preview(arguments: dict, subject) -> ChangePreview:
+        return render_write_preview(crm, tool_name, arguments)
+
+    return preview
+
+
+def attach_write_previews(core: AgentCore, crm) -> None:
+    """给已注册写工具挂上宿主预览器；只改治理对象，不改业务方法。"""
+    for spec in core.registry.all():
+        if spec.name in WRITE_TOOL_NAMES:
+            spec.governance = replace(
+                spec.governance, preview=build_write_preview(crm, spec.name)
+            )
 
 # 权限挡位：值 -> 前端展示名。
 PERMISSION_MODES = ("manual", "partial", "auto")
@@ -95,6 +255,9 @@ class WebChannel:
     """Channel SPI 的网页实现：emit 不做事（事件统一由 astream 推送），
     confirm/ask 挂起等待浏览器经 /api/decision、/api/answer 回传。"""
 
+    #: 接收宿主预览与审批描述，让网页确认卡显示真实变更而不是只有工具名。
+    yai_approval_context_aware = True
+
     def __init__(self, run: dict, loop: asyncio.AbstractEventLoop) -> None:
         self._run = run
         self._loop = loop
@@ -105,8 +268,13 @@ class WebChannel:
     async def ask(self, question: str) -> str:
         return await self._prompt("ask", {"question": question}, "")
 
-    async def confirm(self, tool_name: str, arguments: dict) -> bool:
+    async def confirm(
+        self, tool_name: str, arguments: dict, context: dict | None = None
+    ) -> bool:
         payload = {"tool": tool_name, "arguments": arguments}
+        for key in ("approval_required", "reason", "prompt", "risk", "scope", "target", "preview"):
+            if context and key in context:
+                payload[key] = context[key]
         return bool(await self._prompt("confirm", payload, False))
 
     async def _prompt(self, kind: str, data: dict, default):
@@ -365,6 +533,7 @@ class AgentBridge:
             composition=True,  # 允许模型把现有工具编排成组合工具（创建仍需授权）
             learning=self._learning,  # 跨任务共享的自学习器；None 时内核行为不变
         )
+        attach_write_previews(core, self.crm)
         asyncio.run_coroutine_threadsafe(self._run_guarded(core, task, run), self._loop)
         return run_id
 

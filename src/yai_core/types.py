@@ -105,6 +105,103 @@ class GateDecision:
     target: str = ""
 
 
+ReceiptStatus = Literal["not_started", "succeeded", "failed", "unknown", "partial"]
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """一次工具执行的机器可读收据，用于判断"能不能重试"。
+
+    - ``not_started``：参数/权限/频率/预览等在 handler 之前失败，没有副作用；
+    - ``succeeded``：handler 正常返回；
+    - ``failed``：执行器明确知道失败（例如沙箱返回 ``ok=False``）；
+    - ``unknown``：超时、同步 handler 被放弃、handler 抛错或沙箱调用异常——
+      副作用可能已经发生，**不能盲目重试**；
+    - ``partial``：组合工具前几步成功、后续步骤失败。
+
+    ``idempotency_key`` 只来自宿主声明的生成器；内核的进程内缓存只在这个 key
+    存在时生效，跨进程/多实例去重仍由宿主负责。
+    """
+
+    call_id: str
+    tool: str
+    status: ReceiptStatus
+    retryable: bool = False
+    idempotency_key: str = ""
+    error: str = ""
+    duration_ms: float = 0.0
+    replayed: bool = False
+
+    def __post_init__(self) -> None:
+        if self.status not in (
+            "not_started",
+            "succeeded",
+            "failed",
+            "unknown",
+            "partial",
+        ):
+            raise ValueError(f"未知执行状态：{self.status!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "call_id": self.call_id,
+            "tool": self.tool,
+            "status": self.status,
+            "retryable": self.retryable,
+            "idempotency_key": self.idempotency_key,
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+            "replayed": self.replayed,
+        }
+
+
+@dataclass(frozen=True)
+class ChangePreview:
+    """宿主生成的**实际变更预览**，用于审批与执行前复核。
+
+    ``token`` 是宿主自己计算的版本/哈希（例如目标文件内容 + 参数），内核只比较
+    两次生成的结果是否相同，不解释它。审批人看到的是宿主渲染的 ``diff``，不是
+    模型编造的描述；执行前 token 变了就说明审批所依据的计划已经失效。
+    """
+
+    summary: str
+    token: str
+    diff: str = ""
+    target: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.summary, str) or not self.summary.strip():
+            raise ValueError("ChangePreview.summary 必须是非空字符串")
+        if not isinstance(self.token, str) or not self.token.strip():
+            raise ValueError("ChangePreview.token 必须是非空字符串")
+        for name in ("diff", "target"):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise ValueError(f"ChangePreview.{name} 必须是字符串")
+
+    @classmethod
+    def from_value(cls, value: Any) -> ChangePreview:
+        """接受 ChangePreview 或普通 mapping；其他形状直接拒绝。"""
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            return cls(
+                summary=value.get("summary", ""),
+                token=value.get("token", ""),
+                diff=value.get("diff", ""),
+                target=value.get("target", ""),
+            )
+        raise TypeError("变更预览必须是 ChangePreview 或 mapping")
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "summary": self.summary,
+            "token": self.token,
+            "diff": self.diff,
+            "target": self.target,
+        }
+
+
 #: 参数级审批支持的算子（严格 JSON 值语义，见 :mod:`yai_core.policy.approval`）。
 APPROVAL_OPS = (">", ">=", "<", "<=", "==", "!=", "in", "contains", "exists")
 
@@ -238,6 +335,14 @@ class ToolGovernance:
     # 两者都是**数据**，随能力清单跨进程走；执行器读它们并真的强制。
     timeout_ms: int | None = None
     rate_limit: RateLimitHint | None = None
+    #: 宿主/集成层的**变更预览生成器** ``(arguments, subject) -> ChangePreview``。
+    #: 它是函数，和 ``gate`` 一样不随清单导出；只有审批真正发生时才会展示，
+    #: 审批通过后执行前会再生成一次并比较 token。模型参数无法设置它。
+    preview: Callable[[dict[str, Any], Any], Any] | None = None
+    #: 宿主提供的幂等键生成器 ``(arguments, subject) -> str``。返回空串表示
+    #: 本工具不做幂等去重；非空时执行器会在进程内缓存结果，重试同一 key 不再
+    #: 进入 handler。跨进程/多实例去重必须由宿主用同一个 key 自己实现。
+    idempotency_key: Callable[[dict[str, Any], Any], Any] | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
@@ -766,6 +871,30 @@ class ResourcePart:
 
 #: 多模态消息片段的联合类型。
 ContentPart = TextPart | ImagePart | ResourcePart
+
+
+def flatten_content_blocks(blocks: Any) -> str:
+    """把 OpenAI 兼容的内容数组压成纯文本。
+
+    给不支持多模态的后端与故障切换包装用；图片与未知块都显式说明"看不到"，
+    不做静默丢弃——模型宁可知道自己缺资料，也不该把缺图当成没发生过。
+    """
+    if not isinstance(blocks, list):
+        return "" if blocks is None else str(blocks)
+    chunks: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = str(block.get("text", ""))
+            if text:
+                chunks.append(text)
+            continue
+        if block.get("type") == "image_url":
+            chunks.append("[图片：当前后端不支持多模态，模型看不到这张图]")
+            continue
+        chunks.append("[未知片段：当前后端不支持多模态]")
+    return "\n".join(chunks)
 
 
 def parts_to_text(parts: Any) -> str:

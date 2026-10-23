@@ -46,10 +46,17 @@ class QtChannel:
     ) -> bool:
         payload: dict[str, Any] = {"tool": tool_name, "arguments": arguments}
         # 只把描述性字段并进卡片负载：参数值那一份内核已经脱敏，这里不碰第二个参数。
+        # approval_required 是布尔标志（False 也要明确传），不能按"有值才传"处理，
+        # 否则参数级审批会被界面误判成普通的新能力授权。
+        if context and "approval_required" in context:
+            payload["approval_required"] = bool(context["approval_required"])
         for key in ("reason", "prompt", "risk", "scope", "target"):
             value = (context or {}).get(key)
             if value:
                 payload[key] = value
+        preview = (context or {}).get("preview")
+        if preview:
+            payload["preview"] = preview
         return bool(await self._prompt("confirm", payload, False))
 
     async def _prompt(self, kind: str, data: dict, default: Any) -> Any:

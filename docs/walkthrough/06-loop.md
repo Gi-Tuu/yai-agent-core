@@ -140,6 +140,10 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
             final_text = ev.data.get("text", final_text)
 ```
 - 进入主循环。`use_tools=strategy != DIRECT`：只有 react/plan 才把工具清单给模型；direct 首轮不给。
+  默认仍兼容"模型在 direct 下凭记忆返回 tool_calls"的旧行为；宿主传 `strict_direct=True`
+  （`CoreConfig` 同名项）后改为失败关闭：不执行、发 `ERROR`、保留文字回答。
+  另外，模型把 `<tool_call>` / `<arg_key>` 等 XML 调用写进正文时，内核不把它当最终答案、
+  也不尝试解析执行，而是发 `ERROR(stage=model_protocol)` 并换成正面的失败说明。
 - 一边转发事件，一边顺手记下最终文本（MODEL_MESSAGE 事件里）。`dict.get(k, 默认)` 找不到键时保留旧值。
 
 ```python
@@ -275,5 +279,5 @@ yield AgentEvent(EventType.MODEL_MESSAGE, {"text": resp.content.strip()})
 2. clarify 分支靠哪三道保险保证一定能结束？为什么递归时要把原任务和补充信息拼起来？
 3. 为什么 assistant 的 tool_calls 和 tool 结果都必须写回消息本？缺了 tool_call_id 会怎样？
 4. 循环有哪三个出口？（正常收尾 / 错误 / 上限兜底）
-5. direct 策略下 `tools_schema` 是什么？模型此时还能调工具吗？
+5. direct 策略下 `tools_schema` 是什么？模型此时还能调工具吗？`strict_direct` 改变了哪一步？
 6. 为什么 plan 拆完步骤后必须再补一条 user 消息？离线脚本模型为什么没暴露这个问题？

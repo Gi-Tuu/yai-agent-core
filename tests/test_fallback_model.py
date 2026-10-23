@@ -26,13 +26,17 @@ class _HTTPError(Exception):
 class FakeProvider:
     """脚本化模型：按脚本依次返回 ModelResponse 或抛异常，并记录调用次数。"""
 
-    def __init__(self, name: str, script: list) -> None:
+    def __init__(self, name: str, script: list, *, multimodal: bool = False) -> None:
         self.model = name
         self.strong_model = name
         self._script = script
         self.calls = 0
+        self.messages: list = []
+        if multimodal:
+            self.yai_multimodal = True
 
     async def achat(self, messages, tools=None, *, tier="standard"):  # noqa: ANN001
+        self.messages = messages
         i = self.calls
         self.calls += 1
         item = self._script[min(i, len(self._script) - 1)]
@@ -45,8 +49,10 @@ def _ok(text: str) -> ModelResponse:
     return ModelResponse(content=text)
 
 
-def _run(provider, **kw):
-    return asyncio.run(provider.achat([{"role": "user", "content": "hi"}], **kw))
+def _run(provider, *, messages=None, **kw):
+    return asyncio.run(
+        provider.achat(messages or [{"role": "user", "content": "hi"}], **kw)
+    )
 
 
 def test_primary_healthy_uses_primary() -> None:
@@ -139,6 +145,34 @@ def test_primary_recovers_after_cooldown() -> None:
     # cooldown=0：下一次调用重新试探主模型，主模型已恢复
     assert _run(chain).content == "A-recovered"
     assert primary.calls == 2
+
+
+def test_fallback_keeps_image_arrays_for_vision_and_degrades_per_backend() -> None:
+    """包装层不能提前把图片降级：视觉后端应收到数组，纯文本后端应收到字符串。"""
+    vision = FakeProvider("vision", [_ok("A")], multimodal=True)
+    text = FakeProvider("text", [_ok("B")])
+    chain = FallbackModelProvider([vision, text])
+    assert chain.yai_multimodal is True
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看图"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,eA=="}},
+            ],
+        }
+    ]
+    _run(chain, messages=messages)
+    assert isinstance(vision.messages[0]["content"], list)
+
+    # 主视觉后端故障后，纯文本兜底收到的必须是降级字符串，而不是它不认的数组。
+    vision_fail = FakeProvider("vision", [_HTTPError(429)], multimodal=True)
+    text_backup = FakeProvider("text", [_ok("B")])
+    chain2 = FallbackModelProvider([vision_fail, text_backup])
+    _run(chain2, messages=messages)
+    assert isinstance(text_backup.messages[0]["content"], str)
+    assert "看不到" in text_backup.messages[0]["content"]
 
 
 def test_live_router_marker_and_status() -> None:

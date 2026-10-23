@@ -43,6 +43,7 @@ class HostECrmClient:
         ).rstrip("/")
         self.timeout = timeout
         self._tool_url = f"{self.base_url}/api/agent/tool"
+        self._preview_url = f"{self.base_url}/api/agent/preview"
         self._token = token or self._resolve_token()
 
     @classmethod
@@ -200,6 +201,40 @@ class HostECrmClient:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 
+    def _preview(self, tool_name: str, arguments: dict) -> dict:
+        """向 host_e 要写操作的真实预览；只读，不触发业务写入。
+
+        刻意用下划线：`AgentCore.auto()` 会内省所有公开方法，`preview` 是
+        审批链路内部能力，不能作为模型可调用的业务工具出现。
+        """
+        data = json.dumps(
+            {"name": tool_name, "arguments": arguments or {}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            self._preview_url,
+            data=data,
+            headers=self._auth_headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            try:
+                detail = json.loads(detail).get("detail") or detail
+            except (ValueError, TypeError):
+                pass
+            raise RuntimeError(f"生成 {tool_name} 预览失败（HTTP {exc.code}）：{detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"无法连接销售 CRM 工作台（{self.base_url}），无法生成审批预览。"
+            ) from exc
+        if not body.get("ok") or not isinstance(body.get("preview"), dict):
+            raise RuntimeError(f"生成 {tool_name} 预览失败：{body.get('error', '响应格式不合法')}")
+        return body["preview"]
+
     def _call(self, tool_name: str, **arguments: Any) -> Any:
         # 形参刻意不叫 ``name``：add_customer / get_customer / update_customer 等
         # 业务工具本身就带名为 name 的关键字参数，同名会与本方法首参撞车报
@@ -238,6 +273,15 @@ class HostECrmClient:
                 f"调用 {tool_name} 失败：{body.get('error', '未知错误')}"
             )
         return body.get("result")
+
+
+def build_crm_preview(client: HostECrmClient, tool_name: str):
+    """把 host_e 的预览端点包装成 ToolGovernance.preview 需要的闭包。"""
+
+    def preview(arguments: dict, subject) -> dict:
+        return client._preview(tool_name, arguments)
+
+    return preview
 
 
 def build_crm_catalog(client: HostECrmClient):

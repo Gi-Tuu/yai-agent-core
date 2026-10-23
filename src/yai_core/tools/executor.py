@@ -6,19 +6,20 @@ import inspect
 import json
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from typing import Any
 
 from yai_core.policy.approval import (
     DECISION_APPROVAL_REQUIRED,
     DECISION_REJECT_INVALID_ARGUMENTS,
+    argument_errors,
     evaluate_approval,
 )
 from yai_core.policy.authorize import (
     approval_context,
     authorize_tool_call,
-    channel_wants_approval_context,
+    confirm_with_context,
     fill_prompt,
     snapshot_arguments,
 )
@@ -27,7 +28,15 @@ from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
 from yai_core.tools.registry import ToolRegistry
-from yai_core.types import AgentEvent, EventType, GateDecision, ToolSpec
+from yai_core.types import (
+    AgentEvent,
+    ChangePreview,
+    EventType,
+    ExecutionReceipt,
+    GateDecision,
+    ReceiptStatus,
+    ToolSpec,
+)
 
 #: 代码工具在沙箱里的最长执行秒数（默认值，可由宿主覆盖）。
 DEFAULT_CODE_TIMEOUT = 10.0
@@ -36,6 +45,10 @@ DEFAULT_CODE_TIMEOUT = 10.0
 #: 作用在"工具结果 → 模型上下文"这一层，比 Context 总量事后整轮裁剪更精准；
 #: None 表示关闭（宿主自行负责结果上界）。
 DEFAULT_TOOL_RESULT_CHARS = 16_000
+
+#: 进程内幂等结果缓存上限。只缓存宿主显式提供 idempotency_key 的调用；
+#: 跨进程/多实例去重仍由宿主负责。
+IDEMPOTENCY_CACHE_LIMIT = 256
 
 
 def bound_tool_result(
@@ -73,6 +86,14 @@ def bound_tool_result(
 
 class ToolTimeoutError(RuntimeError):
     """工具 handler 超过 ``handler_timeout``。"""
+
+
+class _PreviewError(RuntimeError):
+    """宿主声明的变更预览无法生成；审批不能建立在未知变更上。"""
+
+
+class _IdempotencyError(RuntimeError):
+    """宿主声明的幂等键生成器失败；不能假装这次调用可去重。"""
 
 
 def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
@@ -176,6 +197,10 @@ class ToolExecutor:
         # 只在工具自己声明了 rate_limit 时才用得上，未声明的工具零开销。
         self._rate_hits: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
+        # (tool, idempotency_key) -> (ok, text, status, error)；只在 key 非空时使用。
+        self._idempotent_cache: OrderedDict[
+            tuple[str, str], tuple[bool, str, ReceiptStatus, str]
+        ] = OrderedDict()
 
     def _effective_timeout(self, spec: ToolSpec) -> float | None:
         """这次调用的实际上墙超时：全局 ``handler_timeout`` 与工具自声明的更严一档。
@@ -247,20 +272,198 @@ class ToolExecutor:
         # 要满 0.4s 才回话）。改用 asyncio.wait 拿到"到点但没完成"的结果后直接放弃，
         # 立刻给模型回话；线程仍在后台跑完，所以话术必须说清"可能仍有副作用"。
         loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         future = loop.run_in_executor(None, functools.partial(handler, **arguments))
         future.add_done_callback(_consume_abandoned_result)
-        done, _pending = await asyncio.wait({future}, timeout=timeout)
+        done, _pending = await asyncio.wait(
+            {future}, timeout=max(0.0, deadline - loop.time())
+        )
         if not done:
             raise ToolTimeoutError(
                 f"超过 {timeout:g}s 未完成；同步工具无法中断，"
                 "它可能仍在后台跑完并产生副作用，重试前先确认状态"
             )
         outcome = future.result()
-        # 少见形状：同步函数返回 awaitable。此时已花掉的时间不计，但语义要保持正确。
-        return await outcome if inspect.isawaitable(outcome) else outcome
+        if not inspect.isawaitable(outcome):
+            return outcome
+        # 少见形状：同步函数返回 awaitable。它同样是这次调用的执行时间，
+        # 不能因为函数本身已经返回就绕开超时；剩余额度用尽也要如实止损。
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            if inspect.iscoroutine(outcome):
+                outcome.close()
+            raise ToolTimeoutError(
+                f"超过 {timeout:g}s 未完成；同步工具返回的异步结果未被等待，"
+                "它可能仍在后台跑完并产生副作用，重试前先确认状态"
+            )
+        try:
+            return await asyncio.wait_for(outcome, remaining)
+        except TimeoutError as exc:
+            raise ToolTimeoutError(
+                f"超过 {timeout:g}s 未完成；同步工具返回的异步结果已取消，"
+                "底层操作可能仍有副作用，重试前先确认状态"
+            ) from exc
 
     def _bound(self, text: str) -> tuple[str, bool, int]:
         return bound_tool_result(text, self.result_char_limit)
+
+    async def _generate_preview(
+        self, spec: ToolSpec, arguments: dict, subject: Any
+    ) -> ChangePreview | None:
+        """调用宿主声明的预览生成器；支持同步/异步，任何异常都失败关闭。"""
+        provider = spec.governance.preview
+        if provider is None:
+            return None
+        try:
+            value = provider(arguments, subject)
+            if inspect.isawaitable(value):
+                value = await value
+            return ChangePreview.from_value(value)
+        except Exception as exc:  # noqa: BLE001 - 预览失败不能让审批无依据地继续
+            raise _PreviewError(
+                f"变更预览生成失败：{type(exc).__name__}: {exc}"
+            ) from exc
+
+    async def _idempotency_key(
+        self, spec: ToolSpec, arguments: dict, subject: Any
+    ) -> str:
+        """宿主声明的幂等键；未声明或返回空串表示不去重。"""
+        provider = spec.governance.idempotency_key
+        if provider is None:
+            return ""
+        try:
+            value = provider(arguments, subject)
+            if inspect.isawaitable(value):
+                value = await value
+        except Exception as exc:  # noqa: BLE001 - 键生成失败不能假装可去重
+            raise _IdempotencyError(
+                f"幂等键生成失败：{type(exc).__name__}: {exc}"
+            ) from exc
+        if value is None:
+            return ""
+        if not isinstance(value, str) or not value.strip():
+            raise _IdempotencyError("幂等键必须是非空字符串（或 None）")
+        return value.strip()
+
+    def _receipt(
+        self,
+        *,
+        call_id: str,
+        tool: str,
+        status: ReceiptStatus,
+        started: float,
+        key: str = "",
+        error: str = "",
+        replayed: bool = False,
+    ) -> ExecutionReceipt:
+        return ExecutionReceipt(
+            call_id=call_id,
+            tool=tool,
+            status=status,
+            # 只有宿主给出稳定 key 时，重试才有去重保护。
+            retryable=bool(key) and status in ("failed", "unknown", "partial"),
+            idempotency_key=key,
+            error=error,
+            duration_ms=round((time.monotonic() - started) * 1000, 3),
+            replayed=replayed,
+        )
+
+    def _attach_receipt(
+        self, events: list[AgentEvent], receipt: ExecutionReceipt
+    ) -> None:
+        data = receipt.to_dict()
+        for event in reversed(events):
+            if event.type == EventType.TOOL_RESULT:
+                event.data["receipt"] = data
+                return
+        events.append(
+            AgentEvent(
+                EventType.TOOL_RESULT,
+                {
+                    "tool": receipt.tool,
+                    "ok": receipt.status == "succeeded",
+                    "error": receipt.error,
+                    "receipt": data,
+                },
+            )
+        )
+
+    def _cache_get(
+        self, tool: str, key: str
+    ) -> tuple[bool, str, ReceiptStatus, str] | None:
+        if not key:
+            return None
+        cached = self._idempotent_cache.pop((tool, key), None)
+        if cached is not None:
+            self._idempotent_cache[(tool, key)] = cached
+        return cached
+
+    def _cache_put(
+        self,
+        tool: str,
+        key: str,
+        *,
+        ok: bool,
+        text: str,
+        status: ReceiptStatus,
+        error: str = "",
+    ) -> None:
+        if not key or status == "not_started":
+            return
+        self._idempotent_cache.pop((tool, key), None)
+        self._idempotent_cache[(tool, key)] = (ok, text, status, error)
+        while len(self._idempotent_cache) > IDEMPOTENCY_CACHE_LIMIT:
+            self._idempotent_cache.popitem(last=False)
+
+    def _infer_status(
+        self, events: list[AgentEvent], *, ok: bool, text: str, source: str
+    ) -> ReceiptStatus:
+        """从子执行器的现有事件推断收据状态（不改它们的返回签名）。"""
+        if ok:
+            return "succeeded"
+        if any(e.data.get("timed_out") for e in events):
+            return "unknown"
+        if any(
+            e.data.get("preview_stale") or e.data.get("preview_failed")
+            for e in events
+        ):
+            return "not_started"
+        if source == "code":
+            if "存活期" in text or "未提供代码沙箱" in text:
+                return "not_started"
+            if "沙箱调用失败" in text:
+                return "unknown"
+            return "failed"
+        if source == "composite":
+            child_statuses = [
+                e.data["receipt"].get("status")
+                for e in events
+                if e.type == EventType.TOOL_RESULT
+                and isinstance(e.data.get("receipt"), dict)
+            ]
+            if "partial" in child_statuses:
+                return "partial"
+            has_success = any(s == "succeeded" for s in child_statuses)
+            has_problem = any(
+                s in ("failed", "unknown", "not_started") for s in child_statuses
+            )
+            if has_success and has_problem:
+                return "partial"
+            if "unknown" in child_statuses:
+                return "unknown"
+            has_call = any(e.type == EventType.TOOL_CALL for e in events)
+            if not has_call and any(
+                e.type == EventType.PERMISSION_ASKED for e in events
+            ):
+                return "not_started"
+            if child_statuses and all(s == "not_started" for s in child_statuses):
+                return "not_started"
+            has_successful_result = any(
+                e.type == EventType.TOOL_RESULT and e.data.get("ok") is True
+                for e in events
+            )
+            return "partial" if has_successful_result else "failed"
+        return "failed"
 
     def _event_preview(self, spec: ToolSpec, payload: Any, text: str) -> str:
         """给 ``TOOL_RESULT`` 事件用的**预览**：按治理声明脱敏后的前 200 字符。
@@ -294,12 +497,26 @@ class ToolExecutor:
         arguments: dict[str, Any],
         *,
         subject: Any = None,
+        budget: Any = None,
+        call_id: str = "",
     ) -> tuple[list[AgentEvent], bool, str]:
-        """返回 (过程事件列表, 是否成功, 文本结果)，永不向 Agent Loop 抛异常。
+        """返回 (过程事件列表, 是否成功, 文本结果)。
+
+        普通执行错误一律回灌给模型、不向上抛；唯一的例外是任务级
+        :class:`~yai_core.kernel.budget.BudgetExceeded`——它是硬熔断，必须冒泡到
+        Agent Loop 统一收尾，不能被当成"某次工具失败"吞掉。
 
         ``subject`` 是宿主注入的可信操作主体（``None`` = 本上下文没有主体）；
         它只交给声明了 ``yai_subject_aware`` 的策略，以及带能力声明的工具做准入。
+
+        ``budget`` 是可选的 :class:`~yai_core.kernel.budget.BudgetTracker`。预算
+        计数下沉到这里，是为了让组合工具的**每个真实步骤**都过同一道闸——只数
+        顶层调用会让"一次组合 = 三次业务操作"绕过 max_tool_calls。
+
+        ``call_id`` 来自模型的工具调用 id，只用于执行收据/关联审计；直接调用
+        执行器的宿主可以留空。
         """
+        started = time.monotonic()
         events: list[AgentEvent] = []
         if not self.registry.has(name):
             return events, False, f"工具 {name!r} 不存在"
@@ -316,8 +533,34 @@ class ToolExecutor:
         if decision is not None and decision.reject:
             return events, False, decision.reject
 
-        if spec.source == "composite" and spec.steps:
-            return await self._execute_composite(spec, arguments, subject, decision)
+        # 入参校验是所有调用路径共同的下限，而不是"挂了审批条件才顺带检查"。
+        # 放在审批拒绝之后：有条件审批时保留它更具体的"审批闸拒绝"话术；
+        # 没有审批/闸门时，声明过的取值域仍然必须对每一次调用生效。
+        errors = argument_errors(arguments, spec.input_schema)
+        if errors:
+            message = f"工具 {name} 的调用参数不合法：" + "；".join(errors)
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": message,
+                        "invalid_arguments": True,
+                    },
+                )
+            )
+            self._attach_receipt(
+                events,
+                self._receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    error=message,
+                ),
+            )
+            return events, False, message
 
         # 频率上限闸：超限的调用**不执行**（不进 handler，也不发 TOOL_CALL）。
         #
@@ -337,7 +580,188 @@ class ToolExecutor:
                     {"tool": name, "ok": False, "error": message, "rate_limited": True},
                 )
             )
+            self._attach_receipt(
+                events,
+                self._receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    error=message,
+                ),
+            )
             return events, False, message
+
+        # 组合工具自身不占一次业务调用（真实操作在每一步），但预算已耗尽时
+        # 不该先弹审批卡再在第一步失败——这里只做前置检查，不计数。
+        if budget is not None:
+            budget.before_tool_call()
+
+        try:
+            idempotency_key = await self._idempotency_key(spec, arguments, subject)
+        except _IdempotencyError as exc:
+            message = str(exc)
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": message,
+                        "receipt_failed": True,
+                    },
+                )
+            )
+            self._attach_receipt(
+                events,
+                self._receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    error=message,
+                ),
+            )
+            return events, False, message
+
+        cached = self._cache_get(name, idempotency_key)
+        if cached is not None:
+            ok, cached_text, cached_status, cached_error = cached
+            receipt = self._receipt(
+                call_id=call_id,
+                tool=name,
+                status=cached_status,
+                started=started,
+                key=idempotency_key,
+                error=cached_error,
+                replayed=True,
+            )
+            payload: dict[str, Any] = {
+                "tool": name,
+                "ok": ok,
+                "replayed": True,
+                "receipt": receipt.to_dict(),
+            }
+            if ok:
+                payload["preview"] = cached_text[:200]
+                payload["truncated"] = False
+                payload["result_chars"] = len(cached_text)
+            else:
+                payload["error"] = cached_text
+            events.append(AgentEvent(EventType.TOOL_RESULT, payload))
+            return events, ok, cached_text
+
+        preview: ChangePreview | None
+        try:
+            preview = await self._generate_preview(spec, arguments, subject)
+        except _PreviewError as exc:
+            message = str(exc)
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": message,
+                        "preview_failed": True,
+                    },
+                )
+            )
+            self._attach_receipt(
+                events,
+                self._receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    key=idempotency_key,
+                    error=message,
+                ),
+            )
+            return events, False, message
+
+        if spec.source == "composite" and spec.steps:
+            declared = spec.governance.timeout_ms
+            if declared is None:
+                comp_events, ok, text = await self._execute_composite(
+                    spec,
+                    arguments,
+                    subject,
+                    decision,
+                    budget=budget,
+                    events=events,
+                    preview=preview,
+                    call_id=call_id,
+                )
+            else:
+                timeout = declared / 1000.0
+                try:
+                    comp_events, ok, text = await asyncio.wait_for(
+                        self._execute_composite(
+                            spec,
+                            arguments,
+                            subject,
+                            decision,
+                            budget=budget,
+                            events=events,
+                            preview=preview,
+                            call_id=call_id,
+                        ),
+                        timeout,
+                    )
+                except TimeoutError:
+                    message = (
+                        f"组合工具 {spec.name} 超过声明的 {declared}ms 未完成，已停止；"
+                        "已完成步骤的副作用不会回滚，同步步骤可能仍在后台跑完"
+                    )
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": message,
+                                "timed_out": True,
+                            },
+                        )
+                    )
+                    receipt = self._receipt(
+                        call_id=call_id,
+                        tool=spec.name,
+                        status="unknown",
+                        started=started,
+                        key=idempotency_key,
+                        error=message,
+                    )
+                    self._attach_receipt(events, receipt)
+                    self._cache_put(
+                        spec.name,
+                        idempotency_key,
+                        ok=False,
+                        text=message,
+                        status="unknown",
+                        error=message,
+                    )
+                    return events, False, message
+            status = self._infer_status(comp_events, ok=ok, text=text, source="composite")
+            receipt = self._receipt(
+                call_id=call_id,
+                tool=spec.name,
+                status=status,
+                started=started,
+                key=idempotency_key,
+                error="" if ok else text,
+            )
+            self._attach_receipt(comp_events, receipt)
+            self._cache_put(
+                spec.name,
+                idempotency_key,
+                ok=ok,
+                text=text,
+                status=status,
+                error="" if ok else text,
+            )
+            return comp_events, ok, text
 
         auth_events, approved, reason = await authorize_tool_call(
             self.policy,
@@ -353,17 +777,121 @@ class ToolExecutor:
             risk=decision.risk if decision else "",
             scope=decision.scope if decision else "",
             target=decision.target if decision else "",
+            preview=preview,
         )
         events.extend(auth_events)
         if not approved:
             return events, False, reason
 
+        if preview is not None and any(
+            event.type == EventType.PERMISSION_ASKED for event in auth_events
+        ):
+            try:
+                current_preview = await self._generate_preview(
+                    spec, arguments, subject
+                )
+            except _PreviewError as exc:
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": name,
+                            "ok": False,
+                            "error": str(exc),
+                            "preview_failed": True,
+                        },
+                    )
+                )
+                message = str(exc)
+                self._attach_receipt(
+                    events,
+                    self._receipt(
+                        call_id=call_id,
+                        tool=name,
+                        status="not_started",
+                        started=started,
+                        key=idempotency_key,
+                        error=message,
+                    ),
+                )
+                return events, False, message
+            assert current_preview is not None
+            if current_preview.token != preview.token:
+                message = (
+                    "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
+                    "本次未执行；请重新发起以查看最新预览并再次确认"
+                )
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": name,
+                            "ok": False,
+                            "error": message,
+                            "preview_stale": True,
+                        },
+                    )
+                )
+                self._attach_receipt(
+                    events,
+                    self._receipt(
+                        call_id=call_id,
+                        tool=name,
+                        status="not_started",
+                        started=started,
+                        key=idempotency_key,
+                        error=message,
+                    ),
+                )
+                return events, False, message
+
         if spec.source == "code":
-            return await self._execute_code(spec, arguments, events)
+            if budget is not None:
+                budget.record_tool_call()
+            code_events, ok, text = await self._execute_code(spec, arguments, events)
+            status = self._infer_status(code_events, ok=ok, text=text, source="code")
+            receipt = self._receipt(
+                call_id=call_id,
+                tool=name,
+                status=status,
+                started=started,
+                key=idempotency_key,
+                error="" if ok else text,
+            )
+            self._attach_receipt(code_events, receipt)
+            self._cache_put(
+                name,
+                idempotency_key,
+                ok=ok,
+                text=text,
+                status=status,
+                error="" if ok else text,
+            )
+            return code_events, ok, text
 
         handler = spec.handler
         if handler is None:
-            return events, False, f"工具 {name} 没有可执行 handler"
+            message = f"工具 {name} 没有可执行 handler"
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": name, "ok": False, "error": message},
+                )
+            )
+            self._attach_receipt(
+                events,
+                self._receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    key=idempotency_key,
+                    error=message,
+                ),
+            )
+            return events, False, message
+        if budget is not None:
+            budget.record_tool_call()
         try:
             result = await self._invoke_handler(
                 handler, arguments, timeout=self._effective_timeout(spec)
@@ -372,19 +900,55 @@ class ToolExecutor:
         except ToolTimeoutError as exc:
             # 超时单独成支：给模型的话术要说明"这次没做成、且可能仍在后台跑完"，
             # 不能和"执行出错"混成一句，否则模型只会原样重试。
+            message = f"工具 {name} 执行失败: {exc}"
             events.append(
                 AgentEvent(
                     EventType.TOOL_RESULT,
-                    {"tool": name, "ok": False, "error": str(exc), "timed_out": True},
+                    {"tool": name, "ok": False, "error": message, "timed_out": True},
                 )
             )
-            return events, False, f"工具 {name} 执行失败: {exc}"
+            receipt = self._receipt(
+                call_id=call_id,
+                tool=name,
+                status="unknown",
+                started=started,
+                key=idempotency_key,
+                error=message,
+            )
+            self._attach_receipt(events, receipt)
+            self._cache_put(
+                name,
+                idempotency_key,
+                ok=False,
+                text=message,
+                status="unknown",
+                error=message,
+            )
+            return events, False, message
         except Exception as exc:  # noqa: BLE001 - 工具错误必须回灌给模型而不是崩溃
+            message = f"工具 {name} 执行出错: {type(exc).__name__}: {exc}"
             events.append(
                 AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": False,
-                                                   "error": str(exc)})
+                                                   "error": message})
             )
-            return events, False, f"工具 {name} 执行出错: {type(exc).__name__}: {exc}"
+            receipt = self._receipt(
+                call_id=call_id,
+                tool=name,
+                status="unknown",
+                started=started,
+                key=idempotency_key,
+                error=message,
+            )
+            self._attach_receipt(events, receipt)
+            self._cache_put(
+                name,
+                idempotency_key,
+                ok=False,
+                text=message,
+                status="unknown",
+                error=message,
+            )
+            return events, False, message
 
         text, truncated, result_chars = self._bound(text)
         events.append(
@@ -398,6 +962,21 @@ class ToolExecutor:
                     "result_chars": result_chars,
                 },
             )
+        )
+        receipt = self._receipt(
+            call_id=call_id,
+            tool=name,
+            status="succeeded",
+            started=started,
+            key=idempotency_key,
+        )
+        self._attach_receipt(events, receipt)
+        self._cache_put(
+            name,
+            idempotency_key,
+            ok=True,
+            text=text,
+            status="succeeded",
         )
         return events, True, text
 
@@ -432,9 +1011,17 @@ class ToolExecutor:
             return events, False, msg
 
         # 3) 交给宿主沙箱执行（无网/无敏感文件/超时由沙箱保证）。
+        # 治理声明只能收紧沙箱超时：声明 10ms 时不能仍给沙箱默认的 10s。
+        sandbox_timeout = self.code_timeout
+        declared = spec.governance.timeout_ms
+        if declared is not None:
+            per_tool = declared / 1000.0
+            sandbox_timeout = per_tool if sandbox_timeout is None else min(
+                sandbox_timeout, per_tool
+            )
         try:
             sb = await self.sandbox.execute(
-                spec.code or "", inputs=arguments, timeout=self.code_timeout
+                spec.code or "", inputs=arguments, timeout=sandbox_timeout
             )
         except Exception as exc:  # noqa: BLE001 - 沙箱异常必须回灌而不是穿透
             events.append(
@@ -476,6 +1063,11 @@ class ToolExecutor:
         arguments: dict[str, Any],
         subject: Any = None,
         decision: GateDecision | None = None,
+        *,
+        budget: Any = None,
+        events: list[AgentEvent] | None = None,
+        preview: ChangePreview | None = None,
+        call_id: str = "",
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -487,7 +1079,9 @@ class ToolExecutor:
         不是黑盒——所以这一步真的去问，绝不静默丢掉这份保护。问的时候只走
         :meth:`Channel.confirm`，不再跑一遍策略（策略对黑盒名字的判断仍然不做）。
         """
-        events: list[AgentEvent] = []
+        # 由调用方传入同一个事件列表：工作流超时被取消时，已执行步骤的事件
+        # 必须仍然可见——副作用发生了，审计链不能只剩一句"超时"。
+        events = [] if events is None else events
         steps = spec.steps
         if not steps:
             return events, False, f"组合工具 {spec.name} 缺少步骤"
@@ -518,6 +1112,9 @@ class ToolExecutor:
             ):
                 if value:
                     payload[key] = value
+            preview_data = preview.to_dict() if preview is not None else None
+            if preview_data:
+                payload["preview"] = preview_data
             events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
             # 与 authorize_tool_call 同一个口径：通道声明了旗标才递第三个参数。
             shown_for_channel = redact_arguments(arguments, spec.governance.sensitive)
@@ -529,14 +1126,49 @@ class ToolExecutor:
                 risk=decision.risk,
                 scope=decision.scope,
                 target=decision.target,
+                preview=preview_data,
             )
-            approved = (
-                await self.channel.confirm(spec.name, shown_for_channel, context)
-                if channel_wants_approval_context(self.channel)
-                else await self.channel.confirm(spec.name, shown_for_channel)  # noqa: B009
+            approved = await confirm_with_context(
+                self.channel, spec.name, shown_for_channel, context
             )
             if not approved:
                 return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
+            if preview is not None:
+                try:
+                    current_preview = await self._generate_preview(
+                        spec, arguments, subject
+                    )
+                except _PreviewError as exc:
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": str(exc),
+                                "preview_failed": True,
+                            },
+                        )
+                    )
+                    return events, False, str(exc)
+                assert current_preview is not None
+                if current_preview.token != preview.token:
+                    message = (
+                        "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
+                        "本次未执行；请重新发起以查看最新预览并再次确认"
+                    )
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": message,
+                                "preview_stale": True,
+                            },
+                        )
+                    )
+                    return events, False, message
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,
@@ -559,8 +1191,13 @@ class ToolExecutor:
                 )
                 return events, False, f"组合工具 {spec.name} 第 {index + 1} 步参数解析失败: {exc}"
 
+            step_call_id = f"{call_id}:{index}" if call_id else ""
             sub_events, ok, sub_text = await self.execute(
-                step.tool, resolved, subject=subject
+                step.tool,
+                resolved,
+                subject=subject,
+                budget=budget,
+                call_id=step_call_id,
             )
             events.extend(sub_events)
             if not ok:

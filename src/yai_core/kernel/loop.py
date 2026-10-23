@@ -51,6 +51,26 @@ from yai_core.types import (
     ToolSpec,
 )
 
+_RAW_TOOL_CALL_NOTICE = (
+    "模型返回了未识别的工具调用文本，本次没有执行任何工具。"
+    "请重试，或换用支持结构化 function calling 的模型。"
+)
+
+
+def _looks_like_raw_tool_call(text: str) -> bool:
+    """识别被模型写成正文的 XML/文本工具调用。
+
+    仅认足够像工具调用的标记组合，避免把普通讲解（只提到 ``<tool_call>``）
+    误判；一旦命中就失败关闭，绝不把这段文本当最终答案或尝试解析执行。
+    """
+    lowered = text.lower()
+    if "<arg_key>" in lowered or "<arg_value>" in lowered:
+        return True
+    if "<function_call" in lowered:
+        return True
+    return "<tool_call" in lowered and "</tool_call>" in lowered
+
+
 _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 你可以使用宿主提供的工具（见下方工具目录）。\
 需要扩展能力时按此选择：\
@@ -115,6 +135,7 @@ class AgentLoop:
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
+        strict_direct: bool = False,
         meta_tools: Iterable[str] = (),
         compaction_policy: CompactionPolicy | None = None,
         compaction_model: ModelProvider | None = None,
@@ -149,6 +170,9 @@ class AgentLoop:
         self.max_iters = max_iters
         self.max_clarify_rounds = max_clarify_rounds
         self.full_schema_budget = full_schema_budget
+        # direct 策略下模型自带 tool_calls 的处理：默认沿用旧行为（执行），
+        # 宿主显式开启后失败关闭。不能默认收紧——现有宿主依赖模型在 direct 下补调工具。
+        self.strict_direct = strict_direct
         self.meta_tools: set[str] = set(meta_tools)
         # 摘要压缩：默认 None（关闭，行为与旧版一致）；宿主显式传入后启用。
         self.compaction_policy = compaction_policy
@@ -736,6 +760,8 @@ class AgentLoop:
         # 跨轮状态：是否已发生工具失败（决定纠偏升档）、上一轮档位（仅变化时发事件）。
         had_failure = False
         last_tier: str | None = None
+        # 审批预览失效后本次任务必须终止：继续让模型“补救”只会重复调用并烧配额。
+        terminal_messages: list[str] = []
         # 重规划次数（经 meta 调用链累加），用于 plan_revised 事件的修订序号。
         replanned: list[int] = [0]
 
@@ -797,6 +823,41 @@ class AgentLoop:
 
             if not resp.tool_calls:
                 text = resp.content.strip()
+                if _looks_like_raw_tool_call(text):
+                    # 模型有时会把 <tool_call>/<arg_key> 写进正文，而不是返回
+                    # 结构化 tool_calls。此时既不能当最终答案展示（用户会看到
+                    # 一段假调用），也不能尝试解析执行（协议与权限都不可信）。
+                    yield AgentEvent(
+                        EventType.ERROR,
+                        {
+                            "stage": "model_protocol",
+                            "error": _RAW_TOOL_CALL_NOTICE,
+                            "raw_tool_markup": True,
+                        },
+                    )
+                    ctx.add(ChatMessage(role="assistant", content=_RAW_TOOL_CALL_NOTICE))
+                    yield AgentEvent(
+                        EventType.MODEL_MESSAGE,
+                        {"text": _RAW_TOOL_CALL_NOTICE, "tier": tier},
+                    )
+                    return
+                ctx.add(ChatMessage(role="assistant", content=text))
+                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
+                return
+
+            if self.strict_direct and strategy == Strategy.DIRECT:
+                # opt-in 的严格模式：direct 本轮没有向模型提供任何工具，模型仍返回
+                # tool_calls 时不能执行——否则它等于凭记忆调用了宿主没有授权的工具。
+                text = resp.content.strip()
+                yield AgentEvent(
+                    EventType.ERROR,
+                    {
+                        "stage": "direct",
+                        "error": "direct 策略下模型返回了工具调用，严格模式已拒绝执行",
+                    },
+                )
+                if not text:
+                    text = "当前策略不允许调用工具，本次没有执行任何工具。"
                 ctx.add(ChatMessage(role="assistant", content=text))
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
                 return
@@ -814,8 +875,15 @@ class AgentLoop:
                 tier_policy,
                 tier_counts,
                 subject,
+                terminal_messages=terminal_messages,
             ):
                 yield ev
+
+            if terminal_messages:
+                message = terminal_messages[0]
+                ctx.add(ChatMessage(role="assistant", content=message))
+                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": message, "tier": tier})
+                return
 
             # 执行中发现的新工具：下一轮 function-calling 必须能看到其完整 schema，
             # 否则模型"发现了却调不到"。全量模式重算；聚焦模式把新名字并入聚焦集。
@@ -863,6 +931,7 @@ class AgentLoop:
         tier_policy: TierPolicy | None,
         tier_counts: dict[str, int] | None,
         subject: Subject | None = None,
+        terminal_messages: list[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """顺序执行本轮工具：meta-tool 由内核直接处理，普通工具走执行器。
 
@@ -888,15 +957,15 @@ class AgentLoop:
                     elif ev.type == EventType.CODE_TOOL_CREATED:
                         newly_registered.append(ev.data.get("name", ""))
                 continue
-            # 业务工具执行前过预算硬墙（meta-tool 编排不计入工具次数）；
-            # 超限直接冒泡到 astream 统一熔断，该工具不会被执行、不产生副作用。
-            if self._active_budget is not None:
-                self._active_budget.before_tool_call()
+            # 预算计数由执行器负责：组合工具的真实步骤也会逐次经过同一道闸，
+            # 不能只把"一次组合"记成一次业务调用。超限异常冒泡到 astream 统一熔断。
             tool_events, ok, result_text = await self.executor.execute(
-                call.name, call.arguments, subject=subject
+                call.name,
+                call.arguments,
+                subject=subject,
+                budget=self._active_budget,
+                call_id=call.id,
             )
-            if self._active_budget is not None:
-                self._active_budget.record_tool_call()
             for tool_event in tool_events:
                 yield tool_event
             ctx.add(
@@ -907,6 +976,22 @@ class AgentLoop:
                     name=call.name,
                 )
             )
+            stale = next(
+                (
+                    event
+                    for event in tool_events
+                    if event.type == EventType.TOOL_RESULT
+                    and event.data.get("preview_stale")
+                ),
+                None,
+            )
+            if stale is not None:
+                # 计划在用户确认后已变化：本次任务到此为止，不再让模型补救。
+                if terminal_messages is not None:
+                    terminal_messages.append(
+                        str(stale.data.get("error") or "审批预览已失效，本次未执行")
+                    )
+                return
             if not ok:
                 failed.append(f"{call.name}：{result_text}")
 

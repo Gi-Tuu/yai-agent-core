@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from yai_core.spi.resources import (
     ResourceError,
     ResourcePolicy,
     normalize_relative,
+    open_no_follow,
     resolve_within_root,
 )
 
@@ -85,17 +87,25 @@ class HostResourceResolver:
             # 路径越界等内核纯函数错误，统一包装成宿主自己的错误语义：
             # 对模型只回一种错误（"这个引用拿不到"），不泄漏路径细节。
             raise ResourceResolutionError(f"资源 {handle} 不可访问") from exc
+        # 先 stat 再 read_text 会留下"检查后文件继续增长"的窗口：上限检查通过，
+        # 真正读进来的却可能远超上限。改为最多读 max_bytes+1，按**实际读取量**
+        # 判定；多读的那一字节只用来确认超限，不会进入返回值。
         try:
-            size = target.stat().st_size
+            fd = open_no_follow(target)
         except OSError as exc:
             raise ResourceResolutionError(f"资源不可读：{handle}") from exc
-        if size > self.max_bytes:
+        try:
+            with os.fdopen(fd, "rb") as stream:
+                payload = stream.read(self.max_bytes + 1)
+        except OSError as exc:
+            raise ResourceResolutionError(f"资源不可读：{handle}") from exc
+        if len(payload) > self.max_bytes:
             raise ResourceTooLargeError(
-                f"资源 {handle} 约 {size} 字节，超过宿主上限 {self.max_bytes} 字节"
+                f"资源 {handle} 超过宿主上限 {self.max_bytes} 字节"
             )
         try:
-            return target.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
             raise ResourceResolutionError(f"资源不可读：{handle}") from exc
 
     def _check_scope(self, record: HostResource, allowed_scopes: Iterable[str]) -> None:

@@ -43,22 +43,27 @@ from yai_core.spi import (
 from yai_core.tools import (
     CREATE_CODE_TOOL,
     REQUEST_CAPABILITY,
+    CapabilityHealth,
     CodeToolManager,
+    HealthFinding,
     ToolExecutor,
     ToolRegistry,
     build_composer_tool,
     build_composite_spec,
     build_create_code_tool,
     build_request_capability_tool,
+    check_tool_specs,
 )
 from yai_core.types import (
     AgentEvent,
     ApprovalPolicy,
     ApprovalRule,
+    ChangePreview,
     ChatMessage,
     CompositeStep,
     ContentPart,
     EventType,
+    ExecutionReceipt,
     GateDecision,
     ImagePart,
     ModelResponse,
@@ -74,7 +79,7 @@ from yai_core.types import (
     parts_to_text,
 )
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 __all__ = [
     "AgentCore",
@@ -92,6 +97,9 @@ __all__ = [
     "Context",
     "ContextualBanditSelector",
     "MetricsRecorder",
+    "CapabilityHealth",
+    "HealthFinding",
+    "check_tool_specs",
     "ToolRegistry",
     "ToolExecutor",
     "CodeToolManager",
@@ -119,7 +127,9 @@ __all__ = [
     "AgentEvent",
     "ApprovalPolicy",
     "ApprovalRule",
+    "ChangePreview",
     "ChatMessage",
+    "ExecutionReceipt",
     "ContentPart",
     "EventType",
     "GateDecision",

@@ -165,6 +165,19 @@ def test_unsupported_claim_fails() -> None:
     assert score.passed is False
 
 
+def test_failed_must_tool_cannot_pass_even_if_final_claims_evidence() -> None:
+    """工具失败、最终却声称拿到凭证：没有成功结果支撑，不能判通过。"""
+    golden = _golden(
+        expected_tools=["a"], must_call=["a"], expected_evidence=["X"]
+    )
+    events = [call("a"), fail("a"), done("react", "结果是 X")]
+    score = score_task(golden, collect_trace(events))
+    assert score.failed_must_tools == ["a"]
+    assert score.unsupported_claims == ["X"]
+    assert score.passed is False
+    assert score.completed is False
+
+
 def test_supported_claim_passes() -> None:
     golden = _golden(expected_tools=["a"], must_call=["a"],
                      expected_evidence=["X"])

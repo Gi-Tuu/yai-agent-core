@@ -44,6 +44,19 @@ def test_annotation_plain_union_first_member() -> None:
     assert _annotation_to_json_type(Union[int, str]) == ("integer", False)  # noqa: UP007
 
 
+def test_generic_containers_are_not_flattened_to_string() -> None:
+    """``list[dict[str, Any]]`` 必须是数组，否则模型按声明传数组会被误判非法。"""
+    from typing import Any
+
+    def fn(rows: list[dict[str, Any]], tags: dict[str, int]) -> None:
+        """文档。"""
+
+    props = build_spec(fn).input_schema["properties"]
+    assert props["rows"]["type"] == "array"
+    assert props["rows"]["items"]["type"] == "object"
+    assert props["tags"]["type"] == "object"
+
+
 def test_build_spec_rejects_non_callable() -> None:
     with pytest.raises(TypeError, match="可调用"):
         build_spec(123)  # type: ignore[arg-type]
