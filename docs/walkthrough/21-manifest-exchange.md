@@ -79,8 +79,8 @@ def to_manifest_dict(self) -> dict[str, Any]:
 ```
 - 组合工具：把每个 `CompositeStep`（dataclass）降成普通 dict 列表——dataclass 不能直接 `json.dumps`，转成 dict 才行；
 - 代码工具：`code` 本来就是字符串，原样携带（执行仍需宿主沙箱，manifest 不含执行器）；
-- 治理声明：只带数据那三样（见第 5 节），**空声明时整个键省略**，未治理的清单与旧格式逐字节一致；
-- **全程不碰 `handler` 和 `governance.gate`**：它们都是运行时函数，不可 JSON 化，也不可移植。
+- 治理声明：只带**数据**（见第 5 节的六样），**空声明时整个键省略**，未治理的清单与旧格式逐字节一致；
+- **全程不碰 `handler` 与 `gate` / `preview` / `idempotency_key`**：它们都是运行时函数，不可 JSON 化，也不可移植。
 
 ## 3. `types.py` · `from_manifest_dict` 逐行（这是 classmethod）
 
@@ -178,9 +178,9 @@ def read_manifest(path):
 文件 IO：父目录自动创建；`ensure_ascii=False` 让中文描述直接可读（不转成 `\uXXXX`），
 `indent=2` 让人眼能看；读写都显式 `encoding="utf-8"`（Windows 默认是 GBK，不写会乱码）。
 
-## 5. 治理声明随清单走 —— 但 `gate` 永远不走
+## 5. 治理声明随清单走 —— 但函数（`gate` 等）永远不走
 
-`ToolSpec.governance` 里有五样东西，其中四样是**数据**，一样是**函数**：
+`ToolSpec.governance` 里有九样东西：**六样是数据**（随清单走），**三样是函数**（不随清单走）：
 
 | 字段 | 随清单导出 | 导入后 | 为什么 |
 |---|---|---|---|
@@ -188,7 +188,11 @@ def read_manifest(path):
 | `audit_sensitive` | ✅ | 立即生效 | 一个布尔提示 |
 | `approval`（原生审批要求） | ✅ | **立即生效** | 它是数据，且只会把闸门往上抬 |
 | `acc`（外部契约声明快照） | ✅ | **惰性记录**，不产生行为 | 它是"别人怎么描述这个能力" |
+| `timeout_ms`（调用硬超时） | ✅ | **立即生效** | 与全局 `handler_timeout` 取更严的一档 |
+| `rate_limit`（频率上限） | ✅ | **立即生效** | 进程内滑动窗口，超限不进 handler |
 | `gate`（准入判定函数） | ❌ 丢弃 | `None` | 函数不可序列化，与 `handler` 同命 |
+| `preview`（变更预览生成器） | ❌ 丢弃 | `None` | 同上，函数不可移植 |
+| `idempotency_key`（幂等键生成器） | ❌ 丢弃 | `None` | 同上，跨进程去重归宿主 |
 
 ```python
 spec.governance = ToolGovernance(
@@ -196,11 +200,15 @@ spec.governance = ToolGovernance(
     audit_sensitive=True,
     approval=ApprovalPolicy(when=(ApprovalRule("amount", ">", 1000),)),
     acc={"version": 1, ...},
+    timeout_ms=2000,
+    rate_limit=RateLimitHint(count=5, window="1m"),
 )
 spec.to_manifest_dict()["governance"]
 # {"sensitive": ["api_key"], "audit_sensitive": True,
+#  "acc": {...},
 #  "approval": {"when": [{"param": "amount", "op": ">", "value": 1000}]},
-#  "acc": {...}}                                        ← 没有 gate
+#  "timeout_ms": 2000, "rate_limit": {"count": 5, "window": "1m"}}
+#                              ← 没有 gate / preview / idempotency_key
 ```
 
 `approval` 的清单形状有两处刻意：**没写值的算子（`exists`）不出 `value` 键**，而
@@ -212,7 +220,8 @@ spec.to_manifest_dict()["governance"]
 
 1. **类型校验**：`sensitive` 必须是字符串数组且每项非空、`audit_sensitive` 必须是布尔、
    `acc` 必须是 object 或 null、`approval` 逐字段严校验（算子必须落在 `APPROVAL_OPS` 里，
-   因为它**会真的参与准入**）——脏数据在进注册表前就被拦下；
+   因为它**会真的参与准入**）、`timeout_ms` 必须是正整数、`rate_limit` 必须是
+   `{"count": 正整数, "window": "30s" / "1m" / "2h" / "1d"}`——脏数据在进注册表前就被拦下；
 2. **不认识的键直接拒绝加载**。听起来苛刻，但静默忽略一个写错的 `sensitives`
    等于"宿主声明了脱敏、内核其实没做"，比报错危险得多。要加字段就升 `MANIFEST_VERSION`；
 3. **绝不凭 `acc` 快照造 `gate`**。外来清单只是"那份服务说这个能力要求主体、要审批"，
@@ -254,6 +263,6 @@ manifest 的职责收敛为一件事：**让能力描述成为语言中立、可
 3. 顶层 `manifest_version` 解决什么问题？
 4. 为什么不该在 manifest 之上再发明一套 JSON-RPC 调用？
 5. `write_manifest` 为什么要显式 `encoding="utf-8"` 和 `ensure_ascii=False`？
-6. `governance` 的五个字段里哪个不随清单走？为什么内核不肯凭 `acc` 快照自己造 gate？
+6. `governance` 里哪些字段随清单走、哪些不随？为什么内核不肯凭 `acc` 快照自己造 gate？
 7. 治理块里出现不认识的键时为什么选择报错而不是忽略？
 8. `approval` 导入即生效，`gate` 却不许凭清单重建——为什么"外来数据"一个放行一个拦？
