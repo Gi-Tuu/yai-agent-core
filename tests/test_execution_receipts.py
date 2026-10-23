@@ -20,6 +20,7 @@ from yai_core import (
 )
 from yai_core.channels import CollectChannel
 from yai_core.policy import AllowlistPolicy
+from yai_core.spi import PermissionDecision
 from yai_core.tools import ToolExecutor, ToolRegistry
 from yai_core.types import EventType, governance_from_manifest, governance_to_manifest
 
@@ -97,6 +98,98 @@ def test_idempotent_success_is_replayed_without_reaching_handler() -> None:
     assert second["replayed"] is True
     assert second["idempotency_key"] == "order-1"
     assert second_text == '{"key": "order-1"}'
+
+
+def test_idempotent_replay_is_blocked_by_current_deny_policy() -> None:
+    calls: list[int] = []
+
+    class SwitchPolicy:
+        deny = False
+
+        async def check(self, name: str, arguments: dict) -> PermissionDecision:
+            return PermissionDecision.DENY if self.deny else PermissionDecision.ALLOW
+
+    def apply(key: str = "") -> dict:
+        """写入。"""
+        calls.append(1)
+        return {"key": key}
+
+    spec = build_spec(apply)
+    spec.governance = ToolGovernance(idempotency_key=lambda args, subject: args["key"])
+    registry = ToolRegistry()
+    registry.register_many([spec])
+    policy = SwitchPolicy()
+    executor = ToolExecutor(registry, policy, CollectChannel())
+
+    _, first_ok, _ = asyncio.run(executor.execute("apply", {"key": "k1"}, call_id="c1"))
+    assert first_ok is True
+
+    policy.deny = True
+    _, replay_ok, reason = asyncio.run(
+        executor.execute("apply", {"key": "k1"}, call_id="c2")
+    )
+    assert replay_ok is False
+    assert "权限策略拒绝" in reason
+    assert calls == [1], "被拒绝的重放不能进入 handler"
+
+
+def test_same_idempotency_key_with_different_arguments_is_rejected() -> None:
+    calls: list[str] = []
+
+    def apply(key: str = "", value: str = "") -> dict:
+        """写入。"""
+        calls.append(value)
+        return {"value": value}
+
+    spec = build_spec(apply)
+    spec.governance = ToolGovernance(idempotency_key=lambda args, subject: args["key"])
+    executor = _executor([spec])
+
+    _, first_ok, _ = asyncio.run(
+        executor.execute("apply", {"key": "k1", "value": "a"}, call_id="c1")
+    )
+    assert first_ok is True
+    second_events, second_ok, second_text = asyncio.run(
+        executor.execute("apply", {"key": "k1", "value": "b"}, call_id="c2")
+    )
+
+    assert second_ok is False
+    assert calls == ["a"], "撞键的不同参数不能被静默当成重放"
+    assert "另一组参数" in second_text
+    assert _receipt(second_events)["status"] == "not_started"
+    result = [e for e in second_events if e.type == EventType.TOOL_RESULT][-1]
+    assert result.data["idempotency_conflict"] is True
+
+
+def test_replay_does_not_ask_for_approval_again() -> None:
+    calls: list[str] = []
+
+    def apply(key: str = "") -> dict:
+        """写入。"""
+        calls.append(key)
+        return {"key": key}
+
+    spec = build_spec(apply)
+    spec.governance = ToolGovernance(idempotency_key=lambda args, subject: args["key"])
+    registry = ToolRegistry()
+    registry.register_many([spec])
+    executor = ToolExecutor(
+        registry, AllowlistPolicy((), mode="auto"), CollectChannel(auto_confirm=True)
+    )
+
+    first_events, first_ok, _ = asyncio.run(
+        executor.execute("apply", {"key": "k1"}, call_id="c1")
+    )
+    assert first_ok is True
+    assert any(e.type == EventType.PERMISSION_ASKED for e in first_events)
+
+    second_events, second_ok, _ = asyncio.run(
+        executor.execute("apply", {"key": "k1"}, call_id="c2")
+    )
+    assert second_ok is True
+    assert calls == ["k1"]
+    assert not any(e.type == EventType.PERMISSION_ASKED for e in second_events)
+    assert _receipt(second_events)["replayed"] is True
 
 
 def test_idempotent_unknown_is_replayed_as_unknown_no_second_handler() -> None:

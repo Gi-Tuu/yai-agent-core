@@ -30,6 +30,7 @@
   │
   │ ④ Context 组装消息列表（含刚发现的工具）      【kernel/context.py】
   │    超预算时旧轮压成摘要、recent 完整保留（第 25 篇）【kernel/compaction.py】
+  │    （可选）每轮瞬态注入宿主实时状态，不进历史/压缩【kernel/state.py，第 53 篇】
   │
   │ ⑤（plan 时）强模型拆步骤，再补"按计划执行"指令；执行中计划走不通可
   │     调 replan 显式重规划（第 31 篇）；每轮按成本·延迟自动选 standard/strong（第 32 篇）
@@ -74,6 +75,7 @@
 | `tools/health.py` | 能力接入体检（不执行 handler，列出声明的约束与执行能力不匹配处，第 50 篇） | 接入前质检员 |
 | `tools/executor.py` + `types.py` | 可信变更预览（宿主渲染 diff、审批展示、执行前 token 复核，第 51 篇） | 审批前的验算员 |
 | `tools/executor.py` + `types.py` | 执行收据与进程内幂等（not_started / succeeded / failed / unknown / partial，第 52 篇） | 故障后的对账员 |
+| `kernel/state.py` + `kernel/loop.py` | 宿主实时状态（每轮瞬态注入只读快照，不进历史/压缩/记忆，失败降级，第 53 篇） | 现状锚 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
 | `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
@@ -171,6 +173,7 @@
 - 50 · tools/health.py + tools/schema.py + policy/approval.py：能力接入体检与 schema 兼容性（静态检查未实现键/审批路径/频控/组合步骤；`anyOf` / `oneOf` / `$ref` 宁可跳过也不误拒；OpenAPI nullable 归一）
 - 51 · types.py + policy/authorize.py + tools/executor.py：可信变更预览（宿主生成 `ChangePreview`、审批上下文展示、确认后 token 复核，失效则拒绝执行；组合工具同规则）
 - 52 · types.py + tools/executor.py + kernel/loop.py：执行收据与进程内幂等（五种状态、retryable、宿主 idempotency_key、call_id、去重缓存与 partial/unknown 边界）
+- 53 · kernel/state.py + kernel/context.py + kernel/loop.py + core.py：宿主实时状态（`register_state_provider`、每轮瞬态 system 注入、不进历史/压缩/记忆、容量上限与失败降级、`HOST_STATE` 事件只报大小不复制内容）
 
 ## 5. 自检（读完本篇应能回答）
 

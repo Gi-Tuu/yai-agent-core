@@ -39,6 +39,7 @@ from yai_core.spi.resources import (
     ResourceNotFoundError,
     ResourcePolicy,
     ResourceTooLargeError,
+    fd_matches_path,
     normalize_relative,
     open_no_follow,
     resolve_within_root,
@@ -51,6 +52,12 @@ _REPARSE = getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 
 def _relative(target: Path, root: Path) -> str:
     return target.relative_to(root).as_posix()
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return os.path.normcase(os.path.normpath(str(left))) == os.path.normcase(
+        os.path.normpath(str(right))
+    )
 
 
 def _is_reparse(target: Path) -> bool:
@@ -113,6 +120,11 @@ class FileSystemResources:
             fd = open_no_follow(target, mode="rb")
         except OSError as exc:
             raise ResourceError(f"读取失败：{path}（{type(exc).__name__}）") from exc
+        if not fd_matches_path(fd, target):
+            # 父目录在校验之后被换成链接时，O_NOFOLLOW 看不到；这里用句柄的
+            # 真实路径复核，把打开位置对不上的读取拒掉（平台取不到路径时不误杀）。
+            os.close(fd)
+            raise ResourceError(f"读取失败：{path}（打开后路径复核不一致，可能发生了链接替换）")
         try:
             with os.fdopen(fd, "rb") as handle:
                 raw = handle.read(limit + 1)
@@ -147,6 +159,15 @@ class FileSystemResources:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
+            # 临时文件写好后再核一次落点：校验与 replace/link 之间父目录也可能被
+            # 换成链接。解析结果必须仍是校验过的那个路径，且仍在根目录内。
+            resolved_now = Path(os.path.realpath(target))
+            if not _same_path(resolved_now, target) or not resolved_now.is_relative_to(
+                self.root
+            ):
+                raise ResourceError(
+                    f"写入失败：{_relative(target, self.root)} 的路径在落盘前发生变化，已拒绝"
+                )
             if exclusive:
                 # 硬链接是"目标存在即失败"的原子操作，比"先 exists 再 rename"可靠。
                 try:

@@ -58,6 +58,8 @@ class DiagnosticKind(StrEnum):
     COMPACTION_FALLBACK = "compaction_fallback"
     #: 工具 schema 两层聚焦失败，已回退注入全量 schema（宁多勿漏）。
     SCHEMA_FOCUS_FALLBACK = "schema_focus_fallback"
+    #: 宿主实时状态 provider 抛错/超时，本轮跳过它（其余状态照常注入）。
+    HOST_STATE_FAILED = "host_state_failed"
 
 
 @dataclass

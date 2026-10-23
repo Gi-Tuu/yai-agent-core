@@ -88,7 +88,9 @@ ToolExecutor.execute
 `attach_write_previews(core, crm)`，只给写工具挂 preview 闭包：
 
 - 预览读当前 CRM 数据，渲染客户、跟进、订单、待办等实际变化；
-- token 是“当前数据 + 参数”的 SHA-256 摘要，确认后任一侧变化都会换 token；
+- token 是“工具 + 本次会读到的状态 + 参数”的 SHA-256 摘要，按工具圈定范围：
+  给王敏记跟进只盯她本人及其跟进记录，隔壁补一条待办不会让这张审批卡失效；
+  同一目标的变化仍会换 token；
 - `WebChannel` 声明 `yai_approval_context_aware = True`，把 `preview` 并进网页
   `permission_request` 负载；
 - 预览器不调用写方法，只读业务对象；真实系统应换成自己的事务快照/revision。
@@ -104,7 +106,8 @@ ToolExecutor.execute
 
 ## 6. 诚实边界
 
-- token 由宿主计算；宿主返回常数 token，内核无法发现状态变化；
+- token 由宿主计算；宿主返回常数 token，内核无法发现状态变化；圈定范围也是宿主的事——
+  漏掉真正影响写结果的状态（例如订单号生成依赖的订单表），内核同样发现不了；
 - 内核只做"审批前后两次比较"，无法消除**第二次生成到 handler 执行之间**的
   宿主状态变化；宿主应在自己的写事务里做最终一致性检查；
 - 预览是宿主代码，内核不执行模型生成的预览文本；

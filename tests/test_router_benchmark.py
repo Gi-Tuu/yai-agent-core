@@ -125,3 +125,35 @@ def test_main_writes_outputs_and_passes_gate(bench, tmp_path) -> None:
     assert result["summary"]["bandit"]["final_success"] > result["summary"]["rules"][
         "final_success"
     ]
+
+
+# ---------- 留出集 / 冻结学习：泛化而不是记住 ----------
+
+def test_split_is_stratified_and_disjoint(bench) -> None:
+    from router_bench_tasks import TASKS
+
+    train, held = bench.split_tasks(TASKS, ratio=0.3, seed=7)
+    assert len(train) + len(held) == 60
+    assert not ({t.task for t in train} & {t.task for t in held})
+    for gt in ("direct", "react", "plan", "clarify"):
+        assert sum(1 for t in held if t.gt == gt) == 4
+        assert sum(1 for t in train if t.gt == gt) == 11
+    with pytest.raises(ValueError, match="留出比例"):
+        bench.split_tasks(TASKS, ratio=1.0)
+
+
+def test_frozen_learning_beats_rules_on_held_out_tasks(bench, tmp_path) -> None:
+    result = bench.main_holdout(seeds=4, epochs=3, out_dir=tmp_path)
+    assert (tmp_path / "router_holdout.json").exists()
+    summary = result["summary"]
+    assert result["meta"]["n_holdout"] == 16
+    assert result["meta"]["n_train"] == 44
+    # 学完冻结、换一批没见过的任务，仍显著优于不学习的规则基线。
+    assert (
+        summary["bandit_frozen"]["holdout_success"]
+        > summary["rules"]["holdout_success"] + 0.05
+    )
+    # 留出任务的上下文在训练集里都见过——泛化来自上下文共享，不是逐题记忆。
+    assert summary["bandit_frozen"]["context_coverage"] == 1.0
+    # 完美路由是天花板。
+    assert summary["oracle"]["holdout_success"] == 1.0

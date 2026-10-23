@@ -24,8 +24,10 @@ from yai_core.kernel import (
     AgentLoop,
     Budget,
     CompactionPolicy,
+    HostStateRegistry,
     TierPolicy,
 )
+from yai_core.kernel.state import HostStateProvider
 from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.metrics import MetricsRecorder
@@ -214,6 +216,9 @@ class AgentCore:
             comp_policy = None
         else:
             raise ValueError("context_compaction 只接受 False、True 或 CompactionPolicy")
+        # 宿主实时状态（现状锚）：注册表与 loop 共享同一对象，宿主可在构造后
+        # 随时注册/注销；未注册时零开销、零行为变化。
+        self.host_state = HostStateRegistry()
         self._loop = AgentLoop(
             model=self.model,
             registry=self.registry,
@@ -247,6 +252,7 @@ class AgentCore:
                 else None
             ),
             auto_recall_k=auto_recall_k,
+            host_state=self.host_state,
         )
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout
@@ -353,6 +359,31 @@ class AgentCore:
 
     def register_tools(self, specs: list[ToolSpec]) -> None:
         self.registry.register_many(specs)
+
+    # ---------- 宿主实时状态（现状锚） ----------
+
+    def register_state_provider(
+        self, name: str, provider: HostStateProvider, *, replace: bool = False
+    ) -> None:
+        """注册一个**只读**的宿主状态快照回调。
+
+        回调无参，返回字符串 / JSON 值 / None（或它们的 awaitable）；内核在每次
+        组装模型消息前调用它，把最新状态作为瞬态 system 块注入——不写入对话历史、
+        不进压缩与长期记忆。返回值是数据不是指令，且只能由宿主注册：模型参数、
+        工具结果与用户消息都改不了它。
+
+        重名默认报错（避免静默覆盖别的状态源）；要替换请显式传 ``replace=True``。
+        回调无参、状态属于本 core 实例：多租户请每会话一个 core，避免状态串号。
+        """
+        self.host_state.register(name, provider, replace=replace)
+
+    def unregister_state_provider(self, name: str) -> bool:
+        """注销一个状态源；返回是否真的存在并移除。"""
+        return self.host_state.unregister(name)
+
+    def state_provider_names(self) -> tuple[str, ...]:
+        """当前已注册的状态源名称（注册顺序）。"""
+        return self.host_state.names()
 
     def list_tools(self) -> list[dict]:
         return [

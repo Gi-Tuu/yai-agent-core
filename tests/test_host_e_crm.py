@@ -79,6 +79,36 @@ def test_write_preview_reads_real_crm_state_and_changes_token() -> None:
     assert preview(args, None).token != first.token, "数据变了，审批依据必须失效"
 
 
+def test_preview_token_ignores_unrelated_state_changes() -> None:
+    crm = _crm()
+    preview = build_write_preview(crm, "add_followup")
+    args = {"customer": "王敏", "content": "回访确认"}
+    token = preview(args, None).token
+
+    # 别的客户、别的表的变化不影响这次审批的依据
+    crm.add_followup("周涛", "另一条跟进")
+    crm.create_todo("与本次无关的待办", "2026-09-30")
+    crm.create_order("李强", "服务", 1000)
+    assert preview(args, None).token == token
+
+    # 但目标客户自己的状态变了，审批依据必须失效
+    crm.add_followup("王敏", "同一客户的另一条")
+    assert preview(args, None).token != token
+
+
+def test_preview_token_for_update_customer_ignores_other_customers() -> None:
+    crm = _crm()
+    preview = build_write_preview(crm, "update_customer")
+    args = {"name": "王敏", "status": "流失"}
+    token = preview(args, None).token
+
+    crm.update_customer("周涛", phone="139-0000-0000")
+    assert preview(args, None).token == token
+
+    crm.update_customer("王敏", phone="138-0000-0000")
+    assert preview(args, None).token != token
+
+
 def test_write_preview_rejects_invalid_business_target() -> None:
     crm = _crm()
     preview = build_write_preview(crm, "add_followup")

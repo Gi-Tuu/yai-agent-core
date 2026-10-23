@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import inspect
 import json
 import threading
@@ -21,10 +22,11 @@ from yai_core.policy.authorize import (
     authorize_tool_call,
     confirm_with_context,
     fill_prompt,
+    policy_decision,
     snapshot_arguments,
 )
 from yai_core.policy.redact import redact_arguments
-from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
+from yai_core.spi import Channel, PermissionDecision, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
 from yai_core.tools.registry import ToolRegistry
@@ -49,6 +51,12 @@ DEFAULT_TOOL_RESULT_CHARS = 16_000
 #: 进程内幂等结果缓存上限。只缓存宿主显式提供 idempotency_key 的调用；
 #: 跨进程/多实例去重仍由宿主负责。
 IDEMPOTENCY_CACHE_LIMIT = 256
+
+
+def _fingerprint_arguments(arguments: dict) -> str:
+    """参数指纹：同一个幂等键只认同一组参数，避免撞键时返回别人的结果。"""
+    raw = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def bound_tool_result(
@@ -197,9 +205,10 @@ class ToolExecutor:
         # 只在工具自己声明了 rate_limit 时才用得上，未声明的工具零开销。
         self._rate_hits: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
-        # (tool, idempotency_key) -> (ok, text, status, error)；只在 key 非空时使用。
+        # (tool, idempotency_key) -> (ok, text, status, error, arguments_fingerprint)；
+        # 只在 key 非空时使用。指纹让"同一个 key 换了参数"不会被当成重放。
         self._idempotent_cache: OrderedDict[
-            tuple[str, str], tuple[bool, str, ReceiptStatus, str]
+            tuple[str, str], tuple[bool, str, ReceiptStatus, str, str]
         ] = OrderedDict()
 
     def _effective_timeout(self, spec: ToolSpec) -> float | None:
@@ -389,19 +398,23 @@ class ToolExecutor:
         )
 
     def _cache_get(
-        self, tool: str, key: str
-    ) -> tuple[bool, str, ReceiptStatus, str] | None:
+        self, tool: str, key: str, fingerprint: str
+    ) -> tuple[tuple[bool, str, ReceiptStatus, str], bool] | None:
+        """返回 (缓存结果, 参数是否与首次执行一致)；没有缓存时返回 None。"""
         if not key:
             return None
         cached = self._idempotent_cache.pop((tool, key), None)
-        if cached is not None:
-            self._idempotent_cache[(tool, key)] = cached
-        return cached
+        if cached is None:
+            return None
+        self._idempotent_cache[(tool, key)] = cached
+        ok, text, status, error, cached_fingerprint = cached
+        return (ok, text, status, error), cached_fingerprint == fingerprint
 
     def _cache_put(
         self,
         tool: str,
         key: str,
+        fingerprint: str,
         *,
         ok: bool,
         text: str,
@@ -411,7 +424,7 @@ class ToolExecutor:
         if not key or status == "not_started":
             return
         self._idempotent_cache.pop((tool, key), None)
-        self._idempotent_cache[(tool, key)] = (ok, text, status, error)
+        self._idempotent_cache[(tool, key)] = (ok, text, status, error, fingerprint)
         while len(self._idempotent_cache) > IDEMPOTENCY_CACHE_LIMIT:
             self._idempotent_cache.popitem(last=False)
 
@@ -624,9 +637,45 @@ class ToolExecutor:
             )
             return events, False, message
 
-        cached = self._cache_get(name, idempotency_key)
+        fingerprint = _fingerprint_arguments(arguments) if idempotency_key else ""
+        cached = self._cache_get(name, idempotency_key, fingerprint)
         if cached is not None:
-            ok, cached_text, cached_status, cached_error = cached
+            (ok, cached_text, cached_status, cached_error), same_arguments = cached
+            if not same_arguments:
+                message = (
+                    f"幂等键 {idempotency_key!r} 已用于另一组参数，拒绝重放；"
+                    "不同操作请使用不同的幂等键"
+                )
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": name,
+                            "ok": False,
+                            "error": message,
+                            "idempotency_conflict": True,
+                        },
+                    )
+                )
+                self._attach_receipt(
+                    events,
+                    self._receipt(
+                        call_id=call_id,
+                        tool=name,
+                        status="not_started",
+                        started=started,
+                        key=idempotency_key,
+                        error=message,
+                    ),
+                )
+                return events, False, message
+            # 重放只交付已有结果，不再弹审批；但当前策略的 DENY 仍然生效——
+            # 缓存是去重，不是绕过权限收紧的后门。
+            if (
+                await policy_decision(self.policy, name, arguments, subject)
+                == PermissionDecision.DENY
+            ):
+                return events, False, f"权限策略拒绝执行工具 {name}"
             receipt = self._receipt(
                 call_id=call_id,
                 tool=name,
@@ -737,6 +786,7 @@ class ToolExecutor:
                     self._cache_put(
                         spec.name,
                         idempotency_key,
+                        fingerprint,
                         ok=False,
                         text=message,
                         status="unknown",
@@ -756,6 +806,7 @@ class ToolExecutor:
             self._cache_put(
                 spec.name,
                 idempotency_key,
+                fingerprint,
                 ok=ok,
                 text=text,
                 status=status,
@@ -862,6 +913,7 @@ class ToolExecutor:
             self._cache_put(
                 name,
                 idempotency_key,
+                fingerprint,
                 ok=ok,
                 text=text,
                 status=status,
@@ -919,6 +971,7 @@ class ToolExecutor:
             self._cache_put(
                 name,
                 idempotency_key,
+                fingerprint,
                 ok=False,
                 text=message,
                 status="unknown",
@@ -943,6 +996,7 @@ class ToolExecutor:
             self._cache_put(
                 name,
                 idempotency_key,
+                fingerprint,
                 ok=False,
                 text=message,
                 status="unknown",
@@ -974,6 +1028,7 @@ class ToolExecutor:
         self._cache_put(
             name,
             idempotency_key,
+            fingerprint,
             ok=True,
             text=text,
             status="succeeded",
