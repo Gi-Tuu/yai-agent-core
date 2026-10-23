@@ -70,6 +70,18 @@ def test_composite_versions_can_be_saved_listed_and_restored() -> None:
     assert restored.steps and restored.steps[0].args == {"range": "week"}
 
 
+def test_latest_follows_the_most_recent_save_even_after_overwriting_a_version() -> None:
+    """覆盖旧版本也要更新 latest；字典插入顺序不能代替"最近保存"。"""
+    store = CompositeWorkflowStore()
+    store.save(_composite(steps=[{"tool": "fetch_data", "args": {"range": "week"}}]), version="v1")
+    store.save(_composite(steps=[{"tool": "fetch_data", "args": {"range": "month"}}]), version="v2")
+    store.save(_composite(steps=[{"tool": "fetch_data", "args": {"range": "year"}}]), version="v1")
+
+    assert store.versions("weekly_review") == ["v1", "v2"]
+    assert store.latest("weekly_review") == "v1"
+    assert store.get("weekly_review", "v1").steps[0].args["range"] == "year"
+
+
 def test_composite_version_diff_reports_added_removed_and_changed() -> None:
     store = CompositeWorkflowStore()
     store.save(

@@ -51,6 +51,27 @@ def test_desktop_channel_keeps_approval_required_flag() -> None:
     assert runtime.payload["reason"] == "金额超过阈值"
 
 
+def test_pending_title_does_not_call_a_high_risk_read_a_write() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    engine = QJSEngine()
+    source = (ROOT / "shell" / "desktop" / "qml" / "Panel.qml").read_text(
+        encoding="utf-8"
+    )
+    block = source.split("readonly property string pendingTitle: {", 1)[1].split(
+        "\n    }\n", 1
+    )[0]
+    program = (
+        "var workbench={activePendingKind:'confirm'};"
+        "var panel={pending:{risk:'high'}};"
+        "(function(){" + block + "})()"
+    )
+    value = engine.evaluate(program)
+    assert not value.isError(), value.toString()
+    assert value.toString() == "高影响操作待确认"
+    del engine
+    del app
+
+
 def test_pending_summary_renders_nested_arguments_readably() -> None:
     app = QCoreApplication.instance() or QCoreApplication([])
     engine = QJSEngine()

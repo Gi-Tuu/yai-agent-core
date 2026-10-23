@@ -60,7 +60,7 @@ Item {
         if (workbench.activePendingKind === "ask") return "数字员工要澄清";
         var p = panel.pending;
         if (p.approval_required) return "参数级审批";
-        return String(p.risk || "") === "high" ? "高影响写操作待确认" : "新能力授权请求";
+        return String(p.risk || "") === "high" ? "高影响操作待确认" : "新能力授权请求";
     }
 
     // 用户主动点开面板时聚焦输入框，展开即可直接打字（由 main.qml 在动画后调用）。

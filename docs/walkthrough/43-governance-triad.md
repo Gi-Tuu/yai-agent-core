@@ -191,8 +191,9 @@ class QtChannel:
 通道收到的事件数是 0）和一条老通道断言（只收到两个位置参数）。桌面端的落点在
 `shell/desktop/channel.py`（把 `approval_required` 与描述性字段并进卡片负载）与
 `qml/Panel.qml` 的 `pendingSummary`：先说为什么问，再说动哪个资源，最后才是参数串；
-对象/数组参数用 `JSON.stringify` 渲染，不再显示 `[object Object]`。对应桌面测试
-`tests/test_desktop_pending_summary.py` 用 QJSEngine 直接执行这段绑定。
+对象/数组参数用 `JSON.stringify` 渲染，不再显示 `[object Object]`。高风险但非参数级审批
+的标题改为“高影响操作待确认”——宿主没有提供动作类型，不能把读操作写成写操作。
+对应桌面测试 `tests/test_desktop_pending_summary.py` 用 QJSEngine 直接执行这些绑定。
 
 ## 6. 自检
 

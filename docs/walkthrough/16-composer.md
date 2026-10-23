@@ -291,6 +291,7 @@ if composition:
 
 - `save` 深拷贝每个 `CompositeStep.args`，并保存 `input_schema` 与可序列化治理
   （`sensitive` / `approval` / `timeout_ms` / `rate_limit`）；
+- `latest` 记录**最近一次 save**，不是字典最后插入的键：重存旧版本号也算“最近保存”；
 - `to_manifest_steps` / `restore` 都返回独立副本，调用方改返回值不会污染已存版本；
 - `restore` 会恢复入参 schema 与审批声明，因此回滚不会"步骤回来了、护栏没回来"；
 - `gate` 是函数，**不保存、不重建**——处理器级准入仍由本地宿主显式绑定。
