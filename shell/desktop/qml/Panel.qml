@@ -52,7 +52,15 @@ Item {
         if (p.risk) tags.push("风险 " + p.risk);
         if (p.scope) tags.push("作用域 " + p.scope);
         var out = head ? head + "\n" + line : line;
-        return tags.length ? out + "\n" + tags.join(" · ") : out;
+        if (tags.length) out += "\n" + tags.join(" · ");
+        var preview = p.preview || null;
+        if (preview) {
+            var previewText = String(preview.summary || "");
+            if (preview.diff) previewText += (previewText ? "\n" : "") + String(preview.diff);
+            if (preview.target) previewText += (previewText ? "\n" : "") + "落点 " + String(preview.target);
+            if (previewText) out += "\n变更预览：" + previewText;
+        }
+        return out;
     }
 
     // 卡片标题跟着"是谁在问"变：新能力授权是高危那档，参数级审批只是要人点个头。

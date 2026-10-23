@@ -167,6 +167,63 @@ def test_composite_steps_consume_task_budget() -> None:
     ] == "budget_exceeded"
 
 
+def test_strict_direct_blocks_model_supplied_tool_calls() -> None:
+    calls: list[int] = []
+
+    def search_notes(keyword: str) -> list:
+        """搜索笔记。"""
+        calls.append(1)
+        return ["secret"]
+
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="search_notes", arguments={"keyword": "x"})
+                ]
+            ),
+            ModelResponse(content="不该被用到"),
+        ]
+    )
+    core = AgentCore(model, strict_direct=True)
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("你好"))
+
+    assert calls == [], "严格模式下 direct 不允许执行模型自带的工具调用"
+    assert any(e.type == EventType.ERROR for e in result.events)
+    assert result.events[-1].type == EventType.DONE
+    assert result.final_text, "没有文字回答时要给出诚实收尾"
+
+
+def test_default_direct_still_allows_model_supplied_tool_calls() -> None:
+    """默认行为保持旧兼容：没有显式开启 strict_direct 的宿主不受影响。"""
+    calls: list[int] = []
+
+    def search_notes(keyword: str) -> list:
+        """搜索笔记。"""
+        calls.append(1)
+        return ["secret"]
+
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="search_notes", arguments={"keyword": "x"})
+                ]
+            ),
+            ModelResponse(content="完成"),
+        ]
+    )
+    core = AgentCore(model)  # strict_direct 默认 False
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("你好"))
+
+    assert calls == [1]
+    assert result.final_text == "完成"
+
+
 def test_direct_executor_call_raises_budget_exceeded_instead_of_swallowing() -> None:
     calls: list[int] = []
 

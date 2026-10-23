@@ -39,16 +39,23 @@ def test_desktop_channel_keeps_approval_required_flag() -> None:
     runtime = Runtime()
     channel = QtChannel(runtime)
     payload = {"tool": "transfer", "arguments": {"payment": {"amount": 5000}}}
+    preview = {"summary": "将修改账户", "token": "rev-1", "diff": "- 100\n+ 500"}
     approved = asyncio.run(
         channel.confirm(
             "transfer",
             payload["arguments"],
-            {"approval_required": True, "reason": "金额超过阈值", "risk": "medium"},
+            {
+                "approval_required": True,
+                "reason": "金额超过阈值",
+                "risk": "medium",
+                "preview": preview,
+            },
         )
     )
     assert approved is False
     assert runtime.payload["approval_required"] is True
     assert runtime.payload["reason"] == "金额超过阈值"
+    assert runtime.payload["preview"] == preview
 
 
 def test_pending_title_does_not_call_a_high_risk_read_a_write() -> None:
@@ -98,5 +105,39 @@ def test_pending_summary_renders_nested_arguments_readably() -> None:
     assert "[object Object]" not in text
     assert '"amount":5000' in text and '"account":"audit"' in text
     assert "金额超过阈值" in text
+    del engine
+    del app
+
+
+def test_pending_summary_renders_trusted_change_preview() -> None:
+    app = QCoreApplication.instance() or QCoreApplication([])
+    engine = QJSEngine()
+    source = (ROOT / "shell" / "desktop" / "qml" / "Panel.qml").read_text(
+        encoding="utf-8"
+    )
+    block = source.split("readonly property string pendingSummary: {", 1)[1].split(
+        "\n    }\n", 1
+    )[0]
+    payload = {
+        "tool": "transfer",
+        "arguments": {"amount": 500},
+        "reason": "超过阈值",
+        "preview": {
+            "summary": "将修改账户余额",
+            "diff": "- 100\n+ 500",
+            "target": "account/a",
+        },
+    }
+    program = (
+        "var workbench={activePendingKind:'confirm'};"
+        f"var panel={{pending:{json.dumps(payload)}}};"
+        "(function(){" + block + "})()"
+    )
+    value = engine.evaluate(program)
+    assert not value.isError(), value.toString()
+    text = value.toString()
+    assert "变更预览" in text
+    assert "将修改账户余额" in text
+    assert "+ 500" in text and "account/a" in text
     del engine
     del app

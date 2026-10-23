@@ -3,6 +3,11 @@
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import build_composer_tool, build_composite_spec
 from yai_core.tools.executor import ToolExecutor
+from yai_core.tools.health import (
+    CapabilityHealth,
+    HealthFinding,
+    check_tool_specs,
+)
 from yai_core.tools.manifest import (
     MANIFEST_VERSION,
     read_manifest,
@@ -24,6 +29,9 @@ from yai_core.tools.schema import EMPTY_OBJECT_SCHEMA, sanitize_schema
 __all__ = [
     "ToolExecutor",
     "ToolRegistry",
+    "CapabilityHealth",
+    "HealthFinding",
+    "check_tool_specs",
     "CodeToolManager",
     "build_composer_tool",
     "build_composite_spec",

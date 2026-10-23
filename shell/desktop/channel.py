@@ -54,6 +54,9 @@ class QtChannel:
             value = (context or {}).get(key)
             if value:
                 payload[key] = value
+        preview = (context or {}).get("preview")
+        if preview:
+            payload["preview"] = preview
         return bool(await self._prompt("confirm", payload, False))
 
     async def _prompt(self, kind: str, data: dict, default: Any) -> Any:

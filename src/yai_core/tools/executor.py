@@ -28,7 +28,7 @@ from yai_core.spi import Channel, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
 from yai_core.tools.registry import ToolRegistry
-from yai_core.types import AgentEvent, EventType, GateDecision, ToolSpec
+from yai_core.types import AgentEvent, ChangePreview, EventType, GateDecision, ToolSpec
 
 #: 代码工具在沙箱里的最长执行秒数（默认值，可由宿主覆盖）。
 DEFAULT_CODE_TIMEOUT = 10.0
@@ -74,6 +74,10 @@ def bound_tool_result(
 
 class ToolTimeoutError(RuntimeError):
     """工具 handler 超过 ``handler_timeout``。"""
+
+
+class _PreviewError(RuntimeError):
+    """宿主声明的变更预览无法生成；审批不能建立在未知变更上。"""
 
 
 def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
@@ -283,6 +287,23 @@ class ToolExecutor:
     def _bound(self, text: str) -> tuple[str, bool, int]:
         return bound_tool_result(text, self.result_char_limit)
 
+    async def _generate_preview(
+        self, spec: ToolSpec, arguments: dict, subject: Any
+    ) -> ChangePreview | None:
+        """调用宿主声明的预览生成器；支持同步/异步，任何异常都失败关闭。"""
+        provider = spec.governance.preview
+        if provider is None:
+            return None
+        try:
+            value = provider(arguments, subject)
+            if inspect.isawaitable(value):
+                value = await value
+            return ChangePreview.from_value(value)
+        except Exception as exc:  # noqa: BLE001 - 预览失败不能让审批无依据地继续
+            raise _PreviewError(
+                f"变更预览生成失败：{type(exc).__name__}: {exc}"
+            ) from exc
+
     def _event_preview(self, spec: ToolSpec, payload: Any, text: str) -> str:
         """给 ``TOOL_RESULT`` 事件用的**预览**：按治理声明脱敏后的前 200 字符。
 
@@ -390,11 +411,34 @@ class ToolExecutor:
         if budget is not None:
             budget.before_tool_call()
 
+        preview: ChangePreview | None
+        try:
+            preview = await self._generate_preview(spec, arguments, subject)
+        except _PreviewError as exc:
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": str(exc),
+                        "preview_failed": True,
+                    },
+                )
+            )
+            return events, False, str(exc)
+
         if spec.source == "composite" and spec.steps:
             declared = spec.governance.timeout_ms
             if declared is None:
                 return await self._execute_composite(
-                    spec, arguments, subject, decision, budget=budget, events=events
+                    spec,
+                    arguments,
+                    subject,
+                    decision,
+                    budget=budget,
+                    events=events,
+                    preview=preview,
                 )
             timeout = declared / 1000.0
             try:
@@ -406,6 +450,7 @@ class ToolExecutor:
                         decision,
                         budget=budget,
                         events=events,
+                        preview=preview,
                     ),
                     timeout,
                 )
@@ -441,10 +486,50 @@ class ToolExecutor:
             risk=decision.risk if decision else "",
             scope=decision.scope if decision else "",
             target=decision.target if decision else "",
+            preview=preview,
         )
         events.extend(auth_events)
         if not approved:
             return events, False, reason
+
+        if preview is not None and any(
+            event.type == EventType.PERMISSION_ASKED for event in auth_events
+        ):
+            try:
+                current_preview = await self._generate_preview(
+                    spec, arguments, subject
+                )
+            except _PreviewError as exc:
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": name,
+                            "ok": False,
+                            "error": str(exc),
+                            "preview_failed": True,
+                        },
+                    )
+                )
+                return events, False, str(exc)
+            assert current_preview is not None
+            if current_preview.token != preview.token:
+                message = (
+                    "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
+                    "本次未执行；请重新发起以查看最新预览并再次确认"
+                )
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": name,
+                            "ok": False,
+                            "error": message,
+                            "preview_stale": True,
+                        },
+                    )
+                )
+                return events, False, message
 
         if spec.source == "code":
             if budget is not None:
@@ -579,6 +664,7 @@ class ToolExecutor:
         *,
         budget: Any = None,
         events: list[AgentEvent] | None = None,
+        preview: ChangePreview | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -623,6 +709,9 @@ class ToolExecutor:
             ):
                 if value:
                     payload[key] = value
+            preview_data = preview.to_dict() if preview is not None else None
+            if preview_data:
+                payload["preview"] = preview_data
             events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
             # 与 authorize_tool_call 同一个口径：通道声明了旗标才递第三个参数。
             shown_for_channel = redact_arguments(arguments, spec.governance.sensitive)
@@ -634,12 +723,49 @@ class ToolExecutor:
                 risk=decision.risk,
                 scope=decision.scope,
                 target=decision.target,
+                preview=preview_data,
             )
             approved = await confirm_with_context(
                 self.channel, spec.name, shown_for_channel, context
             )
             if not approved:
                 return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
+            if preview is not None:
+                try:
+                    current_preview = await self._generate_preview(
+                        spec, arguments, subject
+                    )
+                except _PreviewError as exc:
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": str(exc),
+                                "preview_failed": True,
+                            },
+                        )
+                    )
+                    return events, False, str(exc)
+                assert current_preview is not None
+                if current_preview.token != preview.token:
+                    message = (
+                        "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
+                        "本次未执行；请重新发起以查看最新预览并再次确认"
+                    )
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": message,
+                                "preview_stale": True,
+                            },
+                        )
+                    )
+                    return events, False, message
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,

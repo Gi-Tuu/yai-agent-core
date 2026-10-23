@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`strict_direct`（opt-in）**：`CoreConfig` / `AgentCore` 新增布尔开关，默认 `False`
+  保持旧兼容。开启后，`direct` 策略下模型若仍返回 `tool_calls`，内核不执行任何工具，
+  发 `ERROR` 并保留模型的文字回答；没有文字时给出诚实收尾。之所以不默认开启：现有
+  多个宿主依赖"路由判 direct、模型自行补调工具"的兜底，默认收紧会直接破坏它们。
+- **能力接入体检**：新增 `check_tool_specs()` 与 `AgentCore.capability_health()`。
+  不执行 handler，静态列出未实现的 schema 键、非法/未执行的频控窗口、找不到路径的
+  审批条件、组合步骤缺工具、代码工具缺沙箱等问题；`CapabilityHealth.to_text()` /
+  `to_dict()` 可直接给宿主展示或落日志。
+- **schema 兼容性回归**：遇到 `anyOf` / `oneOf` / `$ref` 这类可能放宽取值域的键时，
+  入参校验整段跳过该子 schema（能力体检会标“未校验”），避免把合法调用误拒；
+  `additionalProperties` 等只收紧的键不影响顶层类型校验。
+- **可信变更预览**：`ChangePreview` + `ToolGovernance.preview`（宿主函数，不随清单
+  导出）。审批前宿主生成 `summary / diff / target / token`，随 `PERMISSION_ASKED`、
+  `Channel.confirm` 上下文与 `TOOL_CALL` 一起展示；确认后执行前重新生成并比较 token，
+  变了就 `preview_stale` 拒绝执行，生成失败则 `preview_failed` 失败关闭。组合工具
+  自己的审批走同一规则；CLI/桌面/QML 已接入展示。
+
 ### Fixed
 
 - **执行约束覆盖所有真实路径**：组合工具此前在预算、频率上限与声明超时之前提前分流，

@@ -44,11 +44,13 @@ from yai_core.spi import (
 from yai_core.tools import (
     CREATE_CODE_TOOL,
     REQUEST_CAPABILITY,
+    CapabilityHealth,
     ToolExecutor,
     ToolRegistry,
     build_composer_tool,
     build_create_code_tool,
     build_request_capability_tool,
+    check_tool_specs,
 )
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
@@ -79,6 +81,7 @@ class AgentCore:
         llm_router: bool | Literal["auto"] = False,
         discovery: ToolDiscovery | None = None,
         composition: bool = False,
+        strict_direct: bool = False,
         sandbox: ToolSandbox | None = None,
         code_storage: Path | str | None = None,
         long_memory: bool = False,
@@ -118,6 +121,7 @@ class AgentCore:
             auto_approve_tools=auto_approve_tools,
             llm_router=llm_router,
             composition=composition,
+            strict_direct=strict_direct,
             code_storage=code_storage,
             long_memory=long_memory,
             memory_storage=memory_storage,
@@ -221,6 +225,7 @@ class AgentCore:
             max_iters=max_iters,
             max_clarify_rounds=max_clarify_rounds,
             full_schema_budget=full_schema_budget,
+            strict_direct=strict_direct,
             meta_tools=meta_tools,
             # 上下文摘要压缩：opt-in，默认关闭；灵动岛真机开启。
             compaction_policy=comp_policy,
@@ -354,6 +359,14 @@ class AgentCore:
             {"name": s.name, "description": s.description, "source": s.source}
             for s in self.registry.all()
         ]
+
+    def capability_health(self) -> CapabilityHealth:
+        """对当前注册的工具做静态接入体检；不执行 handler、不发事件。"""
+        return check_tool_specs(
+            self.registry.all(),
+            registry=self.registry,
+            sandbox_available=self.executor.sandbox is not None,
+        )
 
     # ---------- 代码工具生命周期（后台管理） ----------
 

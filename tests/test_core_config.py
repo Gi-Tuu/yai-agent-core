@@ -79,6 +79,18 @@ def test_agent_core_rejects_bad_kwargs_early() -> None:
         AgentCore(ScriptedModel(), max_iters=0)
 
 
+def test_strict_direct_config_and_wiring() -> None:
+    assert CoreConfig().strict_direct is False
+    assert CoreConfig(strict_direct=True).validate().strict_direct is True
+    with pytest.raises(ValueError, match="strict_direct"):
+        CoreConfig(strict_direct="yes").validate()  # type: ignore[arg-type]
+
+    core = AgentCore.from_config(
+        ScriptedModel(), CoreConfig(strict_direct=True)
+    )
+    assert core._loop.strict_direct is True
+
+
 def test_from_config_matches_direct_construction() -> None:
     model = ScriptedModel("你好")
     cfg = CoreConfig(max_iters=3, llm_router=False)

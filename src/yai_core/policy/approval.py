@@ -129,8 +129,17 @@ def _check_value(value: Any, schema: Any, path: str, errors: list[str]) -> None:
     误以为已经校验过。仍未实现（记录在册的限制）：``anyOf`` / ``oneOf`` /
     ``allOf`` / ``$ref`` / ``additionalProperties`` / ``exclusiveMinimum`` /
     ``exclusiveMaximum`` / ``multipleOf`` / ``uniqueItems`` / ``const``。
+
+    ``anyOf`` / ``oneOf`` / ``$ref`` 可能给出比顶层 ``type`` 更宽的合法分支；
+    遇到它们时整段跳过校验，避免把合法调用误判为非法。能力体检会把这些键
+    标成"未校验"，宿主可据此决定是否改用可执行的 schema 子集。
     """
     if not isinstance(schema, dict):
+        return
+    # 这些键可能**放宽**取值域（anyOf/oneOf/$ref 可以给出与顶层 type 不同的
+    # 合法分支）。只实现子集时继续按 type 拒绝，会把 JSON Schema 判定合法的调用
+    # 误判为非法——兼容性优先：整段跳过校验，由能力体检提示"这层没校验"。
+    if any(key in schema for key in ("anyOf", "oneOf", "$ref")):
         return
     declared = schema.get("type")
     if declared is not None:

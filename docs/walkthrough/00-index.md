@@ -63,7 +63,7 @@
 | 文件 | 角色 | 类比 |
 |---|---|---|
 | `types.py` | 全项目通用的数据结构 | 普通话词典 |
-| `spi/*.py` | 九个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning/embedding/cipher） | 插座标准 |
+| `spi/*.py` | 十个"插槽"的接口约定（model/channel/memory/policy/discovery/sandbox/learning/embedding/cipher/resource） | 插座标准 |
 | `discovery/introspect.py` | 把函数读成工具规格 | 自动翻译官 |
 | `discovery/catalog.py` | 按需能力目录：缺口出现时补工具（最小发现源，关键词） | 备用零件柜 |
 | `discovery/scoring.py` | 词法相关度打分（规范化、中文 bigram、同义词，零依赖） | 字面匹配的标尺 |
@@ -71,6 +71,8 @@
 | `integrations/embedding/` | 真实嵌入后端：本地 bge-m3 ONNX / OpenAI 兼容云端（可选 extra） | 语义向量的发动机 |
 | `tools/registry.py` | 工具花名册（喂模型的目录 / schema 按名确定性排序，第 41 篇） | 电话簿 |
 | `tools/executor.py` | 真正调用工具的地方（组合工具在此分流；单结果有界收口，第 41 篇） | 总机 |
+| `tools/health.py` | 能力接入体检（不执行 handler，列出声明的约束与执行能力不匹配处，第 50 篇） | 接入前质检员 |
+| `tools/executor.py` + `types.py` | 可信变更预览（宿主渲染 diff、审批展示、执行前 token 复核，第 51 篇） | 审批前的验算员 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
 | `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
@@ -164,7 +166,9 @@
 - 46 · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
 - 47 · `paths.py` + `policy/approval.py` + `batteries/filesystem.py` + `tools/executor.py`：安全加固第二批（路径语义收敛成单一真源、空前缀失败关闭、结果侧也脱敏、manifest 治理语义与版本号绑定）
 - 48 · `types.py` + `llm/anthropic.py` + `memory/sqlite_store.py`：多模态消息契约（`ChatMessage.parts` 可选扩展、图片内联/引用两条路径、落盘只存引用不存字节、摘要与降级渲染）
-- 49 · policy/approval.py + kernel/context.py + 	ools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
+- 49 · policy/approval.py + kernel/context.py + tools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
+- 50 · tools/health.py + tools/schema.py + policy/approval.py：能力接入体检与 schema 兼容性（静态检查未实现键/审批路径/频控/组合步骤；`anyOf` / `oneOf` / `$ref` 宁可跳过也不误拒；OpenAPI nullable 归一）
+- 51 · types.py + policy/authorize.py + tools/executor.py：可信变更预览（宿主生成 `ChangePreview`、审批上下文展示、确认后 token 复核，失效则拒绝执行；组合工具同规则）
 
 ## 5. 自检（读完本篇应能回答）
 

@@ -115,6 +115,7 @@ class AgentLoop:
         max_iters: int = 6,
         max_clarify_rounds: int = 2,
         full_schema_budget: int = 24,
+        strict_direct: bool = False,
         meta_tools: Iterable[str] = (),
         compaction_policy: CompactionPolicy | None = None,
         compaction_model: ModelProvider | None = None,
@@ -149,6 +150,9 @@ class AgentLoop:
         self.max_iters = max_iters
         self.max_clarify_rounds = max_clarify_rounds
         self.full_schema_budget = full_schema_budget
+        # direct 策略下模型自带 tool_calls 的处理：默认沿用旧行为（执行），
+        # 宿主显式开启后失败关闭。不能默认收紧——现有宿主依赖模型在 direct 下补调工具。
+        self.strict_direct = strict_direct
         self.meta_tools: set[str] = set(meta_tools)
         # 摘要压缩：默认 None（关闭，行为与旧版一致）；宿主显式传入后启用。
         self.compaction_policy = compaction_policy
@@ -797,6 +801,23 @@ class AgentLoop:
 
             if not resp.tool_calls:
                 text = resp.content.strip()
+                ctx.add(ChatMessage(role="assistant", content=text))
+                yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
+                return
+
+            if self.strict_direct and strategy == Strategy.DIRECT:
+                # opt-in 的严格模式：direct 本轮没有向模型提供任何工具，模型仍返回
+                # tool_calls 时不能执行——否则它等于凭记忆调用了宿主没有授权的工具。
+                text = resp.content.strip()
+                yield AgentEvent(
+                    EventType.ERROR,
+                    {
+                        "stage": "direct",
+                        "error": "direct 策略下模型返回了工具调用，严格模式已拒绝执行",
+                    },
+                )
+                if not text:
+                    text = "当前策略不允许调用工具，本次没有执行任何工具。"
                 ctx.add(ChatMessage(role="assistant", content=text))
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
                 return
