@@ -154,10 +154,10 @@ def fig_architecture():
             iy = hy - 4.9 - j * 4.7
             box(ax, x, iy, gw, 4.2, it, fc=TINT, ec=LINE, fs=9.6)
 
-    # SPI 九契约横条
+    # SPI 十契约横条
     box(ax, 8, 23.2, 84, 6.4,
-        "SPI 九契约（全部可替换）　model · channel · memory · policy · discovery · sandbox\n"
-        "learning（路由自校准）· embedding（语义）· cipher（落盘加密）",
+        "SPI 十契约（全部可替换）　model · channel · memory · policy · discovery · sandbox\n"
+        "learning（路由自校准）· embedding（语义）· cipher（落盘加密）· resource（文件资源）",
         fc="#FBF3E8", ec=ACCENT, fs=10.2, bold=True, tc="#5A3413")
 
     # 外部可选后端
