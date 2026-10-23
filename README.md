@@ -203,8 +203,9 @@ uv sync --extra desktop
 | 6 | `host_e_sales_crm` | 旗舰：独立 CRM，一个开关嵌入 Core（终端 + 网页，端口 8200） |
 | 7 | `host_i_mealie` | 适配真实第三方开源项目（Mealie，REST） |
 | 8 | `host_j_actual` | 第三方播种五拍标准线：记账应用 Actual Budget（发现补能力 / 派子员工，网页 8240） |
+| 9 | `host_k_multimodal` | 多模态：模型只选图片句柄，宿主负责解析、判作用域 / 有效期 / 大小 |
 
-> 目录名保留历史编号（a/c/d/e/f/g/i/j），不随学习顺序重排，以便与各版材料、讲义路径一致。
+> 目录名保留历史编号（a/c/d/e/f/g/i/j/k），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
 ## 在线 HTTP API
 

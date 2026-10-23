@@ -62,7 +62,7 @@ cp .env.example .env              # Windows: copy .env.example .env
 ## 2. 架构红线（改动前必读）
 
 1. **内核本体零第三方硬依赖**。`pyproject.toml` 的 `dependencies` 必须保持为空；openai、fastapi、mcp 等只能出现在可选依赖（`llm` / `server` / `mcp`）里，并在对应模块内**懒加载**（`integrations/mcp/` 顶层禁止 import mcp，有 AST 测试守这条线）。
-2. **一切外部能力走 SPI 契约**（`src/yai_core/spi/`）：模型、通道、记忆、权限、发现、沙箱、路由选择、嵌入、存储加密九个插槽必须可替换，Core 只依赖 `Protocol`，不依赖具体实现。
+2. **一切外部能力走 SPI 契约**（`src/yai_core/spi/`）：模型、通道、记忆、权限、发现、沙箱、路由选择、嵌入、存储加密、文件资源十个插槽必须可替换，Core 只依赖 `Protocol`，不依赖具体实现。
 3. **事件流只有一条出口**：工具执行等过程事件由执行方收集、统一由 `AgentLoop` yield、`AgentCore.astream` 是唯一对外 emit 点，不允许出现第二条事件路径。
 4. **每个自适应决策必须可观测**：新增任何"Core 自己做决定"的分支，都要通过 `AgentEvent` 发出对应事件，不允许静默决策。
 5. **内核边界（明确不做）**：MCP Server、对等 Multi-Agent、内核内执行生成代码、向量长期记忆、内置 UI、coding agent；部分能力已由壳层或可选 extra 提供，准确、最新的边界以 [`docs/architecture.md`](docs/architecture.md) 第 7 节为准。相关讨论先进 Issue。

@@ -3,7 +3,7 @@
 > 目标：不是"看懂每一行"，而是按顺序读完后，能向别人讲清楚 Core 怎么转起来，并能动手改。
 > 建议节奏：每天 1～2 站，配合运行与小练习；卡住超过 30 分钟就先跳过，在文件里留 `# Q:` 注释。
 
-> **配套逐行讲解**：`docs/walkthrough/` 里有每个源码文件逐块、逐行的解释（00 总览 → 24 真机实战），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。
+> **配套逐行讲解**：`docs/walkthrough/` 里有每个源码文件逐块、逐行的解释（00 总览 → 53 宿主实时状态），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。
 
 ## 0. 先跑起来（10 分钟）
 
@@ -16,7 +16,7 @@ cd "D:\YAI Agent Core"
 
 ## 0.5 示例宿主顺序（想直接看 examples 时）
 
-7 个宿主由浅入深（与 README 一致）：
+9 个宿主由浅入深（与 README 一致）：
 
 1. `host_a_notes` —— 最小接入：普通函数自动变工具
 2. `host_c_companion` —— 换领域即换岗位（AI 陪伴 / AMBRACE 预演）
@@ -25,8 +25,10 @@ cd "D:\YAI Agent Core"
 5. `host_g_sandbox` —— 沙箱内现场造代码工具并执行
 6. `host_e_sales_crm` —— 完整产品：一个开关嵌入 Core，含自学习与网页
 7. `host_i_mealie` —— 适配真实第三方高 star 开源项目
+8. `host_j_actual` —— 真实记账应用 Actual Budget：发现补能力 / 派子员工
+9. `host_k_multimodal` —— 多模态：模型只选图片句柄，宿主判作用域 / 有效期 / 大小
 
-> 目录名保留历史编号（a/c/d/e/f/g/i），不随学习顺序重排，以便与各版材料、讲义里的路径一致。
+> 目录名保留历史编号（a/c/d/e/f/g/i/j/k），不随学习顺序重排，以便与各版材料、讲义里的路径一致。
 
 ## 1. 推荐阅读顺序（7 站）
 
@@ -89,7 +91,7 @@ spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.p
 
 | 术语 | 在本项目里的意思 |
 |---|---|
-| 宿主 Host | 嵌入 Core 的现有软件（`examples/` 下 7 个宿主，未来是 AMBRACE） |
+| 宿主 Host | 嵌入 Core 的现有软件（`examples/` 下 9 个宿主，未来是 AMBRACE） |
 | SPI | 宿主可替换、Core 给默认实现的接口契约（Model/Channel/Memory/Policy/Discovery） |
 | Adaptive Router | 决定任务走哪种执行策略的组件 |
 | ReAct | 推理-调用工具-观察结果-再推理的循环 |

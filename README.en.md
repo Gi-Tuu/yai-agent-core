@@ -223,8 +223,9 @@ approval card on first call (discovery ≠ authorization).</p>
 | 6 | `host_e_sales_crm` | Flagship: a standalone CRM that embeds Core with one switch (terminal + web, port 8200) |
 | 7 | `host_i_mealie` | Adapting a real third-party open-source project over REST (Mealie) |
 | 8 | `host_j_actual` | Third-party seeding "five-beat" line in the Actual Budget ledger app (discover a missing tool / delegate sub-employees; web on 8240) |
+| 9 | `host_k_multimodal` | Multimodal: the model only picks an image handle; the host resolves it and enforces scope / expiry / size |
 
-> Directory names keep their historical letters (a/c/d/e/f/g/i/j) and are not reordered by learning
+> Directory names keep their historical letters (a/c/d/e/f/g/i/j/k) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
 
 ## Online HTTP API

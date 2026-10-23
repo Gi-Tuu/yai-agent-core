@@ -143,17 +143,20 @@ def from_manifest_dict(cls, data: dict[str, Any]) -> ToolSpec:
 单个工具的转换在 `types.py`；这个文件负责"一批工具 + 版本包装 + 落盘"。
 
 ```python
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2                     # v2 起治理语义进入格式契约
+_SUPPORTED_MANIFEST_VERSIONS = (1, 2)    # 本实现仍能读 v1 历史文件
 
 def specs_to_manifest(specs):
     return {"manifest_version": MANIFEST_VERSION,
             "tools": [spec.to_manifest_dict() for spec in specs]}
 ```
 顶层包一层 `manifest_version`——**格式将来不兼容升级时可据此判断**，读旧文件不会静默误解。
+v2 的升级动机是治理语义：v1 老读者会**静默忽略** `governance` 块，于是跨进程导入后脱敏与
+审批要求悄悄消失；升到 2 让老读者直接失败关闭。
 
 ```python
 def specs_from_manifest(data):
-    if data.get("manifest_version") != MANIFEST_VERSION:
+    if data.get("manifest_version") not in _SUPPORTED_MANIFEST_VERSIONS:
         raise ValueError(...)
     tools = data.get("tools")
     if not isinstance(tools, list):
