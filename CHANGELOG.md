@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.14.0] - 2026-10-23
+
 ### Added
 
 - **多模态内核核对脚本**：新增 `scripts/check_multimodal_core.py`，把图片放进
