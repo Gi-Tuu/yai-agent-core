@@ -193,11 +193,16 @@ def _render_write_preview(crm, tool_name: str, arguments: dict) -> ChangePreview
     return ChangePreview(summary=summary, token=token, diff=diff, target=target)
 
 
+def render_write_preview(crm, tool_name: str, arguments: dict) -> ChangePreview:
+    """公开的预览渲染入口：网页/桌面跨进程调用与本地闭包共用同一份逻辑。"""
+    return _render_write_preview(crm, tool_name, arguments)
+
+
 def build_write_preview(crm, tool_name: str):
     """构造某写工具的 preview 闭包（可单测，不需要启动 AgentBridge）。"""
 
     def preview(arguments: dict, subject) -> ChangePreview:
-        return _render_write_preview(crm, tool_name, arguments)
+        return render_write_preview(crm, tool_name, arguments)
 
     return preview
 

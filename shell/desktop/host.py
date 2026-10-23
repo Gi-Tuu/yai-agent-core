@@ -153,6 +153,7 @@ def _live_factory(
     storage_path=None,
     learning_path=None,
     catalog_factory=None,
+    preview_client=None,
 ):
     """为一个小宿主生成"每任务一个真 Core"的事件流工厂。
 
@@ -204,6 +205,20 @@ def _live_factory(
             context_compaction=True,
             discovery=catalog,
         )
+        if preview_client is not None:
+            # 销售专员跨进程操作真实 CRM：审批卡显示 host_e 渲染的实际 diff，
+            # 而不是桌面端再复制一套业务规则。
+            from dataclasses import replace
+
+            from host_e_sales_crm.agent_bridge import WRITE_TOOL_NAMES
+            from shell.desktop.crm_client import build_crm_preview
+
+            for spec in core.registry.all():
+                if spec.name in WRITE_TOOL_NAMES:
+                    spec.governance = replace(
+                        spec.governance,
+                        preview=build_crm_preview(preview_client, spec.name),
+                    )
         from shell.employee import attach_delegate
 
         attach_delegate(core, depth=1)
@@ -252,6 +267,7 @@ def build_specs() -> list[SpecialistSpec]:
                 storage_path=sales_storage,
                 learning_path=sales_learning,
                 catalog_factory=lambda: build_crm_catalog(sales_host),
+                preview_client=sales_host,
             ),
             code_storage=sales_storage,
             learning_path=sales_learning,

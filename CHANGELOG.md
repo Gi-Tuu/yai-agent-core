@@ -9,6 +9,9 @@
 
 ### Added
 
+- **多模态内核核对脚本**：新增 `scripts/check_multimodal_core.py`，把图片放进
+  `AgentCore` 会话历史并走完整内核链路；与只核对出站格式的
+  `check_multimodal_wire.py` 分工不同。默认使用 `docs/assets/desktop-panel.png`。
 - **`strict_direct`（opt-in）**：`CoreConfig` / `AgentCore` 新增布尔开关，默认 `False`
   保持旧兼容。开启后，`direct` 策略下模型若仍返回 `tool_calls`，内核不执行任何工具，
   发 `ERROR` 并保留模型的文字回答；没有文字时给出诚实收尾。之所以不默认开启：现有
@@ -26,6 +29,8 @@
   变了就 `preview_stale` 拒绝执行，生成失败则 `preview_failed` 失败关闭。组合工具
   自己的审批走同一规则；CLI/桌面/QML 已接入展示。host_e 示例已接真实 preview
   provider：写工具审批卡展示从当前 CRM 数据渲染的 diff，token 同样用于执行前复核。
+  host_e 新增只读 `/api/agent/preview`，桌面销售专员通过同一端点在确认卡展示真实
+  diff；桌面端不再复制一套业务预览规则，执行前 token 复核仍由内核完成。
 - **执行收据与进程内幂等**：新增 `ExecutionReceipt`（`not_started` / `succeeded` /
   `failed` / `unknown` / `partial`），随 `TOOL_RESULT` 事件流出；`call_id` 从模型
   工具调用透传，组合步骤用“父 id:下标”。超时/同步放弃/handler 异常/沙箱异常记
@@ -36,6 +41,16 @@
 
 ### Fixed
 
+- **桌面销售的内部 preview 方法不再被注册成工具**：`AgentCore.auto()` 会内省公开
+  方法，`HostECrmClient.preview` 曾因此出现在模型工具列表里，模型失败后会去调用
+  一个并不存在的业务工具。现改为 `_preview`，审批链路仍然使用它，但模型不可见。
+- **审批预览失效后立即终止本次任务**：此前 `preview_stale` 被当成普通工具失败，
+  模型会继续调 `list_customers` / `preview` / `request_capability` 试图补救，
+  在免费模型上很容易触发 429。现在失效即收尾，不再发起后续模型调用。
+- **模型把工具调用写成正文时不再伪装成最终答案**：部分兼容模型会把
+  `<tool_call>` / `<arg_key>` / `<function_call>` 写进普通 content，而不是返回结构化
+  `tool_calls`。内核现在识别这种形状后失败关闭：不执行、不把原始 XML 放进最终答复，
+  发 `ERROR(stage=model_protocol)` 并给出可读说明，避免用户看到一个"假工具调用"气泡。
 - **执行约束覆盖所有真实路径**：组合工具此前在预算、频率上限与声明超时之前提前分流，
   导致"一次组合 = 多次业务操作"绕过 `max_tool_calls`、组合声明的 `rate_limit` 不生效、
   `timeout_ms` 只管到单个步骤；现在预算按组合的每个真实步骤计数，频率闸在组合分支之前，

@@ -93,6 +93,15 @@ ToolExecutor.execute
   `permission_request` 负载；
 - 预览器不调用写方法，只读业务对象；真实系统应换成自己的事务快照/revision。
 
+桌面销售专员是**跨进程**路径：`HostECrmClient.preview()` 调用 host_e 新增的只读
+`POST /api/agent/preview`，由 host_e 的 `render_write_preview()` 渲染同一份 diff；
+桌面 Core 仍用返回的 token 做执行前复核。这样网页 AI 与桌面 AI 共用一套业务预览规则，
+不会出现“两边看到的 diff 不一样”。
+
+两个实现细节：`HostECrmClient._preview` 必须是私有方法，否则 `AgentCore.auto()`
+会把它当成业务工具注册给模型；`preview_stale` 会**立即终止当前任务**，不再让模型
+继续调工具补救——继续补救既不会恢复审批，也容易把免费模型的配额打满。
+
 ## 6. 诚实边界
 
 - token 由宿主计算；宿主返回常数 token，内核无法发现状态变化；

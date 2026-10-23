@@ -7,8 +7,12 @@ import asyncio
 import pytest
 
 from yai_core import (
+    AgentCore,
     ApprovalPolicy,
     ChangePreview,
+    ModelResponse,
+    ScriptedModel,
+    ToolCallRequest,
     ToolGovernance,
     ToolSpec,
     build_composite_spec,
@@ -149,6 +153,39 @@ def test_preview_failure_blocks_before_approval() -> None:
     assert next(e for e in events if e.type == EventType.TOOL_RESULT).data[
         "preview_failed"
     ] is True
+
+
+def test_stale_preview_terminates_the_run_without_another_model_call() -> None:
+    """预览失效后任务应结束，而不是让模型继续补救、烧调用额度。"""
+    calls: list[str] = []
+
+    def handler(value: str = "") -> dict:
+        calls.append(value)
+        return {"value": value}
+
+    state = {"token": "rev-1"}
+    channel = CaptureChannel(on_confirm=lambda: state.update(token="rev-2"))
+    spec = _preview_spec(state, handler)
+
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="apply", arguments={"value": "new"})
+                ]
+            ),
+            ModelResponse(content="不该被调用的补救"),
+        ]
+    )
+    core = AgentCore(model, channel=channel, auto_approve_tools=True)
+    core.register_tools([spec])
+
+    result = asyncio.run(core.run("调用工具执行"))
+
+    assert calls == []
+    assert model.calls == 1, " stale 之后不应再发起模型调用"
+    assert "预览已失效" in result.final_text
+    assert result.events[-1].type == EventType.DONE
 
 
 def test_composite_own_approval_uses_the_same_preview_rule() -> None:

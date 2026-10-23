@@ -97,6 +97,47 @@ def test_web_channel_carries_host_preview_to_browser():
     asyncio.run(scenario())
 
 
+def test_agent_preview_endpoint_returns_real_diff_and_rechecks_token():
+    """桌面审批卡跨进程拿真实 diff；数据变化后 token 必须变化。"""
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        args = {"customer": "王敏", "content": "电话回访"}
+        status, body = _post_agent(
+            base, "/api/agent/preview", {"name": "add_followup", "arguments": args}
+        )
+        assert status == 200 and body["ok"] is True
+        preview = body["preview"]
+        assert "王敏" in preview["summary"]
+        assert "电话回访" in preview["diff"]
+        first_token = preview["token"]
+
+        workbench.crm.add_followup("王敏", "电话回访")
+        _, body2 = _post_agent(
+            base, "/api/agent/preview", {"name": "add_followup", "arguments": args}
+        )
+        assert body2["preview"]["token"] != first_token
+
+        status, _ = _post_agent(
+            base, "/api/agent/preview", {"name": "not_a_write", "arguments": {}}
+        )
+        assert status == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_agent_preview_endpoint_requires_token():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        status, body = _post(
+            base, "/api/agent/preview", {"name": "add_followup", "arguments": {}}
+        )
+        assert status == 401 and body["error"] == "unauthorized"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_web_channel_ask_answer_and_wrong_kind_rejected():
     async def scenario():
         loop = asyncio.get_running_loop()
@@ -175,6 +216,23 @@ def _post(base, path, payload):
         base + path,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def _post_agent(base, path, payload):
+    req = urllib.request.Request(
+        base + path,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer test-tool-token",
+        },
         method="POST",
     )
     try:

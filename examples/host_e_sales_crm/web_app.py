@@ -39,8 +39,10 @@ bootstrap()
 from host_e_sales_crm import tool_auth  # noqa: E402
 from host_e_sales_crm.agent_bridge import (  # noqa: E402,F401
     PERMISSION_MODES,
+    WRITE_TOOL_NAMES,
     AgentBridge,
     WebChannel,
+    render_write_preview,
     resolve_pending,
 )
 from host_e_sales_crm.crm_app import (  # noqa: E402
@@ -112,6 +114,17 @@ class Workbench:
     # ---- 状态（AI 状态全部来自嵌入点）----
     def state(self) -> dict:
         return self.bridge.ai_state()
+
+    def preview_tool(self, name: str, arguments: dict | None = None) -> dict:
+        """生成写工具的真实变更预览；只读，不执行业务写操作。"""
+        tool_name = str(name or "").strip()
+        if tool_name not in WRITE_TOOL_NAMES:
+            raise UnknownToolError(tool_name)
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise ToolArgumentError("arguments 必须是对象")
+        return render_write_preview(self.crm, tool_name, arguments).to_dict()
 
     def snapshot(self) -> dict:
         """原生 CRM 界面的全部数据：与 Agent 读的是同一个 SalesCrm 对象。"""
@@ -330,6 +343,28 @@ def make_handler(workbench: Workbench, tool_token: str):
             payload = self._read_json()
             if payload is None:
                 self._send_json(400, {"error": "bad_json"})
+                return
+            if path == "/api/agent/preview":
+                # 跨进程 Agent 的审批预览：只读宿主业务状态，不执行写操作。
+                if not self._agent_authorized():
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                name = str(payload.get("name", "")).strip()
+                arguments = payload.get("arguments", {})
+                if not isinstance(arguments, dict):
+                    self._send_json(400, {"error": "bad_arguments",
+                                          "detail": "arguments 必须是对象"})
+                    return
+                try:
+                    preview = workbench.preview_tool(name, arguments)
+                except UnknownToolError:
+                    self._send_json(404, {"error": "unknown_tool",
+                                          "detail": f"未知工具 {name!r}"})
+                    return
+                except (ToolArgumentError, ValueError, KeyError, TypeError) as exc:
+                    self._send_json(400, {"error": "bad_preview", "detail": str(exc)})
+                    return
+                self._send_json(200, {"ok": True, "preview": preview})
                 return
             if path == "/api/agent/tool":
                 # 跨进程 Agent（桌面灵动岛销售专员）统一工具入口。
