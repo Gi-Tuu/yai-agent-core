@@ -916,6 +916,7 @@ class AgentLoop:
                 call.arguments,
                 subject=subject,
                 budget=self._active_budget,
+                call_id=call.id,
             )
             for tool_event in tool_events:
                 yield tool_event

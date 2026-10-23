@@ -26,6 +26,13 @@
   变了就 `preview_stale` 拒绝执行，生成失败则 `preview_failed` 失败关闭。组合工具
   自己的审批走同一规则；CLI/桌面/QML 已接入展示。host_e 示例已接真实 preview
   provider：写工具审批卡展示从当前 CRM 数据渲染的 diff，token 同样用于执行前复核。
+- **执行收据与进程内幂等**：新增 `ExecutionReceipt`（`not_started` / `succeeded` /
+  `failed` / `unknown` / `partial`），随 `TOOL_RESULT` 事件流出；`call_id` 从模型
+  工具调用透传，组合步骤用“父 id:下标”。超时/同步放弃/handler 异常/沙箱异常记
+  `unknown`，组合前几步成功后续失败记 `partial`，不会被误当成可安全重试。
+  新增宿主幂等键 `ToolGovernance.idempotency_key`（不随清单导出）；提供非空 key 时，
+  执行器进程内缓存结果（默认 256 条），同一 key 重试不再进入 handler，事件标
+  `replayed=True`。跨进程/多实例去重仍由宿主负责。
 
 ### Fixed
 

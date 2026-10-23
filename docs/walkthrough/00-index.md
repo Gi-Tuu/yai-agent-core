@@ -73,6 +73,7 @@
 | `tools/executor.py` | 真正调用工具的地方（组合工具在此分流；单结果有界收口，第 41 篇） | 总机 |
 | `tools/health.py` | 能力接入体检（不执行 handler，列出声明的约束与执行能力不匹配处，第 50 篇） | 接入前质检员 |
 | `tools/executor.py` + `types.py` | 可信变更预览（宿主渲染 diff、审批展示、执行前 token 复核，第 51 篇） | 审批前的验算员 |
+| `tools/executor.py` + `types.py` | 执行收据与进程内幂等（not_started / succeeded / failed / unknown / partial，第 52 篇） | 故障后的对账员 |
 | `tools/composer.py` | 组合工具：把已有工具编排成新工具（不越界、逐步授权） | 可复用的流水线模板 |
 | `tools/code_tools.py` | 代码工具注册表：48h TTL、调用刷新、永久保留、过期回收 | 临时工的考勤与合同 |
 | `tools/manifest.py` | 能力清单（manifest）批量打包 + JSON 文件 IO | 能力的快递箱 |
@@ -169,6 +170,7 @@
 - 49 · policy/approval.py + kernel/context.py + tools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
 - 50 · tools/health.py + tools/schema.py + policy/approval.py：能力接入体检与 schema 兼容性（静态检查未实现键/审批路径/频控/组合步骤；`anyOf` / `oneOf` / `$ref` 宁可跳过也不误拒；OpenAPI nullable 归一）
 - 51 · types.py + policy/authorize.py + tools/executor.py：可信变更预览（宿主生成 `ChangePreview`、审批上下文展示、确认后 token 复核，失效则拒绝执行；组合工具同规则）
+- 52 · types.py + tools/executor.py + kernel/loop.py：执行收据与进程内幂等（五种状态、retryable、宿主 idempotency_key、call_id、去重缓存与 partial/unknown 边界）
 
 ## 5. 自检（读完本篇应能回答）
 

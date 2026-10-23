@@ -105,6 +105,56 @@ class GateDecision:
     target: str = ""
 
 
+ReceiptStatus = Literal["not_started", "succeeded", "failed", "unknown", "partial"]
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """一次工具执行的机器可读收据，用于判断"能不能重试"。
+
+    - ``not_started``：参数/权限/频率/预览等在 handler 之前失败，没有副作用；
+    - ``succeeded``：handler 正常返回；
+    - ``failed``：执行器明确知道失败（例如沙箱返回 ``ok=False``）；
+    - ``unknown``：超时、同步 handler 被放弃、handler 抛错或沙箱调用异常——
+      副作用可能已经发生，**不能盲目重试**；
+    - ``partial``：组合工具前几步成功、后续步骤失败。
+
+    ``idempotency_key`` 只来自宿主声明的生成器；内核的进程内缓存只在这个 key
+    存在时生效，跨进程/多实例去重仍由宿主负责。
+    """
+
+    call_id: str
+    tool: str
+    status: ReceiptStatus
+    retryable: bool = False
+    idempotency_key: str = ""
+    error: str = ""
+    duration_ms: float = 0.0
+    replayed: bool = False
+
+    def __post_init__(self) -> None:
+        if self.status not in (
+            "not_started",
+            "succeeded",
+            "failed",
+            "unknown",
+            "partial",
+        ):
+            raise ValueError(f"未知执行状态：{self.status!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "call_id": self.call_id,
+            "tool": self.tool,
+            "status": self.status,
+            "retryable": self.retryable,
+            "idempotency_key": self.idempotency_key,
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+            "replayed": self.replayed,
+        }
+
+
 @dataclass(frozen=True)
 class ChangePreview:
     """宿主生成的**实际变更预览**，用于审批与执行前复核。
@@ -289,6 +339,10 @@ class ToolGovernance:
     #: 它是函数，和 ``gate`` 一样不随清单导出；只有审批真正发生时才会展示，
     #: 审批通过后执行前会再生成一次并比较 token。模型参数无法设置它。
     preview: Callable[[dict[str, Any], Any], Any] | None = None
+    #: 宿主提供的幂等键生成器 ``(arguments, subject) -> str``。返回空串表示
+    #: 本工具不做幂等去重；非空时执行器会在进程内缓存结果，重试同一 key 不再
+    #: 进入 handler。跨进程/多实例去重必须由宿主用同一个 key 自己实现。
+    idempotency_key: Callable[[dict[str, Any], Any], Any] | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见

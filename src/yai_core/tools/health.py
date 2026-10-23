@@ -479,6 +479,19 @@ def _check_governance(spec: ToolSpec, findings: list[HealthFinding]) -> None:
         findings.append(
             _finding(spec.name, "governance_audit_flag", "error", "audit_sensitive 必须是布尔值")
         )
+    for name, value in (
+        ("preview", governance.preview),
+        ("idempotency_key", governance.idempotency_key),
+    ):
+        if value is not None and not callable(value):
+            findings.append(
+                _finding(
+                    spec.name,
+                    f"governance_bad_{name}",
+                    "error",
+                    f"{name} 必须是可调用对象或 None",
+                )
+            )
     properties = (
         spec.input_schema.get("properties") if isinstance(spec.input_schema, dict) else None
     )
