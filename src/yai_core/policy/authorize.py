@@ -31,7 +31,7 @@ from yai_core.spi.policy import PermissionDecision
 from yai_core.types import AgentEvent, EventType
 
 if TYPE_CHECKING:
-    from yai_core.spi.channel import Channel
+    from yai_core.spi.channel import ApprovalContextChannel, Channel
     from yai_core.spi.policy import PermissionPolicy, SubjectAwarePermissionPolicy
 
 
@@ -78,17 +78,23 @@ async def _check(
     return await policy.check(name, arguments)
 
 
-async def _confirm(
+async def confirm_with_context(
     channel: Channel, name: str, shown: dict, context: dict[str, Any]
 ) -> bool:
     """向通道要一次人工确认；**只有通道自己声明愿意收审批上下文，才多传第三个参数**。
 
     用能力旗标而不是探签名：宿主写的通道可能有 `**kwargs`，鸭子探测会把"能收"猜成
     "不能收"或反过来——猜错的那一次就是审批人少看了一个字段。
+
+    基础 :class:`Channel` 契约只要求两个位置参数；第三个参数属于可选的
+    :class:`ApprovalContextChannel` 扩展。这里按旗标收窄到扩展契约，执行器与
+    ``authorize_tool_call`` 共用同一条调用规则，避免两处各写一份。
     """
     aware = getattr(channel, "yai_approval_context_aware", False)
     if aware:
-        return bool(await channel.confirm(name, shown, context))
+        return bool(
+            await cast("ApprovalContextChannel", channel).confirm(name, shown, context)
+        )
     return bool(await channel.confirm(name, shown))
 
 
@@ -201,7 +207,7 @@ async def authorize_tool_call(
         events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
         # 通道拿的是**另一份**脱敏副本：它若在 confirm 里改自己那份，改不动
         # 已经发出的事件载荷，也改不动执行（见 tests/test_argument_snapshot.py）。
-        approved = await _confirm(
+        approved = await confirm_with_context(
             channel, name, redact_arguments(arguments, sensitive_paths), context
         )
         if not approved:

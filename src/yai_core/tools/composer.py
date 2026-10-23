@@ -16,11 +16,17 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
 from yai_core.tools.registry import ToolRegistry
-from yai_core.types import CompositeStep, ToolSpec
+from yai_core.types import (
+    CompositeStep,
+    ToolSpec,
+    governance_from_manifest,
+    governance_to_manifest,
+)
 
 # 匹配 {{$input.x}} / {{$steps.0.field}}（允许空白）。
 _PLACEHOLDER = re.compile(r"\{\{\s*\$((?:input|steps)(?:\.[\w一-鿿-]+)*)\s*\}\}")
@@ -101,9 +107,19 @@ class CompositeVersion:
     version: str
     description: str = ""
     steps: tuple[CompositeStep, ...] = ()
+    #: 版本快照必须把"声明"一起带走：只还原步骤会丢掉入参约束与审批要求，
+    #: 回滚后的工具看起来一样、实际少了一层护栏。
+    input_schema: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
+    #: 可序列化的治理快照（``gate`` 是函数，按设计不进快照）。
+    governance: dict[str, Any] = field(default_factory=dict)
 
     def to_manifest_steps(self) -> list[dict[str, Any]]:
-        return [{"tool": step.tool, "args": dict(step.args)} for step in self.steps]
+        """返回步骤的独立副本；调用方修改它不能回写版本仓库。"""
+        return [
+            {"tool": step.tool, "args": deepcopy(step.args)} for step in self.steps
+        ]
 
 
 @dataclass
@@ -135,7 +151,12 @@ class CompositeWorkflowStore:
             name=spec.name,
             version=label,
             description=spec.description,
-            steps=tuple(spec.steps or ()),
+            steps=tuple(
+                CompositeStep(tool=step.tool, args=deepcopy(step.args))
+                for step in (spec.steps or ())
+            ),
+            input_schema=deepcopy(spec.input_schema),
+            governance=deepcopy(governance_to_manifest(spec.governance)),
         )
         self._versions.setdefault(spec.name, {})[label] = record
         return record
@@ -194,16 +215,28 @@ class CompositeWorkflowStore:
         }
 
     def restore(self, name: str, version: str) -> ToolSpec:
-        """把某个版本还原成可注册的 :class:`ToolSpec`（供宿主回滚用）。"""
+        """把某个版本还原成可注册的 :class:`ToolSpec`（供宿主回滚用）。
+
+        还原的是**完整声明数据**：步骤、入参 schema 与可序列化治理（脱敏、
+        审批、执行提示）。``gate`` 是函数，明确不还原——外来清单/版本数据不能
+        凭数据重建本地闸门，处理器级准入仍由宿主显式绑定。
+        """
         record = self.get(name, version)
+        schema = deepcopy(record.input_schema)
         return ToolSpec(
             name=record.name,
             description=record.description,
-            input_schema={"type": "object", "properties": {}},
+            input_schema=schema,
             handler=None,
             source="composite",
-            steps=list(record.steps),
+            steps=[
+                CompositeStep(tool=step.tool, args=deepcopy(step.args))
+                for step in record.steps
+            ],
             version=record.version,
+            governance=governance_from_manifest(
+                record.name, deepcopy(record.governance), schema
+            ),
         )
 
 

@@ -174,10 +174,14 @@ def test_budget_snapshot_counts_tools_and_tokens() -> None:
             ),
         ]
     )
+    def search_notes(keyword: str) -> list:
+        """按关键词搜索笔记。"""
+        return ["a", "b"]
+
     core = AgentCore(
         model, budget=Budget(max_model_calls=10, max_tool_calls=10, max_tokens=100000)
     )
-    core.register_tools([build_spec(lambda keyword: ["a", "b"])])
+    core.register_tools([build_spec(search_notes)])
 
     result = asyncio.run(core.run("搜索笔记里关于周报的内容并总结"))
 

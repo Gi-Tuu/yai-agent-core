@@ -85,6 +85,23 @@ def test_oversized_resource_is_refused(tmp_path: Path) -> None:
         resolver.resolve("res://note/big", allowed_scopes=("tenant:a",))
 
 
+def test_size_is_checked_on_the_bytes_actually_read(tmp_path: Path, monkeypatch) -> None:
+    """文件在检查之后增长也不能突破上限：读取本身必须有界。"""
+    resolver = _resolver(tmp_path)
+    target = tmp_path / "notes" / "todo.md"
+    import resolver as resolver_module
+
+    real_open = resolver_module.open_no_follow
+
+    def grow_then_open(path):
+        target.write_text("x" * 4096, encoding="utf-8")
+        return real_open(path)
+
+    monkeypatch.setattr(resolver_module, "open_no_follow", grow_then_open)
+    with pytest.raises(ResourceTooLargeError):
+        resolver.resolve("res://note/1", allowed_scopes=("tenant:a",))
+
+
 def test_path_escape_is_refused(tmp_path: Path) -> None:
     """路径越界走内核那套纯函数：闸门认的路径与实际读的路径必须是同一条。"""
     resolver = HostResourceResolver(

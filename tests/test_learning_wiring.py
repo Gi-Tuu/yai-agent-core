@@ -16,9 +16,11 @@ from yai_core import (
     AgentCore,
     ModelResponse,
     Strategy,
+    ToolCallRequest,
     ToolRegistry,
     build_spec,
 )
+from yai_core.channels import CollectChannel
 from yai_core.learning import (
     ContextualBanditSelector,
     RouteOutcome,
@@ -142,6 +144,48 @@ def test_core_records_feedback_once_after_run() -> None:
     assert outcome.success is True
     assert len(hooks) == 1  # 回调同样触发一次
     assert hooks[0][0] == "查一下数据"
+
+
+def test_clarify_chain_rewards_the_first_decision_not_the_follow_up_route() -> None:
+    """原任务先判 clarify，补充信息后才判 react：功劳属于最初那次决策。"""
+    fake = FakeSelector(None)
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCallRequest(id="c1", name="search_notes", arguments={"keyword": "周报"})
+                ]
+            ),
+            ModelResponse(content="查到了周报。"),
+        ]
+    )
+    core = AgentCore(
+        model,
+        learning=fake,
+        channel=CollectChannel(default_answer="帮我查周报"),
+    )
+    core.register_tools([build_spec(search_notes)])
+
+    result = asyncio.run(core.run("随便"))
+
+    assert result.strategy is Strategy.REACT  # 最终收尾策略
+    assert len(fake.records) == 1
+    task, chosen, _outcome = fake.records[0]
+    assert task == "随便"
+    assert chosen is Strategy.CLARIFY, "反馈不能记到澄清之后的 react 上"
+
+
+class ScriptedModel:
+    """按顺序返回预设响应的离线模型。"""
+
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        self._responses = responses
+        self.calls = 0
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        response = self._responses[min(self.calls, len(self._responses) - 1)]
+        self.calls += 1
+        return response
 
 
 def test_core_without_learning_is_unchanged() -> None:

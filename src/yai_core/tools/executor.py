@@ -13,12 +13,13 @@ from typing import Any
 from yai_core.policy.approval import (
     DECISION_APPROVAL_REQUIRED,
     DECISION_REJECT_INVALID_ARGUMENTS,
+    argument_errors,
     evaluate_approval,
 )
 from yai_core.policy.authorize import (
     approval_context,
     authorize_tool_call,
-    channel_wants_approval_context,
+    confirm_with_context,
     fill_prompt,
     snapshot_arguments,
 )
@@ -247,17 +248,37 @@ class ToolExecutor:
         # 要满 0.4s 才回话）。改用 asyncio.wait 拿到"到点但没完成"的结果后直接放弃，
         # 立刻给模型回话；线程仍在后台跑完，所以话术必须说清"可能仍有副作用"。
         loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         future = loop.run_in_executor(None, functools.partial(handler, **arguments))
         future.add_done_callback(_consume_abandoned_result)
-        done, _pending = await asyncio.wait({future}, timeout=timeout)
+        done, _pending = await asyncio.wait(
+            {future}, timeout=max(0.0, deadline - loop.time())
+        )
         if not done:
             raise ToolTimeoutError(
                 f"超过 {timeout:g}s 未完成；同步工具无法中断，"
                 "它可能仍在后台跑完并产生副作用，重试前先确认状态"
             )
         outcome = future.result()
-        # 少见形状：同步函数返回 awaitable。此时已花掉的时间不计，但语义要保持正确。
-        return await outcome if inspect.isawaitable(outcome) else outcome
+        if not inspect.isawaitable(outcome):
+            return outcome
+        # 少见形状：同步函数返回 awaitable。它同样是这次调用的执行时间，
+        # 不能因为函数本身已经返回就绕开超时；剩余额度用尽也要如实止损。
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            if inspect.iscoroutine(outcome):
+                outcome.close()
+            raise ToolTimeoutError(
+                f"超过 {timeout:g}s 未完成；同步工具返回的异步结果未被等待，"
+                "它可能仍在后台跑完并产生副作用，重试前先确认状态"
+            )
+        try:
+            return await asyncio.wait_for(outcome, remaining)
+        except TimeoutError as exc:
+            raise ToolTimeoutError(
+                f"超过 {timeout:g}s 未完成；同步工具返回的异步结果已取消，"
+                "底层操作可能仍有副作用，重试前先确认状态"
+            ) from exc
 
     def _bound(self, text: str) -> tuple[str, bool, int]:
         return bound_tool_result(text, self.result_char_limit)
@@ -294,11 +315,20 @@ class ToolExecutor:
         arguments: dict[str, Any],
         *,
         subject: Any = None,
+        budget: Any = None,
     ) -> tuple[list[AgentEvent], bool, str]:
-        """返回 (过程事件列表, 是否成功, 文本结果)，永不向 Agent Loop 抛异常。
+        """返回 (过程事件列表, 是否成功, 文本结果)。
+
+        普通执行错误一律回灌给模型、不向上抛；唯一的例外是任务级
+        :class:`~yai_core.kernel.budget.BudgetExceeded`——它是硬熔断，必须冒泡到
+        Agent Loop 统一收尾，不能被当成"某次工具失败"吞掉。
 
         ``subject`` 是宿主注入的可信操作主体（``None`` = 本上下文没有主体）；
         它只交给声明了 ``yai_subject_aware`` 的策略，以及带能力声明的工具做准入。
+
+        ``budget`` 是可选的 :class:`~yai_core.kernel.budget.BudgetTracker`。预算
+        计数下沉到这里，是为了让组合工具的**每个真实步骤**都过同一道闸——只数
+        顶层调用会让"一次组合 = 三次业务操作"绕过 max_tool_calls。
         """
         events: list[AgentEvent] = []
         if not self.registry.has(name):
@@ -316,8 +346,24 @@ class ToolExecutor:
         if decision is not None and decision.reject:
             return events, False, decision.reject
 
-        if spec.source == "composite" and spec.steps:
-            return await self._execute_composite(spec, arguments, subject, decision)
+        # 入参校验是所有调用路径共同的下限，而不是"挂了审批条件才顺带检查"。
+        # 放在审批拒绝之后：有条件审批时保留它更具体的"审批闸拒绝"话术；
+        # 没有审批/闸门时，声明过的取值域仍然必须对每一次调用生效。
+        errors = argument_errors(arguments, spec.input_schema)
+        if errors:
+            message = f"工具 {name} 的调用参数不合法：" + "；".join(errors)
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": message,
+                        "invalid_arguments": True,
+                    },
+                )
+            )
+            return events, False, message
 
         # 频率上限闸：超限的调用**不执行**（不进 handler，也不发 TOOL_CALL）。
         #
@@ -339,6 +385,48 @@ class ToolExecutor:
             )
             return events, False, message
 
+        # 组合工具自身不占一次业务调用（真实操作在每一步），但预算已耗尽时
+        # 不该先弹审批卡再在第一步失败——这里只做前置检查，不计数。
+        if budget is not None:
+            budget.before_tool_call()
+
+        if spec.source == "composite" and spec.steps:
+            declared = spec.governance.timeout_ms
+            if declared is None:
+                return await self._execute_composite(
+                    spec, arguments, subject, decision, budget=budget, events=events
+                )
+            timeout = declared / 1000.0
+            try:
+                return await asyncio.wait_for(
+                    self._execute_composite(
+                        spec,
+                        arguments,
+                        subject,
+                        decision,
+                        budget=budget,
+                        events=events,
+                    ),
+                    timeout,
+                )
+            except TimeoutError:
+                message = (
+                    f"组合工具 {spec.name} 超过声明的 {declared}ms 未完成，已停止；"
+                    "已完成步骤的副作用不会回滚，同步步骤可能仍在后台跑完"
+                )
+                events.append(
+                    AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {
+                            "tool": spec.name,
+                            "ok": False,
+                            "error": message,
+                            "timed_out": True,
+                        },
+                    )
+                )
+                return events, False, message
+
         auth_events, approved, reason = await authorize_tool_call(
             self.policy,
             self.channel,
@@ -359,11 +447,15 @@ class ToolExecutor:
             return events, False, reason
 
         if spec.source == "code":
+            if budget is not None:
+                budget.record_tool_call()
             return await self._execute_code(spec, arguments, events)
 
         handler = spec.handler
         if handler is None:
             return events, False, f"工具 {name} 没有可执行 handler"
+        if budget is not None:
+            budget.record_tool_call()
         try:
             result = await self._invoke_handler(
                 handler, arguments, timeout=self._effective_timeout(spec)
@@ -432,9 +524,17 @@ class ToolExecutor:
             return events, False, msg
 
         # 3) 交给宿主沙箱执行（无网/无敏感文件/超时由沙箱保证）。
+        # 治理声明只能收紧沙箱超时：声明 10ms 时不能仍给沙箱默认的 10s。
+        sandbox_timeout = self.code_timeout
+        declared = spec.governance.timeout_ms
+        if declared is not None:
+            per_tool = declared / 1000.0
+            sandbox_timeout = per_tool if sandbox_timeout is None else min(
+                sandbox_timeout, per_tool
+            )
         try:
             sb = await self.sandbox.execute(
-                spec.code or "", inputs=arguments, timeout=self.code_timeout
+                spec.code or "", inputs=arguments, timeout=sandbox_timeout
             )
         except Exception as exc:  # noqa: BLE001 - 沙箱异常必须回灌而不是穿透
             events.append(
@@ -476,6 +576,9 @@ class ToolExecutor:
         arguments: dict[str, Any],
         subject: Any = None,
         decision: GateDecision | None = None,
+        *,
+        budget: Any = None,
+        events: list[AgentEvent] | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -487,7 +590,9 @@ class ToolExecutor:
         不是黑盒——所以这一步真的去问，绝不静默丢掉这份保护。问的时候只走
         :meth:`Channel.confirm`，不再跑一遍策略（策略对黑盒名字的判断仍然不做）。
         """
-        events: list[AgentEvent] = []
+        # 由调用方传入同一个事件列表：工作流超时被取消时，已执行步骤的事件
+        # 必须仍然可见——副作用发生了，审计链不能只剩一句"超时"。
+        events = [] if events is None else events
         steps = spec.steps
         if not steps:
             return events, False, f"组合工具 {spec.name} 缺少步骤"
@@ -530,10 +635,8 @@ class ToolExecutor:
                 scope=decision.scope,
                 target=decision.target,
             )
-            approved = (
-                await self.channel.confirm(spec.name, shown_for_channel, context)
-                if channel_wants_approval_context(self.channel)
-                else await self.channel.confirm(spec.name, shown_for_channel)  # noqa: B009
+            approved = await confirm_with_context(
+                self.channel, spec.name, shown_for_channel, context
             )
             if not approved:
                 return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
@@ -560,7 +663,7 @@ class ToolExecutor:
                 return events, False, f"组合工具 {spec.name} 第 {index + 1} 步参数解析失败: {exc}"
 
             sub_events, ok, sub_text = await self.execute(
-                step.tool, resolved, subject=subject
+                step.tool, resolved, subject=subject, budget=budget
             )
             events.extend(sub_events)
             if not ok:

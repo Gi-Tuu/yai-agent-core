@@ -12,7 +12,7 @@ import functools
 import inspect
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.config import CoreConfig
@@ -52,7 +52,7 @@ from yai_core.tools import (
 )
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
-from yai_core.types import AgentEvent, RunResult, Strategy, Subject, ToolSpec
+from yai_core.types import AgentEvent, EventType, RunResult, Strategy, Subject, ToolSpec
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
 FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
@@ -144,10 +144,9 @@ class AgentCore:
         self.on_feedback = on_feedback
         self.max_iters = max_iters
         self.max_clarify_rounds = max_clarify_rounds
-        # 没传通道就用收集型默认实现。`cast` 只给类型检查器收窄：Protocol 是结构化的，
-        # mypy 不会自己把 `Channel | CollectChannel` 收成 `Channel`，于是下游每一处
-        # 都要重复解释同一句话。运行时行为一字不变。
-        self.channel = cast("Channel", channel or CollectChannel())
+        # 没传通道就用收集型默认实现。`CollectChannel` 满足基础 Channel 契约
+        # （两参数 confirm）；审批上下文是可选扩展，不再靠 cast 把类型不兼容藏起来。
+        self.channel = channel or CollectChannel()
         self.memory = memory or InMemoryStore()
         self.discovery = discovery
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
@@ -442,6 +441,9 @@ class AgentCore:
         async with self._task_lock:
             events: list[AgentEvent] = []
             strategy: Strategy | None = None
+            # 反馈要奖励**最先做出的路由决策**：澄清链里原任务先选 clarify，
+            # 补充信息后才由内层重新路由成 react；只记最后一个策略会把功劳记错。
+            decision_strategy: Strategy | None = None
             completed = False
             run_error: BaseException | None = None
             # 指标旁路：run 开始打点；任何异常都不允许反噬主流程。
@@ -454,6 +456,8 @@ class AgentCore:
                     data = event.data or {}
                     if "strategy" in data:
                         strategy = Strategy(data["strategy"])
+                        if decision_strategy is None and event.type == EventType.STRATEGY_SELECTED:
+                            decision_strategy = strategy
                     yield event
                 completed = True
             except BaseException as exc:
@@ -465,7 +469,11 @@ class AgentCore:
                 # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
                 # 避免把"用户中途终止"误当成负样本污染学习。
                 if completed:
-                    chosen = strategy or self.router.classify(task, self.registry)
+                    chosen = (
+                        decision_strategy
+                        or strategy
+                        or self.router.classify(task, self.registry)
+                    )
                     self._record_feedback(task, chosen, events)
 
     async def run(self, task: str, *, subject: Subject | None = None) -> RunResult:

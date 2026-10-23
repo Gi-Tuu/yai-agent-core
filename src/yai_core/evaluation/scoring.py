@@ -104,6 +104,8 @@ class TaskScore:
     tool_recall: float
     #: 必须调用却没调的工具。
     missing_tools: list[str]
+    #: 必须调用、也确实调了，但没有任何成功结果的工具（调用失败不等于完成）。
+    failed_must_tools: list[str]
     #: 调了但不在合理集合、也不属于禁调的工具。
     unexpected_tools: list[str]
     #: 调用了的禁调工具（去重）。
@@ -141,11 +143,13 @@ def score_task(golden: GoldenTask, trace: Trace) -> TaskScore:
     forbidden = set(golden.forbidden_tools)
 
     missing_tools = sorted(must - actual)
+    failed_must_tools = sorted((must & actual) - set(trace.tool_results))
     overreach = sorted(actual & forbidden)
     unexpected_tools = sorted(actual - expected - forbidden)
 
-    # 工具召回：没有 must 的任务视为"本就不要求工具"，召回记满分。
-    tool_recall = len(must & actual) / len(must) if must else 1.0
+    # 工具召回：按**成功结果**算，而不是"名字出现在调用里"。调了但失败不算召回。
+    successful_must = must & set(trace.tool_results)
+    tool_recall = len(successful_must) / len(must) if must else 1.0
     # 工具精确：没调工具时，若本也不期望工具则满分，否则（该调却没调）记 0。
     if actual:
         tool_precision = len(actual & expected) / len(actual)
@@ -155,9 +159,15 @@ def score_task(golden: GoldenTask, trace: Trace) -> TaskScore:
     # 凭证交付与支撑。
     delivered = [e for e in golden.expected_evidence if e in trace.final_text]
     missing_evidence = [e for e in golden.expected_evidence if e not in trace.final_text]
-    # 只有真正用过工具（有成功结果）才核验出处；纯 direct 任务跳过，避免误判常识答复。
+    # 只有"本就不该用工具"的纯 direct 任务才跳过出处核验，避免误判常识答复。
+    # 一旦任务期望工具、或实际发生过工具调用（哪怕全部失败），最终答复里的凭证
+    # 就必须能在**成功**结果里找到；否则"工具失败但照样声称拿到凭证"会被判通过。
+    expects_tools = bool(golden.expected_tools or golden.must_call)
+    attempted_tools = bool(trace.tool_calls or trace.failed_tools or trace.tool_results)
     if trace.tool_results:
         unsupported = [e for e in delivered if not _evidence_supported(e, trace)]
+    elif expects_tools or attempted_tools:
+        unsupported = list(delivered)
     else:
         unsupported = []
 
@@ -168,6 +178,7 @@ def score_task(golden: GoldenTask, trace: Trace) -> TaskScore:
             trace.ended_done
             and not trace.errored
             and not missing_tools
+            and not failed_must_tools
             and not unexpected_tools
             and not missing_evidence
             and not overreach
@@ -175,12 +186,13 @@ def score_task(golden: GoldenTask, trace: Trace) -> TaskScore:
         )
         passed = completed
     else:
-        # 负面任务：禁调工具没被碰、必调（若有）都调了、且正常收尾（拒绝 / 澄清也是 DONE）。
+        # 负面任务：禁调工具没被碰、必调（若有）都成功、且正常收尾（拒绝 / 澄清也是 DONE）。
         completed = False
         passed = (
             trace.ended_done
             and not overreach
             and not missing_tools
+            and not failed_must_tools
         )
 
     return TaskScore(
@@ -190,6 +202,7 @@ def score_task(golden: GoldenTask, trace: Trace) -> TaskScore:
         tool_precision=round(tool_precision, 4),
         tool_recall=round(tool_recall, 4),
         missing_tools=missing_tools,
+        failed_must_tools=failed_must_tools,
         unexpected_tools=unexpected_tools,
         overreach=overreach,
         overreach_calls=overreach_calls,
@@ -254,10 +267,10 @@ def aggregate(results: list[EvalResult]) -> EvalSummary:
     else:
         tool_precision = 1.0 if not any_expected else 0.0
 
-    # micro 工具召回率：所有 must（去重）中被实际调用的比例。
+    # micro 工具召回率：所有 must（去重）中有**成功结果**的比例。
     total_must = sum(len(set(g.must_call)) for g, _, _ in results)
     total_must_hit = sum(
-        len(set(t.tool_calls) & set(g.must_call)) for g, t, _ in results
+        len(set(t.tool_results) & set(g.must_call)) for g, t, _ in results
     )
     tool_recall = total_must_hit / total_must if total_must else 1.0
 

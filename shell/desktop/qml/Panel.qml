@@ -38,7 +38,14 @@ Item {
         var args = p.arguments || {};
         var keys = Object.keys(args);
         var parts = [];
-        for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + args[keys[i]]);
+        function readable(value) {
+            if (value === null) return "null";
+            if (typeof value === "object") {
+                try { return JSON.stringify(value); } catch (e) { return String(value); }
+            }
+            return String(value);
+        }
+        for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + readable(args[keys[i]]));
         var line = String(p.tool || "") + (parts.length ? "（" + parts.join(" · ") + "）" : "");
         var tags = [];
         if (p.target) tags.push("落点 " + p.target);

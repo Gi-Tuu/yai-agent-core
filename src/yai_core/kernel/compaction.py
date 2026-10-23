@@ -19,7 +19,11 @@ from yai_core.diagnostics import (
     DiagnosticSink,
     emit,
 )
-from yai_core.kernel.context import Context
+from yai_core.kernel.context import (
+    IMAGE_CONTEXT_COST_CHARS,
+    Context,
+    message_cost,
+)
 from yai_core.types import AgentEvent, ChatMessage, EventType, parts_to_text
 
 #: 摘要器的系统指令：只保留对后续任务有用的信息，去掉寒暄与重复。
@@ -84,7 +88,10 @@ def user_round_starts(messages: list[ChatMessage]) -> list[int]:
 
 
 def select_compaction_range(
-    messages: list[ChatMessage], policy: CompactionPolicy
+    messages: list[ChatMessage],
+    policy: CompactionPolicy,
+    *,
+    image_cost_chars: int = IMAGE_CONTEXT_COST_CHARS,
 ) -> tuple[int, int] | None:
     """确定要压成摘要的旧消息区间 ``[start, end)``；不需要 / 无法压缩返回 None。
 
@@ -95,7 +102,7 @@ def select_compaction_range(
     - 完整旧轮数不足（所有非 system 消息都落在 recent 窗口内）→ None，
       交给硬裁剪兜底。
     """
-    total = sum(len(m.content) for m in messages)
+    total = sum(message_cost(m, image_cost_chars=image_cost_chars) for m in messages)
     if total <= policy.hard_max_chars:
         return None
     starts = user_round_starts(messages)
@@ -151,12 +158,17 @@ async def compact_context(
     （``enforce_budget``），不抛错、不破坏结构；外层任务取消（CancelledError）
     仍正常传播，不被这里的兜底吞掉。
     """
-    rng = select_compaction_range(ctx.messages, policy)
+    rng = select_compaction_range(
+        ctx.messages, policy, image_cost_chars=ctx.image_cost_chars
+    )
     if rng is None:
         return None
     start, end = rng
     before_msgs = end - start
-    before_chars = sum(len(m.content) for m in ctx.messages[start:end])
+    before_chars = sum(
+        message_cost(m, image_cost_chars=ctx.image_cost_chars)
+        for m in ctx.messages[start:end]
+    )
     history_text = render_for_summary(ctx.messages, start, end)
 
     async def _summarize() -> object:

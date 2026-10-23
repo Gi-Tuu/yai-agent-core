@@ -124,11 +124,14 @@ class BudgetTracker:
         if usage is None:
             return
         self.token_usage_seen = True
-        self.prompt_tokens += int(getattr(usage, "prompt_tokens", 0) or 0)
-        self.completion_tokens += int(getattr(usage, "completion_tokens", 0) or 0)
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion = int(getattr(usage, "completion_tokens", 0) or 0)
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
         total = int(getattr(usage, "total_tokens", 0) or 0)
-        # 后端若没给 total，就用 prompt+completion 兜底，保证计数不缺。
-        self.total_tokens += total or (self.prompt_tokens + self.completion_tokens)
+        # 后端若没给 total，用**本次增量**兜底；用累计值会把前几次的 token
+        # 反复加进来（10、30、60 而不是 10、20、30），提前触发预算熔断。
+        self.total_tokens += total or (prompt + completion)
         limit = self.spec.max_tokens
         if limit is not None and self.total_tokens >= limit:
             self._trip(BudgetExceeded(SCOPE_TOKENS, limit, self.total_tokens))

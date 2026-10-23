@@ -888,15 +888,14 @@ class AgentLoop:
                     elif ev.type == EventType.CODE_TOOL_CREATED:
                         newly_registered.append(ev.data.get("name", ""))
                 continue
-            # 业务工具执行前过预算硬墙（meta-tool 编排不计入工具次数）；
-            # 超限直接冒泡到 astream 统一熔断，该工具不会被执行、不产生副作用。
-            if self._active_budget is not None:
-                self._active_budget.before_tool_call()
+            # 预算计数由执行器负责：组合工具的真实步骤也会逐次经过同一道闸，
+            # 不能只把"一次组合"记成一次业务调用。超限异常冒泡到 astream 统一熔断。
             tool_events, ok, result_text = await self.executor.execute(
-                call.name, call.arguments, subject=subject
+                call.name,
+                call.arguments,
+                subject=subject,
+                budget=self._active_budget,
             )
-            if self._active_budget is not None:
-                self._active_budget.record_tool_call()
             for tool_event in tool_events:
                 yield tool_event
             ctx.add(

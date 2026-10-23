@@ -398,6 +398,17 @@ def test_invocation_subset_validator_covers_structural_and_domain_keywords() -> 
     assert invocation_errors({"note": "x"}, schema)
 
 
+def test_date_format_rejects_trailing_junk() -> None:
+    """format: date 必须整串匹配；``2026-10-23junk`` 不能因为前 10 位像日期就通过。"""
+    schema = {
+        "type": "object",
+        "properties": {"day": {"type": "string", "format": "date"}},
+        "required": ["day"],
+    }
+    assert invocation_errors({"day": "2026-10-23"}, schema) == []
+    assert invocation_errors({"day": "2026-10-23junk"}, schema)
+
+
 def test_unknown_type_name_is_a_validation_error_not_a_pass() -> None:
     errors = invocation_errors({"a": 1}, {"type": "object", "properties": {"a": {"type": "int"}}})
     assert errors and "int" in errors[0]

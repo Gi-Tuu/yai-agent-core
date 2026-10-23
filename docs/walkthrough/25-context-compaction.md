@@ -62,7 +62,7 @@ def user_round_starts(messages):
 ### 3.3 确定压哪段：`select_compaction_range`
 
 ```python
-total = sum(len(m.content) for m in messages)
+total = sum(message_cost(m, image_cost_chars=image_cost_chars) for m in messages)
 if total <= policy.hard_max_chars:
     return None                          # ① 没超水位：不压
 starts = user_round_starts(messages)
@@ -77,6 +77,9 @@ return (start, keep_from)                # ③ 压 [第一轮首, 倒数第N轮�
 
 三种返回 `None` 的情况，核心思想是一句话：**宁可暂时超预算，也绝不从一轮中间下刀。** 真正返回区间时：
 
+- **总量、硬裁剪扣减、压缩选区共用 `message_cost`**：多模态片段（图片按保守代理成本、
+  文本片段按实际长度）在三个口径里必须一致；只让 `total_chars` 计入片段，会让图片
+  一超预算就多删整轮、长文本片段则永远触发不了摘要；
 - `start = starts[0]`：从第一个完整轮开始压；
 - `keep_from = starts[-N]`：倒数第 N 个轮首，它和之后的 recent 轮完整保留；
 - 区间两端都是 `user`，因此区间里的 `assistant(tool_calls)` 与其 `tool` 结果要么整段进摘要、要么整段保留，**不会出现"有 tool_calls 却没有 tool"的孤儿消息**。

@@ -22,7 +22,7 @@ from yai_core.diagnostics import (
     DiagnosticSink,
     emit,
 )
-from yai_core.types import ModelResponse
+from yai_core.types import ModelResponse, flatten_content_blocks
 
 # 异常类名里包含这些关键字时视为可重试（覆盖 openai SDK 的 Timeout/Connection/RateLimit）。
 _RETRYABLE_NAME_KEYS = (
@@ -39,6 +39,25 @@ _RETRYABLE_NAME_KEYS = (
 
 class _EmptyResponseError(RuntimeError):
     """模型返回空内容且无工具调用（思考模型偶发），视为可重试。"""
+
+
+def _messages_for(provider: Any, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按**实际尝试的后端**决定消息形态，而不是按整条链的声明决定。
+
+    包装层若只转发链级的 ``yai_multimodal``，主视觉后端故障后切到纯文本后端，
+    后者会收到它不认的内容数组；反过来整条链都降级又会让视觉后端看不到图。
+    这里逐后端降级：文本后端拿字符串，视觉后端原样接数组。
+    """
+    if bool(getattr(provider, "yai_multimodal", False)):
+        return messages
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            out.append({**message, "content": flatten_content_blocks(content)})
+        else:
+            out.append(message)
+    return out
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -67,6 +86,14 @@ class FallbackModelProvider:
 
     # 真实联网后端：让 llm_router="auto" 启用 LLM 分类。
     yai_live_router = True
+
+    @property
+    def yai_multimodal(self) -> bool:
+        """只要链上有视觉后端，就不能在包装层提前把图片降级成文字。"""
+        return any(
+            bool(getattr(provider, "yai_multimodal", False))
+            for provider in self.providers
+        )
 
     def __init__(
         self,
@@ -137,7 +164,9 @@ class FallbackModelProvider:
         for idx in order:
             provider = self.providers[idx]
             try:
-                resp = await self._attempt(provider, messages, tools, tier)
+                resp = await self._attempt(
+                    provider, _messages_for(provider, messages), tools, tier
+                )
                 # 成功：恢复健康并记住当前模型（粘性）。
                 self._unavailable_until[idx] = 0.0
                 self._active_index = idx

@@ -90,14 +90,18 @@ elif ev.type == EventType.DONE:
 
 ```python
 actual = set(trace.tool_calls)
-tool_recall = len(must & actual) / len(must)       # 该调的调了多少
+tool_recall = len(must & 成功结果集) / len(must)   # 该调的**成功**了多少
 tool_precision = len(actual & expected) / len(actual)  # 调的有多少合理
 ```
 
 - 漏调 `must_call` → 记进 `missing_tools`；
+- 调了 `must_call` 但**没有任何成功结果** → 记进 `failed_must_tools`，同样不能算完成；
 - 调了合理集合外、又不是禁调的工具 → 记进 `unexpected_tools`；
 - 边界：任务本不需要工具（`expected` 空）却没调工具，精确率记满分；
   该调工具却一个没调，精确率记 0。
+
+注意：`tool_precision` / `tool_recall` 是**工具名集合**指标，不校验参数值；参数与业务
+副作用要靠 golden 任务的凭证和结果断言补足，不能把"名字调对了"当成"事情做对了"。
 
 **2）越权 overreach**
 
@@ -121,12 +125,17 @@ unsupported = [e for e in delivered
 - **无支撑断言**：答复里写了某凭证，但没有任何一次成功工具结果包含它
   （例如工具根本没返回金额，答复却编了个金额）。
 
+出处核验**不会因为"工具全失败"而跳过**：只要任务期望工具，或实际发生过工具调用
+（哪怕全部失败），最终答复里的凭证就必须能在成功结果里找到。只有"本就不该用工具"
+的纯 direct 任务才跳过——否则"工具失败 + 答复照抄期望凭证"会被误判为通过。
+
 **4）综合完成判定**
 
 ```python
 completed = (ended_done and not errored
-             and not missing_tools and not unexpected_tools
-             and not missing_evidence and not overreach and not unsupported)
+             and not missing_tools and not failed_must_tools
+             and not unexpected_tools and not missing_evidence
+             and not overreach and not unsupported)
 ```
 
 任何一项不满足，正向任务都不算完成。`score_task` 把这些明细全留在 `TaskScore` 里，
@@ -139,7 +148,7 @@ completed = (ended_done and not errored
 
 ```python
 tool_precision = 总命中数 / 总实际调用数
-tool_recall    = 总 must 命中数 / 总 must 数
+tool_recall    = 总 must 成功数 / 总 must 数
 completion_rate = 通过任务数 / 任务总数
 ```
 

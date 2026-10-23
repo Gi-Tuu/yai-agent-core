@@ -768,6 +768,30 @@ class ResourcePart:
 ContentPart = TextPart | ImagePart | ResourcePart
 
 
+def flatten_content_blocks(blocks: Any) -> str:
+    """把 OpenAI 兼容的内容数组压成纯文本。
+
+    给不支持多模态的后端与故障切换包装用；图片与未知块都显式说明"看不到"，
+    不做静默丢弃——模型宁可知道自己缺资料，也不该把缺图当成没发生过。
+    """
+    if not isinstance(blocks, list):
+        return "" if blocks is None else str(blocks)
+    chunks: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = str(block.get("text", ""))
+            if text:
+                chunks.append(text)
+            continue
+        if block.get("type") == "image_url":
+            chunks.append("[图片：当前后端不支持多模态，模型看不到这张图]")
+            continue
+        chunks.append("[未知片段：当前后端不支持多模态]")
+    return "\n".join(chunks)
+
+
 def parts_to_text(parts: Any) -> str:
     """把消息片段渲染成纯文本（给不支持多模态的模型、上下文摘要、降级路径用）。
 

@@ -235,11 +235,11 @@ def _looks_like_datetime(text: str) -> bool:
 
 
 def _looks_like_date(text: str) -> bool:
-    """粗判 ISO 8601 日期（``YYYY-MM-DD``）。"""
-    if len(text) < 10:
+    """粗判 ISO 8601 日期（``YYYY-MM-DD``）：整串都必须是日期，不能只看前 10 位。"""
+    if len(text) != 10:
         return False
     try:
-        datetime.strptime(text[:10], "%Y-%m-%d")
+        datetime.strptime(text, "%Y-%m-%d")
     except ValueError:
         return False
     return True
