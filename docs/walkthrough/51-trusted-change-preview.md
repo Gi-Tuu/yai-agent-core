@@ -82,7 +82,18 @@ ToolExecutor.execute
 - `Panel.qml`：`pendingSummary` 追加 summary、diff、target；
 - `PERMISSION_ASKED` / `TOOL_CALL`：审计链保留实际预览。
 
-## 5. 诚实边界
+## 5. host_e 的落地
+
+`examples/host_e_sales_crm/agent_bridge.py` 在 `AgentCore.auto(...)` 之后调用
+`attach_write_previews(core, crm)`，只给写工具挂 preview 闭包：
+
+- 预览读当前 CRM 数据，渲染客户、跟进、订单、待办等实际变化；
+- token 是“当前数据 + 参数”的 SHA-256 摘要，确认后任一侧变化都会换 token；
+- `WebChannel` 声明 `yai_approval_context_aware = True`，把 `preview` 并进网页
+  `permission_request` 负载；
+- 预览器不调用写方法，只读业务对象；真实系统应换成自己的事务快照/revision。
+
+## 6. 诚实边界
 
 - token 由宿主计算；宿主返回常数 token，内核无法发现状态变化；
 - 内核只做"审批前后两次比较"，无法消除**第二次生成到 handler 执行之间**的
@@ -90,7 +101,7 @@ ToolExecutor.execute
 - 预览是宿主代码，内核不执行模型生成的预览文本；
 - 预览可能含敏感数据：宿主应只渲染审批人有权看到的内容，并自行做脱敏。
 
-## 6. 自检
+## 7. 自检
 
 1. 为什么预览生成器放在 `ToolGovernance` 而不是让模型填一个 `preview` 参数？
 2. token 变与 preview 文本变，哪个才是内核拒绝执行的依据？为什么？

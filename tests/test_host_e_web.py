@@ -70,6 +70,33 @@ def test_web_channel_confirm_approve_and_deny():
     asyncio.run(scenario())
 
 
+def test_web_channel_carries_host_preview_to_browser():
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        run: dict = {"queue": queue.Queue(), "pending": None, "active": True}
+        channel = WebChannel(run, loop)
+        preview = {
+            "summary": "为周涛新增跟进",
+            "token": "rev-1",
+            "diff": "+ 回访",
+        }
+        task = asyncio.ensure_future(
+            channel.confirm(
+                "add_followup",
+                {"customer": "周涛"},
+                {"preview": preview, "reason": "写操作"},
+            )
+        )
+        await asyncio.sleep(0)
+        prompt = run["queue"].get_nowait()
+        assert prompt["data"]["preview"] == preview
+        assert prompt["data"]["reason"] == "写操作"
+        resolve_pending(run, "confirm", True)
+        assert await task is True
+
+    asyncio.run(scenario())
+
+
 def test_web_channel_ask_answer_and_wrong_kind_rejected():
     async def scenario():
         loop = asyncio.get_running_loop()

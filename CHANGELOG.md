@@ -24,7 +24,8 @@
   导出）。审批前宿主生成 `summary / diff / target / token`，随 `PERMISSION_ASKED`、
   `Channel.confirm` 上下文与 `TOOL_CALL` 一起展示；确认后执行前重新生成并比较 token，
   变了就 `preview_stale` 拒绝执行，生成失败则 `preview_failed` 失败关闭。组合工具
-  自己的审批走同一规则；CLI/桌面/QML 已接入展示。
+  自己的审批走同一规则；CLI/桌面/QML 已接入展示。host_e 示例已接真实 preview
+  provider：写工具审批卡展示从当前 CRM 数据渲染的 diff，token 同样用于执行前复核。
 
 ### Fixed
 
