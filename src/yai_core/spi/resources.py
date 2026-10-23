@@ -22,7 +22,7 @@ import os
 import stat as stat_module
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 #: 相对路径的最大段数与总长度（防御性上限，正常业务路径远不到这里）。
 MAX_PATH_SEGMENTS = 16
@@ -145,9 +145,12 @@ def _fd_path(fd: int) -> Path | None:
         import ctypes
         import msvcrt
 
-        handle = msvcrt.get_osfhandle(fd)
+        # cast(Any)：msvcrt.get_osfhandle / ctypes.windll 在 Linux 的 typeshed
+        # 里不存在，直接属性访问会让跨平台 mypy 失败（运行时行为不变）。
+        handle = cast(Any, msvcrt).get_osfhandle(fd)
         buffer = ctypes.create_unicode_buffer(32768)
-        length = ctypes.windll.kernel32.GetFinalPathNameByHandleW(
+        kernel32 = cast(Any, ctypes).windll.kernel32
+        length = kernel32.GetFinalPathNameByHandleW(
             ctypes.c_void_p(handle), buffer, len(buffer), 0
         )
         if not length or length >= len(buffer):
