@@ -24,6 +24,7 @@ from yai_core.kernel.budget import Budget, BudgetExceeded, BudgetTracker
 from yai_core.kernel.compaction import CompactionPolicy, compact_context
 from yai_core.kernel.context import Context
 from yai_core.kernel.router import AdaptiveRouter, RouteDecision
+from yai_core.kernel.state import HostStateRegistry
 from yai_core.kernel.tiering import STANDARD, STRONG, TierPolicy
 from yai_core.policy.authorize import authorize_tool_call, snapshot_arguments
 from yai_core.spi import (
@@ -145,6 +146,7 @@ class AgentLoop:
         budget: Budget | None = None,
         auto_recall: Callable[[str], Awaitable[list[dict[str, object]]]] | None = None,
         auto_recall_k: int = DEFAULT_AUTO_RECALL_K,
+        host_state: HostStateRegistry | None = None,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -185,6 +187,10 @@ class AgentLoop:
         self.model_timeout = model_timeout
         # 本地诊断回调（旁路排障）；None=安静运行。同步、零依赖、异常不反噬。
         self._on_diagnostic = on_diagnostic
+        # 宿主实时状态：注册表由 AgentCore 持有，这里只读渲染；None = 不注入。
+        self.host_state = host_state
+        # 同一次任务里状态没变就不重复发事件（避免每轮刷一条同样的注入记录）。
+        self._last_state_fingerprint: str | None = None
         # 鸭子接线：把同一回调交给路由与模型后端，只要它们暴露可写的
         # on_diagnostic 属性（AdaptiveRouter / FallbackModelProvider 都支持）。
         # 宿主自建、不认识该属性的自定义组件不受影响。
@@ -273,16 +279,44 @@ class AgentLoop:
             {"count": len(event_items), "items": event_items},
         )
 
-    def _model_messages(self, ctx: Context) -> list[dict]:
-        """产出给模型的消息：后端不支持多模态时自动降级成纯文本。
+    async def _model_messages(
+        self, ctx: Context
+    ) -> tuple[list[dict], AgentEvent | None]:
+        """产出给模型的消息，并在每次调用前重新取一次宿主实时状态。
 
-        降级口径在 :meth:`Context.llm_messages` 里：图片与资源引用换成"模型看不到
-        它"的占位文本。后端没声明 ``yai_multimodal`` 时按"不支持"处理——发一个
-        后端不认的数组，比明说缺资料更糟。
+        后端不支持多模态时自动降级成纯文本（口径在 :meth:`Context.llm_messages`）：
+        图片与资源引用换成"模型看不到它"的占位文本——发一个后端不认的数组，
+        比明说缺资料更糟。
+
+        宿主状态是**瞬态**的：只塞进本次消息，不写回 ``ctx``；状态内容没变时
+        不再重复发 ``HOST_STATE`` 事件，变化或首次注入时才发。
         """
-        return ctx.llm_messages(
-            multimodal=bool(getattr(self.model, "yai_multimodal", False))
+        transient = ""
+        event: AgentEvent | None = None
+        if self.host_state is not None:
+            try:
+                body, info = await self.host_state.render(
+                    on_diagnostic=self._on_diagnostic
+                )
+            except Exception as exc:  # noqa: BLE001 - 状态是增强，不能拖垮模型调用
+                self._diag(
+                    DiagnosticKind.HOST_STATE_FAILED,
+                    f"宿主状态渲染失败（{type(exc).__name__}），本轮未注入",
+                    level=DiagnosticLevel.WARNING,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                body, info = "", None
+            if body and info is not None:
+                transient = body
+                fingerprint = str(info.get("fingerprint", ""))
+                if fingerprint != self._last_state_fingerprint:
+                    self._last_state_fingerprint = fingerprint
+                    event = AgentEvent(EventType.HOST_STATE, info)
+        messages = ctx.llm_messages(
+            multimodal=bool(getattr(self.model, "yai_multimodal", False)),
+            transient_system=transient,
         )
+        return messages, event
 
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
@@ -336,6 +370,8 @@ class AgentLoop:
         # 防止靠"多反问几轮"重置预算。loop 实例串行复用，无并发竞争。
         if _clarify_depth == 0:
             self._active_budget = self.budget.start() if self.budget is not None else None
+            # 新任务重新计一次宿主状态事件：即使状态与上个任务相同也要发。
+            self._last_state_fingerprint = None
         decision = await self.router.aclassify(
             task, self.registry, discoverable=self._discoverable_catalog()
         )
@@ -652,7 +688,10 @@ class AgentLoop:
         plan_tier = tier_policy.for_planning().tier if tier_policy is not None else tier
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self._model_chat(self._model_messages(ctx), None, tier=plan_tier)
+        messages, state_event = await self._model_messages(ctx)
+        if state_event is not None:
+            yield state_event
+        resp = await self._model_chat(messages, None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
@@ -800,7 +839,10 @@ class AgentLoop:
             if tier_counts is not None:
                 tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
-                resp = await self._model_chat(self._model_messages(ctx), tools_schema, tier=tier)
+                messages, state_event = await self._model_messages(ctx)
+                if state_event is not None:
+                    yield state_event
+                resp = await self._model_chat(messages, tools_schema, tier=tier)
             except BudgetExceeded:
                 # 预算熔断冒泡到 astream 统一收尾，不能被下面的"模型失败体面 return"吞掉。
                 raise
@@ -1051,7 +1093,10 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
-        resp = await self._model_chat(self._model_messages(ctx), None, tier=STANDARD)
+        messages, state_event = await self._model_messages(ctx)
+        if state_event is not None:
+            yield state_event
+        resp = await self._model_chat(messages, None, tier=STANDARD)
         yield AgentEvent(
             EventType.MODEL_MESSAGE,
             {"text": resp.content.strip(), "tier": STANDARD},
@@ -1271,7 +1316,10 @@ class AgentLoop:
         )
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-        resp = await self._model_chat(self._model_messages(ctx), None, tier=plan_tier)
+        messages, state_event = await self._model_messages(ctx)
+        if state_event is not None:
+            yield state_event
+        resp = await self._model_chat(messages, None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]

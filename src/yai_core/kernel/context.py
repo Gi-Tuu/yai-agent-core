@@ -109,17 +109,27 @@ class Context:
             return
         self.messages = [self.messages[0], *self.messages[aligned:]]
 
-    def llm_messages(self, *, multimodal: bool = True) -> list[dict]:
+    def llm_messages(
+        self, *, multimodal: bool = True, transient_system: str = ""
+    ) -> list[dict]:
         """产出 OpenAI 兼容的消息字典列表。
 
         ``multimodal=False`` 时（后端不支持内容数组）**把片段降级成纯文本**：
         文本块原样保留，图片与资源引用换成一���说明"模型看不到它"的占位——
         宁可让模型明知道自己缺资料，也不要发一个后端不认的数组。
+
+        ``transient_system`` 是**只进本次调用**的瞬态 system 块（宿主实时状态）：
+        插在基础 system 之后、历史之前，不写入 ``messages``，因此不会被压缩、
+        持久化或下一轮沿用。
         """
         out: list[dict] = []
-        for message in self.messages:
+        for index, message in enumerate(self.messages):
             payload = message.to_llm_dict()
             if not multimodal and isinstance(payload.get("content"), list):
                 payload["content"] = flatten_content_blocks(payload["content"])
             out.append(payload)
+            if index == 0 and transient_system.strip() and message.role == "system":
+                out.append({"role": "system", "content": transient_system})
+        if transient_system.strip() and not out:
+            out.append({"role": "system", "content": transient_system})
         return out

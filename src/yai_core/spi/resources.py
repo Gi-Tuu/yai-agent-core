@@ -124,7 +124,11 @@ def open_no_follow(path: Path, *, mode: str = "rb") -> int:
 
     **平台差异（必须知道）**：``O_NOFOLLOW`` 是 POSIX 扩展，**Windows 没有**
     （``os.O_NOFOLLOW`` 不存在），那边只能靠"打开前后各判一次"把窗口收窄，
-    不能根除。跨平台一致的安全承诺因此只到"POSIX 上无窗口、Windows 上窗口被收窄"。
+    不能根除。跨平台一致的安全承诺因此只到"POSIX 上最后一段无窗口、
+    Windows 上窗口被收窄"。
+
+    另外它**只保护最后一段**：父目录在校验后被换成链接仍会把打开引到别处。
+    调用方打开后应再用 :func:`fd_matches_path` 复核句柄真实路径。
     """
     flags = os.O_RDONLY
     if any(token in mode for token in ("w", "a", "+", "x")):
@@ -133,6 +137,62 @@ def open_no_follow(path: Path, *, mode: str = "rb") -> int:
         flags |= os.O_EXCL
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     return os.open(path, flags | nofollow)
+
+
+def _fd_path(fd: int) -> Path | None:
+    """尽力取已打开句柄的真实路径；平台取不到时返回 None。"""
+    if os.name == "nt":  # pragma: no cover - Windows 专用分支
+        import ctypes
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(fd)
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetFinalPathNameByHandleW(
+            ctypes.c_void_p(handle), buffer, len(buffer), 0
+        )
+        if not length or length >= len(buffer):
+            return None
+        value = buffer.value
+        if value.startswith("\\\\?\\UNC\\"):
+            value = "\\\\" + value[8:]
+        elif value.startswith("\\\\?\\"):
+            value = value[4:]
+        return Path(value)
+
+    try:  # Linux：句柄路径最可靠
+        actual = os.readlink(f"/proc/self/fd/{fd}")
+        if actual.endswith(" (deleted)"):
+            actual = actual[: -len(" (deleted)")]
+        return Path(actual)
+    except OSError:
+        pass
+    try:  # macOS
+        import importlib
+
+        fcntl = importlib.import_module("fcntl")
+        getpath = getattr(fcntl, "F_GETPATH", None)
+        if getpath is None:
+            return None
+        raw = fcntl.fcntl(fd, getpath, b"\0" * 1024)
+        return Path(raw.split(b"\0", 1)[0].decode())
+    except (ImportError, OSError):
+        return None
+
+
+def fd_matches_path(fd: int, expected: Path) -> bool:
+    """打开后复核：句柄实际指向的文件必须仍是校验过的那个。
+
+    ``O_NOFOLLOW`` 只保护**最后一段**；路径校验与 ``open`` 之间，父目录也可能被
+    换成链接/重解析点，把读取引到别处。这里比对句柄的真实路径，把父目录竞态
+    也收窄。平台取不到句柄路径时返回 ``True``——不制造新的失败面，但也不能
+    假装已经验证过（见 :func:`open_no_follow` 的平台差异说明）。
+    """
+    actual = _fd_path(fd)
+    if actual is None:
+        return True
+    return os.path.normcase(os.path.normpath(str(actual))) == os.path.normcase(
+        os.path.normpath(str(expected))
+    )
 
 
 def normalize_relative(candidate: Any) -> str:

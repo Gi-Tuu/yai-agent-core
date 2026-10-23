@@ -78,6 +78,18 @@ async def _check(
     return await policy.check(name, arguments)
 
 
+async def policy_decision(
+    policy: PermissionPolicy, name: str, arguments: dict, subject: Any = None
+) -> PermissionDecision:
+    """只做策略判定、不询问审批人。
+
+    供"已经执行过、现在只是重放结果"的路径使用：重放不产生新的副作用，
+    因此不重新弹审批卡，但**当前的 DENY 仍然必须生效**——策略可以随时收紧，
+    缓存不是绕过它的后门。
+    """
+    return await _check(policy, name, arguments, subject)
+
+
 async def confirm_with_context(
     channel: Channel, name: str, shown: dict, context: dict[str, Any]
 ) -> bool:

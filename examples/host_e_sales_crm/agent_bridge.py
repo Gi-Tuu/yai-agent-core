@@ -70,18 +70,6 @@ WRITE_TOOL_NAMES = {
 }
 
 
-def _revision(crm, arguments: dict) -> str:
-    """预览 token：当前 CRM 全量数据 + 参数；任何一侧变化都会换 token。"""
-    # 这是示例宿主，直接读取业务对象；真实系统应调用自己的 revision/事务快照。
-    raw = json.dumps(
-        {"data": crm._data, "arguments": arguments},
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-
-
 def _require_customer(crm, ref: object, *, company: bool = False) -> dict:
     text = str(ref or "").strip()
     if not text:
@@ -92,10 +80,87 @@ def _require_customer(crm, ref: object, *, company: bool = False) -> dict:
     return found
 
 
+def _tool_state(crm, tool_name: str, arguments: dict):
+    """审批依据：只取这次写操作真正会读到的状态。
+
+    全量快照会让"另一张表改了一行"也把审批打成失效——审批卡开着时去补个待办，
+    回来就被告知依据已变。按工具圈定后，无关变更不影响 token，同一目标的变化仍会。
+    """
+    data = crm._data
+    if tool_name == "add_followup":
+        customer = _require_customer(crm, arguments.get("customer"))
+        return {
+            "customer": customer,
+            "followups": [f for f in data["followups"] if f["customer"] == customer["name"]],
+        }
+    if tool_name == "create_todo":
+        # 新增待办不读已有待办（也不做重名检查），参数本身就是全部依据。
+        return {}
+    if tool_name == "add_customer":
+        # 只关心"会不会撞名"：重名检查做精确 + 双向包含匹配。
+        name = str(arguments.get("name", "")).strip()
+        return {
+            "conflicts": [
+                c["name"]
+                for c in data["customers"]
+                if name and (name in c["name"] or c["name"] in name)
+            ]
+        }
+    if tool_name == "update_customer":
+        return {"customer": _require_customer(crm, arguments.get("name"))}
+    if tool_name == "create_order":
+        # 客户决定落到哪家公司，现有订单决定新订单号。
+        return {
+            "customer": _require_customer(crm, arguments.get("customer"), company=True),
+            "orders": data["orders"],
+        }
+    if tool_name == "create_opportunity":
+        # 只有同名的已存在商机会改变结果；客户决定落到哪家公司。
+        title = str(arguments.get("title", "")).strip()
+        return {
+            "customer": _require_customer(crm, arguments.get("customer"), company=True),
+            "title_taken": any(o["title"] == title for o in data["opportunities"]),
+        }
+    if tool_name == "update_opportunity_stage":
+        title = str(arguments.get("title", "")).strip()
+        return {"matches": [o for o in data["opportunities"] if title in o["title"]]}
+    if tool_name == "complete_todo":
+        title = str(arguments.get("title", "")).strip()
+        return {
+            "open_matches": [
+                t for t in data["todos"] if not t["done"] and title in t["title"]
+            ]
+        }
+    if tool_name == "delete_todo":
+        title = str(arguments.get("title", "")).strip()
+        return {"matches": [t for t in data["todos"] if title in t["title"]]}
+    if tool_name == "delete_order":
+        wanted = str(arguments.get("order", "")).strip()
+        return {"matches": [o for o in data["orders"] if wanted in str(o.get("order", ""))]}
+    # 其余写工具没有专属预览器：保守起见仍按全量数据判定。
+    return {"data": data}
+
+
+def _revision(crm, tool_name: str, arguments: dict) -> str:
+    """预览 token：工具 + 本次会读到的状态 + 参数；无关变更不换 token。"""
+    # 这是示例宿主，直接读取业务对象；真实系统应调用自己的 revision/事务快照。
+    raw = json.dumps(
+        {
+            "tool": tool_name,
+            "state": _tool_state(crm, tool_name, arguments),
+            "arguments": arguments,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def _render_write_preview(crm, tool_name: str, arguments: dict) -> ChangePreview:
     """宿主侧真实预览：读当前业务对象，渲染这次写操作会造成什么变化。"""
     args = dict(arguments or {})
-    token = _revision(crm, args)
+    token = _revision(crm, tool_name, args)
     target = ""
     if tool_name == "add_followup":
         customer = _require_customer(crm, args.get("customer"))

@@ -25,6 +25,8 @@ from yai_core.kernel import (
     BudgetExceeded,
     BudgetTracker,
     Context,
+    HostStateProvider,
+    HostStateRegistry,
     RouteDecision,
 )
 from yai_core.learning import ContextualBanditSelector
@@ -95,6 +97,8 @@ __all__ = [
     "BudgetExceeded",
     "BudgetTracker",
     "Context",
+    "HostStateProvider",
+    "HostStateRegistry",
     "ContextualBanditSelector",
     "MetricsRecorder",
     "CapabilityHealth",

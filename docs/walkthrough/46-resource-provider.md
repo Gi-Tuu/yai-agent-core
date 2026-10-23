@@ -46,6 +46,13 @@ file_list/read/create/patch ←  四个 async 工具函数，交给 AgentCore.au
 第 1 道拦"链到外面"，第 2 道拦"绕出去"。测试里 `allow_symlinks=True` 的宽松策略
 **仍然**拦不住逃逸，就是专门钉第 2 道闸独立有效。
 
+两道闸都发生在 `open` 之前，所以还剩"校验完、打开前"的窗口。POSIX 的 `O_NOFOLLOW`
+只能保护**最后一段**，Windows 根本没有这个标志；父目录被换成链接时两者都看不见。
+电池层因此补了**打开后复核**：读路径用句柄的真实路径（Linux `/proc/self/fd`、
+macOS `F_GETPATH`、Windows `GetFinalPathNameByHandleW`）比对校验过的落点；写路径在
+`replace`/`link` 前再 `realpath` 一次。平台取不到句柄路径时按"未验证"降级，不假装
+已经验证过。
+
 ## 2. 写盘的四条实现口径
 
 ```

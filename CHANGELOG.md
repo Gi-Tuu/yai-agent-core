@@ -7,6 +7,42 @@
 
 ## [Unreleased]
 
+### Added
+
+- **宿主实时状态（现状锚）**：`AgentCore.register_state_provider()` /
+  `unregister_state_provider()` 允许宿主注册只读快照回调。内核在**每次主模型调用前**
+  重新取一次状态（工具名聚焦的窄调用除外），作为瞬态 system 块插在基础提示之后、
+  历史之前；不写入
+  `Context.messages`，因此不进压缩摘要、不进长期记忆、下一轮不沿用旧值。
+  单个 provider 默认 2000 字符、总量 4000 字符、异步 provider 2 秒上限；
+  provider 抛错/超时只发 `HOST_STATE_FAILED` 诊断并跳过，其余状态照常注入。
+  状态变化（或首次注入）时发 `HOST_STATE` 事件，载荷只含 provider 名、字符数、
+  截断标记与指纹，**不含状态内容**。状态块明确标注"是数据不是指令"，且只能由
+  宿主注册——模型参数、工具结果与用户消息都改不了它。
+- **路由 benchmark 的留出集 / 冻结学习评测**：新增 `split_tasks()` 与
+  `python scripts/benchmark_router.py --holdout`。按策略分层切出训练/留出任务，
+  只在训练集上学习，**冻结参数后**在没见过的任务上评测，并与规则基线、Oracle
+  对比；硬校验要求冻结后的成功率显著高于规则，否则非零退出。原有主曲线保留
+  （同批任务边学边测），两份结果分别写入 `router_bench.json` 与
+  `router_holdout.json`。
+
+### Fixed
+
+- **host_e 预览 token 的判定范围收窄到相关状态**：此前 token 哈希整个 CRM 快照，
+  审批卡开着时去隔壁补一条待办、给别的客户记跟进，都会让这次审批被判 `preview_stale`
+  ——而它其实与本次写操作无关。现在按工具圈定依据（目标客户及其跟进、目标商机、
+  待办集合、订单表决定的新订单号等），无关变更不再误伤；同一目标的变化仍会失效。
+  圈定范围由宿主负责，真实系统应换成自己的 revision/事务快照。
+- **幂等重放不再绕过权限收紧与参数校验**：重放前仍会跑一次策略判定，当前策略
+  为 DENY 时拒绝（缓存不是后门）；缓存条目绑定参数指纹，同一个幂等键换了参数
+  会返回 `idempotency_conflict`（`not_started`）而不是把上次结果当成这次的。
+  重放本身仍不重复执行、不重新弹人工审批。
+- **父目录链接替换的竞态窗口进一步收窄**：`O_NOFOLLOW` 只保护最后一段，父目录在
+  校验后被换成链接仍能把读取/落盘引到别处（Windows 连 `O_NOFOLLOW` 都没有）。
+  读路径在 `open` 后用句柄真实路径复核（Linux `/proc/self/fd`、macOS `F_GETPATH`、
+  Windows `GetFinalPathNameByHandleW`）；写路径在 `replace`/`link` 前再 `realpath`
+  一次。平台取不到句柄路径时按未验证降级，不制造新的失败面，也不假装验证过。
+
 ## [v0.14.0] - 2026-10-23
 
 ### Added

@@ -20,6 +20,7 @@
 用法：
     python scripts/benchmark_router.py            # 跑默认 8 seeds × 3 epochs
     python scripts/benchmark_router.py --seeds 4 --epochs 2
+    python scripts/benchmark_router.py --holdout  # 训练/留出分离的冻结学习评测
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from router_bench_tasks import TASKS, BenchTask  # noqa: E402
 from yai_core.discovery import build_spec  # noqa: E402
 from yai_core.kernel.router import AdaptiveRouter  # noqa: E402
 from yai_core.learning.bandit import ContextualBanditSelector  # noqa: E402
+from yai_core.learning.features import TaskFeatures  # noqa: E402
 from yai_core.learning.outcomes import extract_route_outcome  # noqa: E402
 from yai_core.tools.registry import ToolRegistry  # noqa: E402
 from yai_core.types import AgentEvent, EventType, Strategy  # noqa: E402
@@ -220,6 +222,16 @@ def _build_router(line: str, seed: int) -> AdaptiveRouter | None:
     raise ValueError(f"未知对比线：{line}")  # pragma: no cover
 
 
+def _learned_choice(
+    router: AdaptiveRouter, task: str, registry: ToolRegistry
+) -> tuple[Strategy, str]:
+    """复用真实路由的同步路径：selector 前置、不表态则规则兜底。"""
+    decision = router._learned_decision(task, registry)
+    if decision is None:
+        decision = router._rules(task, registry)
+    return decision.strategy, decision.source
+
+
 def run_line(line: str, seed: int, epochs: int, registry: ToolRegistry) -> list[dict]:
     """跑一条对比线，返回逐步记录。"""
     tasks = _ordered_tasks(seed, epochs)
@@ -233,11 +245,7 @@ def run_line(line: str, seed: int, epochs: int, registry: ToolRegistry) -> list[
         elif line == "rules":
             chosen, source = router.classify(item.task, registry), "rules"
         else:
-            # 复用真实路由的同步路径：selector 前置、不表态则规则兜底。
-            decision = router._learned_decision(item.task, registry)
-            if decision is None:
-                decision = router._rules(item.task, registry)
-            chosen, source = decision.strategy, decision.source
+            chosen, source = _learned_choice(router, item.task, registry)
 
         events, model_calls = simulate(gt, chosen)
         outcome = extract_route_outcome(
@@ -449,6 +457,248 @@ def print_table(result: dict) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# 留出集 / 冻结学习评测
+# ---------------------------------------------------------------------------
+# 上面的主曲线在**同一批任务**上边学边测，末段成功率会包含“已经见过这道题”的
+# 记忆成分。这里换一个更严格的问题：在训练集上学完、**冻结**参数后，换一批
+# 没见过的任务，还能不能比不学习的规则基线更好。留出集与训练集按策略分层切分，
+# 评测期间不调用 ``record``。
+
+HOLDOUT_RATIO = 0.3
+HOLDOUT_SPLIT_SEED = 7
+HOLDOUT_LINES = ("rules", "bandit_frozen", "oracle")
+_HOLDOUT_LABELS = {
+    "rules": "规则路由（基线，不学习）",
+    "bandit_frozen": "训练后冻结（留出集）",
+    "oracle": "Oracle（完美路由天花板）",
+}
+
+
+def split_tasks(
+    tasks: list[BenchTask],
+    ratio: float = HOLDOUT_RATIO,
+    seed: int = HOLDOUT_SPLIT_SEED,
+) -> tuple[list[BenchTask], list[BenchTask]]:
+    """按 ground-truth 分层切分训练/留出集（每条策略至少留 1 条）。"""
+    if not 0.0 < ratio < 1.0:
+        raise ValueError("留出比例必须在 (0, 1) 之间")
+    groups: dict[str, list[BenchTask]] = {}
+    for item in tasks:
+        groups.setdefault(item.gt, []).append(item)
+    rng = random.Random(seed)
+    train: list[BenchTask] = []
+    held: list[BenchTask] = []
+    for gt in sorted(groups):
+        rows = list(groups[gt])
+        rng.shuffle(rows)
+        n_hold = max(1, round(len(rows) * ratio))
+        held.extend(rows[:n_hold])
+        train.extend(rows[n_hold:])
+    train.sort(key=lambda t: (t.gt, t.task))
+    held.sort(key=lambda t: (t.gt, t.task))
+    return train, held
+
+
+def _train_bandit(
+    router: AdaptiveRouter,
+    tasks: list[BenchTask],
+    registry: ToolRegistry,
+    seed: int,
+    epochs: int,
+) -> None:
+    """只在训练集上学习；每个 epoch 重新打乱，模拟长期陆续到来的任务。"""
+    selector = router.selector
+    assert selector is not None
+    for epoch in range(epochs):
+        batch = list(tasks)
+        random.Random(seed * 1000 + epoch).shuffle(batch)
+        for item in batch:
+            gt = Strategy(item.gt)
+            chosen, _ = _learned_choice(router, item.task, registry)
+            events, _ = simulate(gt, chosen)
+            outcome = extract_route_outcome(
+                events, chosen, max_iters=6, clarify_budget=2
+            )
+            selector.record(item.task, registry, chosen, outcome)
+
+
+def _evaluate_held(
+    line: str,
+    router: AdaptiveRouter | None,
+    held: list[BenchTask],
+    registry: ToolRegistry,
+    rules: AdaptiveRouter,
+) -> list[dict]:
+    """在留出集上评测；调用方保证这条路径不产生 ``record``。"""
+    records: list[dict] = []
+    for item in held:
+        gt = Strategy(item.gt)
+        if line == "oracle":
+            chosen, source = gt, "oracle"
+        elif line == "rules":
+            chosen, source = rules.classify(item.task, registry), "rules"
+        else:
+            assert router is not None
+            chosen, source = _learned_choice(router, item.task, registry)
+        events, model_calls = simulate(gt, chosen)
+        outcome = extract_route_outcome(
+            events, chosen, max_iters=6, clarify_budget=2
+        )
+        records.append(
+            {
+                "task": item.task,
+                "gt": gt.value,
+                "chosen": chosen.value,
+                "source": source,
+                "success": bool(outcome.success),
+                "reward": round(outcome.reward, 4),
+                "tool_calls": outcome.tool_calls,
+                "model_calls": model_calls,
+                "false_clarify": chosen == Strategy.CLARIFY and gt != Strategy.CLARIFY,
+            }
+        )
+    return records
+
+
+def run_holdout(
+    seeds: int = 8,
+    epochs: int = 3,
+    *,
+    registry: ToolRegistry | None = None,
+    ratio: float = HOLDOUT_RATIO,
+    split_seed: int = HOLDOUT_SPLIT_SEED,
+) -> dict:
+    """训练/留出分离的评测：学完冻结，在没见过的任务上看泛化。"""
+    registry = registry or build_registry()
+    train, held = split_tasks(TASKS, ratio, split_seed)
+    per_line: dict[str, list[list[dict]]] = {line: [] for line in HOLDOUT_LINES}
+    coverage: list[float] = []
+
+    for seed in range(seeds):
+        rules = AdaptiveRouter()
+        for line in HOLDOUT_LINES:
+            router: AdaptiveRouter | None = None
+            if line == "bandit_frozen":
+                router = AdaptiveRouter(selector=ContextualBanditSelector(seed=seed))
+                _train_bandit(router, train, registry, seed, epochs)
+                selector = router.selector
+                assert selector is not None
+                seen = sum(
+                    1
+                    for item in held
+                    if selector.observed_count(
+                        TaskFeatures.from_task(item.task, registry)
+                    )
+                    > 0
+                )
+                coverage.append(seen / len(held))
+            per_line[line].append(_evaluate_held(line, router, held, registry, rules))
+
+    summary: dict[str, dict] = {}
+    for line in HOLDOUT_LINES:
+        runs = per_line[line]
+        flat = [record for recs in runs for record in recs]
+        per_seed = [
+            sum(record["success"] for record in recs) / len(recs) for recs in runs
+        ]
+        summary[line] = {
+            "holdout_success": round(sum(per_seed) / seeds, 4),
+            "holdout_min": round(min(per_seed), 4),
+            "holdout_max": round(max(per_seed), 4),
+            "avg_tool_calls": round(
+                sum(r["tool_calls"] for r in flat) / len(flat), 3
+            ),
+            "avg_model_calls": round(
+                sum(r["model_calls"] for r in flat) / len(flat), 3
+            ),
+            "false_clarify_rate": round(
+                sum(r["false_clarify"] for r in flat) / len(flat), 4
+            ),
+        }
+    summary["bandit_frozen"]["context_coverage"] = round(
+        sum(coverage) / len(coverage), 4
+    )
+
+    return {
+        "meta": {
+            "n_train": len(train),
+            "n_holdout": len(held),
+            "ratio": ratio,
+            "split_seed": split_seed,
+            "epochs": epochs,
+            "seeds": seeds,
+            "train_gt": {
+                s: sum(1 for t in train if t.gt == s)
+                for s in ("direct", "react", "plan", "clarify")
+            },
+            "holdout_gt": {
+                s: sum(1 for t in held if t.gt == s)
+                for s in ("direct", "react", "plan", "clarify")
+            },
+        },
+        "summary": summary,
+    }
+
+
+def print_holdout_table(result: dict) -> None:
+    print("\n=== 留出集 / 冻结学习评测（训练后不再更新参数）===")
+    header = (
+        f"{'对比线':<24}{'留出成功率':>10}{'最低':>8}{'最高':>8}"
+        f"{'上下文覆盖':>10}{'误澄清率':>9}"
+    )
+    print(header)
+    print("-" * len(header))
+    for line in HOLDOUT_LINES:
+        s = result["summary"][line]
+        coverage = s.get("context_coverage")
+        coverage_text = f"{coverage * 100:>8.1f}%" if coverage is not None else f"{'-':>9}"
+        print(
+            f"{_HOLDOUT_LABELS[line]:<22}"
+            f"{s['holdout_success'] * 100:>9.1f}%"
+            f"{s['holdout_min'] * 100:>7.1f}%"
+            f"{s['holdout_max'] * 100:>7.1f}%"
+            f"{coverage_text:>10}"
+            f"{s['false_clarify_rate'] * 100:>8.1f}%"
+        )
+
+
+def main_holdout(
+    seeds: int = 8,
+    epochs: int = 3,
+    *,
+    ratio: float = HOLDOUT_RATIO,
+    split_seed: int = HOLDOUT_SPLIT_SEED,
+    out_dir: Path | None = None,
+) -> dict:
+    """跑留出集评测、写 JSON，并按"显著优于规则"做硬校验。"""
+    result = run_holdout(
+        seeds=seeds, epochs=epochs, ratio=ratio, split_seed=split_seed
+    )
+
+    out_dir = out_dir or (_ROOT / "benchmark_out")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "router_holdout.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print_holdout_table(result)
+    meta = result["meta"]
+    print(
+        f"\n训练 {meta['n_train']} 条 / 留出 {meta['n_holdout']} 条"
+        f"（按策略分层，split_seed={meta['split_seed']}）"
+    )
+
+    frozen = result["summary"]["bandit_frozen"]["holdout_success"]
+    rules = result["summary"]["rules"]["holdout_success"]
+    print(f"硬校验：冻结 bandit 留出 {frozen:.1%} vs rules 留出 {rules:.1%}")
+    if not frozen > rules + 0.05:
+        print("FAIL：冻结后的学习成果没有显著超过规则基线，疑似只在训练集上生效。")
+        raise SystemExit(1)
+    print("PASS：冻结参数在留出任务上仍显著优于规则基线，学习可泛化。")
+    print(f"产物：{out_dir / 'router_holdout.json'}")
+    return result
+
+
 def main(seeds: int = 8, epochs: int = 3, window: int = 15, out_dir: Path | None = None) -> dict:
     registry = build_registry()
     result = aggregate(seeds, epochs, registry, window)
@@ -478,5 +728,20 @@ if __name__ == "__main__":
     parser.add_argument("--seeds", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--window", type=int, default=15)
+    parser.add_argument(
+        "--holdout",
+        action="store_true",
+        help="改用训练/留出分离的冻结学习评测（学完冻结，在没见过的任务上测）",
+    )
+    parser.add_argument("--holdout-ratio", type=float, default=HOLDOUT_RATIO)
+    parser.add_argument("--split-seed", type=int, default=HOLDOUT_SPLIT_SEED)
     args = parser.parse_args()
-    main(seeds=args.seeds, epochs=args.epochs, window=args.window)
+    if args.holdout:
+        main_holdout(
+            seeds=args.seeds,
+            epochs=args.epochs,
+            ratio=args.holdout_ratio,
+            split_seed=args.split_seed,
+        )
+    else:
+        main(seeds=args.seeds, epochs=args.epochs, window=args.window)
