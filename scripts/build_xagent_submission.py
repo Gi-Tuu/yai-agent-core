@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -147,8 +148,12 @@ def preflight_offline() -> dict:
         url = manifest[key]
         if not url.startswith("https://") or "localhost" in url:
             fail(f"{key} 必须是公网 HTTPS URL")
-    origins = {re.match(r"https://[^/]+", manifest[k]).group(0) for k in
-               ("apiBaseUrl", "healthCheckUrl", "deploymentProofUrl")}
+    origins = set()
+    for key in ("apiBaseUrl", "healthCheckUrl", "deploymentProofUrl"):
+        matched = re.match(r"https://[^/]+", manifest[key])
+        if matched is None:  # 上一行已保证 https 开头，这里是类型收窄兜底
+            fail(f"{key} 不是合法 URL")
+        origins.add(matched.group(0))
     if len(origins) != 1:
         fail("API / health / deployment-proof 必须同源")
     if not manifest["deploymentProofUrl"].endswith("/.well-known/xagent-verification.json"):
@@ -206,10 +211,25 @@ def preflight_offline() -> dict:
     return manifest
 
 
+# 预检只允许访问官方域（GitHub commit 可访问性 + 线上验证端点），
+# manifest 字段被篡改时 fail-closed，不向任意地址发请求。
+_ALLOWED_HOSTS = frozenset(
+    {
+        "api.github.com",
+        "github.com",
+        "objects.githubusercontent.com",
+        "yai-agent-core.onrender.com",
+    }
+)
+
+
 def http_json(url: str) -> dict:
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in _ALLOWED_HOSTS:
+        raise ValueError(f"预检只允许 https 官方域，拒绝访问：{url}")
     req = urllib.request.Request(url, headers={"User-Agent": "yai-submission-check",
                                                "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - 固定官方 URL
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - 域名白名单已校验
         return json.loads(resp.read().decode("utf-8"))
 
 

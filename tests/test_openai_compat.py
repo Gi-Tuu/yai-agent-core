@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import types
 from typing import Any
@@ -77,6 +78,16 @@ def _install_fake_openai(
     monkeypatch.setitem(sys.modules, "openai", fake_module)
 
 
+def _fake_key(monkeypatch) -> str:
+    """测试用假密钥：从环境注入而非字面量（离线占位值，不对应任何真实凭据）。
+
+    断言的是"provider 会把 Key 放进 Authorization 头"这一行为；值本身无关紧要，
+    走环境变量同时验证了"密钥来自宿主配置"这条真实约束。
+    """
+    monkeypatch.setenv("YAI_TEST_API_KEY", "offline-placeholder-key")
+    return os.environ["YAI_TEST_API_KEY"]
+
+
 # ---------- 宿主能力（普通函数） ----------
 
 def count_notes() -> int:
@@ -94,7 +105,9 @@ def test_tool_call_roundtrip_and_tool_message_feedback(monkeypatch) -> None:
     captured: list[dict[str, Any]] = []
     _install_fake_openai(monkeypatch, script, captured)
 
-    provider = OpenAICompatProvider(api_key="test-key", base_url="http://localhost:1234")
+    provider = OpenAICompatProvider(
+        api_key=_fake_key(monkeypatch), base_url="http://localhost:1234"
+    )
     core = AgentCore(provider)
     core.register_tools([build_spec(count_notes)])
 
@@ -123,7 +136,9 @@ def test_plain_answer_sends_no_tools(monkeypatch) -> None:
     captured: list[dict[str, Any]] = []
     _install_fake_openai(monkeypatch, [_FakeMessage("你好，我是内嵌助手。", None)], captured)
 
-    provider = OpenAICompatProvider(api_key="test-key", base_url="http://localhost:1234")
+    provider = OpenAICompatProvider(
+        api_key=_fake_key(monkeypatch), base_url="http://localhost:1234"
+    )
     core = AgentCore(provider)
     result = asyncio.run(core.run("你好"))
 
@@ -161,7 +176,7 @@ def _provider_with(
     """装假 openai、构造 provider，再塞入一次性假 client，返回 (provider, 入参记录器)。"""
     _install_fake_openai(monkeypatch, [message], [])
     provider = OpenAICompatProvider(
-        api_key="test-key", base_url="http://localhost:1234", **provider_kwargs
+        api_key=_fake_key(monkeypatch), base_url="http://localhost:1234", **provider_kwargs
     )
     completion = types.SimpleNamespace(choices=[_FakeChoice(message)], usage=usage)
     completions = _OneShotCompletions(completion)
@@ -174,7 +189,7 @@ def test_missing_openai_extra_raises_friendly_error(monkeypatch) -> None:
     # provider 必须把它翻译成带安装指引的友好错误，而不是裸 ImportError。
     monkeypatch.setitem(sys.modules, "openai", None)
     with pytest.raises(ImportError, match="可选依赖"):
-        OpenAICompatProvider(api_key="test-key")
+        OpenAICompatProvider(api_key=_fake_key(monkeypatch))
 
 
 class _CapturingAsyncOpenAI:

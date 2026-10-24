@@ -7,17 +7,17 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import threading
-import urllib.error
-import urllib.request
 from datetime import date
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from _local_http import local_json  # noqa: E402
+
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
@@ -50,26 +50,19 @@ def server():
 
 
 def _post(base, arguments, headers=None):
-    req = urllib.request.Request(
-        base + "/api/agent/tool",
-        data=json.dumps({"name": "list_customers", "arguments": arguments}).encode(),
-        headers={"Content-Type": "application/json", **(headers or {})},
+    status, body = local_json(
+        base,
+        "/api/agent/tool",
         method="POST",
+        payload={"name": "list_customers", "arguments": arguments},
+        headers=headers or {},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode())
+    return status, body
 
 
 def _get(base, path, headers=None):
-    req = urllib.request.Request(base + path, headers=headers or {})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status
-    except urllib.error.HTTPError as exc:
-        return exc.code
+    status, _ = local_json(base, path, headers=headers or {})
+    return status
 
 
 # ---------- 环回判定与启动守卫 ----------
