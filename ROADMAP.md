@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.15.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-24（对应已发布版本 **v0.16.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -156,7 +156,7 @@
   unknown / partial；`call_id` 透传；宿主 `idempotency_key` 存在时同 key 重试不再进
   handler（进程内缓存，跨进程仍归宿主）。
 
-### v0.15 — 宿主现状锚与执行治理加固（tag 2026-10-24，当前发布版本）
+### v0.15 — 宿主现状锚与执行治理加固（tag 2026-10-24）
 
 - **宿主实时状态（现状锚）**：`register_state_provider()` 注册只读快照，每次主模型
   调用前作为瞬态 system 块注入；不进历史、压缩与长期记忆；有单条/总量上限，provider
@@ -166,12 +166,18 @@
 - **证据链补齐**：路由 benchmark 增加留出集/冻结学习评测并接入 CI；Windows 增加
   junction 父目录替换测试；能力体检、执行收据、预览与状态注入的离线用例补齐。
 
+### v0.16 — 语言无关宿主接入（tag 2026-10-24，当前发布版本）
+
+- **Sidecar 会话控制协议**：`python -m yai_core.sidecar` 用 stdio NDJSON +
+  JSON-RPC 2.0 承载初始化、运行、取消、审批/澄清与事件流；工具面仍走
+  MCP/OpenAPI，不新增 `tool/call` 通道；单进程单任务，桥接失败回滚，关闭时
+  取消任务并释放 core。
+- **证据**：16 个离线用例覆盖审批/澄清/取消/错误码/stdio/MCP/OpenAPI，另有
+  第 54 篇讲义与多语言接入文档同步。
+
 ## 下一步
 
-### v0.16 — 候选（未排序，等维护者拍板）
-
-> 已在 main 待发版（详见 `CHANGELOG.md` 的 `[Unreleased]`）：Sidecar 会话控制协议
-> （stdio NDJSON JSON-RPC；工具面仍走 MCP/OpenAPI）。
+### v0.17 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。
