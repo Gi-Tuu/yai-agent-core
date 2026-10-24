@@ -1,10 +1,15 @@
 // shell/desktop/qml/NebulaOrbCanvas.qml
-// Drop-in Qt Quick 2D Canvas implementation of the 4-state Orange Nebula & Clockwise Planet header
+// Qt Quick 2D Canvas implementation of the 4-state Orange Nebula & Clockwise Planet header
 // States (phase):
 //   "idle"     -> 未工作：星云不断向右飘（左深右浅）
 //   "working"  -> 工作中：俯视同心圆行星凝聚，顺时针旋转 + 轨道轨迹（内密外疏、左深右浅）
 //   "complete" -> 完成时：超新星冲击波爆发并平滑恢复为向右飘动的星云
 //   "frozen"   -> 待确认：HITL 审批拦截，时间平滑减速至完全静止
+//
+// 渲染特征对齐 web_preview 的 nebula_engine.js：四色调色板、径向核心光晕、虚线旋转轨道、
+// 顺时针拖尾弧、行星球渐变与暗环、呼吸透明度、纵向波动、超新星粒子爆发与双冲击波。
+// 粒子数与空闲帧率按常驻桌面的 CPU 预算压低（120 粒 / 空闲 20fps）；所有运动按真实 dt 积分，
+// 降帧只损失流畅度、不损失速度。
 import QtQuick
 
 Item {
@@ -23,60 +28,81 @@ Item {
     property real accretionBlend: 0.0
     property real planetCoreRadius: 0.0
     property real supernovaFlash: 0.0
+    property real implosionCharge: 0.0
+    property real implosionCountdown: 0.0
     property string lastPhase: "idle"
+    property var shockwaves: []
     property var particles: []
     property var orbitRadii: [6.2, 9.8, 14.2, 19.5, 25.5]
+    property double lastTick: 0.0
+
+    // 左深橙 → 琥珀 → 右侧象牙白
+    readonly property var nebulaPalette: [
+        { r: 255, g: 72, b: 0 },
+        { r: 255, g: 112, b: 36 },
+        { r: 255, g: 162, b: 96 },
+        { r: 250, g: 244, b: 236 }
+    ]
 
     Component.onCompleted: {
         var arr = [];
-        // 常驻桌面：空闲只保留下沉漂移，粒子数压低；工作态再提高帧率。
-        var count = 120;
+        // 260 粒：与 web 演示同密度；实测粒子数几乎不影响 CPU，帧率才是成本杠杆。
+        var count = 260;
         for (var i = 0; i < count; i++) {
             var u = (i + 0.5) / count;
             var driftX = 4 + Math.pow(Math.random(), 1.55) * 410;
-            var driftY = coreY + (Math.random() - 0.5) * 28;
+            var spreadY = (Math.random() - 0.5) * 2.0;
             var isRider = (i % 4 === 0);
             var workingR = isRider
-                ? orbitRadii[i % orbitRadii.length]
+                ? (root.orbitRadii[i % root.orbitRadii.length] + (Math.random() - 0.5) * 0.7)
                 : (4.6 + Math.pow(u, 2.35) * 24.0);
             arr.push({
                 u: u,
                 driftX: driftX,
-                driftY: driftY,
+                driftY: root.coreY + spreadY * (14 + (driftX / 440) * 8),
                 driftVx: 0.28 + Math.random() * 0.48,
                 driftPhase: Math.random() * 6.28,
-                angle: u * 44.0,
+                angle: (i / count) * Math.PI * 2 * 7,
                 workingR: workingR,
                 currentR: workingR,
                 cwSpeed: 0.014 + 0.062 / Math.pow(Math.max(4.4, workingR), 0.68),
                 isTrackRider: isRider,
-                size: (u < 0.22) ? 0.55 : 0.36,
+                vx: 0,
+                vy: 0,
+                burstMix: 0,
+                size: (u < 0.22) ? (0.42 + (i % 3) * 0.14) : (0.28 + (i % 4) * 0.12),
                 baseAlpha: (u < 0.3) ? (0.65 + (1 - u) * 0.3) : (0.22 + (1 - u) * 0.45),
                 x: driftX,
-                y: driftY
+                y: root.coreY
             });
         }
         particles = arr;
     }
 
+    function triggerSupernova() {
+        root.supernovaFlash = 1.0;
+        root.shockwaves = [
+            { r: 3.5, maxR: 32.0, alpha: 0.92, width: 1.5 },
+            { r: 2.0, maxR: 22.0, alpha: 0.60, width: 0.9 }
+        ];
+        for (var i = 0; i < root.particles.length; i++) {
+            var p = root.particles[i];
+            var angle = p.angle + (i % 5 - 2) * 0.08;
+            var speed = (1.6 - p.u * 0.7) * (1.25 + (i % 6) * 0.28);
+            p.vx = Math.cos(angle) * speed + 0.45;   // 略偏右，爆发后自然融回右飘星云
+            p.vy = Math.sin(angle) * speed;
+            p.burstMix = 1.0;
+            p.driftX = Math.max(6, Math.min(420, root.coreX + Math.cos(angle) * p.workingR));
+            p.driftY = Math.max(6, Math.min(46, root.coreY + Math.sin(angle) * p.workingR));
+        }
+    }
+
     Timer {
-        // 工作中 60fps；空闲/完成 20fps；冻结减速到 0 后彻底停画。
-        interval: root.phase === "working" ? 16 : 50
+        // 工作中 60fps；空闲/完成 30fps；冻结减速到 0 后彻底停画。
+        interval: root.phase === "working" ? 16 : 33
         running: root.visible && !(root.phase === "frozen" && root.timeScale <= 0.002)
         repeat: true
         onTriggered: orbCanvas.requestPaint()
-    }
-
-    // 渐变交给 QML 圆角矩形：Canvas 的 fillRect 在胶囊左端会露出直角。
-    Rectangle {
-        anchors.fill: parent
-        radius: root.isWide ? height / 2 : width / 2
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: "#47FF4F00" }
-            GradientStop { position: 0.4; color: "#1FFF6E23" }
-            GradientStop { position: 1.0; color: "#00111112" }
-        }
     }
 
     Canvas {
@@ -89,6 +115,15 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
+
+            // 真实 dt：降帧只影响流畅度，速度按墙钟时间推进。
+            var now = Date.now();
+            var dt = root.lastTick > 0 ? (now - root.lastTick) / 1000 : 0.016;
+            root.lastTick = now;
+            if (dt > 0.05) dt = 0.05;
+            if (dt < 0) dt = 0;
+            var f = dt * 60.0;   // 以 60fps 为 1 的帧当量
+
             // 星云必须裁进壳层：球/面板是圆，胶囊是左右全圆角的横向药丸。
             ctx.save();
             ctx.beginPath();
@@ -109,79 +144,208 @@ Item {
             }
             ctx.clip();
 
+            // 完成态：先坍缩蓄力，再爆发冲击波。
             if (root.phase !== root.lastPhase) {
-                if (root.phase === "complete") root.supernovaFlash = 1.0;
+                if (root.phase === "complete") {
+                    if (root.accretionBlend < 0.55) {
+                        root.implosionCharge = 1.0;
+                        root.implosionCountdown = 0.32;
+                    } else {
+                        root.triggerSupernova();
+                    }
+                }
                 root.lastPhase = root.phase;
             }
 
+            // 1. 时间缩放：冻结时平滑减速至完全静止
             var targetTS = (root.phase === "frozen") ? 0.0 : 1.0;
-            root.timeScale += (targetTS - root.timeScale) * 0.15;
+            root.timeScale += (targetTS - root.timeScale) * (1 - Math.pow(1 - 0.15, f));
             if (root.timeScale < 0.002) root.timeScale = 0;
-            root.nebulaTime += 0.016 * root.timeScale;
+            root.nebulaTime += dt * root.timeScale;
 
-            var targetAcc = (root.phase === "working") ? 1.0 : (root.phase === "frozen" ? Math.max(root.accretionBlend, 0.85) : 0.0);
-            root.accretionBlend += (targetAcc - root.accretionBlend) * 0.06 * Math.max(0.15, root.timeScale);
+            // 2. 吸积混合：坍缩瞬间快速成星，完成时缓慢退回星云
+            var targetAcc = 0.0;
+            if (root.phase === "working" || root.implosionCharge > 0) {
+                targetAcc = 1.0;
+            } else if (root.phase === "frozen") {
+                targetAcc = root.accretionBlend > 0.3 ? root.accretionBlend : 0.85;
+            }
+            var blendRate = (root.implosionCharge > 0) ? 0.18 : (root.phase === "complete" ? 0.065 : 0.05);
+            root.accretionBlend += (targetAcc - root.accretionBlend)
+                * (1 - Math.pow(1 - blendRate, f)) * Math.max(0.15, root.timeScale);
 
-            // 渐变由外层 QML Rectangle 负责；这里只画轨道、粒子和行星核心。
-
-            // 2. Top-Down Orbital Tracks
-            if (root.accretionBlend > 0.04) {
-                for (var t = 0; t < root.orbitRadii.length; t++) {
-                    var tr = root.orbitRadii[t];
-                    var ta = (1 - t / root.orbitRadii.length) * 0.25 * root.accretionBlend;
-                    ctx.strokeStyle = "rgba(255, 130, 60, " + ta + ")";
-                    ctx.lineWidth = 0.55;
-                    ctx.beginPath();
-                    ctx.arc(root.coreX, root.coreY, tr, 0, Math.PI * 2);
-                    ctx.stroke();
+            if (root.implosionCharge > 0) {
+                root.implosionCountdown -= dt;
+                if (root.implosionCountdown <= 0) {
+                    root.implosionCharge = 0.0;
+                    root.triggerSupernova();
                 }
             }
 
-            // 3. Particles (Rightward Drift in Idle, Clockwise Rotation in Working)
-            var limitX = root.isWide ? 310 : 52;
+            // 3. 左深右浅体积辉光（呼吸）
+            var breath = Math.sin(root.nebulaTime * 2.0) * 0.03;
+            var leftDeepAlpha = Math.min(0.65, 0.24 + root.accretionBlend * 0.14 + root.supernovaFlash * 0.32 + breath);
+            var grad = ctx.createLinearGradient(0, 0, root.isWide ? 260 : 52, 0);
+            grad.addColorStop(0, "rgba(255, 79, 0, " + leftDeepAlpha + ")");
+            grad.addColorStop(0.28, "rgba(255, 110, 35, " + (leftDeepAlpha * 0.55) + ")");
+            grad.addColorStop(0.65, "rgba(255, 150, 80, " + (leftDeepAlpha * 0.16) + ")");
+            grad.addColorStop(1, "rgba(17, 17, 18, 0)");
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, root.isWide ? 260 : 52, height);
+
+            // 4. 核心径向光晕
+            var coreGlow = ctx.createRadialGradient(root.coreX, root.coreY, 1, root.coreX, root.coreY, 25);
+            coreGlow.addColorStop(0, "rgba(255, 125, 45, " + (0.22 + root.accretionBlend * 0.24 + root.supernovaFlash * 0.35) + ")");
+            coreGlow.addColorStop(0.55, "rgba(255, 79, 0, " + (0.08 + root.accretionBlend * 0.06) + ")");
+            coreGlow.addColorStop(1, "rgba(17, 17, 18, 0)");
+            ctx.fillStyle = coreGlow;
+            ctx.beginPath();
+            ctx.arc(root.coreX, root.coreY, 25, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 5. 俯视行星轨道（内密外疏，奇数道虚线顺时针流动）
+            if (root.accretionBlend > 0.04) {
+                for (var t = 0; t < root.orbitRadii.length; t++) {
+                    var tr = root.orbitRadii[t];
+                    var ta = (1 - t / root.orbitRadii.length) * 0.26 * root.accretionBlend;
+                    ctx.save();
+                    ctx.strokeStyle = "rgba(255, 130, 60, " + ta + ")";
+                    ctx.lineWidth = (t === 0 || t === 1) ? 0.65 : 0.45;
+                    if (t % 2 === 1) {
+                        ctx.setLineDash([4, 3]);
+                        ctx.lineDashOffset = -root.nebulaTime * 12 * (t + 1);
+                    }
+                    ctx.beginPath();
+                    ctx.arc(root.coreX, root.coreY, tr, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
+            // 6. 星尘粒子：空闲向右飘，工作顺时针公转
+            var maxVisibleX = root.isWide ? 422 : 52;
             for (var i = 0; i < root.particles.length; i++) {
                 var p = root.particles[i];
                 if (root.timeScale > 0) {
-                    p.driftX += p.driftVx * root.timeScale;
-                    if (p.driftX > limitX) {
+                    p.driftX += p.driftVx * root.timeScale * f;
+                    var waveY = Math.sin(root.nebulaTime * 1.6 + p.driftPhase + p.driftX * 0.04) * 0.22;
+                    p.driftY += waveY * root.timeScale * f;
+                    if (p.driftX > 310) {
                         p.driftX = 4 + Math.random() * 14;
                         p.driftY = root.coreY + (Math.random() - 0.5) * 26;
                     }
-                    p.angle += p.cwSpeed * root.timeScale; // Clockwise
+                    p.angle += p.cwSpeed * root.timeScale * f;
+                    p.currentR += (p.workingR - p.currentR) * (1 - Math.pow(1 - 0.1, f)) * root.timeScale;
+                    if (p.burstMix > 0.005) {
+                        p.driftX += p.vx * root.timeScale * f;
+                        p.driftY += p.vy * root.timeScale * f;
+                        p.vx *= Math.pow(0.92, f);
+                        p.vy *= Math.pow(0.92, f);
+                        p.burstMix *= Math.pow(0.93, f);
+                    } else {
+                        p.burstMix = 0;
+                    }
                 }
-                var ox = root.coreX + Math.cos(p.angle) * p.currentR;
+
+                var tailStretchX = (root.isWide && p.u > 0.55) ? ((p.u - 0.55) * 105 * root.accretionBlend) : 0;
+                var ox = root.coreX + Math.cos(p.angle) * p.currentR + tailStretchX;
                 var oy = root.coreY + Math.sin(p.angle) * p.currentR;
                 p.x = p.driftX * (1 - root.accretionBlend) + ox * root.accretionBlend;
                 p.y = p.driftY * (1 - root.accretionBlend) + oy * root.accretionBlend;
 
+                if (p.x > maxVisibleX) continue;
+
+                // 左深右浅：位置与半径共同决定亮度衰减
                 var xNorm = Math.max(0, Math.min(1, (p.x - 6) / (root.isWide ? 250 : 44)));
-                var alpha = Math.max(0.05, p.baseAlpha * Math.pow(1 - xNorm, 1.35));
-                ctx.fillStyle = "rgba(255, 112, 36, " + alpha + ")";
+                var rNorm = Math.max(0, Math.min(1, p.currentR / 26.0));
+                var fadeFactor = (1 - root.accretionBlend) * Math.pow(1 - xNorm, 1.45)
+                    + root.accretionBlend * Math.pow(1 - rNorm * 0.72, 1.35) * Math.pow(1 - xNorm * 0.65, 1.2);
+                var alpha = Math.min(0.95, Math.max(0.04, p.baseAlpha * fadeFactor + root.supernovaFlash * 0.25));
+
+                // 配色：左侧深橙、中段琥珀、右侧与内圈偏象牙白
+                var col = root.nebulaPalette[0];
+                if (root.accretionBlend > 0.5 && p.u < 0.16) {
+                    col = root.nebulaPalette[3];
+                } else if (xNorm > 0.55) {
+                    col = root.nebulaPalette[2];
+                } else if (xNorm > 0.25) {
+                    col = root.nebulaPalette[1];
+                }
+
+                // 顺时针拖尾弧
+                if (root.accretionBlend > 0.25 && p.isTrackRider && p.currentR < 24) {
+                    var trailArcLen = 0.28 * root.accretionBlend;
+                    ctx.strokeStyle = "rgba(" + col.r + ", " + col.g + ", " + col.b + ", " + (alpha * 0.55) + ")";
+                    ctx.lineWidth = p.size * 0.85;
+                    ctx.beginPath();
+                    ctx.arc(root.coreX + tailStretchX, root.coreY, p.currentR, p.angle - trailArcLen, p.angle);
+                    ctx.stroke();
+                }
+
+                ctx.fillStyle = "rgba(" + col.r + ", " + col.g + ", " + col.b + ", " + alpha + ")";
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 ctx.fill();
             }
 
-            // 4. Central Planet Core
+            // 7. 俯视行星核：球面渐变 + 与内圈分离的暗环
             var targetR = (root.accretionBlend > 0.08) ? (3.6 * root.accretionBlend) : 0;
-            root.planetCoreRadius += (targetR - root.planetCoreRadius) * 0.12;
-            if (root.planetCoreRadius > 0.25) {
-                ctx.fillStyle = "#FF4F00";
+            if (root.timeScale > 0) {
+                root.planetCoreRadius += (targetR - root.planetCoreRadius) * (1 - Math.pow(1 - 0.12, f)) * root.timeScale;
+                root.supernovaFlash *= Math.pow(0.89, f * root.timeScale);
+            }
+            if (root.planetCoreRadius > 0.25 || root.supernovaFlash > 0.04) {
+                var pr = Math.max(0.4, root.planetCoreRadius + root.supernovaFlash * 2.4);
+                ctx.strokeStyle = "rgba(17, 17, 18, 0.65)";
+                ctx.lineWidth = 1.3;
                 ctx.beginPath();
-                ctx.arc(root.coreX, root.coreY, root.planetCoreRadius, 0, Math.PI * 2);
+                ctx.arc(root.coreX, root.coreY, pr + 1.0, 0, Math.PI * 2);
+                ctx.stroke();
+
+                var planetGrad = ctx.createLinearGradient(root.coreX - pr, root.coreY, root.coreX + pr, root.coreY);
+                planetGrad.addColorStop(0, "#C83200");
+                planetGrad.addColorStop(0.45, "#FF4F00");
+                planetGrad.addColorStop(0.85, "#FF9E5E");
+                planetGrad.addColorStop(1, "#FFF8F0");
+                ctx.fillStyle = planetGrad;
+                ctx.beginPath();
+                ctx.arc(root.coreX, root.coreY, pr, 0, Math.PI * 2);
                 ctx.fill();
             }
 
-            // 完成态：一次向外扩散的橙色冲击波，然后回到向右飘散的星云。
-            if (root.supernovaFlash > 0.01) {
-                var ringR = 6 + (1 - root.supernovaFlash) * 30;
-                ctx.strokeStyle = "rgba(255, 122, 52, " + (root.supernovaFlash * 0.55) + ")";
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                ctx.arc(root.coreX, root.coreY, ringR, 0, Math.PI * 2);
-                ctx.stroke();
-                root.supernovaFlash *= 0.92;
+            // 8. 超新星冲击波
+            if (root.shockwaves.length > 0) {
+                var alive = [];
+                for (var s = root.shockwaves.length - 1; s >= 0; s--) {
+                    var sw = root.shockwaves[s];
+                    if (root.timeScale > 0) {
+                        sw.r += (sw.maxR - sw.r) * (1 - Math.pow(1 - 0.12, f)) * root.timeScale;
+                        sw.alpha *= Math.pow(0.91, f * root.timeScale);
+                    }
+                    if (sw.alpha > 0.015) {
+                        alive.push(sw);
+                        ctx.strokeStyle = "rgba(255, 170, 105, " + sw.alpha + ")";
+                        ctx.lineWidth = sw.width;
+                        ctx.beginPath();
+                        ctx.arc(root.coreX, root.coreY, sw.r, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                }
+                root.shockwaves = alive;
             }
+
+            // 9. 待确认：静止锁定环
+            if (root.timeScale < 0.35) {
+                var lockAlpha = (1 - root.timeScale / 0.35) * 0.7;
+                ctx.strokeStyle = "rgba(255, 79, 0, " + lockAlpha + ")";
+                ctx.lineWidth = 1.0;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.arc(root.coreX, root.coreY, 22.5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
             ctx.restore();
         }
     }
