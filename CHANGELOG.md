@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.20.0] - 2026-10-24
+
 ### Changed
 
 - **桌面壳视觉重构（Optical Obsidian / Braun Signal Orange）**：合并新的
