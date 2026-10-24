@@ -113,7 +113,20 @@ async def _model_messages(self, ctx):
 core 时，状态会串到别人的会话里；正确做法与权限主体一致——每会话/每租户一个
 core，各自注册各自的状态源。
 
-## 5. 可观测性：报大小，不复制内容
+## 5. 真实宿主落地：陪伴示例
+
+`examples/host_c_companion/run.py` 的 `build_core()` 把当前档案注册成状态源：
+
+```python
+core = AgentCore.auto(capabilities, model, llm_router="auto")
+core.register_state_provider("companion", capabilities.get_companion_profile)
+```
+
+默认任务“先查看小拥的状态……”不再需要先调一次工具：模型每次调用前都能看到
+`mood / energy / bond_days`，且这些值不会写进历史或长期记忆。`tests/test_host_c_state.py`
+钉住了这条链路。
+
+## 6. 可观测性：报大小，不复制内容
 
 状态变化（或首次注入）时发一次事件：
 
@@ -130,7 +143,7 @@ core，各自注册各自的状态源。
 新任务会重新发一次。宿主 UI 可以用它显示"已注入哪些现状锚"，
 日志也能按指纹判断状态是否在任务中途变化。
 
-## 6. 与预算、压缩、记忆的关系
+## 7. 与预算、压缩、记忆的关系
 
 - **硬裁剪**：状态不在 `ctx.messages` 里，不参与 `Context.enforce_budget()`；
   它自己的 4000 字符上限就是它的预算；
@@ -138,7 +151,7 @@ core，各自注册各自的状态源。
 - **长期记忆**：状态不写入 `MemoryStore`，下次任务必须重新生成；
 - **多模态降级**：状态是纯文本 system 块，不经过图片/资源片段的降级路径。
 
-## 7. 自检
+## 8. 自检
 
 1. 为什么状态不能作为普通 `ChatMessage` 加进 `Context`？会带来哪三个问题？
 2. 模型在工具参数里写 `state={"selected_customer": "李强"}`，会改变注入块吗？为什么？

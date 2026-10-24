@@ -112,7 +112,24 @@
 - 运行期异常 → `agent/error` 通知，进程继续服务下一个任务；
 - `shutdown`/EOF → 取消任务、逆序关闭桥接、`core.aclose()`。
 
-## 6. 诚实边界
+## 6. 可运行的真实宿主：Node 示例
+
+`examples/host_l_sidecar_node/` 是一个零依赖 Node 宿主：
+
+- Node 起一个本地 HTTP 服务，既是 OpenAPI 工具（`GET /orders`），也是 OpenAI
+  兼容的 mock 模型；
+- Node 拉起 `python -m yai_core.sidecar`，发送 `initialize` / `agent/run`，
+  自动应答 `approval/request`，打印事件直到 `done`；
+- 全程本机、无外网、无 API Key：
+
+```bash
+YAI_PYTHON=.venv/Scripts/python.exe node examples/host_l_sidecar_node/host.mjs
+```
+
+它同时验证了会话面、审批反向请求与“工具走 OpenAPI、协议里没有 `tool/call`”
+这条边界。
+
+## 7. 诚实边界
 
 - **单进程单任务**：不做并发调度、不做多客户端；
 - **不做持久化**：审批中的任务重启即丢（Checkpointer 是独立议题）；
@@ -121,7 +138,7 @@
 - **工具必须经 MCP/OpenAPI**：sidecar 进程里的 Python 函数默认不构成宿主能力；
 - 事件由 `AgentCore.astream` 统一产出；sidecar 不额外解释或改写事件语义。
 
-## 7. 自检
+## 8. 自检
 
 1. 为什么协议里没有 `tool/call`？如果加了，会与哪个既有标准重复？
 2. 审批/澄清为什么由 sidecar 发起反向请求，而不是让宿主轮询一个状态接口？

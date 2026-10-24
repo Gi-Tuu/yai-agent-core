@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Node 宿主样例与 CI sidecar 强化**：新增 `examples/host_l_sidecar_node/`，零依赖
+  Node 进程真实拉起 `python -m yai_core.sidecar`，工具由 Node 自己的 OpenAPI 服务
+  暴露、模型走本地 mock，全程离线；演示审批反向请求与 `done` 事件。CI 新增
+  `sidecar (mcp + llm)` job（含 Node 样例），不再跳过 MCP/stdio 真实路径。
+- **HostStateProvider 接入真实宿主**：`examples/host_c_companion/run.py` 的
+  `build_core()` 注册 `companion` 状态源，当前心情/能量/羁绊每轮瞬态注入，
+  不需要先调工具、也不写入历史；新增离线测试钉住这条链路。
+
 ## [v0.16.0] - 2026-10-24
 
 ### Added

@@ -225,6 +225,7 @@ approval card on first call (discovery ≠ authorization).</p>
 | 7 | `host_i_mealie` | Adapting a real third-party open-source project over REST (Mealie) |
 | 8 | `host_j_actual` | Third-party seeding "five-beat" line in the Actual Budget ledger app (discover a missing tool / delegate sub-employees; web on 8240) |
 | 9 | `host_k_multimodal` | Multimodal: the model only picks an image handle; the host resolves it and enforces scope / expiry / size |
+| 10 | `host_l_sidecar_node` | Language-agnostic host: Node spawns the sidecar, exposes tools via its own OpenAPI service, and answers approval requests |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
