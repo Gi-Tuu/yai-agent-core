@@ -5,6 +5,90 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.22.0] - 2026-10-24
+
+本版是一次**全面体检后的整改批次**：把"实现已经比文档靠前 7 个版本"这件事掰回齐平，
+并给最引以为傲的那条红线补上真正拦得住人的守门测试。
+
+### Added
+
+- **红线 1「内核本体零第三方硬依赖」补上全库守门测试**（`tests/test_kernel_dependencies.py`，12 例）：
+  此前唯一的守卫是 `tests/test_mcp_bridge.py::test_no_toplevel_mcp_import_keeps_kernel_dependency_free`，
+  它只检查 `integrations/mcp/client.py` **一个文件**，且整个模块顶部 `pytest.importorskip("mcp")`
+  ——没装 `[mcp]` extra 的环境里整条守卫被跳过。实测把 `import httpx` 注入
+  `src/yai_core/core.py` / `tools/executor.py` 顶层，全量 1 564 项测试**全绿**，红线被破坏而无人察觉。
+  新测试用 AST 扫 `src/yai_core` 全量 102 个文件的**模块顶层** import（懒加载在函数体内，仍允许），
+  并断言 `pyproject.toml` 的 `dependencies == []`；守卫自身有反证用例，确保注入即变红。
+
+- **`CODE_TOOL_RETIRED` 从死事件变成真事件**：
+  该事件类型定义在 `types.py`，白皮书把它列为对外可见的 20 类事件之一，
+  `examples/runner_common.py` 也有对应的消费分支——但内核**从头到尾没发过**：
+  `CodeToolManager.expire_stale()` 静默注销过期代码工具，不留任何痕迹。
+  现在执行器在 run 内发现代码工具已过期时，除发 `TOOL_RESULT(ok=False)` 外，
+  另发 `CODE_TOOL_RETIRED`（`data = {name, source: "code", reason: "expired"}`），
+  宿主得以区分"工具被回收"与"工具调用失败"。新增 `tests/test_spi_surface.py::test_no_dead_event_types`
+  把"每个事件类型都必须在 `src/` 里有真实发出点"钉成断言，杜绝同类死事件再出现。
+
+- **sdist 自带的 `tests/` 在包内跑不起来**：
+  `pyproject.toml` 的 sdist 白名单只含 `src/yai_core` 与 `tests`，不含 `shell/`、`examples/`、
+  `scripts/`、`uv.lock`、`SECURITY.zh-CN.md`——而 `tests/` 里有 21 个模块依赖它们。
+  实测从解包的 sdist 跑 `pytest --collect-only`：**21 个模块收集失败**（`ModuleNotFoundError: shell.desktop.host`
+  等），只能收集到 1 276 项；`test_version_consistency.py`（读 `uv.lock`）与
+  `test_security_policy_parity.py`（要 `SECURITY.zh-CN.md`）直接失败。
+  现在白名单根锚定并补齐这些依赖，从 sdist 跑全量测试 **exit 0**。
+
+- **sdist 白名单被 hatchling 的 gitignore 语义击穿**：
+  `include` 里写无前导斜杠的 `"README.md"` 会匹配**任意层级**同名文件，
+  已发布的 0.21.0 sdist 因此混入了 9 个白名单外的 README.md
+  （`examples/*/README.md`、`models/README.md`、`fuzzing/README.md` 等）。
+  现在所有模式改为 `/` 根锚定，并显式排除本机过程稿。
+
+- **README 首屏授权措辞与真实默认值相反**：
+  README 写「高危操作默认**先请求授权**」，而默认是 `auto_approve_tools=True`
+  → `AllowlistPolicy(mode="allow_all")`，**所有工具调用静默放行**，也没有"高危"默认分级；
+  授权卡只在宿主显式声明 `ApprovalPolicy` / ACC `approval_required` 时才出现。
+  中英两份 README 均已改为如实描述默认策略与收紧方式。
+
+- **依赖带两条已知 CVE**：`opentelemetry-api 1.44.0`（GHSA-xcq7-p3pf-p88h，无界 tracestate 解析，
+  修复版 1.45.1）与 `filelock 4.0.6`（GHSA-567q-5qvw-pf92，修复版 4.2.1）。
+  锁文件已升级到 `opentelemetry-api 1.45.1` 与 `filelock 4.2.4`，OSV 批量扫描 0 命中。
+
+- **`anthropic` 可选依赖缺上界**：官方 SDK 1.x→2.x 是 breaking 区间，而本项目测试用假模块，
+  CI 永远发现不了真实 SDK 的 API 漂移——`pip install yai-agent-core[anthropic]` 会拿到未测的 2.x。
+  上界收紧为 `>=0.40,<2`，等真机验证过 2.x 再放开。
+
+- **GitHub Release 正文退化成了 PR 流水账**：`publish.yml` 只有 `generate_release_notes: true`，
+  从不读取 `docs/releases/<tag>.md`，仓库里写好的人话版发布说明（三条主线 / 升级指引 / 本版数字 /
+  诚实边界）从未生效。现在发版时优先用 `docs/releases/<tag>.md` 作正文，文件不存在才回退自动生成。
+
+### Added
+
+- **三道新的守门测试**：
+  - `tests/test_kernel_dependencies.py`（12 例）：内核零第三方硬依赖的全库 AST 扫描（见上）。
+  - `tests/test_spi_surface.py`（7 例）：十个 SPI 契约的数量、形状、README 清单对应，
+    以及"无死事件"断言。
+  - `tests/test_version_consistency.py` 扩充：两份 README 的版本徽章必须与包版本同值
+    （此前 `README.en.md` 徽章停在 v0.20.0、`README.md` 已是 v0.21.0，中英门面漂移而 CI 全绿），
+    且 README 不得把旧版本标成"当前发布版本"。
+
+### Changed
+
+- **中英门面的事实与措辞校准**（README / README.en / docs/comparison(.en) / SECURITY(.zh-CN) /
+  CONTRIBUTING(.en) / docs/architecture(.en) / docs/whitepaper）：
+  版本徽章、版本路线（补齐 v0.15–v0.21）、示例宿主数（9→10）、测试数（1100+→1500+）、
+  SECURITY 支持版本表（0.8.x→0.21.x/0.20.x）、SQLite schema 口径（v1→v3）、
+  `achat` 签名、诊断类型数（8→9，补 `host_state_failed`）、能力表补"默认关闭"标注、
+  竞品类别级的全称否定改为中性描述。
+- **`docs/architecture.md` 补「v0.12–v0.21 新增机制」小节**（中英各一份）：
+  多模态消息契约、manifest v2、schema 13 关键字、能力体检、ChangePreview + ExecutionReceipt、
+  HostStateProvider、Sidecar、Office 文本抽取、ACC 执行提示真被执行。
+- **讲义第 06 / 18 / 21 / 41 篇与源码重新对齐**：第 06 篇贴的系统提示词、`describe()` vs
+  `catalog_text()`、`max_iters` 透传、`_model_chat` 与 `executor.execute(..., call_id=…)`
+  全部换成当前源码写法，行号锚点改为按函数名定位；第 18 篇补 `CODE_TOOL_RETIRED` 的两条回收路径；
+  第 21 篇补 `to_manifest_dict` 的 `version` 分支；第 41 篇补 v0.12 起的 `_event_preview` 脱敏闸。
+- **Dependabot 的 pip 段加分组**并把 `open-pull-requests-limit` 从 3 提到 8：此前锁文件 90+ 个包
+  却每周最多 3 个 PR 且无分组，93 个包永远追不上。
+
 ## [v0.21.0] - 2026-10-24
 
 ### Added

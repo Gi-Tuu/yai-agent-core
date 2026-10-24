@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.21.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-24（对应已发布版本 **v0.22.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -211,14 +211,24 @@
 - **截图与文档**：`docs/assets` 更新并新增胶囊/HITL/VAULT/MEM；README、第 22/23
   篇讲义与 CHANGELOG 同步。
 
-### v0.21 — Office 文本抽取 + 星云动效对齐（tag 2026-10-24，当前发布版本）
+### v0.21 — Office 文本抽取 + 星云动效对齐（tag 2026-10-24，已完成）
 
 - `batteries/office_text.py`：docx/xlsx/pptx 零依赖文本抽取，PDF 走 `[office]` extra pypdf（三安全闸，讲义 55）
 - 桌面星云动效按 web 引擎对齐设计稿（260 粒 dt 积分）；测试/本地工具安全卫生批量加固
 
+### v0.22 — 全面体检整改批次（tag 2026-10-24，当前发布版本）
+
+一次"全面、对抗性体检"之后的整改批次。核心不是加功能，而是**把已经存在却没被守住的承诺补上**：
+
+- **红线 1 补上全库守门测试**（`tests/test_kernel_dependencies.py`）：此前只守 `integrations/mcp/client.py` 一个文件、且未装 `[mcp]` extra 时整条跳过；实测注入 `import httpx` 进内核顶层，全量测试全绿而红线已破。现在 AST 扫全量内核文件，注入即变红。
+- **死事件变活**：`CODE_TOOL_RETIRED` 定义在 `types.py`、白皮书列为对外可见事件、示例有消费分支，但内核从未发出过；现在执行器回收过期代码工具时真的发它，并加"无死事件"断言。
+- **sdist 自带测试可跑通**：白名单根锚定并补齐 `shell/` `examples/` `scripts/` `uv.lock` 等依赖，从解包 sdist 跑全量测试 exit 0（此前 21 个模块收集失败）。
+- **依赖 CVE 清零**：`opentelemetry-api 1.45.1`、`filelock 4.2.4`，OSV 扫描 0 命中；`anthropic` 补上界 `<2`。
+- **中英门面全量校准**：README / comparison / SECURITY / CONTRIBUTING / architecture / 白皮书的事实与措辞，讲义第 06/18/21/22/41 篇与源码重新对齐。
+
 ## 下一步
 
-### v0.22 — 候选（未排序，等维护者拍板）
+### v0.23 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。

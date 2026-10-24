@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.21.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.22.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -239,7 +239,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.18（已完成）**：桌面陪伴专员接入 HostStateProvider，现状锚在真实 live factory 上验证
 - **v0.19（已完成）**：销售 CRM「当前选中客户」接入 HostStateProvider，网页与桌面跨进程读同一状态
 - **v0.20（已完成）**：桌面壳视觉重构（Optical Obsidian / Braun Signal Orange），球 / 胶囊 / 面板共用四态星云
-- **v0.21.0（已完成，当前发布版本）**：Office 文档文本抽取 Battery（docx / xlsx / pptx 零依赖，PDF 走可选 extra）、桌面星云动效按设计稿对齐（按真实 dt 积分，修正漂移速度）
+- **v0.21.0（已完成）**：Office 文档文本抽取 Battery（docx / xlsx / pptx 零依赖，PDF 走可选 extra）、桌面星云动效按设计稿对齐（按真实 dt 积分，修正漂移速度）
+- **v0.22.0（已完成，当前发布版本）**：全面体检整改批次——红线 1（内核零第三方硬依赖）补上全库守门测试、`CODE_TOOL_RETIRED` 从死事件变成真事件、sdist 自带测试从 21 个收集错误修到 0（包内跑全量 exit 0）、依赖 CVE 清零、中英门面的事实与措辞全量校准
 - **下个版本候选（未排序）**：跨实例分布式限流、生产级沙箱适配器递进（gVisor / 微 VM / 远程执行）、组合工具的可视化编排（宿主侧）、公网实例的暴露面收口、多模态资源引用的宿主侧解析器推广
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 

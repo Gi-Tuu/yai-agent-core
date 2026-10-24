@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.21.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.22.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -293,9 +293,14 @@ For optional environment variables (persistent memory, history trimming / TTL, r
   web app and the desktop reading the same state across processes
 - **v0.20 (done)**: desktop shell visual rework (Optical Obsidian / Braun Signal Orange), with the
   orb / capsule / panel sharing the four-state nebula
-- **v0.21.0 (done, current release)**: the Office document text-extraction battery (zero-dependency
+- **v0.21.0 (done)**: the Office document text-extraction battery (zero-dependency
   docx / xlsx / pptx; PDF via an optional extra); the desktop nebula motion aligned with the design
   draft (integrated by real dt, fixing the drift speed)
+- **v0.22.0 (done, current release)**: a full audit remediation batch — red line 1 (zero third-party
+  hard dependencies in the kernel) now has a whole-tree guard test, `CODE_TOOL_RETIRED` became a real
+  event instead of a dead one, the sdist's bundled test suite went from 21 collection errors to 0
+  (full suite exits 0 from the unpacked package), dependency CVEs are cleared, and every
+  Chinese/English facade's facts and wording were reconciled
 - **Next-version candidates (unordered)**: cross-instance distributed rate limiting; production-grade
   sandbox adapter tiers (gVisor / micro-VM / remote execution); visual composition authoring (host
   side); closing the public instance's exposure surface; wider adoption of host-side resolvers for
