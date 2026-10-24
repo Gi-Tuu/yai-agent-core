@@ -86,6 +86,9 @@ python -m yai_core.sidecar     # stdin/stdout 上的 NDJSON + JSON-RPC 2.0
 MCP Server（或 REST 服务），会话协议里没有 `tool/call`。这样既让宿主复用现有
 工具适配器，也不与 MCP 重复。详见 `docs/walkthrough/54-sidecar-protocol.md`。
 
+可运行样例：`examples/host_l_sidecar_node/`（零依赖 Node，本地 mock 模型 +
+Node 自己的 OpenAPI 工具，真实拉起 sidecar 并走审批反向请求）。
+
 ---
 
 ## 4. 还没做、如何演进（路线，按性价比排序）

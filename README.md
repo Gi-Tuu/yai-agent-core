@@ -205,6 +205,7 @@ uv sync --extra desktop
 | 7 | `host_i_mealie` | 适配真实第三方开源项目（Mealie，REST） |
 | 8 | `host_j_actual` | 第三方播种五拍标准线：记账应用 Actual Budget（发现补能力 / 派子员工，网页 8240） |
 | 9 | `host_k_multimodal` | 多模态：模型只选图片句柄，宿主负责解析、判作用域 / 有效期 / 大小 |
+| 10 | `host_l_sidecar_node` | 语言无关宿主：Node 拉起 sidecar，工具走 Node 的 OpenAPI 服务，审批走反向请求 |
 
 > 目录名保留历史编号（a/c/d/e/f/g/i/j/k），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
