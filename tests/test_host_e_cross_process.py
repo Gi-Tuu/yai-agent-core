@@ -13,8 +13,10 @@ extra 时整体跳过。全程离线，不访问公网 / API Key。
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
+import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -58,6 +60,22 @@ def live_pair():
     yield crm, client
     httpd.shutdown()
     httpd.server_close()
+
+
+def test_selection_state_reads_through_agent_endpoint(live_pair):
+    _, client = live_pair
+    assert client._selection() == {"selected_customer": None}
+
+    payload = json.dumps({"name": "王敏"}, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        client.base_url + "/api/selection",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as resp:
+        assert resp.status == 200
+    assert client._selection()["selected_customer"] == "王敏"
 
 
 def test_ping_and_read_tools_roundtrip(live_pair):

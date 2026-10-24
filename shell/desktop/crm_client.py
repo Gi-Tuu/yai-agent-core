@@ -44,6 +44,7 @@ class HostECrmClient:
         self.timeout = timeout
         self._tool_url = f"{self.base_url}/api/agent/tool"
         self._preview_url = f"{self.base_url}/api/agent/preview"
+        self._state_url = f"{self.base_url}/api/agent/state"
         self._token = token or self._resolve_token()
 
     @classmethod
@@ -68,6 +69,21 @@ class HostECrmClient:
                 return resp.status == 200
         except (urllib.error.URLError, OSError):
             return False
+
+    def _selection(self) -> dict:
+        """网页工作台当前选中的客户；离线/无选中时返回空状态。
+
+        私有方法：``AgentCore.auto`` 会把公开方法注册成工具，状态读取不是业务能力。
+        """
+        try:
+            request = urllib.request.Request(
+                self._state_url, headers=self._auth_headers()
+            )
+            with urllib.request.urlopen(request, timeout=3.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (urllib.error.URLError, OSError, ValueError):
+            return {}
 
     # ---- 读：客户 ----
     def list_customers(self, level: str = "") -> list[dict]:
@@ -282,6 +298,15 @@ def build_crm_preview(client: HostECrmClient, tool_name: str):
         return client._preview(tool_name, arguments)
 
     return preview
+
+
+def build_crm_state(client: HostECrmClient):
+    """把网页当前选中客户包装成 HostStateProvider 闭包（只读、可失败降级）。"""
+
+    def state() -> dict:
+        return client._selection()
+
+    return state
 
 
 def build_crm_catalog(client: HostECrmClient):

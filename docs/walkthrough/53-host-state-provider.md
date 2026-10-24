@@ -131,6 +131,17 @@ core.register_state_provider("companion", capabilities.get_companion_profile)
 心情 + 总数）。每次任务新建 Core 时注册，任务结束随 Core 一起释放；
 `tests/test_desktop_companion_state.py` 走真实 live factory 验证注入。
 
+销售 CRM 则把网页原生界面的“当前选中客户”作为状态源：
+
+- `POST /api/selection` 设置/清空，`GET /api/selection` 读取；
+- `Workbench._agent_state()` 只把“确实有选中客户”注入网页内置 Agent；
+- 桌面销售经带令牌的 `GET /api/agent/state` 读取同一状态（`HostECrmClient._selection`，
+  私有方法，不会被 `AgentCore.auto` 注册成工具），在 `_live_factory` 里以
+  `sales_selection` 注册；
+- 客户被删除后 `selection_state()` 自动清空，不会把过期名字继续注入。
+
+这样用户点一下“选中”，销售专员就能直接理解“这笔/这位客户”，不必再反问。
+
 ## 6. 可观测性：报大小，不复制内容
 
 状态变化（或首次注入）时发一次事件：
