@@ -1,6 +1,6 @@
 """host_g 极简网页壳（标准库 http.server）的离线测试。
 
-在随机端口用线程起真实的 ThreadingHTTPServer，再用 urllib 走真实 HTTP 访问：
+在随机端口用线程起真实的 ThreadingHTTPServer，再经 tests/_local_http 走真实 HTTP 访问：
 静态首页、健康检查、原生候选人数据，以及 POST /api/run 的"造工具→沙箱执行"
 完整链路。全程离线，不依赖网络与 API Key。
 """
@@ -8,11 +8,12 @@
 import json
 import sys
 import threading
-import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+
+from _local_http import local_json, local_request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -36,19 +37,12 @@ def server():
 
 
 def _get(base, path):
-    with urllib.request.urlopen(base + path, timeout=30) as resp:
-        return resp.status, resp.read().decode("utf-8")
+    status, raw = local_request(base, path, timeout=30)
+    return status, raw.decode("utf-8")
 
 
 def _post_json(base, path, payload):
-    req = urllib.request.Request(
-        base + path,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
+    return local_json(base, path, method="POST", payload=payload, timeout=30)
 
 
 def test_index_html_served(server):

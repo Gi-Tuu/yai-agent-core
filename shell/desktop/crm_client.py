@@ -19,9 +19,12 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class HostECrmClient:
@@ -41,6 +44,13 @@ class HostECrmClient:
         self.base_url = (
             base_url or os.getenv("YAI_HOST_E_URL") or "http://127.0.0.1:8200"
         ).rstrip("/")
+        # 只连本机 host_e 是这个客户端的存在前提（令牌体系的信任边界就是环回）：
+        # 非环回目标在构造期直接拒绝，而不是等第一个请求才失败。
+        parts = urllib.parse.urlsplit(self.base_url)
+        if parts.scheme != "http" or (parts.hostname or "") not in _LOOPBACK_HOSTS:
+            raise ValueError(
+                f"HostECrmClient 只允许 http 环回地址，收到：{self.base_url}"
+            )
         self.timeout = timeout
         self._tool_url = f"{self.base_url}/api/agent/tool"
         self._preview_url = f"{self.base_url}/api/agent/preview"

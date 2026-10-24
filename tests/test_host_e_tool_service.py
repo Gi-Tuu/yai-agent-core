@@ -9,17 +9,17 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import threading
-import urllib.error
-import urllib.request
 from datetime import date
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from _local_http import local_json  # noqa: E402
+
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
@@ -141,22 +141,17 @@ def _start_tool_server(crm: SalesCrm | None = None):
 
 
 def _post_tool(base, name, arguments):
-    payload = json.dumps({"name": name, "arguments": arguments}).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/api/agent/tool", data=payload,
-        headers={"Content-Type": "application/json", **AUTH}, method="POST",
+    return local_json(
+        base,
+        "/api/agent/tool",
+        method="POST",
+        payload={"name": name, "arguments": arguments},
+        headers=dict(AUTH),
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
 def _get_json(base, path):
-    req = urllib.request.Request(base + path, headers=AUTH)
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
+    return local_json(base, path, headers=dict(AUTH))
 
 
 def test_tools_catalog_endpoint_lists_all_whitelisted():

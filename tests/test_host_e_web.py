@@ -1,6 +1,7 @@
 """host_e 网页工作台：WebChannel 授权交互 + 标准库 HTTP/SSE 端到端，全部离线测试。"""
 
 import asyncio
+import http.client
 import json
 import queue
 import re
@@ -8,8 +9,7 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from datetime import date
 from pathlib import Path
 
@@ -222,47 +222,64 @@ def _start_server(model, crm=None, *, learning_path=None, enable_learning=True):
     return workbench, httpd, base
 
 
-def _post(base, path, payload):
-    req = urllib.request.Request(
-        base + path,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _require_loopback(url: str) -> tuple[str, int]:
+    """测试专用 HTTP 客户端只允许打环回地址：base 万一被改成真实地址，测试自身 fail-closed。
+
+    返回解析出的 (host, port) 供 http.client 直连——显式 host/port 而不是拼 URL 字符串，
+    请求目标在连接层就是确定的。
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    assert parts.scheme == "http", f"测试只允许 http，收到：{parts.scheme}"
+    assert host in {"127.0.0.1", "localhost", "::1"}, f"测试只允许环回地址，收到：{host}"
+    return host, parts.port or 80
+
+
+def _request(base, path, *, method="GET", payload=None, headers=None, timeout=10):
+    """对本地测试服务发一次请求，返回 (status, json)。非 2xx 也正常返回状态码。"""
+    host, port = _require_loopback(base + path)
+    body = None
+    merged_headers = dict(headers or {})
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        merged_headers.setdefault("Content-Type", "application/json")
+    conn = http.client.HTTPConnection(host, port, timeout=timeout)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
+        conn.request(method, path, body=body, headers=merged_headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+    finally:
+        conn.close()
+    return status, json.loads(data.decode("utf-8"))
+
+
+def _post(base, path, payload):
+    return _request(base, path, method="POST", payload=payload)
 
 
 def _post_agent(base, path, payload):
-    req = urllib.request.Request(
-        base + path,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer test-tool-token",
-        },
+    return _request(
+        base,
+        path,
         method="POST",
+        payload=payload,
+        headers={"Authorization": "Bearer test-tool-token"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
-def _get_json(base, path):
-    with urllib.request.urlopen(base + path, timeout=10) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
+def _get_json(base, path, headers=None):
+    return _request(base, path, headers=headers)
 
 
 def _collect_stream(base, run_id, on_permission=None):
     """在工作线程里消费 SSE；遇到授权请求时按回调回传决策。"""
     events = []
-    url = f"{base}/api/stream?run_id={run_id}"
-    with urllib.request.urlopen(url, timeout=20) as resp:
+    host, port = _require_loopback(f"{base}/api/stream?run_id={run_id}")
+    conn = http.client.HTTPConnection(host, port, timeout=20)
+    try:
+        conn.request("GET", f"/api/stream?run_id={run_id}")
+        resp = conn.getresponse()
         for raw in resp:
             line = raw.decode("utf-8").strip()
             if not line.startswith("data: "):
@@ -274,6 +291,8 @@ def _collect_stream(base, run_id, on_permission=None):
                 _post(base, "/api/decision", {"run_id": run_id, "approved": approved})
             if event["type"] in ("done", "error"):
                 break
+    finally:
+        conn.close()
     return events
 
 
@@ -333,12 +352,10 @@ def test_selection_endpoint_sets_state_anchor_and_clears_on_delete():
         _, snapshot = _get_json(base, "/api/snapshot")
         assert snapshot["selected_customer"] == "王敏"
 
-        request = urllib.request.Request(
-            base + "/api/agent/state",
-            headers={"Authorization": "Bearer test-tool-token"},
+        status, state_body = _get_json(
+            base, "/api/agent/state", headers={"Authorization": "Bearer test-tool-token"}
         )
-        with urllib.request.urlopen(request, timeout=10) as resp:
-            assert json.loads(resp.read().decode("utf-8"))["selected_customer"] == "王敏"
+        assert status == 200 and state_body["selected_customer"] == "王敏"
 
         status, _ = _post(base, "/api/selection", {"name": "不存在"})
         assert status == 404
@@ -544,12 +561,8 @@ def test_customer_detail_endpoint_aggregates_and_404():
         assert {o["order"] for o in wang["orders"]} == {"S001", "S006"}
         assert wang["order_total"] == 17000
         assert wang["open_opportunity_total"] == 120000
-        try:
-            _get_json(base, "/api/crm/customer?name=" + quote("无名氏"))
-            raise AssertionError("不存在的客户应返回 404")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 404
-            assert json.loads(exc.read().decode("utf-8"))["ok"] is False
+        status_404, body_404 = _get_json(base, "/api/crm/customer?name=" + quote("无名氏"))
+        assert status_404 == 404 and body_404["ok"] is False
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -687,11 +700,8 @@ def test_native_actions_rejected_while_agent_running():
 def test_run_not_found_returns_404():
     workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
     try:
-        try:
-            urllib.request.urlopen(base + "/api/stream?run_id=nope", timeout=5)
-            raise AssertionError("应当 404")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 404
+        status, _ = _get_json(base, "/api/stream?run_id=nope")
+        assert status == 404
     finally:
         httpd.shutdown()
         httpd.server_close()

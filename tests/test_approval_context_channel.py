@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from yai_core import GateDecision, ToolGovernance, build_composite_spec, build_spec
@@ -23,7 +24,15 @@ from yai_core.spi.policy import PermissionDecision
 from yai_core.tools import ToolExecutor, ToolRegistry
 from yai_core.types import AgentEvent, EventType
 
-_ARGS = {"amount": 2000, "api_key": "sk-secret-abcdef"}
+# 假参数值从环境注入（离线占位，环境变量不存在时 setdefault 落一个占位串）：
+# 本测试验证"声明了 sensitive 的字段一律脱敏"，与值是否长得像密钥无关——
+# 脱敏契约本来就是不按字段名/值形状猜。
+_ARGS = {
+    "amount": 2000,
+    "api_key": os.environ.setdefault(
+        "YAI_TEST_REDACTION_KEY", "offline-credential-placeholder"
+    ),
+}
 
 
 class _Allow:

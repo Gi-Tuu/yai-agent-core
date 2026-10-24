@@ -31,13 +31,15 @@ def TestOneInput(data: bytes) -> None:
     out = sanitize_schema(obj)
 
     # 不变量：根节点类型形状保持——dict→dict（空 dict 也会变成 EMPTY_OBJECT_SCHEMA）、
-    # list→list、其余标量原样返回。
+    # list→list、其余标量原样返回（同一对象）。
+    # 标量用 is 判恒等：json.loads("NaN") 产生的 float('nan') 与自身 == 恒 False，
+    # sanitize 对标量是原对象返回，== 比较会假阴性（fuzzer 2026-10-24 实测撞出）。
     if isinstance(obj, dict):
         assert isinstance(out, dict)
     elif isinstance(obj, list):
         assert isinstance(out, list)
     else:
-        assert out == obj
+        assert out is obj or out == obj
 
 
 if __name__ == "__main__":
