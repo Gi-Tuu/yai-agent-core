@@ -6,9 +6,14 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
+
+# shell.desktop 包会导入 PySide6；最小 CI（只装 dev）没有桌面 extra。
+pytest.importorskip("PySide6")
 
 from shell.desktop.host import DemoCompanion, _companion_state, _live_factory  # noqa: E402
 
