@@ -111,6 +111,8 @@ include = [
     # SECURITY.zh-CN.md：tests/test_security_policy_parity.py 断言中英两份同时存在。
     "/SECURITY.zh-CN.md",
     "/LICENSE",
+    # ROADMAP.md：白皮书链接到它；不带上则包内那处链接是死链。
+    "/ROADMAP.md",
     # uv.lock：tests/test_version_consistency.py 会读它核对版本串。
     "/uv.lock",
     # 核心文档（README 里的相对链接在 sdist 内也要可达）。
@@ -131,6 +133,11 @@ include = [
     "/docs/releases",
     # 讲义里的截图（讲义 22 的五张桌面图等）：不带则包内图片全是断链。
     "/docs/assets",
+    # 白皮书与部署文档引用的赛事配图（**仅这两项被 git 跟踪的公开内容**；
+    # docs/competitions 下的申报表 / 作品介绍 / 更新邮件等含个人信息的本地稿
+    # 全都未被跟踪，绝不能进包）。
+    "/docs/competitions/deployment.md",
+    "/docs/competitions/shanghai/figs",
 ]
 # hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录。
 # tests/fixtures/acc：上游 Agent Capability Contract 的官方一致性语料（Apache-2.0，
