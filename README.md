@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.14.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.15.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -203,8 +203,9 @@ uv sync --extra desktop
 | 6 | `host_e_sales_crm` | 旗舰：独立 CRM，一个开关嵌入 Core（终端 + 网页，端口 8200） |
 | 7 | `host_i_mealie` | 适配真实第三方开源项目（Mealie，REST） |
 | 8 | `host_j_actual` | 第三方播种五拍标准线：记账应用 Actual Budget（发现补能力 / 派子员工，网页 8240） |
+| 9 | `host_k_multimodal` | 多模态：模型只选图片句柄，宿主负责解析、判作用域 / 有效期 / 大小 |
 
-> 目录名保留历史编号（a/c/d/e/f/g/i/j），不随学习顺序重排，以便与各版材料、讲义路径一致。
+> 目录名保留历史编号（a/c/d/e/f/g/i/j/k），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
 ## 在线 HTTP API
 
@@ -224,7 +225,13 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.4 – v0.6（已完成）**：能力缺口感知与 ToolDiscovery 闭环、host_e CRM 零改造嵌入、权限三档、组合工具、双通道语义发现、执行中动态发现
 - **v0.7（已完成）**：自校准路由 contextual bandit（离线 +16pp）、代码工具注册 / TTL / 授权闸、子进程教学沙箱、灵动岛员工薄壳
 - **v0.8（已完成）**：上下文摘要压缩、MCP/OpenAPI 动态发现源与多源聚合、SQLite KV TTL、Docker 沙箱适配器、API Key 鉴权 / 限流 / 响应守卫、发布 PyPI、CI 安全加固（CodeQL、OpenSSF Scorecard、mypy、覆盖率门禁）
-- **v0.9（开发中，已在 main 落地）**：动态重规划 `replan`、成本·延迟感知选档 `tiering`（standard/strong 自动换挡 + DONE 成本汇总）；长期记忆语义召回与任务起始主动注入、落盘加密第九 SPI `StorageCipher`；结构化 tracing（OpenTelemetry）与 metrics / readiness、任务级预算熔断；子员工预算与全局并发闸；第三方播种五拍标准线（`host_j` 零改造嵌入真实记账应用 Actual Budget）
+- **v0.9（已完成）**：动态重规划 `replan`、成本·延迟感知选档 `tiering`（standard/strong 自动换挡 + DONE 成本汇总）；长期记忆语义召回与任务起始主动注入、落盘加密第九 SPI `StorageCipher`；结构化 tracing（OpenTelemetry）与 metrics / readiness、任务级预算熔断；子员工预算与全局并发闸；第三方播种五拍标准线（`host_j` 零改造嵌入真实记账应用 Actual Budget）
+- **v0.10（已完成）**：治理声明随能力清单跨进程、工具硬超时 `tool_timeout` 与 `aclose` 统一收尾、Anthropic 模型后端、第十个 SPI `ResourceProvider`、ACC 兼容层、审批-执行-审计同源与声明式脱敏、全局限流兜底
+- **v0.11（已完成）**：原生参数级审批（ACC 降级为互操作 shim）、`risk` / `scope` 随事件发出、资源作用域闸 `filesystem_gate`、PEP 563 注解解析修正
+- **v0.12（已完成）**：八处"静默失效"安全加固、ACC 执行提示由执行器真正强制、多模态消息契约 `ChatMessage.parts`、能力清单 `manifest_version` 升 2、certifi 关键漏洞修复
+- **v0.13（已完成）**：入参 schema 子集 4→13 个关键字、多模态三处落地（成本口径 / 能力探测 / `host_k` 样板）、组合工具版本仓库、跨层对抗性证据、POSIX `O_NOFOLLOW` 收窄竞态窗口
+- **v0.14（已完成，当前发布版本）**：执行约束覆盖全部路径、入参校验成为所有调用的共同下限、`strict_direct` 严格模式、`capability_health()` 接入体检、可信变更预览 `ChangePreview`、执行收据与进程内幂等
+- **v0.15（候选中）**：跨实例分布式限流、生产级沙箱递进、组合工具可视化编排（宿主侧）、预览 token 收窄、公网实例暴露面收口、多模态真机验证
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
 ## 许可证

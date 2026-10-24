@@ -91,9 +91,10 @@ spec.governance = ToolGovernance(sensitive=("api_key", "headers.Authorization"))
 
 ### 3.2 声明会跟着能力清单走
 
-`governance` 的**数据部分**（`sensitive` / `audit_sensitive` / `acc` 快照 / `approval` 审批要求）
-随 manifest 一起导出、导入后继续生效；`gate` 是函数，与 `handler` 同命——不导出、
-也不从清单重建，跨进程后由宿主本地重新绑定（第 21 篇）。
+`governance` 的**数据部分**（`sensitive` / `audit_sensitive` / `acc` 快照 / `approval` 审批要求 /
+`timeout_ms` 硬超时 / `rate_limit` 频控）随 manifest 一起导出、导入后继续生效；`gate` / `preview` /
+`idempotency_key` 是函数，与 `handler` 同命——不导出、也不从清单重建，跨进程后由宿主本地重新绑定
+（第 21 篇 §5 有完整字段表）。
 
 ## 4. 原生参数级审批：`governance.approval`
 

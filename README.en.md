@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.14.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.15.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -223,8 +223,9 @@ approval card on first call (discovery ≠ authorization).</p>
 | 6 | `host_e_sales_crm` | Flagship: a standalone CRM that embeds Core with one switch (terminal + web, port 8200) |
 | 7 | `host_i_mealie` | Adapting a real third-party open-source project over REST (Mealie) |
 | 8 | `host_j_actual` | Third-party seeding "five-beat" line in the Actual Budget ledger app (discover a missing tool / delegate sub-employees; web on 8240) |
+| 9 | `host_k_multimodal` | Multimodal: the model only picks an image handle; the host resolves it and enforces scope / expiry / size |
 
-> Directory names keep their historical letters (a/c/d/e/f/g/i/j) and are not reordered by learning
+> Directory names keep their historical letters (a/c/d/e/f/g/i/j/k) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
 
 ## Online HTTP API
@@ -253,12 +254,30 @@ For optional environment variables (persistent memory, history trimming / TTL, r
 - **v0.8 (done)**: context compaction; MCP/OpenAPI dynamic discovery sources with multi-source
   aggregation; SQLite KV TTL; Docker sandbox adapter; API-key auth, rate limiting and response guards;
   published to PyPI; CI hardening (CodeQL, OpenSSF Scorecard, mypy, coverage gate)
-- **v0.9 (in progress, already on main)**: dynamic re-planning `replan` and cost/latency-aware `tiering`
+- **v0.9 (done)**: dynamic re-planning `replan` and cost/latency-aware `tiering`
   (automatic standard/strong shifting + DONE cost summary); semantic recall of long-term memory with
   proactive recall at task start, and the 9th SPI `StorageCipher` for at-rest encryption; structured
   OpenTelemetry tracing, metrics/readiness and a task-level budget circuit breaker; sub-employee budget
   and a global concurrency gate; and the third-party seeding five-beat line (`host_j` embeds into the
   real bookkeeping app Actual Budget with zero source changes)
+- **v0.10 (done)**: governance declarations travel across processes with the capability manifest; hard
+  tool timeout `tool_timeout` and unified `aclose` teardown; Anthropic model backend; the 10th SPI
+  `ResourceProvider`; ACC compatibility layer; approval/execution/audit from one parameter snapshot plus
+  declarative redaction; a global rate-limit backstop
+- **v0.11 (done)**: native parameter-level approval (ACC demoted to an interop shim); `risk` / `scope`
+  emitted with events; resource-scope gate `filesystem_gate`; PEP 563 annotation resolution fix
+- **v0.12 (done)**: eight "looks guarded, actually silent" security fixes; ACC execution hints really
+  enforced by the executor; multimodal message contract `ChatMessage.parts`; manifest
+  `manifest_version` bumped to 2; a critical certifi vulnerability fix
+- **v0.13 (done)**: input-schema subset expanded from 4 to 13 keywords; three multimodal follow-throughs
+  (true cost accounting / capability probing / the `host_k` sample); composite workflow version store;
+  cross-layer adversarial evidence; POSIX `O_NOFOLLOW` narrows the symlink race window
+- **v0.14 (done, current release)**: execution constraints applied on every path; input validation as a
+  common floor for all calls; `strict_direct` mode; `capability_health()` checks; trusted change preview
+  `ChangePreview`; execution receipts and in-process idempotency
+- **v0.15 (candidates)**: cross-instance distributed rate limiting; production-grade sandbox tiers;
+  visual composition authoring (host side); narrower preview tokens; closing the public instance's
+  exposure surface; real-hardware multimodal verification
 - **v1.0 (planned)**: flow back in as the agent kernel of the AI Companion project
   [AMBRACE](https://github.com/Gi-Tuu/AMBRACE)
 

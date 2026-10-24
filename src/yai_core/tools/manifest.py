@@ -8,18 +8,21 @@
   其能力声明，导入后 ``handler=None``，需绑定后端；跨语言接入这类能力请直接
   走 MCP / OpenAPI 集成（它们自带 handler）。
 - 本模块**不另造调用通道**（"manifest + 自有 JSON-RPC"等于简化版 MCP）。
-- 治理声明（脱敏路径 / 宽口径审计 / 外部契约快照）随清单走，但
-  ``governance.gate`` 与 handler 同命：**函数不出现在清单里，也不从清单里重建**。
+- 治理声明（脱敏路径 / 宽口径审计 / 审批要求 / 外部契约快照 / 超时 / 频控）随清单走，但
+  ``governance.gate`` / ``preview`` / ``idempotency_key`` 与 handler 同命：**函数不出现在清单里，
+  也不从清单里重建**。
   跨进程导入后要让准入判定复活，必须由宿主本地重新绑定（见
   :meth:`ToolSpec.from_manifest_dict` 的示例）——外来清单不能替本机工具决定闸门。
 
 文件格式：
 
-    {"manifest_version": 1, "tools": [ {ToolSpec manifest}, ... ]}
+    {"manifest_version": 2, "tools": [ {ToolSpec manifest}, ... ]}
 
 其中工具项可含可选的 ``governance`` 块（无治理声明时整个键省略）：
 
-    "governance": {"sensitive": ["api_key"], "audit_sensitive": true, "acc": {...}}
+    "governance": {"sensitive": ["api_key"], "audit_sensitive": true,
+                   "approval": {...}, "acc": {...}, "timeout_ms": 2000,
+                   "rate_limit": {"count": 5, "window": "1m"}}
 """
 
 from __future__ import annotations

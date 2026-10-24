@@ -113,6 +113,10 @@ jobs:
         run: uv sync --extra dev
       - name: Run offline router benchmark
         run: uv run python scripts/benchmark_router.py
+      # 留出集 / 冻结学习：在训练集学完、冻结参数后测没见过的任务，防止
+      # "同批任务边学边测"的虚高曲线掩盖泛化退化。
+      - name: Run held-out frozen-learning benchmark
+        run: uv run python scripts/benchmark_router.py --holdout
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
