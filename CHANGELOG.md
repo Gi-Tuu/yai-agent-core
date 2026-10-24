@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Office 文档文本抽取 Battery（`batteries/office_text.py`，新 `[office]` extra）**：
+  docx / xlsx / pptx 走标准库 `zipfile` + `xml.etree`（零依赖），PDF 走可选 pypdf
+  （BSD-3、纯 Python、0.4 MB，懒加载）。安全闸三条有测试钉住：只读白名单 ZIP 成员
+  且逐成员流式限量（防 zip 炸弹）、全量缓冲区拒绝 `<!DOCTYPE` / `<!ENTITY`（实体
+  攻击定义通道整条封死）、结果截断带 `…[truncated]`。边界如实声明：文本级抽取，
+  版面/样式/公式/数字单元格不进文本层。CI 矩阵同步装 `--extra office`。
+
 ### Changed
 
 - **星云动效对齐设计稿（web 引擎 → QML 全量移植）**：`NebulaOrbCanvas.qml`
