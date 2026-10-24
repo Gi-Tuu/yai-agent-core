@@ -7,7 +7,7 @@
 
 ## [Unreleased]
 
-## [v0.15.0] - 2026-10-24
+## [v0.16.0] - 2026-10-24
 
 ### Added
 
@@ -18,6 +18,11 @@
   处理。**工具面仍走 MCP / OpenAPI**，协议里没有 `tool/call`，不新增第二套工具
   调用通道。单进程单任务；工具接入失败会关闭已建 core；运行期异常只发
   `agent/error`，不杀进程。默认真实模型走 `[llm]` extra，测试可注入模型与工具。
+
+## [v0.15.0] - 2026-10-24
+
+### Added
+
 - **CI 增加留出集评测与 Windows junction 竞态测试**：`router benchmark` job 在原有
   主曲线之后同时跑 `--holdout`（冻结学习泛化）；Windows 上新增 junction 父目录
   替换测试，证明句柄真实路径复核在没有 `O_NOFOLLOW` 的平台也确实生效（此前该
