@@ -54,8 +54,8 @@ jobs:
         if: matrix.family == 'linux' && matrix.python-version == '3.12'
         run: uv lock --check
 
-      - name: Install project (dev + llm + server + mcp + openapi + otel extras)
-        run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel
+      - name: Install project (dev + llm + server + mcp + openapi + otel + office extras)
+        run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel --extra office
 
       - name: Ruff lint
         run: uv run ruff check src tests examples scripts fuzzing shell

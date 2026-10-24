@@ -176,6 +176,7 @@
 - 52 · types.py + tools/executor.py + kernel/loop.py：执行收据与进程内幂等（五种状态、retryable、宿主 idempotency_key、call_id、去重缓存与 partial/unknown 边界）
 - 53 · kernel/state.py + kernel/context.py + kernel/loop.py + core.py：宿主实时状态（`register_state_provider`、每轮瞬态 system 注入、不进历史/压缩/记忆、容量上限与失败降级、`HOST_STATE` 事件只报大小不复制内容）
 - 54 · sidecar/：语言无关宿主的会话控制协议（stdio NDJSON + JSON-RPC 2.0；initialize / run / cancel / approval / clarify / shutdown；工具面仍走 MCP/OpenAPI，不另造工具调用通道；单进程单任务与失败清理）
+- 55 · `batteries/office_text.py`：Office 文本抽取（docx/xlsx/pptx 零依赖标准库，PDF 走 [office] extra pypdf；zip 炸弹/实体/截断三闸）
 
 ## 5. 自检（读完本篇应能回答）
 
