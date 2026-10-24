@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.19.0] - 2026-10-24
+
 ### Added
 
 - **销售 CRM 的“当前选中客户”接入 HostStateProvider**：host_e 网页新增
