@@ -7,6 +7,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **桌面壳视觉重构（Optical Obsidian / Braun Signal Orange）**：合并新的
+  `Theme.qml`（球 52、胶囊 440×52、面板 440×536、26px 面板圆角、信号橙），
+  保留原 QML 仍依赖的字体/时长/状态 token；新增 `NebulaOrbCanvas.qml`，
+  球、胶囊与面板顶栏共用 idle / working / complete / frozen 四态。
+  为常驻桌面控成本：空闲 20fps、工作 60fps、冻结停画，实测待命约单核 6.2%。
+  胶囊改为 `01/SALES + 活动状态 + OPEN + 收起箭头`；面板改为
+  `YAI.CORE · 模型 + VAULT/MEM + 编号标签 + HITL.GATE + TRACE + RUN` 结构；
+  VAULT/MEM 改为全屏面板并可直接互切。壳层改为不透明，避免桌面其他窗口文字
+  透进对话。`docs/assets` 的球/面板截图已按真实运行态更新，并新增胶囊、HITL、
+  VAULT、MEM 四张截图；压缩包里的网页预览依赖 CDN 且为独立 mock，未并入仓库。
+
 ## [v0.19.0] - 2026-10-24
 
 ### Added

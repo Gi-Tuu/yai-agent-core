@@ -16,8 +16,17 @@ Item {
     height: parent ? parent.height : 620
 
     signal collapseRequested
+    signal capsuleRequested
 
     readonly property var host: Window.window
+    readonly property int vaultCount: {
+        try { return (JSON.parse(workbench.codeVault || "{}").tools || []).length; }
+        catch (e) { return 0; }
+    }
+    readonly property int memCount: {
+        try { return (JSON.parse(workbench.learningVault || "{}").buckets || []).length; }
+        catch (e) { return 0; }
+    }
     readonly property string sid: workbench.activeSpecialistId
     property var feedModel: null
     property var pending: workbench
@@ -80,7 +89,11 @@ Item {
         var text = inputField.text.trim();
         if (text === "") return;
         host.pushUser(sid, text);
-        if (workbench.startTask(text)) inputField.text = "";
+        if (workbench.startTask(text)) {
+            inputField.text = "";
+            // 胶囊显示用户可读的任务摘要，而不是内部路由名。
+            host.capText = "正在处理：" + text;
+        }
     }
 
     function toggleChain(index, open) {
@@ -111,31 +124,47 @@ Item {
         anchors.fill: parent
         spacing: 10
 
-        // ---------- 标题（Core / 审批 / 工具 / 学习 / 退出 全部收进右侧齿轮）----------
+        // ---------- 顶栏：YAI.CORE / 模型 / VAULT / MEM / 设置 / 折叠 ----------
         RowLayout {
             spacing: 6
+            NebulaOrbCanvas {
+                Layout.preferredWidth: 52
+                Layout.preferredHeight: 52
+                isWide: false
+                phase: panel.host ? String(panel.host.orbPhase || "idle") : "idle"
+            }
             Text {
-                text: "YAI 灵动岛"
+                text: "YAI.CORE"
                 color: Theme.text
-                font.pixelSize: 14
+                font.family: Theme.fontMono
+                font.pixelSize: 11
                 font.bold: true
             }
-            Rectangle {
-                width: modeText.implicitWidth + 14
-                height: 19
-                radius: 9.5
-                color: "transparent"
-                border.width: 1
-                border.color: workbench.activeRunMode === "demo" ? Theme.dim : Theme.accent
-                Text {
-                    id: modeText
-                    anchors.centerIn: parent
-                    font.pixelSize: 10
-                    color: workbench.activeRunMode === "demo" ? Theme.dim : Theme.accent
-                    text: workbench.activeRunMode === "demo" ? "离线演示" : "真实模型"
-                }
+            Text {
+                text: "·"
+                color: Theme.dim
+                font.pixelSize: 11
             }
-            Item { Layout.fillWidth: true }
+            Text {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 40
+                text: workbench.activeRunMode === "demo"
+                      ? "offline · 0-deps" : "live · 0-deps"
+                color: Theme.dim
+                font.family: Theme.fontMono
+                font.pixelSize: 11
+                elide: Text.ElideRight
+            }
+            HardwareButton {
+                objectName: "vaultBtn"
+                label: "VAULT [" + panel.vaultCount + "]"
+                onClicked: vaultLayer.open()
+            }
+            HardwareButton {
+                objectName: "memBtn"
+                label: "MEM [" + panel.memCount + "]"
+                onClicked: learningLayer.open()
+            }
             IconButton {
                 objectName: "settingsGear"
                 glyph: "⋯"
@@ -145,43 +174,46 @@ Item {
             }
             IconButton {
                 objectName: "collapseBtn"
-                glyph: "×"
+                glyph: "⌃"
                 glyphSize: 15
                 tone: Theme.dim
-                onClicked: panel.collapseRequested()
+                onClicked: panel.capsuleRequested()
             }
         }
 
-        // 整体以离线模式启动时，明确告知这是脚本，引导评委走"真实员工"入口
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 28 : 0
-            visible: !workbench.launchLive
-            radius: 8
-            color: Theme.warnTint
-            border.width: 1
-            border.color: Theme.warn
-            Text {
-                anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                anchors.verticalCenter: parent.verticalCenter
-                text: "离线演示：回复为预设脚本；真实能力请用桌面「真实员工」入口启动"
-                color: Theme.warn
-                font.pixelSize: 10
-                elide: Text.ElideRight
-            }
-        }
-
-        // ---------- 专员条：始终同一行；非活动收成左边小图标，活动的在本行原地展开 ----------
+        // ---------- 专员索引：01/02/03/04 的瑞士式标签，不再用图标手风琴 ----------
         Row {
             objectName: "specialistBar"
             Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            spacing: 6
+            Layout.preferredHeight: 30
+            spacing: 4
             Repeater {
                 model: workbench.specialistModel
-                delegate: SpecialistRow { }
+                delegate: Rectangle {
+                    required property int index
+                    required property string specialistId
+                    required property string name
+                    required property bool active
+
+                    width: tabText.implicitWidth + 14
+                    height: 24
+                    radius: 6
+                    color: active ? Theme.text : "transparent"
+                    Text {
+                        id: tabText
+                        anchors.centerIn: parent
+                        text: (index + 1 < 10 ? "0" : "") + (index + 1) + " " + name
+                        color: active ? Theme.shell : Theme.dim
+                        font.family: Theme.fontMono
+                        font.pixelSize: 11
+                        font.bold: active
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: workbench.setActiveSpecialist(specialistId)
+                    }
+                }
             }
         }
 
@@ -211,33 +243,50 @@ Item {
                 RowLayout {
                     spacing: 8
                     Rectangle {
-                        width: 22
-                        height: 22
-                        radius: 6
+                        width: 8
+                        height: 8
+                        radius: 4
                         color: Theme.warn
-                        Text {
-                            anchors.centerIn: parent
-                            text: workbench.activePendingKind === "ask" ? "?" : "⛨"
-                            color: Theme.accentInk
-                            font.pixelSize: 13
-                            font.bold: true
-                        }
                     }
                     Text {
-                        text: panel.pendingTitle
-                        color: Theme.warn
-                        font.pixelSize: 12
+                        text: workbench.activePendingKind === "ask"
+                              ? "CLARIFY // 需要补充信息"
+                              : "HITL.GATE // 写操作冻结待批"
+                        color: Theme.accentBright
+                        font.family: Theme.fontMono
+                        font.pixelSize: 11
                         font.bold: true
                     }
                     Item { Layout.fillWidth: true }
+                    Rectangle {
+                        visible: workbench.activePendingKind === "confirm"
+                        width: riskText.implicitWidth + 12
+                        height: 18
+                        radius: 4
+                        color: "#33FF4F00"
+                        Text {
+                            id: riskText
+                            anchors.centerIn: parent
+                            text: "RISK: " + String(panel.pending.risk || "HIGH").toUpperCase()
+                            color: Theme.accentBright
+                            font.family: Theme.fontMono
+                            font.pixelSize: 10
+                        }
+                    }
                 }
 
                 // 待授权代码可能很长：限高 + 内部滚动，保证下方"允许/拒绝"始终可点
                 ScrollView {
                     id: pendingScroll
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(220, codeText.implicitHeight + 2)
+                    Layout.preferredHeight: Math.min(220, codeText.implicitHeight + 18)
                     clip: true
+                    background: Rectangle {
+                        color: "#33000000"
+                        radius: 8
+                        border.width: 1
+                        border.color: "#1FFFFFFF"
+                    }
                     Text {
                         id: codeText
                         width: pendingScroll.width - 12
@@ -288,12 +337,18 @@ Item {
                 RowLayout {
                     spacing: 8
                     visible: workbench.activePendingKind === "confirm"
-                    Item { Layout.fillWidth: true }
-                    Pill { label: "拒绝"; tone: Theme.bad; onClicked: workbench.decide(false) }
                     Pill {
-                        label: "允许"
+                        label: "[REJECT] 拒绝阻断"
                         filled: true
-                        tone: Theme.ok
+                        tone: Theme.raised2
+                        Layout.fillWidth: true
+                        onClicked: workbench.decide(false)
+                    }
+                    Pill {
+                        label: "[APPROVE] 批准放行"
+                        filled: true
+                        tone: Theme.accent
+                        Layout.fillWidth: true
                         onClicked: workbench.decide(true)
                     }
                 }
@@ -409,38 +464,39 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 height: 38
-                radius: 19
+                radius: 12
                 color: Theme.raised
                 border.width: 1
                 border.color: inputField.activeFocus ? Theme.accent : Theme.edge
                 Behavior on border.color { ColorAnimation { duration: Theme.msFast } }
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: ">"
+                    color: Theme.dim
+                    font.family: Theme.fontMono
+                    font.pixelSize: 12
+                }
                 TextField {
                     id: inputField
                     anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 70
+                    anchors.leftMargin: 28
+                    anchors.rightMargin: 10
                     verticalAlignment: TextInput.AlignVCenter
                     background: Item { }
                     color: Theme.text
                     font.pixelSize: 12
                     placeholderText: workbench.activeCoreEnabled
-                                     ? "交给" + workbench.activeName + "…" : "先启用该专员"
+                                     ? "输入自然语言或指令调配宿主函数…" : "先启用该专员"
                     placeholderTextColor: Theme.dim
                     onActiveFocusChanged: host.typing =
                         inputField.activeFocus || answerField.activeFocus
                     onAccepted: panel.send()
                 }
-                Text {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Theme.dim
-                    font.pixelSize: 10
-                    text: workbench.activeBusy ? "执行中" : "Enter 发送"
-                }
             }
             Pill {
-                label: workbench.activeBusy ? "终止" : "发送"
+                label: workbench.activeBusy ? "STOP" : "RUN"
                 filled: true
                 tone: workbench.activeBusy ? Theme.bad : Theme.accent
                 onClicked: {
@@ -454,13 +510,23 @@ Item {
     // 代码工具仓库弹层：放在最后，保证盖在所有内容之上
     ToolVaultPanel {
         id: vaultLayer
+        objectName: "vaultLayer"
         anchors.fill: parent
+        onOpenLearning: {
+            vaultLayer.visible = false;
+            learningLayer.open();
+        }
     }
 
     // 路由学习状态弹层：放在最后，保证盖在所有内容之上
     LearningPanel {
         id: learningLayer
+        objectName: "learningLayer"
         anchors.fill: parent
+        onOpenVault: {
+            learningLayer.visible = false;
+            vaultLayer.open();
+        }
     }
 
     // 标题栏齿轮下拉：Core / 审批 / 工具 / 学习 / 自动收回 / 退出
@@ -536,8 +602,9 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "过程 · " + count + " 步"
+                    text: "TRACE // 推理过程 " + count + " 步"
                     color: Theme.dim
+                    font.family: Theme.fontMono
                     font.pixelSize: 11
                 }
             }
@@ -769,6 +836,35 @@ Item {
     }
 
     // ---------- 标题栏圆形图标按钮（设置 / 收起）----------
+    component HardwareButton: Rectangle {
+        id: hb
+        property string label: ""
+        property color tone: Theme.dim
+        signal clicked
+
+        width: hbText.implicitWidth + 14
+        height: 22
+        radius: 6
+        color: hbHover.containsMouse ? Theme.raised2 : "transparent"
+        border.width: 1
+        border.color: Theme.edge
+        Text {
+            id: hbText
+            anchors.centerIn: parent
+            text: hb.label
+            color: hb.tone
+            font.family: Theme.fontMono
+            font.pixelSize: 10
+        }
+        MouseArea {
+            id: hbHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: hb.clicked()
+        }
+    }
+
     component IconButton: Rectangle {
         id: ib
         property string glyph: ""
