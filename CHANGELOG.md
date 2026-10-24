@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **桌面陪伴专员接入 HostStateProvider**：`shell/desktop/host.py` 的 `_live_factory`
+  支持 `state_provider`；陪伴专员每次任务注册 `companion` 状态源（最近三条心情 +
+  总数），模型调用前瞬态注入，不写入历史/记忆。新增
+  `tests/test_desktop_companion_state.py`，走真实 live factory 验证。
+
 ## [v0.17.0] - 2026-10-24
 
 ### Added

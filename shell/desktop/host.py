@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from typing import Any
 
 from shell._bootstrap import ROOT, bootstrap
 from shell.demo_script import (
@@ -118,6 +120,12 @@ class DemoCompanion:
         return {"logged": True, "total": len(self._moods)}
 
 
+def _companion_state(host: DemoCompanion) -> dict[str, Any]:
+    """陪伴专员的“现状锚”：最近心情与总记录数。"""
+    moods = host.mood_trend()
+    return {"recent_moods": moods[-3:], "total": len(moods)}
+
+
 #: 各专员的"读工具"白名单：部分审批挡下自动放行，写操作仍要授权。
 #: sales 与 host_e 跨进程 ToolService 的 READ_TOOLS 保持一致（真实 CRM 的十个读能力）。
 _READ_TOOLS = {
@@ -154,6 +162,7 @@ def _live_factory(
     learning_path=None,
     catalog_factory=None,
     preview_client=None,
+    state_provider: tuple[str, Callable[[], Any]] | None = None,
 ):
     """为一个小宿主生成"每任务一个真 Core"的事件流工厂。
 
@@ -167,7 +176,7 @@ def _live_factory(
     """
     # 每任务新建 Core，但路由学习必须在任务之间累积：选择器在闭包里共享，
     # 首个任务时才从磁盘恢复。同专员 busy 时拒绝第二个任务，访问天然串行。
-    shared = {"selector": None}
+    shared: dict[str, Any] = {"selector": None}
 
     async def factory(task: str, channel):
         # 必须是 async generator（体内含 yield）：调用 factory(...) 直接返回
@@ -205,6 +214,10 @@ def _live_factory(
             context_compaction=True,
             discovery=catalog,
         )
+        if state_provider is not None:
+            # 现状锚：每次模型调用前重新取，不写入历史/记忆。
+            name, provider = state_provider
+            core.register_state_provider(name, provider)
         if preview_client is not None:
             # 销售专员跨进程操作真实 CRM：审批卡显示 host_e 渲染的实际 diff，
             # 而不是桌面端再复制一套业务规则。
@@ -250,6 +263,7 @@ def build_specs() -> list[SpecialistSpec]:
     from shell.desktop.crm_client import HostECrmClient, build_crm_catalog
 
     sales_host = HostECrmClient()
+    companion_host = DemoCompanion()
     return [
         SpecialistSpec(
             id="sales",
@@ -308,11 +322,15 @@ def build_specs() -> list[SpecialistSpec]:
             glyph="陪",
             demo_factory=make_demo_stream(SCRIPT_COMPANION),
             live_factory=_live_factory(
-                DemoCompanion(),
+                companion_host,
                 _READ_TOOLS["companion"],
                 with_sandbox=True,
                 storage_path=companion_storage,
                 learning_path=companion_learning,
+                state_provider=(
+                    "companion",
+                    lambda: _companion_state(companion_host),
+                ),
             ),
             code_storage=companion_storage,
             learning_path=companion_learning,

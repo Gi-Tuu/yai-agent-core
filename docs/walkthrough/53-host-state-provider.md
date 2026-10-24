@@ -126,6 +126,11 @@ core.register_state_provider("companion", capabilities.get_companion_profile)
 `mood / energy / bond_days`，且这些值不会写进历史或长期记忆。`tests/test_host_c_state.py`
 钉住了这条链路。
 
+桌面陪伴专员也走同一机制：`shell/desktop/host.py` 的 `_live_factory` 增加
+`state_provider` 参数，`build_specs()` 为陪伴专员注册 `_companion_state`（最近三条
+心情 + 总数）。每次任务新建 Core 时注册，任务结束随 Core 一起释放；
+`tests/test_desktop_companion_state.py` 走真实 live factory 验证注入。
+
 ## 6. 可观测性：报大小，不复制内容
 
 状态变化（或首次注入）时发一次事件：
