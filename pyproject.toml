@@ -30,8 +30,11 @@ Documentation = "https://github.com/Gi-Tuu/yai-agent-core/blob/main/docs/archite
 [project.optional-dependencies]
 # 真实模型接入（OpenAI 兼容：DeepSeek / 通义千问 / OpenAI 等）
 llm = ["openai>=1.40"]
-# Anthropic Messages API（Claude 系列）：与 llm 并列的可选模型后端，内核本体不依赖
-anthropic = ["anthropic>=0.40"]
+# Anthropic Messages API（Claude 系列）：与 llm 并列的可选模型后端，内核本体不依赖。
+# **上界 <2**：官方 SDK 1.x→2.x 是 breaking 区间，而本项目的测试用假模块
+# （见 CONTRIBUTING.md），CI 永远发现不了真实 SDK 的 API 漂移。
+# 等真机验证过 2.x 再放开上界，届时另开版本。
+anthropic = ["anthropic>=0.40,<2"]
 # FastAPI Battery：在线 API、健康端点、X-Agent 部署验证端点
 server = [
     "fastapi>=0.115",
@@ -82,23 +85,72 @@ build-backend = "hatchling.build"
 packages = ["src/yai_core"]
 
 [tool.hatch.build.targets.sdist]
-# 显式白名单：sdist 只含库源码、测试与核心文档。hatchling 默认会打包工作区里
-# 未被 .gitignore 忽略的文件，会把 docs/inbox 等本地过程稿一并带上，故改为只 include：
+# 显式白名单：sdist 只含库源码、可跑通的测试与核心文档。hatchling 默认会打包工作区里
+# 未被 .gitignore 忽略的文件，会把 docs/inbox 等本地过程稿一并带上，故改为只 include。
+#
+# **所有模式必须以 "/" 根锚定**：hatchling 用 pathspec.GitIgnoreSpec 编译 include，
+# gitignore 语义下无斜杠的模式会匹配**任意层级**的同名文件——`"README.md"` 曾把
+# examples/*/README.md、models/README.md、fuzzing/README.md 一并打进包（已发布的
+# 0.21.0 sdist 就带着 9 个这样的 README.md）。
 include = [
-    "src/yai_core",
-    "tests",
-    "README.md",
-    "CHANGELOG.md",
-    "CONTRIBUTING.md",
-    "SECURITY.md",
-    "LICENSE",
+    "/src/yai_core",
+    "/tests",
+    # tests/ 里有 21 个模块依赖这三处（shell.desktop.*、host_* 示例、脚本），
+    # 不带上它们，从 sdist 跑 pytest 会在**收集阶段**就报 21 个错。
+    "/shell",
+    "/examples",
+    "/scripts",
+    "/README.md",
+    "/README.en.md",
+    # .env.example：README 的安装段链接到它（只有占位符，无真实 Key）。
+    "/.env.example",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/CONTRIBUTING.en.md",
+    "/SECURITY.md",
+    # SECURITY.zh-CN.md：tests/test_security_policy_parity.py 断言中英两份同时存在。
+    "/SECURITY.zh-CN.md",
+    "/LICENSE",
+    # uv.lock：tests/test_version_consistency.py 会读它核对版本串。
+    "/uv.lock",
+    # 核心文档（README 里的相对链接在 sdist 内也要可达）。
+    # 刻意**不**整包 include /docs：docs/exports（构建产物）、docs/competitions
+    # 与本机过程稿都在那儿；只点名带核心几篇与讲义目录。
+    "/docs/architecture.md",
+    "/docs/architecture.en.md",
+    "/docs/reading-guide.md",
+    "/docs/comparison.md",
+    "/docs/comparison.en.md",
+    "/docs/deployment-scaling.md",
+    "/docs/deployment-scaling.en.md",
+    "/docs/tracing.md",
+    "/docs/tracing.en.md",
+    "/docs/multilang-interop.md",
+    "/docs/whitepaper.md",
+    "/docs/walkthrough",
+    "/docs/releases",
+    # 讲义里的截图（讲义 22 的五张桌面图等）：不带则包内图片全是断链。
+    "/docs/assets",
 ]
 # hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录。
 # tests/fixtures/acc：上游 Agent Capability Contract 的官方一致性语料（Apache-2.0，
 # 出处与 SHA-256 见同目录 SOURCE.md）。它是**别人的测试数据集**，我们只在源码仓库里
 # 用它证明兼容层跑得对，不对外分发副本；缺该文件时 tests/test_acc_conformance.py
 # 整模块 skip，从 sdist 跑测试的人不会因此报错。
-exclude = ["inbox", "tests/fixtures/acc"]
+exclude = [
+    "inbox",
+    "tests/fixtures/acc",
+    # 本机过程稿只在 .git/info/exclude 里（不随仓库分发）；显式再排一次，
+    # 防止将来有人把它们移进 .gitignore 之前就已经被打进包。
+    "docs/项目台账*.md",
+    "docs/检查点A-*.md",
+    "docs/YAI*.md",
+    "docs/产品化更新方案.md",
+    "docs/内部备战-*.md",
+    "docs/宣传视频-*.md",
+    "docs/工具管理永久保留-*.md",
+    "docs/终端工艺视觉-*.md",
+]
 
 [tool.ruff]
 line-length = 100

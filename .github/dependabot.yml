@@ -5,7 +5,35 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 3
+    # 锁文件有 90+ 个包，限额 3 永远追不上；开分组后一次 PR 解决一族。
+    open-pull-requests-limit: 8
+    groups:
+      # OpenTelemetry 全家桶（api / sdk / exporter / semantic-conventions）
+      # 必须同版本，拆开升级会造成 api 与 sdk 版本错配。
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
+      # 安全敏感的基础库成组升级：一次 PR 解决一族同源 CVE
+      # （2026-10 审计实测 opentelemetry-api 1.44.0 与 filelock 4.0.6 均为已知漏洞，
+      #   且当时仓库里一个 Dependabot PR 都没有——限额太低、分组太散是主因）。
+      security-critical:
+        patterns:
+          - "certifi"
+          - "cryptography"
+          - "filelock"
+          - "httpx"
+          - "pyyaml"
+          - "requests"
+          - "urllib3"
+      # 开发工具链成组：升级往往需要一起动（如 pytest 插件与 pytest 本体）。
+      dev-tooling:
+        patterns:
+          - "pytest"
+          - "pytest-*"
+          - "ruff"
+          - "mypy"
+          - "coverage"
+          - "pytest-cov"
 
   # GitHub Actions：钉了完整 SHA，Dependabot 负责滚动更新 SHA 与版本注释
   - package-ecosystem: "github-actions"
