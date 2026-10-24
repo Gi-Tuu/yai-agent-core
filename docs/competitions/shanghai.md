@@ -60,7 +60,7 @@
 - [x] docs/comparison.md（五类同类方案诚实对比）
 - [x] .github/ Issue 模板 ×2 + PR 模板
 - [x] CONTRIBUTING.md 补"新人 30 分钟跑通" + 测试数更新（现 241）
-- [x] docs/competitions/shanghai/作品介绍.md（四段式）→ PDF（入库，含 host_e 原生/发现两张门面图）
+- [x] docs/competitions/shanghai/作品介绍.md（四段式）→ PDF（入库，含 host_e 原生/发现两张门面图）；2026-10-24 赛事结束后已归档为通用技术白皮书 [docs/whitepaper.md](../whitepaper.md)
 - [x] docs/releases/v0.2.0.md（Release notes 源；tag/Release 由用户本人执行）
 - [x] README 门面（hero 发现闭环图 + 原生 CRM 图）
 - [ ] 3–4 min 演示视频（用户录制/补段7 host_e 发现闭环，脚本见 演示视频脚本.md，口播数字 241）
