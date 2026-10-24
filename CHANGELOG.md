@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.17.0] - 2026-10-24
+
 ### Added
 
 - **Node 宿主样例与 CI sidecar 强化**：新增 `examples/host_l_sidecar_node/`，零依赖

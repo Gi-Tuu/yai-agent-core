@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.16.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-24（对应已发布版本 **v0.17.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -166,7 +166,7 @@
 - **证据链补齐**：路由 benchmark 增加留出集/冻结学习评测并接入 CI；Windows 增加
   junction 父目录替换测试；能力体检、执行收据、预览与状态注入的离线用例补齐。
 
-### v0.16 — 语言无关宿主接入（tag 2026-10-24，当前发布版本）
+### v0.16 — 语言无关宿主接入（tag 2026-10-24）
 
 - **Sidecar 会话控制协议**：`python -m yai_core.sidecar` 用 stdio NDJSON +
   JSON-RPC 2.0 承载初始化、运行、取消、审批/澄清与事件流；工具面仍走
@@ -175,12 +175,18 @@
 - **证据**：16 个离线用例覆盖审批/澄清/取消/错误码/stdio/MCP/OpenAPI，另有
   第 54 篇讲义与多语言接入文档同步。
 
+### v0.17 — 跨语言证据与宿主状态接线（tag 2026-10-24，当前发布版本）
+
+- **Node 宿主样例**：零依赖 Node 进程真实拉起 sidecar，工具走 Node 自己的
+  OpenAPI 服务、模型走本地 mock；演示审批反向请求与 `done` 事件。
+- **CI 强化**：新增 `sidecar (mcp + llm)` job，安装真实可选依赖并执行 Node
+  样例，不再跳过 MCP/stdio 路径。
+- **HostStateProvider 真实接线**：陪伴示例注册 `companion` 状态源，当前档案
+  每轮瞬态注入，不需要先调工具、也不写入历史。
+
 ## 下一步
 
-### v0.17 — 候选（未排序，等维护者拍板）
-
-> 已在 main 待发版（详见 `CHANGELOG.md` 的 `[Unreleased]`）：Node 宿主样例、
-> CI 的 sidecar（mcp + llm）job、陪伴宿主的 HostStateProvider 接线。
+### v0.18 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。
