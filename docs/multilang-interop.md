@@ -1,6 +1,6 @@
 # 多语言接入设计（Multilang Interop）
 
-> 事实基线：yai-agent-core **v0.14.0**，最后核实 **2026-10-23**。
+> 事实基线：yai-agent-core **v0.15.0**，最后核实 **2026-10-24**。
 
 ## 0. 先回答：能实现，还是已经实现？
 
@@ -10,6 +10,7 @@
 | Python **同进程零配置内省** | **✅ 已实现** | `discover(host)` 用 `inspect` 自动生成 ToolSpec，**仅 Python** |
 | `ToolSpec` 中立数据 + `registry.register()` | **✅ 已实现** | 工具能力是数据，不绑定语言 |
 | **ToolSpec ↔ manifest JSON 序列化 + 文件 IO** | **✅ 已实现** | `to_manifest_dict` / `from_manifest_dict` + `tools/manifest.py`；composite / code 可完整移植并执行，native 类只导出声明；治理声明（脱敏路径 / 宽口径审计 / 审批要求 / 契约快照 / 超时 / 频控）随清单走，函数（`gate` / `preview` / `idempotency_key`）不随清单走 |
+| **Sidecar 会话控制（stdio JSON-RPC）** | **🛠 已落地 main，待发版** | `python -m yai_core.sidecar`：只传 initialize / run / cancel / 审批 / 澄清 / 事件；**工具面仍走 MCP / OpenAPI**，不新增工具调用通道 |
 | 非 Python 的**同进程零配置内省** | ❌ 不追求对等 | 静态语言无同等运行时元数据，需"注解 / 生成"一步（语言特性，非缺陷） |
 | 各语言注解 / 代码生成器（JVM APT、Rust proc-macro、`go:generate`、TS 提取） | 🛠 未做（路线） | 见 §4 |
 | 每语言 native exporter 探针 | 🛠 未做（路线） | 见 §4 |
@@ -67,6 +68,24 @@ Python `inspect` 只是"生成清单"的**其中一个 provider**：
 
 > 这两条路**不要求对方是 Python**，是当前已验证的跨语言接入方式。
 
+### 3.3 经 Sidecar 会话控制（🛠 已落地 main，待发版）
+
+非 Python 宿主想把**整个 Agent** 跑起来（而不只是接几个工具），可以拉起一个
+Python 子进程：
+
+```bash
+python -m yai_core.sidecar     # stdin/stdout 上的 NDJSON + JSON-RPC 2.0
+```
+
+- `initialize`：配模型、MCP/OpenAPI、权限挡位；
+- `agent/run`：启动任务并流式收 `agent/event`；最终答案在 `done` 事件里；
+- `agent/cancel`、`shutdown`；
+- 审批/澄清由 sidecar 反向发起 `approval/request` / `clarify/request`，宿主 UI 回答。
+
+**工具仍然只经 MCP / OpenAPI 接入**：宿主把自己的业务函数包成一个任意语言的
+MCP Server（或 REST 服务），会话协议里没有 `tool/call`。这样既让宿主复用现有
+工具适配器，也不与 MCP 重复。详见 `docs/walkthrough/54-sidecar-protocol.md`。
+
 ---
 
 ## 4. 还没做、如何演进（路线，按性价比排序）
@@ -77,8 +96,10 @@ Python `inspect` 只是"生成清单"的**其中一个 provider**：
 
 > 内核的 Python 代码不需要为这些改动；它们都是新增的 **manifest provider**。
 
-> **边界：不另造"manifest + 自有 JSON-RPC 调用通道"**——那等于一个简化版 MCP。
-> manifest 只负责"能力的语言中立描述与交换"；跨语言的实际调用统一走 MCP / OpenAPI。
+> **边界：不另造"manifest + 自有 JSON-RPC 工具调用通道"**——那等于一个简化版 MCP。
+> manifest 只负责"能力的语言中立描述与交换"；跨语言的实际工具调用统一走 MCP / OpenAPI。
+> Sidecar 的 JSON-RPC **只承载 Agent 会话控制**（运行、取消、审批、澄清、事件），
+> 不承载工具调用，因此不违反这条边界。
 
 ---
 
@@ -110,6 +131,7 @@ Python `inspect` 只是"生成清单"的**其中一个 provider**：
 | `src/yai_core/integrations/mcp/client.py` | MCP Client（stdio + HTTP） |
 | `src/yai_core/integrations/openapi/{discovery,spec,client}.py` | OpenAPI 发现（JSON/YAML） |
 | `src/yai_core/tools/manifest.py` | manifest 批量导入导出 + 文件 IO |
+| `src/yai_core/sidecar/` | Sidecar 会话控制协议（stdio NDJSON JSON-RPC） |
 | `src/yai_core/discovery/` | Python 函数内省 |
 | `src/yai_core/spi/` | 10 个能力契约 |
 | `docs/walkthrough/10-mcp-client.md` / `12-openapi-discovery.md` | 逐行讲义 |
