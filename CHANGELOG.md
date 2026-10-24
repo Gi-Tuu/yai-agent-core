@@ -5,7 +5,7 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.21.0] - 2026-10-24
 
 ### Added
 
@@ -28,6 +28,17 @@
   对照 web 演示）：粒子数 120→260 对 CPU 无影响，帧率才是成本杠杆
   （空闲 20fps≈10%、30fps≈14%、60fps≈19% 单核），故取 260 粒 + 空闲 30fps +
   工作 60fps；旧口径"120 粒 20fps 占 6.2%"已在讲义 22 订正。
+
+### Fixed
+
+- **测试与本地工具的安全卫生批量加固**（同时消除静态扫描器的 24 项误报源头）：
+  新增 `tests/_local_http.py`（环回 fail-closed + `http.client` 显式 host/port），
+  五个测试文件的本地 HTTP helper 收编至此；假凭据改环境注入（`YAI_TEST_API_KEY` /
+  `YAI_TEST_REDACTION_KEY`）；`shell/desktop/crm_client.py` 构造期强制 http + 环回；
+  `scripts/build_xagent_submission.py` 的 `http_json` 加 https 官方域白名单并修复一处
+  latent `union-attr`；`docs/exports/render_mermaid.py` 改常量 host 直连 kroki.io。
+  `fuzzing/fuzz_schema.py` 标量不变量改为 `is` 恒等判（`json.loads("NaN")` 的
+  `float('nan')` 与自身 `==` 恒 False，fuzzer 实测撞出）。
 
 ## [v0.20.0] - 2026-10-24
 
