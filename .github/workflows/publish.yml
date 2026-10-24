@@ -100,6 +100,25 @@ jobs:
             cosign sign-blob "$f" --bundle "$f.sigstore" --yes
           done
 
+      # Release 正文优先用 docs/releases/<tag>.md（人话版：三条主线 / 升级指引 /
+      # 本版数字 / 诚实边界）。没有该文件才回退到工作流从 PR 标题自动生成的流水账。
+      # 此前 generate_release_notes: true 一把梭，最新一版的正文退化成了 PR 列表，
+      # 仓库里精心写的人话版发布说明从未生效。
+      - name: Prepare release notes
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${TAG}.md"
+          if [ -f "$notes" ]; then
+            echo "path=${notes}" >> "$GITHUB_OUTPUT"
+            echo "release notes: using ${notes}"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "release notes: ${notes} 不存在，回退到自动生成的 PR 流水"
+          fi
+
       - name: GitHub Release (upload signed artifacts)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -111,6 +130,7 @@ jobs:
             dist/*.sig
             dist/*.pem
             dist/github-archives/*.sigstore
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
 
       # PyPI 发布只认 wheel / sdist；dist 里的 SHA256SUMS 与 .sigstore/.sig/.pem 会被

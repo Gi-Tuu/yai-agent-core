@@ -61,7 +61,7 @@ uv run pytest
 uv run python scripts/smoke_test.py
 ```
 
-The suite currently has **1100+ tests (a handful skipped, 0 failures)**; the exact count grows over
+The suite currently has **1,500+ tests (a handful skipped, 0 failures)**; the exact count grows over
 time, so the live `pytest` output is authoritative. Tests are fully offline and skip only when an environment piece is
 missing (no Docker daemon, no local bge-m3 weights, etc.).
 

@@ -145,7 +145,7 @@ class AgentCore:
         self._task_lock = asyncio.Lock()
         self.model = model
         self.registry = ToolRegistry()
-        # 自校准路由学习器（第六个 SPI）：默认 None，行为与不接入学习完全一致。
+        # 自校准路由学习器（RouteSelector 契约）：默认 None，行为与不接入学习完全一致。
         self.learning = learning
         self.on_feedback = on_feedback
         self.max_iters = max_iters

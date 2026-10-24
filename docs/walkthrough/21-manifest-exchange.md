@@ -36,6 +36,23 @@ print(composite.to_manifest_dict())
 }
 ```
 
+`version` 是**可选**键（v0.13 引入）：`ToolSpec.version` 非空时才会出现在清单里，
+上面这个组合工具没设版本，所以输出中**没有**这个键。设了版本就多一行：
+
+```json
+{
+  "name": "chain",
+  "description": "先加一再翻倍",
+  "input_schema": {"type": "object", "properties": {}},
+  "source": "composite",
+  "version": "v2",
+  "steps": [
+    {"tool": "add_one", "args": {"value": "{{$input.value}}"}},
+    {"tool": "double", "args": {"value": "{{$steps.0}}"}}
+  ]
+}
+```
+
 把这份 JSON 交给另一个 Core 实例（`ToolSpec.from_manifest_dict(...)`），注册后它**照样能执行**——
 因为组合工具的"执行逻辑"就是 steps 里的确定性编排（第 16 篇），不依赖任何运行时函数对象。
 
@@ -72,6 +89,8 @@ def to_manifest_dict(self) -> dict[str, Any]:
         ]
     if self.source == "code":
         manifest["code"] = self.code
+    if self.version:
+        manifest["version"] = self.version
     governance = governance_to_manifest(self.governance)
     if governance:
         manifest["governance"] = governance
@@ -79,6 +98,9 @@ def to_manifest_dict(self) -> dict[str, Any]:
 ```
 - 组合工具：把每个 `CompositeStep`（dataclass）降成普通 dict 列表——dataclass 不能直接 `json.dumps`，转成 dict 才行；
 - 代码工具：`code` 本来就是字符串，原样携带（执行仍需宿主沙箱，manifest 不含执行器）；
+- **版本标记（v0.13 引入）**：`version` 是纯数据（组合工具用它标出"这套流程是 v1 / v2"），
+  **非空时才写这个键**——没设版本的工具清单逐字节不变，老读者不认识这个键就当没有（向后兼容）；
+  导入侧 `from_manifest_dict` 会把它读回来（`version = str(data.get("version", "") or "").strip()`）；
 - 治理声明：只带**数据**（见第 5 节的六样），**空声明时整个键省略**，未治理的清单与旧格式逐字节一致；
 - **全程不碰 `handler` 与 `gate` / `preview` / `idempotency_key`**：它们都是运行时函数，不可 JSON 化，也不可移植。
 

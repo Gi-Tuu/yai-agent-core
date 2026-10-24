@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.20.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.22.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -33,8 +33,10 @@ that runs inside your software's process**:
 - You hand it the **ordinary functions that already exist** in your software (or connect MCP / OpenAPI);
 - It introspects those capabilities, auto-generates tool specs, and on each task **adaptively** decides
   whether to answer directly, call a tool, plan in steps, or ask you for clarification;
-- When capabilities are insufficient it **senses the gap and discovers new tools on demand**; risky
-  operations **request authorization by default** — and every step is visible as an event.
+- When capabilities are insufficient it **senses the gap and discovers new tools on demand**;
+  **operations covered by a host-declared approval policy** request authorization first (the default
+  policy allows everything — tighten it with `auto_approve_tools=False` or the `PermissionPolicy`
+  SPI) — and every step is visible as an event.
 
 ## Who it is / isn't for
 
@@ -42,7 +44,7 @@ that runs inside your software's process**:
 |---|---|
 | Already have working software and want to **add agent capability cheaply**, without platform lock-in | Want to **drag-and-drop agents** in a browser with no code (use a visual agent platform) |
 | Want AI to call your software's **real functions**, not generic chit-chat | Want an out-of-the-box **cloud-hosted / team SaaS** agent |
-| Need a **self-hostable, embeddable** agent runtime with swappable parts | Want an unattended, fully autonomous **coding agent** (YAI asks for approval by design) |
+| Need a **self-hostable, embeddable** agent runtime with swappable parts | Want an unattended, fully autonomous **coding agent** (YAI's approval gate is driven by host declarations and can be tightened as needed) |
 | Want to learn agent internals by building (auditable decisions, line-by-line walkthrough) | Expect a zero-config generic assistant — YAI's value is precisely in **binding to host capabilities** |
 
 ## How it differs from what you've heard of
@@ -50,9 +52,9 @@ that runs inside your software's process**:
 |  | Platforms<br>visual agent platforms | Frameworks<br>orchestration · multi-agent frameworks | **Embedded kernel · YAI** |
 |---|---|---|---|
 | Form | Sign up, build inside the platform | Define agents / tools / orchestration yourself | **`import` into existing software** |
-| Agent code you write | — | A lot | **None** |
+| Agent code you write | — | A lot | **No Agent Loop / Planner / tool selection** (just your business functions and declarations) |
 | Deployment | Hosted by the platform | Run a service yourself | **Lives in the host process; no separate service** |
-| Binding host capabilities | Weak, manual wiring | Manual wiring | **Automatic introspection & discovery** |
+| Binding host capabilities | Ready-made integrations / plugins come first; host-private capabilities usually need your own wiring | Manual wiring | **Automatic introspection & discovery** |
 | Hard third-party kernel deps | — | Usually many | **0** (all optional, lazily loaded) |
 
 > Database analogy: platforms are cloud database consoles, frameworks are ORMs, **YAI is SQLite** — it never
@@ -125,12 +127,12 @@ For architecture in English see [`docs/architecture.en.md`](docs/architecture.en
 |---|---|
 | **Capability auto-discovery** | Python type hints + docstrings auto-generate JSON Schema; external **MCP** tools (via MCP Client) and **OpenAPI** REST operations (via spec parsing) register the same way |
 | **Adaptive routing** | Tasks route to `direct / react / plan / clarify`; LLM classification falls back to rules on error; insufficient tools emit `capability_missing`; every decision is auditable |
-| **Self-calibrating learning** | A contextual bandit learns routing from success/failure and picks strategies via Thompson Sampling; offline benchmark reaches **89.6% vs 73.3% for rules (~+16pp)** in late rounds |
-| **On-demand discovery loop** | Gap → ask discovery sources for candidates → register → **callable within the same turn**; dual-channel recall (lexical + local bge-m3 / cloud embeddings), and remote MCP/OpenAPI sources are conservatively narrowed by the gap too (fall back to all on no hit) |
-| **Long-context compaction** | Over budget, old turns are summarized while recent turns stay intact; on model failure it falls back to hard truncation — long conversations keep early goals and facts |
+| **Self-calibrating learning** | A contextual bandit learns routing from success/failure and picks strategies via Thompson Sampling; offline benchmark reaches **89.6% vs 73.3% for rules (~+16pp)** in late rounds (off by default: `learning=None`) |
+| **On-demand discovery loop** | Gap → ask discovery sources for candidates → register → **callable within the same turn**; dual-channel recall (lexical + local bge-m3 / cloud embeddings), and remote MCP/OpenAPI sources are conservatively narrowed by the gap too (fall back to all on no hit) (off by default: without a discovery source there is no `request_capability`) |
+| **Long-context compaction** | Over budget, old turns are summarized while recent turns stay intact; on model failure it falls back to hard truncation — long conversations keep early goals and facts (off by default: `context_compaction=False`) |
 | **Dynamic re-planning** | When a multi-step plan turns out unworkable mid-execution, the model calls `replan` to explicitly return to planning, keeping completed steps and producing a revised plan (`plan_revised`); registered only for PLAN, it only rearranges the internal plan with no side effects and no approval gate |
 | **Cost-aware tiering** | Defaults to the cheap/fast `standard` tier and only escalates to `strong` for planning, failure-recovery, or being stuck in late rounds; tiering is deterministic and costs no extra call; DONE summarizes per-tier call counts; disable with `cost_aware=False` |
-| **Structured long-term memory** | `remember` / `recall` proactively store and retrieve facts / preferences / profiles; near-duplicate merge, importance weighting, JSON persistence; no built-in vector memory — semantic recall goes through the Embedding SPI |
+| **Structured long-term memory** | `remember` / `recall` proactively store and retrieve facts / preferences / profiles; near-duplicate merge, importance weighting, JSON persistence; no built-in vector memory — semantic recall goes through the Embedding SPI (off by default: `long_memory=False`) |
 | **Live host state (current-state anchor)** | The host registers read-only snapshot callbacks; before every model call the kernel injects the *current* UI/business state as a transient system block — never written to history, compaction or long-term memory; per-provider and total caps apply, and a failing provider only degrades with a diagnostic |
 | **Language-agnostic hosts (Sidecar)** | `python -m yai_core.sidecar` carries the agent session over stdio NDJSON + JSON-RPC 2.0: initialize, run, cancel, approvals/clarifications and the event stream; host tools still come in via MCP/OpenAPI — no second tool-call channel |
 | **Multimodal messages (optional)** | `ChatMessage.parts` carries text / image / resource-reference parts: **off by default** (plain-text messages serialize byte-identically); only an inlined image is actually visible to the model, while a reference renders as an explicit "the model cannot see this" placeholder (never silently dropped), and persistence stores references only — never image bytes |
@@ -201,12 +203,13 @@ framework**.
 <p align="center">
   <img src="docs/assets/hoste-native.png" alt="The sales CRM's six native views, fully usable without Core." width="45%">
   &nbsp;&nbsp;
-  <img src="docs/assets/hoste-discovery.png" alt="The CRM with Core embedded: it auto-discovers a weather tool when capabilities are insufficient and requests authorization." width="45%">
+  <img src="docs/assets/hoste-discovery.png" alt="The CRM with Core embedded: it auto-discovers a weather tool when capabilities are insufficient and requests authorization (that host explicitly declared an approval policy)." width="45%">
 </p>
 
 <p align="center"><b>Left:</b> the app as it naturally is (six native views, fully usable without Core);
 <b>right:</b> after embedding Core, it discovers tools when capabilities are short, and still shows an
-approval card on first call (discovery ≠ authorization).</p>
+approval card on first call (discovery ≠ authorization) — here host_e **explicitly declared an approval
+policy**; the kernel's default policy allows everything.</p>
 
 <p align="center">
   <img src="docs/assets/router-learning-curve.svg" alt="The self-calibrating router learning curve: the bandit climbs from the rules baseline to about 90%." width="60%">
@@ -227,7 +230,7 @@ approval card on first call (discovery ≠ authorization).</p>
 | 9 | `host_k_multimodal` | Multimodal: the model only picks an image handle; the host resolves it and enforces scope / expiry / size |
 | 10 | `host_l_sidecar_node` | Language-agnostic host: Node spawns the sidecar, exposes tools via its own OpenAPI service, and answers approval requests |
 
-> Directory names keep their historical letters (a/c/d/e/f/g/i/j/k) and are not reordered by learning
+> Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
 
 ## Online HTTP API
@@ -274,12 +277,34 @@ For optional environment variables (persistent memory, history trimming / TTL, r
 - **v0.13 (done)**: input-schema subset expanded from 4 to 13 keywords; three multimodal follow-throughs
   (true cost accounting / capability probing / the `host_k` sample); composite workflow version store;
   cross-layer adversarial evidence; POSIX `O_NOFOLLOW` narrows the symlink race window
-- **v0.14 (done, current release)**: execution constraints applied on every path; input validation as a
+- **v0.14 (done)**: execution constraints applied on every path; input validation as a
   common floor for all calls; `strict_direct` mode; `capability_health()` checks; trusted change preview
   `ChangePreview`; execution receipts and in-process idempotency
-- **v0.15 (candidates)**: cross-instance distributed rate limiting; production-grade sandbox tiers;
-  visual composition authoring (host side); narrower preview tokens; closing the public instance's
-  exposure surface; real-hardware multimodal verification
+- **v0.15 (done)**: live host state (current-state anchor) injection; execution-governance hardening
+  (idempotent replays no longer bypass tightened permissions, preview tokens narrowed to the relevant
+  state); the router benchmark's holdout / frozen-learning evaluation wired into CI
+- **v0.16 (done)**: language-agnostic host access through the Sidecar session control protocol
+  (stdio NDJSON + JSON-RPC 2.0; the tool surface still goes through MCP / OpenAPI)
+- **v0.17 (done)**: a zero-dependency Node host really spawns the sidecar; CI exercises the real
+  MCP / stdio path; the companion host registers a state provider
+- **v0.18 (done)**: the desktop companion specialist joins HostStateProvider, with the current-state
+  anchor verified against the real live factory
+- **v0.19 (done)**: the sales CRM's "currently selected customer" joins HostStateProvider, with the
+  web app and the desktop reading the same state across processes
+- **v0.20 (done)**: desktop shell visual rework (Optical Obsidian / Braun Signal Orange), with the
+  orb / capsule / panel sharing the four-state nebula
+- **v0.21.0 (done)**: the Office document text-extraction battery (zero-dependency
+  docx / xlsx / pptx; PDF via an optional extra); the desktop nebula motion aligned with the design
+  draft (integrated by real dt, fixing the drift speed)
+- **v0.22.0 (done, current release)**: a full audit remediation batch — red line 1 (zero third-party
+  hard dependencies in the kernel) now has a whole-tree guard test, `CODE_TOOL_RETIRED` became a real
+  event instead of a dead one, the sdist's bundled test suite went from 21 collection errors to 0
+  (full suite exits 0 from the unpacked package), dependency CVEs are cleared, and every
+  Chinese/English facade's facts and wording were reconciled
+- **Next-version candidates (unordered)**: cross-instance distributed rate limiting; production-grade
+  sandbox adapter tiers (gVisor / micro-VM / remote execution); visual composition authoring (host
+  side); closing the public instance's exposure surface; wider adoption of host-side resolvers for
+  multimodal resource references
 - **v1.0 (planned)**: flow back in as the agent kernel of the AI Companion project
   [AMBRACE](https://github.com/Gi-Tuu/AMBRACE)
 

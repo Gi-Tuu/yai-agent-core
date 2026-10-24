@@ -83,7 +83,11 @@ class ToolSpec:
 - 代码工具的 `handler` 是 `None`——它没有一个 Python 函数可直接调用，真正的"函数体"是 `code` 字符串，
   要送进沙箱执行。这是它和原生工具最本质的区别。
 - 两个新事件：创建成功发 `CODE_TOOL_CREATED`（宿主 UI 可提示"AI 新建了一个工具"）；
-  后台回收发 `CODE_TOOL_RETIRED`（本版回收由宿主定时调用，事件名先预留）。
+  **回收发 `CODE_TOOL_RETIRED`**——事件流是唯一出口，宿主要能区分"工具被回收"与"工具调用失败"，
+  而不是只能从错误文案里反推。回收有两条路径：
+  - **run 内回收**（执行器发现工具已过期）：发 `CODE_TOOL_RETIRED`，`data = {name, source: "code", reason: "expired"}`；
+  - **宿主定时批量回收**（`core.sweep_code_tools()`，在 run 之外）：没有运行中的事件流可挂，
+    因此**通过返回值**把被回收的名字列表交给宿主——信息不丢，只是走返回值而不是事件流。
 
 ## 3. code_tools.py：生命周期记录与管理器
 
@@ -194,10 +198,15 @@ if spec.source == "code":
 `_execute_code` 三步走：
 
 ```python
-# 1) 生命周期：touch 成功即刷新 TTL；过期则注销并提示重建
+# 1) 生命周期：touch 成功即刷新 TTL；过期则注销、发回收事件并提示重建
 if self.code_manager is not None and not self.code_manager.touch(spec.name):
     self.registry.unregister(spec.name)
-    return events, False, f"代码工具 {spec.name} 已超过存活期被回收，请重新创建"
+    msg = f"代码工具 {spec.name} 已超过存活期被回收，请重新创建"
+    events.append(AgentEvent(EventType.CODE_TOOL_RETIRED,
+                              {"name": spec.name, "source": "code", "reason": "expired"}))
+    events.append(AgentEvent(EventType.TOOL_RESULT,
+                              {"tool": spec.name, "ok": False, "error": msg}))
+    return events, False, msg
 
 # 2) 没有沙箱：优雅降级，而不是崩溃
 if self.sandbox is None:

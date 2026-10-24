@@ -81,7 +81,7 @@ from yai_core.types import (
     parts_to_text,
 )
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 __all__ = [
     "AgentCore",
