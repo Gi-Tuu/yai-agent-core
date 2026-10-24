@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.20.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-24（对应已发布版本 **v0.21.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -200,7 +200,11 @@
 - **桌面跨进程**：销售专员经带令牌的 `/api/agent/state` 读取同一状态
   （`_selection` 私有，不注册成工具）。
 
-### v0.20 — 桌面灵动岛视觉重设计（tag 2026-10-24，当前发布版本）
+### v0.21 — Office 文本抽取 + 星云动效对齐（tag 2026-10-24，当前发布版本）
+
+- `batteries/office_text.py`：docx/xlsx/pptx 零依赖文本抽取，PDF 走 `[office]` extra pypdf（三安全闸，讲义 55）
+- 桌面星云动效按 web 引擎对齐设计稿（260 粒 dt 积分）；测试/本地工具安全卫生批量加固
+
 
 - **胶囊/面板结构**：`01/SALES + 状态 + OPEN`；`YAI.CORE + VAULT/MEM +
   编号标签 + HITL.GATE + TRACE + RUN`；VAULT/MEM 改全屏面板。
