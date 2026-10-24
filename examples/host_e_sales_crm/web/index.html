@@ -197,7 +197,7 @@
         </div>
       </div>
       <div class="panel">
-        <h3>客户档案</h3>
+        <h3>客户档案 <span id="selectedCustomerHint" class="muted"></span></h3>
         <div class="filter-bar" style="margin-bottom:10px">
           <input id="cuSearch" placeholder="搜索姓名或公司…">
           <select id="cuFilterLevel"><option value="">全部等级</option><option value="重点">重点</option><option value="普通">普通</option></select>
@@ -376,6 +376,8 @@
     });
     document.getElementById('cuCount').textContent =
       '显示 ' + shownCustomers.length + ' / 共 ' + s.customers.length + ' 位';
+    document.getElementById('selectedCustomerHint').textContent =
+      s.selected_customer ? '当前选中：' + s.selected_customer : '当前选中：未选择';
     document.getElementById('tbCustomers').innerHTML = shownCustomers.length ? shownCustomers.map(function (c) {
       var overdue = dueMap[c.name];
       var followCell = esc(c.last_followup) +
@@ -385,6 +387,7 @@
         (c.phone ? esc(c.phone) : '<span class="muted">—</span>') + '</td><td>' +
         '<span class="tag ' + (c.level === '重点' ? 'key' : 'normal') + '">' + esc(c.level) + '</span>' +
         '</td><td>' + esc(c.owner) + '</td><td>' + followCell + '</td><td>' + statusTag + '</td><td>' +
+        '<button class="small" data-select-customer="' + esc(c.name) + '">选中</button> ' +
         '<button class="small" data-detail-customer="' + esc(c.name) + '">详情</button> ' +
         '<button class="small" data-edit-customer="' + esc(c.name) + '">编辑</button> ' +
         '<button class="small danger" data-delete-customer="' + esc(c.name) + '">删除</button></td></tr>';
@@ -551,6 +554,14 @@
       post('/api/crm/complete', { title: title }).then(function (r) {
         if (r.s === 200 && r.j.ok) { toast('已完成：' + title); return refreshSnapshot(); }
         toast((r.j && r.j.error) || '操作失败');
+      });
+      return;
+    }
+    var selectCust = t.getAttribute('data-select-customer');
+    if (selectCust) {
+      post('/api/selection', { name: selectCust }).then(function (r) {
+        if (r.s === 200 && r.j.ok) { toast('已选中：' + selectCust); return refreshSnapshot(); }
+        toast((r.j && r.j.detail) || '选中失败');
       });
       return;
     }

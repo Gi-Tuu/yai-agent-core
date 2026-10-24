@@ -77,6 +77,8 @@ class Workbench:
         enable_learning: bool = True,
     ) -> None:
         self.crm = crm or SalesCrm()
+        # 网页原生界面的“当前选中客户”：作为现状锚注入 Agent，不是业务写操作。
+        self.selected_customer: str | None = None
         self.bridge = AgentBridge(
             self.crm,
             model_factory,
@@ -85,6 +87,7 @@ class Workbench:
             permission_mode=permission_mode,
             learning_path=learning_path,
             enable_learning=enable_learning,
+            state_provider=self._agent_state,
         )
         # 原生写操作与 Agent 写操作的互斥锁（避免两边同时改数据）。
         self._lock = threading.Lock()
@@ -111,9 +114,43 @@ class Workbench:
                 return _run()
         return _run()
 
+    # ---- 当前选中客户（原生界面的现状锚）----
+    def selection_state(self) -> dict:
+        """返回当前选中客户的只读摘要；客户被删除后自动清空。"""
+        name = self.selected_customer
+        if not name:
+            return {"selected_customer": None}
+        customer = self.crm.get_customer(name)
+        if not customer.get("ok", True):
+            self.selected_customer = None
+            return {"selected_customer": None}
+        return {
+            "selected_customer": customer["name"],
+            "company": customer["company"],
+            "level": customer["level"],
+            "status": customer["status"],
+        }
+
+    def select_customer(self, name: str) -> dict:
+        """设置/清空当前选中客户；只改界面状态，不写业务数据。"""
+        text = str(name or "").strip()
+        if not text:
+            self.selected_customer = None
+            return self.selection_state()
+        customer = self.crm.get_customer(text)
+        if not customer.get("ok", True):
+            raise ValueError(f"客户 {text!r} 不存在")
+        self.selected_customer = customer["name"]
+        return self.selection_state()
+
+    def _agent_state(self):
+        """只把“确实有选中客户”作为状态注入；未选中不占上下文。"""
+        state = self.selection_state()
+        return state if state.get("selected_customer") else None
+
     # ---- 状态（AI 状态全部来自嵌入点）----
     def state(self) -> dict:
-        return self.bridge.ai_state()
+        return {**self.bridge.ai_state(), "selection": self.selection_state()}
 
     def preview_tool(self, name: str, arguments: dict | None = None) -> dict:
         """生成写工具的真实变更预览；只读，不执行业务写操作。"""
@@ -140,6 +177,7 @@ class Workbench:
             "brief": crm.daily_brief(),
             "total_amount": crm.sum_amount(),
             "pipeline_amount": sum(o["amount"] for o in open_opps),
+            "selected_customer": self.selection_state().get("selected_customer"),
             # 业务枚举单一来源，前端下拉/看板列直接渲染，避免魔法字符串漂移。
             "enums": {
                 "levels": list(CUSTOMER_LEVELS),
@@ -315,6 +353,16 @@ def make_handler(workbench: Workbench, tool_token: str):
             if path == "/api/state":
                 self._send_json(200, workbench.state())
                 return
+            if path == "/api/selection":
+                self._send_json(200, workbench.selection_state())
+                return
+            if path == "/api/agent/state":
+                # 跨进程销售专员读取“网页当前选中客户”，与工具口共用本地令牌。
+                if not self._agent_authorized():
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                self._send_json(200, workbench.selection_state())
+                return
             if path == "/api/learning":
                 self._send_json(200, workbench.learning_status())
                 return
@@ -389,6 +437,16 @@ def make_handler(workbench: Workbench, tool_token: str):
                     self._send_json(400, {"error": "bad_arguments", "detail": str(exc)})
                     return
                 self._send_json(200, {"ok": True, "result": result})
+                return
+            if path == "/api/selection":
+                try:
+                    selection = workbench.select_customer(str(payload.get("name", "")))
+                except ValueError as exc:
+                    self._send_json(
+                        404, {"error": "not_found", "detail": str(exc)}
+                    )
+                    return
+                self._send_json(200, {"ok": True, **selection})
                 return
             if path == "/api/core":
                 on = bool(payload.get("enabled"))

@@ -6,7 +6,11 @@ import pytest
 
 pytest.importorskip("PySide6", reason="需要 PySide6（uv sync --extra desktop）")
 
-from shell.desktop.crm_client import HostECrmClient, build_crm_preview  # noqa: E402
+from shell.desktop.crm_client import (  # noqa: E402
+    HostECrmClient,
+    build_crm_preview,
+    build_crm_state,
+)
 
 
 class _Client:
@@ -27,6 +31,19 @@ def test_preview_helper_is_not_a_discoverable_tool() -> None:
     """`preview` 是审批内部能力，不能作为公开方法被 AgentCore.auto 注册成工具。"""
     assert not hasattr(HostECrmClient, "preview")
     assert hasattr(HostECrmClient, "_preview")
+
+
+def test_selection_state_helper_is_private_and_returns_snapshot() -> None:
+    class _StateClient:
+        def _selection(self) -> dict:
+            return {"selected_customer": "王敏", "company": "华东智造集团"}
+
+    assert not hasattr(HostECrmClient, "selection")
+    assert hasattr(HostECrmClient, "_selection")
+    assert build_crm_state(_StateClient())() == {
+        "selected_customer": "王敏",
+        "company": "华东智造集团",
+    }
 
 
 def test_crm_preview_closure_passes_real_endpoint_payload() -> None:

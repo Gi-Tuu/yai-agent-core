@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **销售 CRM 的“当前选中客户”接入 HostStateProvider**：host_e 网页新增
+  `POST/GET /api/selection` 与客户表“选中”按钮；`Workbench._agent_state()` 只把
+  已选客户（姓名/公司/等级/状态）瞬态注入网页内置 Agent。桌面销售通过带令牌的
+  `GET /api/agent/state` 读取同一状态（`HostECrmClient._selection` 私有方法，不会
+  被自动注册成工具），以 `sales_selection` 注册；客户删除后自动清空。新增跨进程
+  与网页端离线用例。
+
 ## [v0.18.0] - 2026-10-24
 
 ### Added

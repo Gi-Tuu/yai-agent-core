@@ -386,10 +386,13 @@ class AgentBridge:
         permission_mode: str = DEFAULT_PERMISSION_MODE,
         learning_path: str | Path | None = None,
         enable_learning: bool = True,
+        state_provider=None,
     ) -> None:
         self.crm = crm
         self._model_factory = model_factory
         self.model_label = model_label
+        # 宿主现状锚（如网页当前选中的客户）；None = 不注入。
+        self._state_provider = state_provider
         # 按需能力目录：默认不注册，命中能力缺口才被发现并在本轮启用。
         self.catalog = catalog or build_catalog()
         # Core 开关：默认启用（开箱即用）；关闭后 start_run 拒绝新任务。
@@ -599,6 +602,8 @@ class AgentBridge:
             learning=self._learning,  # 跨任务共享的自学习器；None 时内核行为不变
         )
         attach_write_previews(core, self.crm)
+        if self._state_provider is not None:
+            core.register_state_provider("sales_selection", self._state_provider)
         asyncio.run_coroutine_threadsafe(self._run_guarded(core, task, run), self._loop)
         return run_id
 

@@ -173,6 +173,17 @@ class _OneToolModel:
         )
 
 
+class _RecordingModel:
+    """记录每次模型调用的消息，用于检查宿主状态是否注入。"""
+
+    def __init__(self):
+        self.calls: list[list[dict]] = []
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls.append(messages)
+        return ModelResponse(content="好的")
+
+
 class _BlockModel:
     """卡在首轮的模型，用于验证同一时刻只允许一个任务。"""
 
@@ -302,6 +313,55 @@ def test_state_lists_twentytwo_tools_grouped_by_access():
             "sum_amount", "list_opportunities", "list_followups",
             "customers_due_followup", "list_todos", "daily_brief",
         }
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_selection_endpoint_sets_state_anchor_and_clears_on_delete():
+    workbench, httpd, base = _start_server(_OneToolModel("sum_amount", {}))
+    try:
+        status, selection = _get_json(base, "/api/selection")
+        assert status == 200 and selection == {"selected_customer": None}
+        assert workbench._agent_state() is None
+
+        status, selection = _post(base, "/api/selection", {"name": "王敏"})
+        assert status == 200 and selection["selected_customer"] == "王敏"
+        assert selection["company"] == "华东智造集团"
+        assert workbench._agent_state()["selected_customer"] == "王敏"
+
+        _, snapshot = _get_json(base, "/api/snapshot")
+        assert snapshot["selected_customer"] == "王敏"
+
+        request = urllib.request.Request(
+            base + "/api/agent/state",
+            headers={"Authorization": "Bearer test-tool-token"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            assert json.loads(resp.read().decode("utf-8"))["selected_customer"] == "王敏"
+
+        status, _ = _post(base, "/api/selection", {"name": "不存在"})
+        assert status == 404
+
+        workbench.crm.delete_customer("王敏")
+        assert workbench.selection_state() == {"selected_customer": None}
+        assert workbench._agent_state() is None
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_selected_customer_is_injected_into_agent_messages():
+    model = _RecordingModel()
+    workbench, httpd, base = _start_server(model)
+    try:
+        _post(base, "/api/selection", {"name": "王敏"})
+        _run_and_collect(base, "你好")
+        system = "\n".join(
+            m["content"] for m in model.calls[0] if m.get("role") == "system"
+        )
+        assert "宿主实时状态" in system
+        assert "王敏" in system and "华东智造集团" in system
     finally:
         httpd.shutdown()
         httpd.server_close()

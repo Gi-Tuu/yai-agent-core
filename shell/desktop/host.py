@@ -260,7 +260,11 @@ def build_specs() -> list[SpecialistSpec]:
     companion_learning = _DESKTOP_DATA / "companion_route_learning.json"
     # 销售专员跨进程操控 host_e 网页工作台（真实 CRM，127.0.0.1:8200）。
     # 实例化不发起连接，只有真正调用工具时才访问；离线 demo 形态完全不受影响。
-    from shell.desktop.crm_client import HostECrmClient, build_crm_catalog
+    from shell.desktop.crm_client import (
+        HostECrmClient,
+        build_crm_catalog,
+        build_crm_state,
+    )
 
     sales_host = HostECrmClient()
     companion_host = DemoCompanion()
@@ -282,6 +286,7 @@ def build_specs() -> list[SpecialistSpec]:
                 learning_path=sales_learning,
                 catalog_factory=lambda: build_crm_catalog(sales_host),
                 preview_client=sales_host,
+                state_provider=("sales_selection", build_crm_state(sales_host)),
             ),
             code_storage=sales_storage,
             learning_path=sales_learning,
