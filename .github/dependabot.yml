@@ -13,3 +13,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    groups:
+      # CodeQL 的 init / autobuild / analyze 必须同版本，拆开会直接失败
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
