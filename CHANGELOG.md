@@ -5,6 +5,21 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Fixed
+
+- **发出去的包，文档链接全是断的**：sdist 白名单里没有 `ROADMAP.md`、`docs/competitions/deployment.md`
+  与 `docs/competitions/shanghai/figs/`，而白皮书与部署文档链接到它们。
+  对着 **PyPI 上已发布的 0.22.0 sdist** 实测：**包内断链 12 处**（白皮书 9 张赛事配图
+  + 部署文档 2 处 + 白皮书引 ROADMAP 1 处）。
+  这三处**都只含已被 git 跟踪的公开内容**（含个人信息的申报表 / 作品介绍 / 更新邮件等本地稿
+  全部未被跟踪，仍不进包），现补进白名单：**包内断链 12 → 0**。
+- 新增 `tests/test_sdist_link_integrity.py`（19 例）把这件事钉住：
+  仓库内所有 markdown 的相对链接必须可达；**进了包的文档，其链接目标也必须在包里**
+  （否则包内必然断链）；另有一组断言守住白名单里的关键支点文件。
+  已实测：把 `/ROADMAP.md` 从白名单摘掉，该守卫当场变红。
+
 ## [v0.22.0] - 2026-10-24
 
 本版是一次**全面体检后的整改批次**：把"实现已经比文档靠前 7 个版本"这件事掰回齐平，
