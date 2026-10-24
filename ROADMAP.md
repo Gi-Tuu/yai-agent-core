@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.19.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-24（对应已发布版本 **v0.20.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -191,7 +191,7 @@
 - **证据**：真实 live factory 的离线用例验证 `HOST_STATE` 注入；CI 的
   PySide6 缺失环境跳过该用例，本地完整环境照常运行。
 
-### v0.19 — 销售选中态（tag 2026-10-24，当前发布版本）
+### v0.19 — 销售选中态（tag 2026-10-24）
 
 - **网页选中客户**：客户表新增“选中”按钮与 `/api/selection`；选中态随快照/状态
   返回，客户删除后自动清空。
@@ -200,9 +200,18 @@
 - **桌面跨进程**：销售专员经带令牌的 `/api/agent/state` 读取同一状态
   （`_selection` 私有，不注册成工具）。
 
+### v0.20 — 桌面灵动岛视觉重设计（tag 2026-10-24，当前发布版本）
+
+- **胶囊/面板结构**：`01/SALES + 状态 + OPEN`；`YAI.CORE + VAULT/MEM +
+  编号标签 + HITL.GATE + TRACE + RUN`；VAULT/MEM 改全屏面板。
+- **四态星云**：球/胶囊/面板顶栏共用 idle/working/complete/frozen；空闲 20fps、
+  工作 60fps、冻结停画，待命实测约单核 6.2%。
+- **截图与文档**：`docs/assets` 更新并新增胶囊/HITL/VAULT/MEM；README、第 22/23
+  篇讲义与 CHANGELOG 同步。
+
 ## 下一步
 
-### v0.20 — 候选（未排序，等维护者拍板）
+### v0.21 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。
