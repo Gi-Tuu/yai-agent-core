@@ -66,15 +66,15 @@ warnTint / badTint / knob`），避免其他 QML 文件因缺 token 编译失败
 - `main.qml` 只在 `done` 时短暂切 `complete`；`Panel.qml` 顶栏使用同一份
   `orbPhase`，三态视觉一致。
 
-![图 1　引导球：橙色星云 + 点我](../../assets/desktop-ball.png)
+![图 1　引导球：橙色星云 + 点我](../assets/desktop-ball.png)
 
-![图 2　胶囊：01/SALES + 当前任务 + OPEN](../../assets/desktop-capsule.png)
+![图 2　胶囊：01/SALES + 当前任务 + OPEN](../assets/desktop-capsule.png)
 
-![图 3　HITL.GATE 审批卡](../../assets/desktop-panel-hitl.png)
+![图 3　HITL.GATE 审批卡](../assets/desktop-panel-hitl.png)
 
-![图 4　VAULT 全屏面板](../../assets/desktop-vault.png)
+![图 4　VAULT 全屏面板](../assets/desktop-vault.png)
 
-![图 5　MEMORY 全屏面板](../../assets/desktop-learning.png)
+![图 5　MEMORY 全屏面板](../assets/desktop-learning.png)
 - 外壳结构同步设计稿：胶囊是 `01/SALES + 状态 + OPEN + 收起`；面板顶栏是
   `YAI.CORE · 模型 + VAULT/MEM`，下面是编号专员标签、`HITL.GATE` 审批卡、
   `TRACE // 推理过程`、提示 chips 与 `> ... RUN` 输入条；VAULT/MEM 是全屏

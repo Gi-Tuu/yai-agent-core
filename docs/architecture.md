@@ -63,8 +63,9 @@ Loop/Core/宿主示例零改动。边界（历史裁剪、多进程写、临时�
 历史保留策略（v0.3，opt-in）：`memory/retention.py` 提供纯函数 count_cut/ttl_cut，
 两种 Store 以构造参数 max_messages / ttl_seconds / clock 对等支持；裁剪边界按"轮"
 对齐（一条 user 到下一条 user 之前为一轮），保证 assistant(tool_calls)/tool 配对
-不被拆散；SQLite 构造时自动 prune 一次覆盖重启场景。MemoryStore 契约与 schema
-版本（仍为 v1）不变；KV 的 TTL 需 schema v2 迁移，留待 v0.4。`Context` 的字符预算
+不被拆散；SQLite 构造时自动 prune 一次覆盖重启场景。MemoryStore 契约不变；SQLite
+schema 当前为 **v3**（v1→v2 加 `kv.expires_at`、v2→v3 加 `history.parts`，逐级迁移），
+KV 的 TTL 已落地（v0.8 起）。`Context` 的字符预算
 硬裁剪（原私有 `_compact`，现公共方法 `enforce_budget`）同为轮边界丢弃（kernel 内同源实现）；
 v0.7 起在其之上新增摘要压缩，见 2.5 节。
 
@@ -145,7 +146,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 | Metrics（零依赖收集器，见下） | 运维 / 成本看板 | 这段时间**整体跑得怎么样**（run 成败计数、工具失败率、强档模型调用量、时延分布） | `astream` 唯一出口旁路 tap，默认开启 |
 | OpenTelemetry tracing（可选 extra） | 分布式 / 跨服务 | 一次请求跨进程的**链路、耗时、归因** | 宿主在外侧订阅事件流，内核不初始化 exporter |
 
-- **数据结构**：`DiagnosticEvent(kind, message, level, data)`。`level ∈ debug/info/warning/error`；`kind` 当前覆盖 8 类：`model_error`、`model_timeout`、`model_fallback`、`router_llm_fallback`、`discovery_failed`、`discoverable_list_failed`、`compaction_fallback`、`schema_focus_fallback`。
+- **数据结构**：`DiagnosticEvent(kind, message, level, data)`。`level ∈ debug/info/warning/error`；`kind` 当前覆盖 9 类：`model_error`、`model_timeout`、`model_fallback`、`router_llm_fallback`、`discovery_failed`、`discoverable_list_failed`、`compaction_fallback`、`schema_focus_fallback`、`host_state_failed`。
 - **安全语义**：回调是同步的，宿主应让它快速、非阻塞（写一行日志、推一个监控计数即可）；回调内部抛出的任何异常都会被内核吞掉，诊断是旁路，绝不能因为"日志系统挂了"而拖垮 Agent 主流程。内核不依赖 `logging`，不把任何日志库变成硬依赖。
 - **接线方式**：`AgentCore(model, on_diagnostic=fn)` 一处传入，内核会把同一回调鸭子接线给内部的 `AdaptiveRouter` 与 `FallbackModelProvider`（它们暴露可写的 `on_diagnostic` 属性；宿主自建、不认识该属性的自定义组件不受影响）。不传回调时内核完全安静，行为与旧版本一致。
 - **刻意不纳入诊断的情况**：沙箱执行失败会冒泡成 `tool_result(ok=False)`、权限拒绝会发 `permission_asked`——这些本就是用户可见的业务事件，不属于"静默兜底"，因此不重复发诊断。
@@ -175,11 +176,25 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **单个工具结果统一有界收口（C4）**：`ToolExecutor` 对原生函数、代码工具（沙箱输出）、组合工具（`{"steps":[...]}`）三类成功结果，在 `json.dumps` 之后、写回对话上下文之前，统一经纯函数 `bound_tool_result(text, limit)` 收口：默认上限 **16000 字符**（与 OpenAPI 集成的 `max_result_chars` 对齐），超限保留**头 70% + 尾 30%**，中间插入显式省略标记（写明省略字符数），并以收紧循环保证结果严格不越上界，绝不静默截断。`AgentCore(tool_result_char_limit=...)` 可覆盖，传 `None` 关闭；`CoreConfig.validate()` 在装配期拒绝非正整数与 bool。`TOOL_RESULT` 成功事件新增 `truncated` 与 `result_chars`（收口前原始字符数），事件 `preview` 仍只取前 200 字；未超限的小结果逐字不变。它位于"工具结果 → 上下文"最靠近源头的一层，与 §2.5（整轮 24000 字符压缩）和在线 API 的响应体守卫 `payload_guard`（HTTP 出口 256KB）构成三道互不替代的上界。
 - **工具目录确定性排序（C1）**：`ToolRegistry` 喂给模型的 `catalog()` / `catalog_text()` / `describe()` / `llm_schemas()` 一律经内部 `_ordered()` 按工具名排序；内部存储视图 `all()` 仍保持注册顺序，按需取完整 schema 的 `schemas_for(names)` 仍遵循调用方给定顺序。这样系统提示里的工具清单字节只在工具集**真正变化**（增删 / 改名）时才改变，避免宿主注册顺序的偶然波动无谓击穿提示缓存的稳定前缀，也让快照测试确定。
 
+### 2.11 v0.12–v0.21 新增机制
+
+以下机制均已落地：内核零硬依赖、默认不改变既有宿主行为。
+
+- **多模态消息契约（v0.12）**：`ChatMessage.parts` 与 `TextPart`/`ImagePart`/`ResourcePart`（`src/yai_core/types.py:747-963`）。`parts_to_text()`（`types.py:901`）把片段降级成纯文本并明说"模型看不到"，图片与资源引用不静默丢弃。
+- **能力清单 manifest v2（v0.12）**：`MANIFEST_VERSION = 2`、可读版本 `(1, 2)`（`src/yai_core/tools/manifest.py:43-46`）。v2 把治理语义纳入格式契约，老 reader 直接拒——宁可不导，不带着失效的安全语义跑。
+- **入参校验扩到 13 个关键字（v0.13）**：`src/yai_core/policy/approval.py:121` 校验结构类 4 个（`type`/`required`/`properties`/`items`）与取值域类 9 个（`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`）；尚未实现的键记录在册（`src/yai_core/tools/health.py:31`），不假装校验过。
+- **能力体检（v0.14）**：`check_tool_specs()`（`src/yai_core/tools/health.py:622`）静态核对声明能否被内核如实执行（不跑 handler、不联网）；`AgentCore.capability_health()`（`src/yai_core/core.py:394`）对已注册工具出体检报告。
+- **可信变更预览 + 执行收据（v0.14）**：`ChangePreview`（`src/yai_core/types.py:160`）带宿主给的真实 diff 与 token，执行前重算比对，变了即审批失效；`ExecutionReceipt`（`types.py:113`）区分 not_started/succeeded/failed/unknown/partial，据此判断能不能重试。
+- **宿主实时状态（v0.15/v0.19）**：`HostStateProvider`（`src/yai_core/kernel/state.py:48`）每轮模型调用前注入只读瞬态快照，不进历史与记忆；provider 失败只发 `host_state_failed` 诊断（`kernel/state.py:170`），其余状态照常注入。
+- **Sidecar 协议（v0.16）**：`python -m yai_core.sidecar` 在 stdio 上跑 NDJSON + JSON-RPC 2.0（`src/yai_core/sidecar/protocol.py:18`），承载 initialize / agent/run / agent/cancel / ping / shutdown；工具面仍走 MCP / OpenAPI，协议里没有 tool/call。
+- **Office 文档文本抽取（v0.21）**：`src/yai_core/batteries/office_text.py:50` 的 `extract_text()`：docx/xlsx/pptx 走标准库 zipfile + ElementTree（零依赖），PDF 走可选 pypdf；三条安全闸（成员白名单、拒 DOCTYPE/ENTITY、限量截断）写在文件头。
+- **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:214`（超时取更严一档）与 `tools/executor.py:584`（频率闸在授权之前判定）真的强制。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
 |---|---|---|---|
-| ModelProvider | `achat(messages, tools, tier)` | OpenAICompatProvider（DeepSeek 等）、AnthropicProvider（Claude） | 接私有模型/本地模型 |
+| ModelProvider | `achat(messages, tools, *, tier)` | OpenAICompatProvider（DeepSeek 等）、AnthropicProvider（Claude） | 接私有模型/本地模型 |
 | Channel | `emit / ask / confirm` | CollectChannel、CliChannel | Web SSE、Flutter UI |
 | MemoryStore | `history / put / get / clear` | InMemoryStore | SQLite、向量记忆 |
 | PermissionPolicy | `check(tool, args) → allow/deny/ask` | AllowlistPolicy | 高危工具人工确认 |
@@ -232,7 +247,7 @@ v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗�
 ## 6. 与生态的差异化（诚实对比，用于比赛材料）
 
 - 模型厂商自带的 Agent SDK、图编排框架：developer-builds-agent，工具/编排需显式定义，且常绑定自家生态；
-- agentic-kernel（TS）：嵌入式运行时理念相近，但仅 TypeScript 且无能力自发现/策略自适应；
+- 同类嵌入式 Agent 运行时：嵌入式运行时理念相近，但多以 TypeScript 为主，能力自发现与策略自适应并非其默认形态；
 - MCP：工具互操作**协议**，不是运行时；YAI 是 MCP 的消费者（v0.2 Client）而非竞争者；
 - YAI：host-declares-capability、Python 进程内、模型/通道/存储全无关、自适应过程可观测。
 

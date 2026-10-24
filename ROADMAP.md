@@ -94,7 +94,7 @@
 - **两处真实纠错**：PEP 563 下 `build_spec` 把所有参数退化成 `string`（进而让审批把每次合法调用判成非法）改为先解析字符串注解；清单导出丢审批阈值改为 `__post_init__` 补齐
 - **语料分发口径**：上游 Apache-2.0 的 26 条一致性向量不再随 sdist 分发（源码仓库与 CI 仍全量跑），缺文件时相关测试整模块 `skip`
 
-### v0.12 — 补上"静默失效"的那几处（tag 2026-10-22，当前发布版本）
+### v0.12 — 补上"静默失效"的那几处（tag 2026-10-22）
 
 - **安全加固第二批**：八处"看起来有护栏、实际没生效"的缺陷逐条钉死，并各配回归测试——
   参数级审批的数组路径曾**永远不命中**（schema 侧与取值侧两套路径语义，条件静默失效；
@@ -200,22 +200,25 @@
 - **桌面跨进程**：销售专员经带令牌的 `/api/agent/state` 读取同一状态
   （`_selection` 私有，不注册成工具）。
 
-### v0.21 — Office 文本抽取 + 星云动效对齐（tag 2026-10-24，当前发布版本）
+### v0.20 — 桌面壳视觉重构（tag 2026-10-24）
 
-- `batteries/office_text.py`：docx/xlsx/pptx 零依赖文本抽取，PDF 走 `[office]` extra pypdf（三安全闸，讲义 55）
-- 桌面星云动效按 web 引擎对齐设计稿（260 粒 dt 积分）；测试/本地工具安全卫生批量加固
-
-
-- **胶囊/面板结构**：`01/SALES + 状态 + OPEN`；`YAI.CORE + VAULT/MEM +
-  编号标签 + HITL.GATE + TRACE + RUN`；VAULT/MEM 改全屏面板。
+- **桌面壳视觉重构（Optical Obsidian / Braun Signal Orange）**：合并新的 `Theme.qml`
+  （球 52、胶囊 440×52、面板 440×536、26px 面板圆角、信号橙），新增
+  `NebulaOrbCanvas.qml`；壳层改为不透明，避免桌面其他窗口文字透进对话。
+- **胶囊/面板结构**：`01/SALES + 状态 + OPEN`；`YAI.CORE + VAULT/MEM + 编号标签 + HITL.GATE + TRACE + RUN`；VAULT/MEM 改全屏面板。
 - **四态星云**：球/胶囊/面板顶栏共用 idle/working/complete/frozen；空闲 20fps、
   工作 60fps、冻结停画，待命实测约单核 6.2%。
 - **截图与文档**：`docs/assets` 更新并新增胶囊/HITL/VAULT/MEM；README、第 22/23
   篇讲义与 CHANGELOG 同步。
 
+### v0.21 — Office 文本抽取 + 星云动效对齐（tag 2026-10-24，当前发布版本）
+
+- `batteries/office_text.py`：docx/xlsx/pptx 零依赖文本抽取，PDF 走 `[office]` extra pypdf（三安全闸，讲义 55）
+- 桌面星云动效按 web 引擎对齐设计稿（260 粒 dt 积分）；测试/本地工具安全卫生批量加固
+
 ## 下一步
 
-### v0.21 — 候选（未排序，等维护者拍板）
+### v0.22 — 候选（未排序，等维护者拍板）
 
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。

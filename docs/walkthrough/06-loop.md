@@ -3,69 +3,117 @@
 > 建议配合断点读：在 `astream`、`_react_cycle` 里设断点，跑 `scripts/smoke_test.py` 看每一步。
 > 知识点：异步生成器、`yield` 事件流、async for、递归重入、ReAct 循环、消息角色闭环。
 
-## 块 1 · 系统提示词模板（L27-L33）
+## 块 1 · 系统提示词模板（模块常量 `_SYSTEM_TEMPLATE`）
 ```python
 _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 你可以使用宿主提供的工具（见下方工具目录）。\
-如果现有工具不足以完成任务，请明确指出缺失的能力，系统会尝试为你发现或补充新工具。\
+需要扩展能力时按此选择：\
+固定多步编排宿主已有工具（含先取数、再加工）用 compose_tool；\
+数据由调用方提供、只需全新纯计算（换算 / 评分 / 统计）用 create_code_tool\
+（沙箱内不能回调宿主工具）；\
+宿主根本没有该能力，就明确指出缺失处或调用 request_capability。\
 不要编造工具不存在的数据。当任务完成时，直接给出可交付的最终结果。
 
 宿主当前提供的能力：
 {tools}
 """
 ```
-- 这是发给模型的"人设与规矩"。`{tools}` 占位符运行时被 `registry.describe()` 替换。
+- 这是发给模型的"人设与规矩"。`{tools}` 占位符运行时被 `registry.catalog_text()` 替换——**轻量目录**：每个工具一行"名字 + 一句话摘要"。
 - 行尾反斜杠 `\` 表示字符串里不换行（人设各句连成一段），空行才真正分段。
-- 早期版本写的是"你**只能**通过工具操作宿主的能力"，这在暗示模型"工具是固定集合，
-  不要想着扩展"。长期愿景是"能发现工具、创造工具的智能体"，所以改成"可以使用工具，
-  能力不足时明确指出缺口"——模型的缺口判断会被路由层结构化接住（见块 3 的
-  `capability_missing` 事件）。
+- 当前人设给的是**三条扩展路径**（按"宿主到底缺什么"分流，不是笼统一句"能力不足就提出"）：
+  1. **固定多步编排宿主已有工具**（含先取数、再加工）→ `compose_tool`（只编排已注册工具，不生成代码）；
+  2. **数据由调用方提供、只需全新纯计算**（换算 / 评分 / 统计）→ `create_code_tool`（沙箱内**不能**回调宿主工具）；
+  3. **宿主根本没有该能力** → 明确指出缺失处，或调 `request_capability` 让内核去发现。
 - **保留的护栏一条没删**："不要编造工具不存在的数据"仍然在，防幻觉比提主动性更优先；
   提示词也没有承诺"自动安装/自动发现"，内核只负责把缺口喊出来，补不补、怎么补由宿主决定。
+- **完整参数结构不在这里**：系统提示只放轻量目录，完整 JSON Schema 在 function-calling 的
+  `tools` 参数里按需注入（两层工具目录；源码里 `catalog_text()` 上方那两行注释就是这个意思）。
 
-## 块 2 · 构造（L48-L72）
+## 块 2 · 构造（`def __init__`）
 ```python
-def __init__(self, model, registry, executor, channel, memory,
-             router: AdaptiveRouter | None = None, *,
-             max_iters: int = 6, max_clarify_rounds: int = 2) -> None:
-    ...
-    self.router = router or AdaptiveRouter()
-    self.max_iters = max_iters
-    self.max_clarify_rounds = max_clarify_rounds
+class AgentLoop:
+    def __init__(
+        self,
+        model: ModelProvider,
+        registry: ToolRegistry,
+        executor: ToolExecutor,
+        channel: Channel,
+        memory: MemoryStore,
+        router: AdaptiveRouter | None = None,
+        discovery: ToolDiscovery | None = None,
+        *,
+        max_iters: int = 6,
+        max_clarify_rounds: int = 2,
+        full_schema_budget: int = 24,
+        strict_direct: bool = False,
+        ...
+    ) -> None:
+        ...
+        self.router = router or AdaptiveRouter()
+        self.max_iters = max_iters
+        self.max_clarify_rounds = max_clarify_rounds
 ```
 - 五大依赖全部注入。`router or AdaptiveRouter()`：调用方没给就用默认款（`None or x` 结果是 x，这是常见的默认值惯用法）。
 - 两个失控保护：`max_iters=6` 限制工具循环轮数；`max_clarify_rounds=2` 限制澄清反问轮数（见块 3.5）。
-- 这两个参数目前都没有从 `AgentCore` 透传（处境一致），用默认值；配置化留待后续版本。
+- 这两个参数**已经能从 `AgentCore` 透传**：`AgentCore(max_iters=6, max_clarify_rounds=2)` 在装配时原样传给 `AgentLoop`（`core.py` 里 `max_iters=` / `max_clarify_rounds=` 两行），默认值仍是 6 / 2，宿主可按需改。
+- `...` 省略的都是**可选增强**，不传即关闭：工具发现源、schema 预算、direct 严格模式、meta-tool、上下文压缩、成本感知选档、模型硬超时、诊断回调、任务预算、主动召回、宿主实时状态。
 
-## 块 3 · astream：总调度（L56-L92）
+## 块 3 · astream：总调度（`def astream`）
 
 ```python
-async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
+async def astream(
+    self,
+    task: str,
+    *,
+    _clarify_depth: int = 0,
+    subject: Subject | None = None,
+) -> AsyncIterator[AgentEvent]:
 ```
 - 关键语法：`async def` + 函数体内有 `yield` = **异步生成器**。调用它得到一个"异步事件流"，外部用 `async for event in core.astream(...)` 逐个取事件。好处：任务还在跑，UI 就能实时显示"正在调工具…"，而不是干等 30 秒拿一个最终结果。
 
 ```python
-    decision = await self.router.aclassify(task, self.registry)
+    decision = await self.router.aclassify(
+        task, self.registry, discoverable=self._discoverable_catalog()
+    )
     strategy = decision.strategy
-    yield AgentEvent(EventType.STRATEGY_SELECTED, {
-        "strategy": strategy.value, "source": decision.source,
-        "reason": decision.reason, "tier": decision.tier})
+    yield AgentEvent(
+        EventType.STRATEGY_SELECTED,
+        {
+            "strategy": strategy.value,
+            "source": decision.source,
+            "reason": decision.reason,
+            "tier": decision.tier,
+        },
+    )
 ```
 - 第一步决策策略，立刻"喊出来"（发事件）。`aclassify` 是 v0.2 的异步入口：
   配置了 LLM 路由就先模型分类、失败回退规则，返回带 `source/reason/tier` 的 RouteDecision
   （见 05 篇 C 节）；事件里保留 `strategy` 键，老的消费方不受影响。
+- 多出来的 `discoverable=` 参数：宿主配了发现源时，把"可按需启用"的轻量目录一并交给路由；
+  发现源没实现 `list_discoverable` 或调用失败就返回 None，退化成"只在缺口出现后被动发现"。
 
 ```python
-    # 能力缺口感知：LLM 路由明确判定现有工具不足时，向宿主发事件，
-    # 宿主可据此引导安装插件/接入 MCP；规则路径、澄清、无工具部署形态不发。
-    if (decision.missing_capability
-            and strategy != Strategy.CLARIFY
-            and len(self.registry) > 0):
-        yield AgentEvent(EventType.CAPABILITY_MISSING, {
-            "task": task,
-            "missing": decision.missing_capability,
-            "available_tools": [s.name for s in self.registry.all()],
-            "strategy": strategy.value})
+    # 能力缺口感知：发缺口事件；配置发现源时把缺口闭环成新工具（本轮即可用）。
+    async for ev in self._emit_capability_gap(decision, task):
+        yield ev
+```
+`_emit_capability_gap` 内部（规则路径、澄清、无工具部署形态不发）：
+
+```python
+    if (
+        decision.missing_capability
+        and decision.strategy != Strategy.CLARIFY
+        and len(self.registry) > 0
+    ):
+        yield AgentEvent(
+            EventType.CAPABILITY_MISSING,
+            {
+                "task": task,
+                "missing": decision.missing_capability,
+                "available_tools": [s.name for s in self.registry.all()],
+                "strategy": decision.strategy.value,
+            },
+        )
 ```
 - 紧接着首个路由事件的，是**能力缺口事件**。模型在分类时若发现"现有工具不足以完成任务"，
   路由决策里会带一句缺口描述（如"天气查询能力"），Loop 把它喊给宿主：
@@ -102,20 +150,33 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 - 澄清分支曾经只有三行（问用户 → 拿回答 → 递归），实测会无限反问，现在加了**三道保险**，见块 3.5。
 
 ```python
-    ctx = Context(_SYSTEM_TEMPLATE.format(tools=self.registry.describe()))
+    ctx = Context(_SYSTEM_TEMPLATE.format(tools=self.registry.catalog_text()))
     for msg in self.memory.history():
         ctx.add(msg)
     ctx.add(ChatMessage(role="user", content=task))
 ```
 - 建消息本：system（含工具清单）→ 历史记忆 → 当前用户任务。
 - `str.format(tools=...)` 填充模板。
+- `{tools}` 填的是**轻量目录**（`registry.catalog_text()`，每个工具一行 name + 一句话摘要）；
+  完整 JSON Schema 不在这里，而是在 function-calling 的 `tools` 参数里按需注入
+  （源码里 `catalog_text()` 上方那两行注释写的就是这件事，见块 5.1）。
+- `registry.describe` 是**另一个**方法（完整描述文本），内核里已没有调用点。
 
 ```python
     if strategy == Strategy.PLAN:
-        async for ev in self._make_plan(ctx, task):
+        self._ensure_replan_tool()
+        async for ev in self._make_plan(
+            ctx,
+            task,
+            tier=decision.tier,
+            tier_policy=self.tier_policy,
+            tier_counts=tier_counts,
+        ):
             yield ev
 ```
 - plan 策略：先规划（额外一轮强模型调用），事件同样转发。
+- `_ensure_replan_tool()` 幂等注册 `replan` meta-tool：多步计划走不通时，模型可以显式
+  要求重规划（空宿主 / direct / 简单 react 不注册）。
 
 ```python
     # 计划只是"助手说过的话"，必须再推一把，模型才会进入工具执行；
@@ -134,7 +195,15 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 
 ```python
     final_text = ""
-    async for ev in self._react_cycle(ctx, use_tools=strategy != Strategy.DIRECT):
+    async for ev in self._react_cycle(
+        ctx,
+        use_tools=strategy != Strategy.DIRECT,
+        task=task,
+        strategy=strategy,
+        tier_policy=self.tier_policy,
+        tier_counts=tier_counts,
+        subject=subject,
+    ):
         yield ev
         if ev.type == EventType.MODEL_MESSAGE:
             final_text = ev.data.get("text", final_text)
@@ -149,9 +218,19 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 ```python
     await self.memory.append_history(ChatMessage(role="user", content=task))
     await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
-    yield AgentEvent(EventType.DONE, {"strategy": strategy.value, "final_text": final_text})
+    done_data: dict[str, object] = {
+        "strategy": strategy.value,
+        "final_text": final_text,
+        "standard_calls": tier_counts[STANDARD],
+        "strong_calls": tier_counts[STRONG],
+        "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
+    }
+    yield AgentEvent(EventType.DONE, done_data)
 ```
 - 收尾：把这一轮问答写进记忆，发 DONE 事件（携带最终结果）。
+- DONE 里还带**成本证据**：`standard_calls` / `strong_calls` / `model_calls` 是本次任务的
+  模型调用次数（规划 + 执行 + 收尾口径，不含路由分类与上下文压缩调用）；配了预算时
+  还会附上 `budget` 快照，触发熔断则附 `reason="budget_exceeded"`。
 
 ## 块 3.5 · 澄清分支的三道保险（为什么不能无限反问）
 
@@ -173,16 +252,27 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 测试见 `tests/test_loop.py` 的 5 个 clarify 用例：收敛、跨轮累积、两轮上限降级、长任务截断、空回答收尾，
 并断言整条事件链**恰好一个 DONE**。
 
-## 块 4 · _make_plan：先拆步骤（L94-L106）
+## 块 4 · _make_plan：先拆步骤（`def _make_plan`）
 ```python
-prompt = ("把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
-          "只输出步骤本身：\n" + task)
-ctx.add(ChatMessage(role="user", content=prompt))
-resp = await self.model.achat(ctx.llm_messages(), tools=None, tier="strong")
+    prompt = (
+        "把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
+        "只输出步骤本身：\n" + task
+    )
+    ctx.add(ChatMessage(role="user", content=prompt))
+    # 档位：成本感知开启时由策略决定（规划默认 strong），否则沿用路由建议 tier。
+    plan_tier = tier_policy.for_planning().tier if tier_policy is not None else tier
+    messages, state_event = await self._model_messages(ctx)
+    resp = await self._model_chat(messages, None, tier=plan_tier)
 ```
 - 拼一个"只做规划"的提示词，加进消息本。
-- `tools=None`：规划轮不许调工具，只输出文字。
-- `tier="strong"`：模型路由钩子，规划这种难活交给强模型。
+- 第二个参数 `None`（`tools` 位置）= 规划轮不许调工具，只输出文字。
+- 档位不再写死 `"strong"`：开成本感知时由 `TierPolicy.for_planning()` 决定（默认 strong），
+  关闭时沿用路由给出的 tier。
+- 模型调用统一走 `self._model_chat(messages, None, tier=plan_tier)`——它是内核**唯一**的模型
+  调用入口：任务预算熔断闸、单次调用硬超时（`asyncio.wait_for`）、档位透传都在这一层；
+  超时会被转成带说明的 `TimeoutError`，由上层发 ERROR 事件体面收尾。
+- `_model_messages(ctx)` 负责组装出站消息：先把宿主实时状态渲染成**瞬态** system 块
+  塞进本次消息（不进历史、不进记忆），并顺带把 `HOST_STATE` 事件带出来。
 
 ```python
 steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
@@ -197,36 +287,56 @@ yield AgentEvent(EventType.PLAN_CREATED, {"steps": steps})
 - 把计划作为 assistant 消息放回消息本——这样后续工具循环"看得到自己刚定的计划"。
 - 发 PLAN_CREATED 事件，UI 可展示计划。
 
-## 块 5 · _react_cycle：ReAct 工具循环（L108-L164）
+## 块 5 · _react_cycle：ReAct 工具循环（`def _react_cycle`）
 
 ### 5.1 循环开头
 ```python
-tools_schema = self.registry.llm_schemas() if use_tools else None
-for _ in range(self.max_iters):
+    if use_tools:
+        tools_schema, focused_names = await self._focus_tool_schemas(task, tier_counts)
+    else:
+        tools_schema, focused_names = None, None
+    ...
+    for iteration in range(self.max_iters):
 ```
-- 准备工具清单（direct 时为 None）。
-- `for _ in range(n)`：`_` 表示"这个循环变量我用不到"；最多 n 轮。
+- 工具 schema 不是一次性全量塞进去：`_focus_tool_schemas` 决定本轮注入哪份完整 schema——
+  工具数不超过 `full_schema_budget`（默认 24）就一次给全量；超过就先让模型只看**轻量目录**
+  挑出工具名，再只注入被选中那些的完整 schema（聚焦失败回退全量，宁多勿漏）。
+- `use_tools=False`（direct）时 `tools_schema` 为 None，模型本轮看不到任何工具。
+- `for iteration in range(self.max_iters)`：最多 n 轮；`iteration` 供成本感知选档用
+  （执行到第 3 轮起仍未收尾就升 strong）。
 
 ### 5.2 调模型，网络错误不崩
 ```python
-try:
-    resp = await self.model.achat(ctx.llm_messages(), tools=tools_schema)
-except Exception as exc:
-    yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
-    return
+    try:
+        messages, state_event = await self._model_messages(ctx)
+        if state_event is not None:
+            yield state_event
+        resp = await self._model_chat(messages, tools_schema, tier=tier)
+    except BudgetExceeded:
+        # 预算熔断冒泡到 astream 统一收尾，不能被下面的"模型失败体面 return"吞掉。
+        raise
+    except Exception as exc:  # noqa: BLE001
+        yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
+        return
 ```
-- 把当前消息本快照 + 工具清单发给模型。模型挂了（网络/Key/限流）就发 ERROR 事件并优雅结束，而不是抛栈崩溃。
+- 把当前消息本快照 + 工具清单发给模型。模型挂了（网络/Key/限流/硬超时）就发 ERROR 事件并优雅结束，而不是抛栈崩溃。
+- 档位 `tier` 由成本感知策略每轮给出（未开启时恒 `standard`），档位相对上轮变了才发 `TIER_CHANGED` 事件。
+- **预算熔断故意不吞**：`BudgetExceeded` 直接向上冒泡到 `astream` 的统一熔断点，改发
+  `BUDGET_EXCEEDED` 事件与固定诚实收尾文案。
 
 ### 5.3 模型不调工具 = 任务收尾
 ```python
-if not resp.tool_calls:
-    text = resp.content.strip()
-    ctx.add(ChatMessage(role="assistant", content=text))
-    yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text})
-    return
+    if not resp.tool_calls:
+        text = resp.content.strip()
+        ctx.add(ChatMessage(role="assistant", content=text))
+        yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
+        return
 ```
 - 空列表/None 都算"没有工具调用"（`not []` 为 True）。
 - 模型给的自然语言就是最终答案：入消息本、发事件、`return` 结束循环。**循环的唯一正常出口在这里。**
+- 正文里出现裸 XML 调用标记时，先走 `_looks_like_raw_tool_call` 分支：发
+  `ERROR(stage=model_protocol)` 并把固定说明文案当最终回答——既不把假调用当答案展示，
+  也不去解析执行它。
 
 ### 5.4 模型要调工具：先把"调用请求"记账
 ```python
@@ -239,30 +349,57 @@ ctx.add(ChatMessage(
 ))
 ```
 - OpenAI 协议要求：assistant 发起工具调用时，要先以 assistant 角色把调用记录原样放回消息历史，否则下一轮会报"tool_call 找不到对应 assistant 消息"。
+- 这段源码抽成了独立方法 `_append_assistant_tool_calls(ctx, resp)`，循环里只是一行调用。
 - 注意 `arguments` 要序列化成 **JSON 字符串**（协议要求字符串，不是对象）。
 
 ### 5.5 逐个执行并把结果回填
 ```python
-for call in resp.tool_calls:
-    tool_events, ok, result_text = await self.executor.execute(call.name, call.arguments)
+for call in calls:
+    tool_events, ok, result_text = await self.executor.execute(
+        call.name,
+        call.arguments,
+        subject=subject,
+        budget=self._active_budget,
+        call_id=call.id,
+    )
     for tool_event in tool_events:
         yield tool_event
     ctx.add(ChatMessage(role="tool", content=result_text,
                         tool_call_id=call.id, name=call.name))
 ```
-- 模型可能一轮要多个工具，逐个执行。
+- 模型可能一轮要多个工具，逐个执行；这段源码在 `_execute_tool_calls` 里（内核 meta-tool
+  先被内核自己拦下处理，不进普通执行器）。
 - executor 返回的事件逐个转发（TOOL_CALL/TOOL_RESULT/PERMISSION_ASKED）。
+- `subject=` 是宿主注入的**可信主体**（能力闸用）；`budget=` 是任务级预算计数器——组合工具的
+  真实步骤也会逐次过同一道闸，不能把"一次组合"记成一次业务调用；超限异常冒泡到 `astream`
+  统一熔断。
+- `call_id=call.id` 是 v0.14 **执行收据**的来源：执行器用它把 `ExecutionReceipt`
+  （not_started / succeeded / failed / unknown / partial）挂到事件上，宿主据此对账；
+  宿主给了 `idempotency_key` 时，同 key 重试不再进 handler（进程内缓存，跨进程仍归宿主）。
 - **关键闭环**：每个工具结果以 `role="tool"` 消息放回消息本，并用 `tool_call_id` 对应到是哪次调用。下一轮模型就能"看到"工具返回了什么，再决定继续调还是收尾。
 
-### 5.6 迭代上限兜底（L156-L164）
+### 5.6 迭代上限兜底（`def _finish_at_iteration_limit`）
 ```python
 # for 循环正常跑完（6 轮都在调工具、没收尾）才会走到这里
-ctx.add(ChatMessage(role="user",
-    content="已达到工具调用上限，请基于已有结果直接给出最终答案。"))
-resp = await self.model.achat(ctx.llm_messages(), tools=None)
-yield AgentEvent(EventType.MODEL_MESSAGE, {"text": resp.content.strip()})
+async for ev in self._finish_at_iteration_limit(ctx, tier_counts):
+    yield ev
+```
+```python
+ctx.add(
+    ChatMessage(
+        role="user",
+        content="已达到工具调用上限，请基于已有结果直接给出最终答案。",
+    )
+)
+messages, state_event = await self._model_messages(ctx)
+resp = await self._model_chat(messages, None, tier=STANDARD)
+yield AgentEvent(
+    EventType.MODEL_MESSAGE,
+    {"text": resp.content.strip(), "tier": STANDARD},
+)
 ```
 - 如果 6 轮都没结束，强制再问模型一次且**不给工具**（想调也没得调），逼它基于已有观察交答案。这保证 run 一定会终止。
+- 这一轮固定用标准档 `STANDARD`（源码里写死，不随成本感知升档），同样走 `_model_chat` 这一个出口。
 
 ## 一张时序表（react 两轮的消息本变化）
 

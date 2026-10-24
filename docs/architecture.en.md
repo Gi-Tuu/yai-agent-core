@@ -73,8 +73,9 @@ History retention (v0.3, opt-in): `memory/retention.py` provides pure functions 
 both stores support them symmetrically via constructor args `max_messages` / `ttl_seconds` / `clock`.
 Trim boundaries align to "turns" (from one user message to just before the next), so an
 assistant(tool_calls)/tool pair is never split; the SQLite store prunes once on construction to cover the
-restart case. The MemoryStore contract and schema version (still v1) are unchanged; KV TTL needs a schema
-v2 migration, deferred to v0.4. The `Context` character-budget hard truncation (formerly the private
+restart case. The MemoryStore contract is unchanged; the SQLite schema is now at **v3** (v1→v2 adds
+`kv.expires_at`, v2→v3 adds `history.parts`, migrated step by step), and KV TTL has shipped (since v0.8). The
+`Context` character-budget hard truncation (formerly the private
 `_compact`, now the public `enforce_budget`) drops at turn boundaries the same way (same-origin
 implementation in the kernel); v0.7 adds summary compaction on top of it — see §2.5.
 
@@ -174,7 +175,7 @@ At moments when the kernel **silently falls back so the main flow keeps running,
 | Metrics (dependency-free recorder, see below) | Ops / cost dashboards | How things run **in aggregate over time** (run outcome counts, tool error rate, strong-tier model calls, latency distribution) | A side-channel tap at the single `astream` exit; on by default |
 | OpenTelemetry tracing (optional extra) | Distributed / cross-service | The **trace, latency, and attribution** of a request across processes | The host, subscribing to the event stream from the outside; the kernel initializes no exporter |
 
-- **Shape:** `DiagnosticEvent(kind, message, level, data)`, with `level ∈ debug/info/warning/error`. The current eight `kind`s are `model_error`, `model_timeout`, `model_fallback`, `router_llm_fallback`, `discovery_failed`, `discoverable_list_failed`, `compaction_fallback`, and `schema_focus_fallback`.
+- **Shape:** `DiagnosticEvent(kind, message, level, data)`, with `level ∈ debug/info/warning/error`. The current nine `kind`s are `model_error`, `model_timeout`, `model_fallback`, `router_llm_fallback`, `discovery_failed`, `discoverable_list_failed`, `compaction_fallback`, `schema_focus_fallback`, and `host_state_failed`.
 - **Safety contract:** the callback is synchronous and should be fast and non-blocking (a log line or a metrics counter is enough). Any exception raised inside the callback is swallowed by the kernel: diagnostics are a side channel and must never take the agent down because "the logger crashed." The kernel does not depend on `logging` and turns no logging library into a hard dependency.
 - **Wiring:** pass it once via `AgentCore(model, on_diagnostic=fn)`. The kernel duck-types the same callback onto the internal `AdaptiveRouter` and `FallbackModelProvider` (both expose a writable `on_diagnostic` attribute; custom host-built components that lack it are unaffected). With no callback the kernel stays completely silent and behaves exactly as before.
 - **Deliberately excluded:** a sandbox failure surfaces as `tool_result(ok=False)` and a permission denial emits `permission_asked`; these are already user-visible business events, not silent fallbacks, so they are not re-emitted as diagnostics.
@@ -203,6 +204,20 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 
 - **Uniform per-result bounding (C4):** for all three success paths — native functions, code tools (sandbox output), and composite tools (`{"steps":[...]}`) — `ToolExecutor` runs the `json.dumps` result through the pure helper `bound_tool_result(text, limit)` before writing it back into context. The default cap is **16,000 characters** (aligned with the OpenAPI integration's `max_result_chars`); on overflow it keeps the **first 70% and last 30%** with an explicit ellipsis marker in between stating how many characters were omitted, and a tightening loop guarantees the result never exceeds the cap — truncation is never silent. `AgentCore(tool_result_char_limit=...)` overrides it and `None` disables it; `CoreConfig.validate()` rejects non-positive integers and bools at assembly time. Successful `TOOL_RESULT` events gain `truncated` and `result_chars` (the original length before bounding), while the event `preview` stays at 200 characters; results within the cap are returned byte-for-byte unchanged. This is the closest-to-source bound on the "tool result → context" path; together with §2.5 (whole-turn 24,000-character compaction) and the HTTP-egress `payload_guard` (256 KB response cap) it forms three non-substitutable limits.
 - **Deterministic tool-catalog ordering (C1):** the model-facing `catalog()` / `catalog_text()` / `describe()` / `llm_schemas()` of `ToolRegistry` all go through an internal `_ordered()` that sorts by tool name; the internal storage view `all()` still preserves registration order, and `schemas_for(names)` still follows the caller-supplied order. Consequently the tool-list bytes in the system prompt change only when the tool set **actually changes** (add/remove/rename), preventing incidental host registration-order churn from breaking the stable prompt-cache prefix and making snapshots deterministic.
+
+### 2.11 Mechanisms added in v0.12–v0.21
+
+All of the following have shipped: zero hard kernel dependencies, and no change to existing host behavior by default.
+
+- **Multimodal message contract (v0.12):** `ChatMessage.parts` plus `TextPart`/`ImagePart`/`ResourcePart` (`src/yai_core/types.py:747-963`). `parts_to_text()` (`types.py:901`) degrades parts to plain text and states plainly that the model cannot see them — image and resource references are never dropped silently.
+- **Capability manifest v2 (v0.12):** `MANIFEST_VERSION = 2` with supported versions `(1, 2)` (`src/yai_core/tools/manifest.py:43-46`). v2 makes the governance semantics part of the format contract, so an old reader rejects it outright — better to refuse the import than to run with silently voided safety semantics.
+- **Input validation over 13 schema keywords (v0.13):** `src/yai_core/policy/approval.py:121` validates 4 structural keywords (`type`/`required`/`properties`/`items`) plus 9 value-domain ones (`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`); keywords that are still unimplemented stay on record (`src/yai_core/tools/health.py:31`) instead of pretending they were checked.
+- **Capability health check (v0.14):** `check_tool_specs()` (`src/yai_core/tools/health.py:622`) statically checks whether a declaration can really be enforced by the kernel (no handler call, no network); `AgentCore.capability_health()` (`src/yai_core/core.py:394`) reports on the registered tools.
+- **Trusted change preview + execution receipt (v0.14):** `ChangePreview` (`src/yai_core/types.py:160`) carries the host-generated real diff and token, re-generated before execution and compared — a changed token invalidates the approval; `ExecutionReceipt` (`types.py:113`) distinguishes not_started/succeeded/failed/unknown/partial, which is what decides whether a call may be retried.
+- **Live host state (v0.15/v0.19):** `HostStateProvider` (`src/yai_core/kernel/state.py:48`) injects a read-only, transient snapshot before each model call; it never enters history or memory, and a failing provider only emits a `host_state_failed` diagnostic (`kernel/state.py:170`) while the remaining state is still injected.
+- **Sidecar protocol (v0.16):** `python -m yai_core.sidecar` runs NDJSON + JSON-RPC 2.0 over stdio (`src/yai_core/sidecar/protocol.py:18`), carrying initialize / agent/run / agent/cancel / ping / shutdown; the tool surface still goes through MCP / OpenAPI — the protocol itself has no tool/call.
+- **Office document text extraction (v0.21):** `extract_text()` in `src/yai_core/batteries/office_text.py:50`: docx/xlsx/pptx go through the stdlib zipfile + ElementTree (zero dependency), PDF through the optional pypdf; the three safety gates (member allowlist, DOCTYPE/ENTITY rejection, size caps) are stated at the top of the file.
+- **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:214` (the timeout takes the stricter setting) and `tools/executor.py:584` (the rate gate runs before authorization).
 
 ## 3. SPI contracts
 
@@ -266,8 +281,8 @@ the peer address; state is in-memory only and clears on restart; there is no glo
 
 - Vendor-provided agent SDKs and graph orchestration frameworks: developer-builds-agent; tools/orchestration must be explicitly
   defined and they bind to their own ecosystems;
-- agentic-kernel (TS): a similar embedded-runtime idea, but TypeScript-only and without capability
-  auto-discovery or adaptive strategy;
+- Embedded agent runtimes in the same category: a similar embedded-runtime idea, but most are TypeScript-first, and
+  capability auto-discovery / adaptive strategy are not their default shape;
 - MCP: a tool-interoperability **protocol**, not a runtime; YAI is a consumer of MCP (v0.2 Client), not a
   competitor;
 - YAI: host-declares-capability, in-process Python, fully model/channel/storage-agnostic, observable

@@ -1,8 +1,8 @@
 # YAI Agent Core vs. Alternatives (an honest comparison)
 
-[English](comparison.en.md) · [简体中文](comparison.md)
+**English** · [简体中文](comparison.md)
 
-> Last updated: 2026-10-13. This document states only **verifiable facts**; YAI's side is based on this
+> Last updated: 2026-10-24. This document states only **verifiable facts**; YAI's side is based on this
 > repository's code/config. To avoid restating third parties' own marketing copy, alternatives are
 > described **by category** (general framework / graph runtime / multi-agent framework / self-hosted
 > platform / hosted no-code) — no names, no slogans, no vendor metrics. Category traits reflect public
@@ -29,7 +29,7 @@
 | Embedding into existing software | In-process `import`, one-line `AgentCore.auto`; no server introduced | Embeddable, but you must implement agent assembly and the loop yourself | Embeddable, but the multi-agent paradigm needs app cooperation | The app becomes a platform client/external caller | Cannot embed; the app runs inside the platform |
 | Kernel runtime deps | **`dependencies = []`** (openai/fastapi/mcp/httpx are all optional, lazily-loaded extras) | A set of layered dependency packages | Framework dependencies | A full server stack (multi-container orchestration) | None (hosted) |
 | Tool onboarding | Function introspection auto-registration; **MCP Client**; **OpenAPI auto-discovery**; **on-demand ToolDiscovery loop** | Tool abstractions + many integration packages | Tool abstractions | In-platform tools/plugin marketplace | Platform plugin ecosystem |
-| Tool discovery/matching | **Dual channel: lexical (zero-dep, Chinese bigrams, synonyms) + optional embedding semantics**, stdlib cosine, two-layer summaries, margin to prevent false recall; degrades to pure lexical with no embedder configured | Usually manual binding by the developer or stuffing everything into the prompt; no built-in semantic retrieval | None built in | Fixed in-platform toolset, chosen by name | Platform plugin marketplace |
+| Tool discovery/matching | **Dual channel: lexical (zero-dep, Chinese bigrams, synonyms) + optional embedding semantics**, stdlib cosine, two-layer summaries, margin to prevent false recall; degrades to pure lexical with no embedder configured | Recall is chosen by the host (built-in depth varies by product) | Usually delegated to host-side components | In-platform tool/plugin set, chosen by configuration | Platform plugin marketplace |
 | Orchestration paradigm | Adaptive routing (direct/react/plan/clarify) + a minimal capability-gap loop (sense→discover→register→usable this turn); the host presets no flow | Chains/middleware; graphs and state machines | Role teams / conversation-driven | Visual workflow graph | Visual orchestration |
 | Routing self-calibration | **A contextual bandit learning from execution feedback** (Beta/Thompson bucketed by task features, rules as the cold-start prior), getting more accurate for similar tasks; offline benchmark reproducible (late rounds 89.6% vs rules 73.3%), off by default | None built in; you build the eval/fine-tune loop yourself | None built in | None built in | None built in |
 | Multi-agent | **Explicitly not done** (belongs to the host layer) | Build it yourself | **Native strength** | Often supported | Platform-side multi-agent collaboration |
@@ -37,7 +37,7 @@
 | Permission control | Host provides the PermissionPolicy SPI; read/write graded, writes can be human-authorized | Implemented by the app | Implemented by the app | Platform permission model | Platform model |
 | Deployment requirements | Follows the host; an optional FastAPI battery and container example are provided | Deployed by the app | Deployed by the app | Must deploy and operate the platform | Just sign up |
 | Offline testable | The full suite is offline (fake models/MockTransport/injected clocks), no network or keys | Testable, you mock yourself | Testable, you mock yourself | Depends on the platform running | Depends on the platform |
-| Maturity | A new single-person project; 1,500+ tests, 9 example hosts | Mature ecosystems | Mature communities | Mature platforms | Commercial products |
+| Maturity | A new single-person project; 1,500+ tests, 10 example hosts | Mature ecosystems | Mature communities | Mature platforms | Commercial products |
 
 ## 3. YAI's differentiating claims (mapped to "technical innovation" scoring)
 
@@ -93,7 +93,7 @@
 ## 5. Sources of fact
 
 - YAI facts: this repository's `pyproject.toml` (dependencies/extras), `src/yai_core/`, `README.md`,
-  `ROADMAP.md` (re-checked 2026-10-13; the test count comes from an actual `uv run pytest` run).
+  `ROADMAP.md` (re-checked 2026-10-24; the test count comes from an actual `uv run pytest` run).
 - Alternatives: described by category from public common knowledge; no third-party text, metrics or links.
 
 > Category descriptions may lag behind product changes; treat each project's own current documentation
