@@ -11,6 +11,7 @@ from yai_core import (
     CREATE_CODE_TOOL,
     AgentCore,
     CodeToolManager,
+    EventType,
     ModelResponse,
     SandboxResult,
     ToolCallRequest,
@@ -428,3 +429,64 @@ def test_tool_creation_guidance_states_sandbox_boundary() -> None:
     assert "compose_tool" in _SYSTEM_TEMPLATE
     assert "create_code_tool" in _SYSTEM_TEMPLATE
     assert "request_capability" in _SYSTEM_TEMPLATE
+
+
+# ---------- 回收必须留痕（事件流唯一出口） ----------
+
+
+def test_expired_code_tool_call_emits_retired_event() -> None:
+    """调用已过期的代码工具时必须发 CODE_TOOL_RETIRED。
+
+    事件流是唯一出口：宿主要能区分"工具被回收"与"工具调用失败"，
+    而不是只能从错误文案里反推。
+    """
+    clock = _Clock()
+    registry = ToolRegistry()
+    manager = CodeToolManager(registry, clock=clock)
+    manager.create(**_code_spec_body())
+    assert registry.has("double")
+
+    clock.advance(TTL + 1)  # 超过 48h 存活期
+
+    executor = ToolExecutor(
+        registry,
+        AllowlistPolicy(mode="allow_all"),
+        CollectChannel(),
+        code_manager=manager,
+    )
+    events, ok, text = asyncio.run(executor.execute("double", {"x": 2}))
+
+    retired = [e for e in events if e.type == EventType.CODE_TOOL_RETIRED]
+    assert len(retired) == 1
+    assert retired[0].data["name"] == "double"
+    assert retired[0].data["source"] == "code"
+    assert retired[0].data["reason"] == "expired"
+
+    # 回收后从注册表注销，调用本身失败。
+    assert not registry.has("double")
+    assert ok is False
+    assert "已超过存活期被回收" in text
+
+    # 顺序：先留痕（回收），再报失败（调用结果）。
+    types = [e.type for e in events]
+    assert types.index(EventType.CODE_TOOL_RETIRED) < types.index(EventType.TOOL_RESULT)
+
+
+def test_live_code_tool_call_does_not_emit_retired_event() -> None:
+    """没过期就不该出现回收事件（别让事件流被噪声淹没）。"""
+    clock = _Clock()
+    registry = ToolRegistry()
+    manager = CodeToolManager(registry, clock=clock)
+    manager.create(**_code_spec_body())
+
+    executor = ToolExecutor(
+        registry,
+        AllowlistPolicy(mode="allow_all"),
+        CollectChannel(),
+        code_manager=manager,
+        sandbox=_FakeSandbox(),
+    )
+    events, ok, _ = asyncio.run(executor.execute("double", {"x": 2}))
+
+    assert not [e for e in events if e.type == EventType.CODE_TOOL_RETIRED]
+    assert ok is True

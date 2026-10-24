@@ -1046,6 +1046,15 @@ class ToolExecutor:
         if self.code_manager is not None and not self.code_manager.touch(spec.name):
             self.registry.unregister(spec.name)
             msg = f"代码工具 {spec.name} 已超过存活期被回收，请重新创建"
+            # 回收是内核替宿主做的动作，必须留痕：事件流是唯一出口，
+            # 否则宿主只能从这句错误文案里反推"工具被收了"，
+            # 也无法在事件流上区分"工具被回收"与"工具调用失败"。
+            events.append(
+                AgentEvent(
+                    EventType.CODE_TOOL_RETIRED,
+                    {"name": spec.name, "source": "code", "reason": "expired"},
+                )
+            )
             events.append(
                 AgentEvent(
                     EventType.TOOL_RESULT,
