@@ -15,7 +15,7 @@ uv sync --extra desktop          # 或 uv pip install -e ".[desktop]"
 .\.venv\Scripts\python.exe -m shell.desktop --live   # 接真实模型
 ```
 
-屏幕顶部居中出现一条 340×52 的黑色胶囊；交代任务后它自己展开成 420×620 的员工面板，
+屏幕顶部居中出现一条 440×52 的黑色胶囊；交代任务后它自己展开成 440×536 的员工面板，
 路由决策、能力缺口、新工具飞入、授权卡、子员工出芽，全部由真实内核事件驱动。
 
 ## 1. 为什么不是 pywebview / Tauri / Electron
@@ -41,6 +41,40 @@ shell/desktop/
     ├── main.qml   # 窗口：胶囊态 ⇄ 面板态的真窗口形变 + 事件→动效映射
     └── Panel.qml  # 面板：授权卡 / 过程时间线 / 权限三档 / 输入
 ```
+
+### 2.1 视觉层：光学黑曜石与四态星云
+
+桌面壳的视觉 token 全部集中在 `qml/YaiTheme/Theme.qml`，本轮换成
+**Optical Obsidian + Braun Signal Orange**，但保留原运行时 token
+（`fontMono / topMargin / dragSlop / msFast / msNormal / msSlow / idleDot /
+warnTint / badTint / knob`），避免其他 QML 文件因缺 token 编译失败。
+
+- 尺寸保持正交：球 `52×52` → 胶囊 `440×52`（只向右长）→ 面板 `440×536`
+  （只向下长）；
+- 壳层必须**不透明**：半透明会让桌面其他窗口的文字透进对话；
+- `NebulaOrbCanvas.qml` 是球/胶囊/面板顶栏共用的四态动效：
+  `idle` 向右漂散、`working` 顺时针行星、`complete` 冲击波、`frozen` 减速静止；
+- 常驻桌面要控成本：空闲/完成 20fps、工作态 60fps、冻结减速到 0 后停画；
+  实测胶囊待命约占单核 **6.2%**（120 粒子、20fps），不是“满屏重绘”。
+- `main.qml` 只在 `done` 时短暂切 `complete`；`Panel.qml` 顶栏使用同一份
+  `orbPhase`，三态视觉一致。
+
+![图 1　引导球：橙色星云 + 点我](../../assets/desktop-ball.png)
+
+![图 2　胶囊：01/SALES + 当前任务 + OPEN](../../assets/desktop-capsule.png)
+
+![图 3　HITL.GATE 审批卡](../../assets/desktop-panel-hitl.png)
+
+![图 4　VAULT 全屏面板](../../assets/desktop-vault.png)
+
+![图 5　MEMORY 全屏面板](../../assets/desktop-learning.png)
+- 外壳结构同步设计稿：胶囊是 `01/SALES + 状态 + OPEN + 收起`；面板顶栏是
+  `YAI.CORE · 模型 + VAULT/MEM`，下面是编号专员标签、`HITL.GATE` 审批卡、
+  `TRACE // 推理过程`、提示 chips 与 `> ... RUN` 输入条；VAULT/MEM 是全屏
+  面板，顶部可直接互切并 `[ESC] 返回`。
+
+压缩包里的 `web_preview/` 依赖 Tailwind CDN + Google Fonts，且是独立 mock，
+本轮**没有**并入仓库；网页宿主仍使用零依赖 `http.server` + SSE。
 
 ## 3. 线程纪律：一条信号跨两个世界
 
@@ -86,7 +120,7 @@ shell/desktop/
 | 声波条起伏、状态点呼吸 | `runtime.busy` | 属性绑定，无需额外事件 |
 | 三粒光点出芽 | `tool_call(tool="delegate")` → `tool_result` | `delegating` 期间无限循环动画 |
 
-**性能红线**（这台机器吃过亏）：窗口只有 340×420 的透明面积，动效全在小元素上做
+**性能红线**（这台机器吃过亏）：窗口只有 440×536 的透明面积，动效全在小元素上做
 `x/y/opacity/color` 四类属性动画；**不开全窗 alpha 模糊、不做满屏 canvas 重绘**，
 避免拖慢整个桌面。
 

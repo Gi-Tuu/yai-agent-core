@@ -12,12 +12,13 @@ Rectangle {
     id: overlay
 
     visible: false
-    color: Qt.rgba(0, 0, 0, 0.66)
+    color: Theme.shell
     opacity: visible ? 1 : 0
     Behavior on opacity { NumberAnimation { duration: Theme.msFast } }
 
     readonly property var payload: JSON.parse(workbench.codeVault || "{}")
     readonly property var tools: payload.tools || []
+    signal openLearning
 
     function open() {
         workbench.openCodeVault();      // 触发 worker 读取并回传
@@ -37,16 +38,15 @@ Rectangle {
     }
 
     ColumnLayout {
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 32, 380)
+        anchors.fill: parent
+        anchors.margins: 14
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: cardCol.implicitHeight + 28
-            radius: 14
-            color: Theme.shell
-            border.width: 1
-            border.color: Theme.edge
+            Layout.fillHeight: true
+            radius: 0
+            color: "transparent"
+            border.width: 0
 
             // 挡住遮罩，卡片内点击不误关；同时吞掉卡片内（ListView 之外）的滚轮
             MouseArea {
@@ -63,22 +63,32 @@ Rectangle {
                 spacing: 10
 
                 RowLayout {
-                    spacing: 8
+                    spacing: 6
                     Text {
-                        text: "代码工具"
+                        text: "VAULT // 工具保险箱"
                         color: Theme.text
-                        font.pixelSize: 13
+                        font.family: Theme.fontMono
+                        font.pixelSize: 12
                         font.bold: true
                     }
                     Text {
                         text: workbench.activeName
                         color: Theme.dim
-                        font.pixelSize: 11
+                        font.pixelSize: 10
                     }
                     Item { Layout.fillWidth: true }
                     Pill {
-                        label: "关闭"
+                        label: "MEM"
                         tone: Theme.dim
+                        onClicked: {
+                            overlay.visible = false;
+                            overlay.openLearning();
+                        }
+                    }
+                    Pill {
+                        label: "[ESC] 返回"
+                        filled: true
+                        tone: Theme.accent
                         onClicked: overlay.visible = false
                     }
                 }
@@ -86,7 +96,7 @@ Rectangle {
                 ListView {
                     id: vaultList
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(264, Math.max(88, contentHeight))
+                    Layout.fillHeight: true
                     // 保底 88px：0 高度时委托不会被创建，contentHeight 就永远长不出来
                     spacing: 8
                     clip: true

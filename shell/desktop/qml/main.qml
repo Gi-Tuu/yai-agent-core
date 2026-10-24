@@ -21,6 +21,13 @@ YaiWindow {
     property string capText: "待命"
     property string notice: ""
     property bool delegating: false
+    readonly property string capBadge: {
+        var sid = workbench ? workbench.activeSpecialistId : "sales";
+        if (sid === "warehouse") return "02/INVENTORY";
+        if (sid === "notes") return "03/NOTES";
+        if (sid === "companion") return "04/COMPANION";
+        return "01/SALES";
+    }
 
     // 球锚点（屏幕坐标）：展开时窗口为避开屏幕边缘会整体平移，
     // 锚点始终记录球的位置，收回时回到这里；持久化也只存锚点。
@@ -32,6 +39,18 @@ YaiWindow {
     readonly property bool onboardingOpen: shape === "ball" && !workbench.onboardingDone
     readonly property var pending: workbench
                                    ? JSON.parse(workbench.activePendingPayload || "{}") : ({})
+
+    // 四态星云：待确认冻结、完成短暂超新星、执行中行星、其余向右飘散。
+    property bool completionFlash: false
+    readonly property string orbPhase: workbench && workbench.activePendingKind !== ""
+        ? "frozen"
+        : (completionFlash ? "complete"
+            : ((workbench && (workbench.activeBusy || root.delegating)) ? "working" : "idle"))
+    Timer {
+        id: completionTimer
+        interval: 1200
+        onTriggered: root.completionFlash = false
+    }
 
     // 不用 Qt.Tool：无 owner 的透明 frameless Tool 窗口在 Windows 上会走到
     // QWindowToolSaveBits 遗留合成路径，内容全透明、鼠标穿透；改用 Qt.Window 走
@@ -272,8 +291,6 @@ YaiWindow {
         }
 
         if (type === "strategy_selected") {
-            root.capText = "路由 " + (d.strategy || "?") + "（" + (d.source || "?") + "）";
-            ripple.restart();
             addStep(model, "路由 " + (d.strategy || "?") + " · " + (d.source || "?"));
         } else if (type === "model_message") {
             addSay(model, String(d.text || ""), Theme.text);
@@ -309,6 +326,8 @@ YaiWindow {
         } else if (type === "done") {
             root.delegating = false;
             root.capText = "已完成";
+            root.completionFlash = true;
+            completionTimer.restart();
             // live 内核的 final_text 与刚发的 model_message 同源，去重；
             // demo 的 final_text 是独立结论，仍显示。
             var ft = String(d.final_text || "");
@@ -387,8 +406,7 @@ YaiWindow {
             objectName: "shell"
             anchors.fill: parent
             // 每态各自的小圆角（都不超过短边一半）：形变中间帧不会再割出扇形/椭圆
-            radius: root.shape === "panel" ? 28
-                    : (root.shape === "capsule" ? 26 : height / 2)
+            radius: root.shape === "ball" ? height / 2 : Theme.rPanel
             color: Theme.shell
             border.width: 1
             border.color: Theme.edge
@@ -477,61 +495,74 @@ YaiWindow {
                 font.bold: true
             }
 
-            // 动态波形：空闲静止，执行中起伏（5 根 3px 小条）
-            Row {
-                id: waveform
-                spacing: 3
-                y: (parent.height - 22) / 2
-                x: root.shape === "capsule" ? 18 : (parent.width - implicitWidth) / 2
-                visible: !root.onboardingOpen
-                Behavior on x { PropertyAnimation { duration: Theme.msNormal; easing.type: Easing.OutCubic } }
-                Repeater {
-                    model: 5
-                    Rectangle {
-                        required property int index
-                        readonly property var peaks: [12, 18, 22, 16, 10]
-                        width: 3
-                        radius: 1.5
-                        color: Theme.accent
-                        height: 7
-                        SequentialAnimation on height {
-                            loops: Animation.Infinite
-                            running: workbench.activeBusy || root.delegating
-                            NumberAnimation { to: peaks[index]; duration: 190 + index * 45; easing.type: Easing.OutQuad }
-                            NumberAnimation { to: 6; duration: 210 + index * 35; easing.type: Easing.InQuad }
-                        }
-                    }
-                }
+            // 四态星云：球/胶囊共用；面板顶栏在 Panel.qml 里单独放一份。
+            NebulaOrbCanvas {
+                id: orb
+                anchors.fill: parent
+                isWide: root.shape !== "ball"
+                phase: root.orbPhase
+            }
+
+            // 胶囊：编号 + 当前活动 + OPEN + 收起箭头（无多余波形/状态点）。
+            Text {
+                id: capBadgeText
+                visible: root.shape === "capsule"
+                x: 64
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.capBadge
+                color: Theme.text
+                font.family: Theme.fontMono
+                font.pixelSize: 11
+                font.bold: true
             }
 
             Text {
                 visible: root.shape === "capsule"
-                x: waveform.x + waveform.implicitWidth + 14
+                x: capBadgeText.x + capBadgeText.implicitWidth + 8
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - x - 46
+                width: parent.width - x - 96
                 color: Theme.text
-                font.pixelSize: 13
+                opacity: 0.85
+                font.pixelSize: 12
                 elide: Text.ElideRight
                 text: root.capText
             }
 
-            // 状态点：空闲灰、执行中琥珀、待授权黄
             Rectangle {
+                id: openChip
+                visible: root.shape === "capsule"
+                anchors.right: capChevron.left
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: 42
+                height: 18
+                radius: 4
+                color: "#1AFFFFFF"
+                Text {
+                    anchors.centerIn: parent
+                    text: "OPEN"
+                    color: Theme.text
+                    opacity: 0.75
+                    font.family: Theme.fontMono
+                    font.pixelSize: 10
+                }
+            }
+
+            Text {
+                id: capChevron
                 visible: root.shape === "capsule"
                 anchors.right: parent.right
-                anchors.rightMargin: 18
+                anchors.rightMargin: 15
                 anchors.verticalCenter: parent.verticalCenter
-                width: 9
-                height: 9
-                radius: 4.5
-                color: workbench.activePendingKind !== "" ? Theme.warn
-                     : (workbench.activeBusy ? Theme.accent : Theme.idleDot)
-                Behavior on color { ColorAnimation { duration: 200 } }
-                SequentialAnimation on opacity {
-                    loops: Animation.Infinite
-                    running: workbench.activeBusy
-                    NumberAnimation { to: 0.35; duration: 650 }
-                    NumberAnimation { to: 1; duration: 650 }
+                text: "‹"
+                color: Theme.text
+                opacity: 0.65
+                font.pixelSize: 18
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.shape = "ball"
                 }
             }
 
@@ -553,7 +584,7 @@ YaiWindow {
             // 思考涟漪：胶囊态一条高光横穿底边
             Rectangle {
                 id: rippleBar
-                visible: root.shape === "capsule"
+                visible: false
                 width: 60
                 height: 2
                 radius: 1
@@ -641,8 +672,10 @@ YaiWindow {
             visible: root.expanded
             opacity: root.expanded ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.msNormal } }
-            onLoaded: item.collapseRequested.connect(
-                function () { root.shape = "ball"; })
+            onLoaded: {
+                item.collapseRequested.connect(function () { root.shape = "ball"; });
+                item.capsuleRequested.connect(function () { root.shape = "capsule"; });
+            }
         }
 
         Binding {

@@ -84,8 +84,8 @@ height: shape === "panel" ? Theme.panelH : (shape === "capsule" ? Theme.capH : T
 
 | 行 | 来源事件 | 呈现 |
 |---|---|---|
-| `say` | `model_message` / `done` / `error` / 用户发问 | 气泡：你说=右侧紫边，它答=左侧深底 |
-| `chain` | 路由、工具调用与结果、缺口、发现、组合、子员工 | 一条 `› 过程 · N 步`，点击展开明细 |
+| `say` | `model_message` / `done` / `error` / 用户发问 | 气泡：你说=右侧信号橙边，它答=左侧深底 |
+| `chain` | 路由、工具调用与结果、缺口、发现、组合、子员工 | 一条 `› TRACE // 推理过程 N 步`，点击展开明细 |
 
 `addStep()` 会**并入上一条 chain 行**（同一轮的过程攒在一起），遇到 `say` 就断开新的一轮。
 每个专员各存一份 ListModel（`Qt.createQmlObject` 建、`Binding` 按 `activeSpecialistId` 换给

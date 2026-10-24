@@ -172,13 +172,13 @@ persistent floating window, rendered natively with Qt Quick, running in the **sa
 embedded in each app (no local port).
 
 <p align="left">
-  <img src="docs/assets/desktop-ball.png" alt="The Dynamic Island guide ball: a round ball with a pulsing purple ring and a 'click me' hint." width="180">
+  <img src="docs/assets/desktop-ball.png" alt="The Dynamic Island guide ball: an orange nebula orb with a 'click me' hint." width="180">
 </p>
 
-- **Three-state morphing**: round ball (56px) → on hover expands right into a capsule (340×52) → on click
-  expands down into the employee panel (470×620); draggable throughout;
+- **Three-state morphing**: round ball (52px) → on hover expands right into a capsule (440×52) → on click
+  expands down into the employee panel (440×536); draggable throughout;
 - **Position memory**: after dragging, closing and reopening returns the window to where it was;
-- **First-run guide**: a "click me" hint + pulsing purple ring, shown once and never again;
+- **First-run guide**: a "click me" hint + four-state orange nebula, shown once and never again;
 - **Global hotkey**: press `Ctrl+Alt+Y` in any application to summon and expand it instantly;
 - **Offline / live dual entry**: desktop shortcuts start either the offline demo or the live-model employee;
 - **Multi-specialist switching**: one island manages several **isolated** specialists — sales / warehouse /
