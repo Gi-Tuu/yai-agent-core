@@ -7,8 +7,14 @@
 
 ## [Unreleased]
 
+## [v0.15.0] - 2026-10-24
+
 ### Added
 
+- **CI 增加留出集评测与 Windows junction 竞态测试**：`router benchmark` job 在原有
+  主曲线之后同时跑 `--holdout`（冻结学习泛化）；Windows 上新增 junction 父目录
+  替换测试，证明句柄真实路径复核在没有 `O_NOFOLLOW` 的平台也确实生效（此前该
+  竞态测试在 Windows 只 skip）。
 - **宿主实时状态（现状锚）**：`AgentCore.register_state_provider()` /
   `unregister_state_provider()` 允许宿主注册只读快照回调。内核在**每次主模型调用前**
   重新取一次状态（工具名聚焦的窄调用除外），作为瞬态 system 块插在基础提示之后、

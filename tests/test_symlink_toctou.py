@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,6 +119,38 @@ def test_parent_directory_swap_is_detected_after_open(tmp_path: Path) -> None:
         assert fd_matches_path(fd, target) is False
     finally:
         os.close(fd)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction 专用")
+def test_windows_parent_junction_swap_is_detected(tmp_path: Path) -> None:
+    """Windows 没有 O_NOFOLLOW，父目录换成 junction 时只能靠句柄复核发现。"""
+    root = tmp_path / "root"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    (sub / "a.txt").write_text("正常内容", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.txt").write_text("根目录外的内容", encoding="utf-8")
+
+    target = sub / "a.txt"
+    sub.rename(root / "sub-real")
+    created = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(sub), str(outside)],
+        capture_output=True,
+    )
+    if created.returncode != 0:
+        # cmd 的输出是 OEM 代码页，按 UTF-8 解会炸掉 subprocess 的读线程。
+        detail = (created.stdout or b"") + (created.stderr or b"")
+        pytest.skip(f"无法创建 junction：{detail.decode('mbcs', errors='replace')}")
+    try:
+        fd = os.open(target, os.O_RDONLY)
+        try:
+            assert _fd_path(fd) is not None
+            assert fd_matches_path(fd, target) is False
+        finally:
+            os.close(fd)
+    finally:
+        os.rmdir(sub)  # 只删 junction 本身，不删目标目录内容
 
 
 def test_write_rechecks_target_before_replace(tmp_path: Path, monkeypatch) -> None:
