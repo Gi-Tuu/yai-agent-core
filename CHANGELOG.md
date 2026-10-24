@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.18.0] - 2026-10-24
+
 ### Added
 
 - **桌面陪伴专员接入 HostStateProvider**：`shell/desktop/host.py` 的 `_live_factory`
