@@ -112,7 +112,30 @@
 - 运行期异常 → `agent/error` 通知，进程继续服务下一个任务；
 - `shutdown`/EOF → 取消任务、逆序关闭桥接、`core.aclose()`。
 
-## 6. 可运行的真实宿主：Node 示例
+## 6. 这一层的测试面
+
+两个测试文件把这层的失败边界钉死（全部离线：不联网、不需要 API Key，MCP/OpenAPI
+用假模块注入）：
+
+| 文件 | 覆盖什么 |
+|---|---|
+| `tests/test_sidecar_protocol.py` | 协议语义：初始化、事件流、审批/澄清应答、取消、错误码、CLI 子进程、MCP/OpenAPI 真实接入 |
+| `tests/test_sidecar_server.py` | 服务端装配与失败边界：默认模型工厂、工具接入的清理、宿主失联/报错、stdio 收发与收尾、进程退出码 |
+
+`test_sidecar_server.py` 里几处值得记住的断言：
+
+- **第二个桥接失败要关掉第一个**：MCP 接上、OpenAPI 挂掉时，已经拉起的桥接必须
+  `aclose()`，不留半初始化进程（`attach_configured_tools` 的 `except BaseException` 分支）。
+- **宿主失联不挂死**：审批等不到回答按拒绝处理；宿主回 `error` 也按拒绝处理。
+- **stdio 读到 EOF 也要收尾**：读线程异常时按 EOF 处理，照样走 `_cleanup()`。
+- **入口退出码**：正常 0、`KeyboardInterrupt` 130、管道断开 0。
+
+2026-10-25 补测后的覆盖率记录：`src/yai_core/sidecar/` 五个模块
+（`__init__` / `__main__` / `channel` / `protocol` / `server`）均为 **100%**；
+此前 `__main__.py` 是 0%（旧测试只把 CLI 跑在子进程里，进程内看不到），
+`server.py` 是 74%。这是当时的记录，不代表后续改动的覆盖率。
+
+## 7. 可运行的真实宿主：Node 示例
 
 `examples/host_l_sidecar_node/` 是一个零依赖 Node 宿主：
 
@@ -129,7 +152,7 @@ YAI_PYTHON=.venv/Scripts/python.exe node examples/host_l_sidecar_node/host.mjs
 它同时验证了会话面、审批反向请求与“工具走 OpenAPI、协议里没有 `tool/call`”
 这条边界。
 
-## 7. 诚实边界
+## 8. 诚实边界
 
 - **单进程单任务**：不做并发调度、不做多客户端；
 - **不做持久化**：审批中的任务重启即丢（Checkpointer 是独立议题）；
@@ -138,7 +161,7 @@ YAI_PYTHON=.venv/Scripts/python.exe node examples/host_l_sidecar_node/host.mjs
 - **工具必须经 MCP/OpenAPI**：sidecar 进程里的 Python 函数默认不构成宿主能力；
 - 事件由 `AgentCore.astream` 统一产出；sidecar 不额外解释或改写事件语义。
 
-## 8. 自检
+## 9. 自检
 
 1. 为什么协议里没有 `tool/call`？如果加了，会与哪个既有标准重复？
 2. 审批/澄清为什么由 sidecar 发起反向请求，而不是让宿主轮询一个状态接口？
