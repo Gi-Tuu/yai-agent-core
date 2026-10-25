@@ -30,10 +30,37 @@ _VISIBLE = (
 async def run_host(title: str, host: object, task: str) -> None:
     print(f"\n===== {title} =====")
     core = AgentCore.auto(host, OfflineScriptedModel())
-    print(f"自动发现工具: {[t['name'] for t in core.list_tools()]}")
-    async for event in core.astream(task):
-        if event.type in _VISIBLE:
-            print(f"  {event.type.value}: {event.data}")
+    try:
+        # 默认装配仅注册宿主业务工具；不能把模型文字或内部事件当成工具执行成功。
+        tools = {t["name"] for t in core.list_tools()}
+        print(f"自动发现工具: {sorted(tools)}")
+        events = []
+        async for event in core.astream(task):
+            events.append(event)
+            if event.type in _VISIBLE:
+                print(f"  {event.type.value}: {event.data}")
+
+        for event in events:
+            if (
+                event.type in (EventType.ERROR, EventType.BUDGET_EXCEEDED)
+                or (event.type == EventType.TOOL_RESULT and event.data.get("ok") is not True)
+                or (
+                    event.type == EventType.DONE
+                    and event.data.get("reason") == "budget_exceeded"
+                )
+            ):
+                raise RuntimeError(f"{title} 冒烟失败: {event.type.value}: {event.data}")
+        if not any(event.type == EventType.DONE for event in events):
+            raise RuntimeError(f"{title} 冒烟失败: 缺少 DONE")
+        if not any(
+            event.type == EventType.TOOL_RESULT
+            and event.data.get("ok") is True
+            and event.data.get("tool") in tools
+            for event in events
+        ):
+            raise RuntimeError(f"{title} 冒烟失败: 没有成功的宿主业务工具调用")
+    finally:
+        await core.aclose()
 
 
 async def main() -> None:
