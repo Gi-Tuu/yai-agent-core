@@ -185,7 +185,8 @@ async def compact_context(
         if timeout is None:
             resp = await _summarize()
         else:
-            resp = await asyncio.wait_for(_summarize(), timeout=timeout)
+            async with asyncio.timeout(timeout):
+                resp = await _summarize()
         summary = (getattr(resp, "content", "") or "").strip()
     except Exception as exc:  # noqa: BLE001 - 摘要超时/失败都是增强失败，回退硬裁剪
         emit(

@@ -294,7 +294,8 @@ async def run_worker(
         if timeout is None:
             await _drive()
         else:
-            await asyncio.wait_for(_drive(), timeout=timeout)
+            async with asyncio.timeout(timeout):
+                await _drive()
     except TimeoutError:
         status = "timeout"
 

@@ -113,7 +113,7 @@ _BUDGET_STOP_TEXT = (
 
 #: 单次模型调用的默认硬超时（秒）：防止模型 / 网络永久挂起把任务拖死。
 #: 传 None 可关闭（由模型客户端自身的超时负责）；对第三方自定义模型同样生效，
-#: 因为超时在 loop 层用 asyncio.wait_for 统一兜底，而不是依赖各模型实现。
+#: 因为超时在 loop 层用 asyncio.timeout 统一兜底，而不是依赖各模型实现。
 DEFAULT_MODEL_TIMEOUT = 60.0
 
 #: 任务起始主动召回默认注入的长期记忆条数：只放最相关的少数几条，避免挤占上下文。
@@ -348,7 +348,7 @@ class AgentLoop:
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
 
-        - 超时：``wait_for`` 会先取消挂起的模型调用协程，再抛 TimeoutError，
+        - 超时：``asyncio.timeout`` 会先取消挂起的模型调用协程，再抛 TimeoutError，
           因此挂死的调用不会残留；上层据此发 ERROR 事件体面收尾。
         - 外层取消（用户终止 / aclose / 任务 cancel）：抛 CancelledError，
           它属于 BaseException、不会被这里或上层的 ``except Exception`` 吞掉，
@@ -362,10 +362,13 @@ class AgentLoop:
             resp = await self.model.achat(messages, tools=tools, tier=tier)
         else:
             try:
-                resp = await asyncio.wait_for(
-                    self.model.achat(messages, tools=tools, tier=tier),
-                    timeout=self.model_timeout,
-                )
+                # 用 asyncio.timeout 而不是 asyncio.wait_for：3.11 的 wait_for 会把
+                # 协程包进额外 Task，并在"内层恰好完成"时走 `if fut.done(): return
+                # fut.result()` 把外层取消吞掉——委派里"一个子任务失败要中断另一个
+                # 子任务"就靠取消生效，吞掉就等于没人中断，工具会一直跑下去。
+                # asyncio.timeout 是 3.12+ wait_for 的同一套语义，各版本行为一致。
+                async with asyncio.timeout(self.model_timeout):
+                    resp = await self.model.achat(messages, tools=tools, tier=tier)
             except TimeoutError:
                 raise TimeoutError(
                     f"模型调用超过 {self.model_timeout:g}s 硬超时上限，已终止"

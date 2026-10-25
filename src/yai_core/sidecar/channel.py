@@ -49,9 +49,8 @@ class SidecarChannel:
         if context:
             payload["context"] = context
         try:
-            result = await asyncio.wait_for(
-                self._request_host("approval/request", payload), timeout=self.timeout
-            )
+            async with asyncio.timeout(self.timeout):
+                result = await self._request_host("approval/request", payload)
         except TimeoutError:
             return False
         if isinstance(result, bool):
@@ -62,10 +61,10 @@ class SidecarChannel:
 
     async def ask(self, question: str) -> str:
         try:
-            result = await asyncio.wait_for(
-                self._request_host("clarify/request", {"question": question}),
-                timeout=self.timeout,
-            )
+            async with asyncio.timeout(self.timeout):
+                result = await self._request_host(
+                    "clarify/request", {"question": question}
+                )
         except TimeoutError:
             return ""
         if result is None:

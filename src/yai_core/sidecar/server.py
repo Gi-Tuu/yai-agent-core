@@ -504,7 +504,8 @@ class SidecarServer:
             await self._send(rpc_request(request_id, method, params))
             timeout = self._channel.timeout if self._channel else 600.0
             try:
-                return await asyncio.wait_for(future, timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    return await future
             except TimeoutError:
                 return None
             except RpcError:

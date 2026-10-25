@@ -162,7 +162,8 @@ class HostStateRegistry:
             try:
                 value = provider()
                 if inspect.isawaitable(value):
-                    value = await asyncio.wait_for(value, self.timeout)
+                    async with asyncio.timeout(self.timeout):
+                        value = await value
             except Exception as exc:  # noqa: BLE001 - 状态是增强，失败只降级
                 emit(
                     on_diagnostic,

@@ -170,7 +170,7 @@ elif kind == "done":
 穿透 `asyncio.gather`、不会把整批并行子员工带崩。
 
 > 墙钟 `timeout` 与预算熔断是两条独立的路：超时抛 `TimeoutError` 被
-> `wait_for` 捕获标 `timeout`；预算熔断是正常事件流，很快返回、不进超时分支。
+> `asyncio.timeout` 捕获标 `timeout`；预算熔断是正常事件流，很快返回、不进超时分支。
 
 ---
 
@@ -303,7 +303,7 @@ def _budget_for_item(item: dict, max_iters: int) -> Budget:
    `DelegationSupervisor(max_concurrent=2)`。断言**峰值 `peak==2`**。
    若哪天回归成"每层一把独立信号量"，根 2 + 子 2 会同时占座，`peak==4`，测试立即红。
 5. **`test_worker_cancellation_propagates`**：外层 `task.cancel()` 一个正在跑慢工具的
-   子员工，断言 `CancelledError` 能穿透 `run_worker`（`wait_for` 只捕 `TimeoutError`，
+   子员工，断言 `CancelledError` 能穿透 `run_worker`（`asyncio.timeout` 只捕 `TimeoutError`，
    不吞取消），不会留下卡死的后台任务。
 
 ---

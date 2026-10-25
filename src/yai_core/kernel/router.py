@@ -167,10 +167,8 @@ class AdaptiveRouter:
         # 3) LLM 分类（仅当配置了路由模型）；任何异常/超时/非法输出都回退规则。
         if self.model is not None:
             try:
-                raw = await asyncio.wait_for(
-                    self._llm_classify(text, registry, discoverable),
-                    timeout=self.classify_timeout,
-                )
+                async with asyncio.timeout(self.classify_timeout):
+                    raw = await self._llm_classify(text, registry, discoverable)
                 return self._parse(raw, registry)
             except Exception as exc:  # noqa: BLE001 - 分类是增强不是依赖，任何失败都兜底
                 fallback = self._rules(task, registry)

@@ -274,7 +274,7 @@ class ToolExecutor:
 
         两种形状的区别必须说清楚，不能一起承诺：
 
-        - ``async def`` handler：``wait_for`` 会真的取消它，协程收到 ``CancelledError``；
+        - ``async def`` handler：``asyncio.timeout`` 会真的取消它，协程收到 ``CancelledError``；
         - 同步 handler：只能丢进线程池，**线程杀不掉**。这里刻意不用 ``wait_for``——
           它会 await 被取消的 future，等于一直等线程跑完（实测 0.4s 的活儿要满 0.4s
           才回话）；改用 ``asyncio.wait`` 拿到"到点未完成"就立刻放弃，回话不延迟。
@@ -289,7 +289,12 @@ class ToolExecutor:
             if timeout is None:
                 return await handler(**arguments)
             try:
-                return await asyncio.wait_for(handler(**arguments), timeout)
+                # asyncio.timeout 而非 asyncio.wait_for：3.11 的 wait_for 会把协程
+                # 包进额外 Task，且在内层恰好完成时吞掉外层取消（见 kernel/loop.py
+                # 同处注释）。工具超时必须只终止这一次调用，不能连带把"取消整个
+                # 子任务"也吃掉。
+                async with asyncio.timeout(timeout):
+                    return await handler(**arguments)
             except TimeoutError as exc:
                 raise ToolTimeoutError(
                     f"超过 {timeout:g}s 未完成，已取消（异步工具会被真正中断）"
@@ -327,7 +332,8 @@ class ToolExecutor:
                 "它可能仍在后台跑完并产生副作用，重试前先确认状态"
             )
         try:
-            return await asyncio.wait_for(outcome, remaining)
+            async with asyncio.timeout(remaining):
+                return await outcome
         except TimeoutError as exc:
             raise ToolTimeoutError(
                 f"超过 {timeout:g}s 未完成；同步工具返回的异步结果已取消，"
@@ -872,8 +878,8 @@ class ToolExecutor:
             else:
                 timeout = declared / 1000.0
                 try:
-                    comp_events, ok, text = await asyncio.wait_for(
-                        self._execute_composite(
+                    async with asyncio.timeout(timeout):
+                        comp_events, ok, text = await self._execute_composite(
                             spec,
                             arguments,
                             subject,
@@ -883,9 +889,7 @@ class ToolExecutor:
                             preview=preview,
                             call_id=call_id,
                             trace=trace,
-                        ),
-                        timeout,
-                    )
+                        )
                 except TimeoutError:
                     message = _composite_timeout_message(spec.name, declared)
                     events.append(
@@ -1285,7 +1289,7 @@ class ToolExecutor:
         if not steps:
             return events, False, f"组合工具 {spec.name} 缺少步骤"
         # 声明超时不仅要包住整条工作流，还要下发到每个步骤：同步 handler 默认在
-        # 事件循环线程里直接跑，外包的 wait_for 在它返回前根本没机会触发。
+        # 事件循环线程里直接跑，外包的超时在它返回前根本没机会触发。
         declared = spec.governance.timeout_ms
         if declared is None:
             deadline = None

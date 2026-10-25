@@ -212,10 +212,8 @@ class FallbackModelProvider:
         last_exc: Exception | None = None
         for attempt in range(self.retries + 1):
             try:
-                resp = await asyncio.wait_for(
-                    provider.achat(messages, tools, tier=tier),
-                    timeout=self.per_call_timeout,
-                )
+                async with asyncio.timeout(self.per_call_timeout):
+                    resp = await provider.achat(messages, tools, tier=tier)
                 if not (resp.content or resp.tool_calls):
                     raise _EmptyResponseError("模型返回空内容且无工具调用")
                 return resp

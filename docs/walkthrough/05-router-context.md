@@ -159,8 +159,8 @@ async def aclassify(self, task, registry) -> RouteDecision:
     if not text or self.model is None or len(registry) == 0:
         return self._rules(task, registry)          # 三种情况不浪费模型调用
     try:
-        raw = await asyncio.wait_for(
-            self._llm_classify(text, registry), timeout=self.classify_timeout)
+        async with asyncio.timeout(self.classify_timeout):
+            raw = await self._llm_classify(text, registry)
         return self._parse(raw, registry)
     except Exception as exc:                        # 网络/超时/JSON 非法/策略越界
         fallback = self._rules(task, registry)
@@ -169,7 +169,7 @@ async def aclassify(self, task, registry) -> RouteDecision:
 ```
 - **三个短路条件**：空任务（必澄清）、没配模型（纯规则部署）、宿主无工具（必 direct）——
   能力边界判断永远在本地，不花一次模型调用，也不会被模型带偏。
-- `asyncio.wait_for` 给分类加硬超时（默认 15s）：路由是主流程的第一道关，不能卡死。
+- `asyncio.timeout` 给分类加硬超时（默认 15s）：路由是主流程的第一道关，不能卡死。
 - `except Exception` 兜底一切：**分类是增强而不是依赖**。失败理由里写清异常类型，
   事件流里能直接看到"这次为什么走了规则"。
 
