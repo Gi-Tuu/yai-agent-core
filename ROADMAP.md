@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-24（对应已发布版本 **v0.22.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-25（对应已发布版本 **v0.22.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -216,7 +216,7 @@
 - `batteries/office_text.py`：docx/xlsx/pptx 零依赖文本抽取，PDF 走 `[office]` extra pypdf（三安全闸，讲义 55）
 - 桌面星云动效按 web 引擎对齐设计稿（260 粒 dt 积分）；测试/本地工具安全卫生批量加固
 
-### v0.22 — 全面体检整改批次（tag 2026-10-24，当前发布版本）
+### v0.22 — 全面体检整改批次（tag 2026-10-24，已完成）
 
 一次"全面、对抗性体检"之后的整改批次。核心不是加功能，而是**把已经存在却没被守住的承诺补上**：
 
@@ -225,6 +225,15 @@
 - **sdist 自带测试可跑通**：白名单根锚定并补齐 `shell/` `examples/` `scripts/` `uv.lock` 等依赖，从解包 sdist 跑全量测试 exit 0（此前 21 个模块收集失败）。
 - **依赖 CVE 清零**：`opentelemetry-api 1.45.1`、`filelock 4.2.4`，OSV 扫描 0 命中；`anthropic` 补上界 `<2`。
 - **中英门面全量校准**：README / comparison / SECURITY / CONTRIBUTING / architecture / 白皮书的事实与措辞，讲义第 06/18/21/22/41 篇与源码重新对齐。
+
+### v0.22.1 — 审计整改第二批次（tag 2026-10-25，当前发布版本）
+
+13 个提交，全部是修复 / 测试 / 文档 / CI，没有新增对外能力：
+
+- **执行语义收紧**：坏 JSON 参数在 parse 边界拒绝；幂等重放复核首次调用的权限依赖；组合工具把剩余超时逐步骤下发。
+- **取消与超时**：修掉 Python 3.11 上 `asyncio.wait_for` 吞掉外部取消的缺陷（内核 + `shell/employee` 共 10 个文件统一改用 `asyncio.timeout`）。
+- **数据与状态**：SQLite 备份/恢复原子替换；子员工权限逐层叠加；关闭后再运行直接报错。
+- **打包与供应链**：sdist 包内断链 12 → 0；Release 起上传 `provenance/*.intoto.jsonl`；sidecar 五模块覆盖率 100%。
 
 ## 下一步
 
