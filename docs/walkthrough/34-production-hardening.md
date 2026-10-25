@@ -267,7 +267,9 @@ done, _ = await asyncio.wait({future}, timeout=timeout)            # 到点没�
 还有一条不粉饰的边界：被放弃的线程仍在循环默认线程池里，**事件循环收尾会 join 它**。
 所以同步工具的超时是"给模型的止损"，不是进程级立即脱身；可能长时间阻塞的能力应当写成 `async def`。
 超时回给模型的话术也分两种（异步说"已取消"，同步说"仍在后台、先确认状态再重试"），
-否则模型只会原样重试同一个调用。
+否则模型只会原样重试同一个调用。组合工具声明的 `timeout_ms` 也按同一口径把剩余预算
+下发给每个步骤：即使全局 `tool_timeout` 关闭，同步步骤也会在组合到期时止损，而不是
+阻塞事件循环直到 handler 返回。
 
 **F-2 `await core.aclose(*, close_shared=False)`**
 
@@ -285,8 +287,8 @@ if self.memory_vault is not None: self._owned.append(self.memory_vault)
 替别人关资源是误伤。确实要连整张图一起收才传 `close_shared=True`，顺序固定
 channel → discovery → sandbox → memory → model。三条细节：
 
-- 幂等（`_closed` 标记），可以放在 `finally` 里重复调；
-- 拿实例串行锁，所以**不会在当前任务跑到一半时把资源抽走**（要关先取消任务）；
+- 幂等：在实例串行锁内检查 `_closed`，并发关闭也只收尾一次，可以放在 `finally` 里重复调；
+- 拿实例串行锁，所以**不会在当前任务跑到一半时把资源抽走**（要关先取消任务）；`run()` / `astream()` 拿锁后也检查关闭状态，已经关闭或排队期间被关闭的实例会抛出 `RuntimeError`，不再调用模型与通道；
 - 单个资源关不掉不阻止其余收尾，但会在全部尝试之后抛汇总异常——收尾故障要能被运维看见。
 
 ## G. 自检（读完应能回答）

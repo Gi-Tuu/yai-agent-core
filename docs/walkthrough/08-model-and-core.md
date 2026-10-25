@@ -58,14 +58,16 @@ msg = completion.choices[0].message
 tool_calls: list[ToolCallRequest] = []
 for tc in getattr(msg, "tool_calls", None) or []:
     try:
-        args = json.loads(tc.function.arguments or "{}")
-    except json.JSONDecodeError:
-        args = {}
+        args = json.loads(tc.function.arguments)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError("工具调用参数必须是合法 JSON 对象") from None
+    if not isinstance(args, dict):
+        raise ValueError("工具调用参数必须是合法 JSON 对象")
     tool_calls.append(ToolCallRequest(id=tc.id, name=tc.function.name, arguments=args))
 return ModelResponse(content=msg.content or "", tool_calls=tool_calls, raw=completion)
 ```
 - `getattr(msg, "tool_calls", None)`：属性可能不存在，安全取值；`... or []`：存在但为 None 时也变空列表。
-- 模型给的参数是 **JSON 字符串**，`json.loads` 解析成字典；模型偶尔会吐出非法 JSON，解析失败就用空字典兜底，不崩。
+- 模型给的参数必须是 **JSON 对象字符串**。非法 JSON、空字符串和数组、`null` 等非对象值直接抛出 `ValueError`，不再替换成 `{}` 意外执行默认参数；错误信息不包含原始参数。显式的 `"{}"` 仍合法。整批解析成功才返回，因此同一批中只要有非法参数，合法调用也不会提前执行。
 - 最终统一返回我们自己的 `ModelResponse`——**厂商 SDK 的数据结构到此为止，不许泄漏进内核**，以后换厂商只改这一个文件。
 
 ## B. `core.py`：门面（Facade）

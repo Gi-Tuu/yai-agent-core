@@ -9,6 +9,8 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 from yai_core.policy.approval import (
@@ -59,6 +61,15 @@ def _fingerprint_arguments(arguments: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _composite_timeout_message(name: str, declared_ms: int) -> str:
+    """组合超时的统一话术：只停止等待，不承诺终止同步步骤的副作用。"""
+    return (
+        f"组合工具 {name} 超过声明的 {declared_ms}ms 未完成，已停止等待（不是强制终止）；"
+        "已完成步骤的副作用不会回滚，异步步骤会被取消，"
+        "同步步骤无法中断、可能仍在后台跑完"
+    )
+
+
 def bound_tool_result(
     text: str, limit: int | None
 ) -> tuple[str, bool, int]:
@@ -102,6 +113,15 @@ class _PreviewError(RuntimeError):
 
 class _IdempotencyError(RuntimeError):
     """宿主声明的幂等键生成器失败；不能假装这次调用可去重。"""
+
+
+@dataclass(frozen=True)
+class _PermissionDependency:
+    """仅存于进程内缓存的权限依据，不进入事件、收据或模型正文。"""
+
+    name: str
+    spec: ToolSpec
+    arguments: dict[str, Any] | None
 
 
 def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
@@ -205,10 +225,11 @@ class ToolExecutor:
         # 只在工具自己声明了 rate_limit 时才用得上，未声明的工具零开销。
         self._rate_hits: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
-        # (tool, idempotency_key) -> (ok, text, status, error, arguments_fingerprint)；
-        # 只在 key 非空时使用。指纹让"同一个 key 换了参数"不会被当成重放。
+        # 每条结果同时绑定参数指纹和首次调用的权限依赖（含嵌套子调用）。
+        # 依赖随同一 LRU 条目淘汰，不另建无界缓存。
         self._idempotent_cache: OrderedDict[
-            tuple[str, str], tuple[bool, str, ReceiptStatus, str, str]
+            tuple[str, str],
+            tuple[bool, str, ReceiptStatus, str, str, tuple[_PermissionDependency, ...]],
         ] = OrderedDict()
 
     def _effective_timeout(self, spec: ToolSpec) -> float | None:
@@ -380,9 +401,15 @@ class ToolExecutor:
     def _attach_receipt(
         self, events: list[AgentEvent], receipt: ExecutionReceipt
     ) -> None:
+        # 代码工具可能刚因 TTL 过期被注销；其固定退役提示不需要治理脱敏。
+        spec = self.registry.get(receipt.tool) if self.registry.has(receipt.tool) else None
         data = receipt.to_dict()
+        if spec is not None:
+            data["error"] = self._event_error(spec, receipt.error)
         for event in reversed(events):
             if event.type == EventType.TOOL_RESULT:
+                if spec is not None and "error" in event.data:
+                    event.data["error"] = self._event_error(spec, event.data["error"])
                 event.data["receipt"] = data
                 return
         events.append(
@@ -391,7 +418,7 @@ class ToolExecutor:
                 {
                     "tool": receipt.tool,
                     "ok": receipt.status == "succeeded",
-                    "error": receipt.error,
+                    "error": data["error"],
                     "receipt": data,
                 },
             )
@@ -399,16 +426,18 @@ class ToolExecutor:
 
     def _cache_get(
         self, tool: str, key: str, fingerprint: str
-    ) -> tuple[tuple[bool, str, ReceiptStatus, str], bool] | None:
-        """返回 (缓存结果, 参数是否与首次执行一致)；没有缓存时返回 None。"""
+    ) -> tuple[
+        tuple[bool, str, ReceiptStatus, str, tuple[_PermissionDependency, ...]], bool
+    ] | None:
+        """返回 (缓存结果及权限依赖, 参数是否与首次执行一致)。"""
         if not key:
             return None
         cached = self._idempotent_cache.pop((tool, key), None)
         if cached is None:
             return None
         self._idempotent_cache[(tool, key)] = cached
-        ok, text, status, error, cached_fingerprint = cached
-        return (ok, text, status, error), cached_fingerprint == fingerprint
+        ok, text, status, error, cached_fingerprint, dependencies = cached
+        return (ok, text, status, error, dependencies), cached_fingerprint == fingerprint
 
     def _cache_put(
         self,
@@ -420,13 +449,54 @@ class ToolExecutor:
         text: str,
         status: ReceiptStatus,
         error: str = "",
+        dependencies: list[_PermissionDependency],
     ) -> None:
         if not key or status == "not_started":
             return
         self._idempotent_cache.pop((tool, key), None)
-        self._idempotent_cache[(tool, key)] = (ok, text, status, error, fingerprint)
+        self._idempotent_cache[(tool, key)] = (
+            ok, text, status, error, fingerprint, tuple(dependencies)
+        )
         while len(self._idempotent_cache) > IDEMPOTENCY_CACHE_LIMIT:
             self._idempotent_cache.popitem(last=False)
+
+    async def _replay_dependency_rejection(
+        self, dependencies: tuple[_PermissionDependency, ...], subject: Any
+    ) -> str:
+        """只复核当前准入，不审批、不生成预览、不解析步骤、更不执行工具。"""
+        for index, dependency in enumerate(dependencies):
+            name, spec = dependency.name, dependency.spec
+            if (
+                not self.registry.has(name)
+                or self.registry.get(name) is not spec
+                or spec.name != name
+            ):
+                return f"缓存依赖工具 {name} 已注销或替换，拒绝重放"
+            if dependency.arguments is None:
+                return f"缓存依赖工具 {name} 的参数快照不可用，拒绝重放"
+            # 外层工具已按本轮参数走过 gate、参数校验和 DENY 检查。
+            if index == 0:
+                continue
+            try:
+                # 每个回调得到独立副本，不能污染缓存或后续校验的权限依据。
+                gate = spec.governance.gate
+                decision = (
+                    gate(deepcopy(dependency.arguments), subject) if gate else None
+                )
+                decision = _tighten(
+                    decision, _native_approval(spec, deepcopy(dependency.arguments))
+                )
+                if decision is not None and decision.reject:
+                    return f"缓存依赖工具 {name} 的准入闸拒绝重放"
+                if argument_errors(deepcopy(dependency.arguments), spec.input_schema):
+                    return f"缓存依赖工具 {name} 的调用参数不合法，拒绝重放"
+                if await policy_decision(
+                    self.policy, name, deepcopy(dependency.arguments), subject
+                ) == PermissionDecision.DENY:
+                    return f"权限策略拒绝重放缓存依赖工具 {name}"
+            except Exception:  # noqa: BLE001 - 复核失败关闭，不泄漏参数/异常正文
+                return f"缓存依赖工具 {name} 的权限复核失败，拒绝重放"
+        return ""
 
     def _infer_status(
         self, events: list[AgentEvent], *, ok: bool, text: str, source: str
@@ -504,6 +574,24 @@ class ToolExecutor:
                 return f"[结果预览不可用：{len(text)} 字符]"
         return text[:200]
 
+    def _replay_preview(self, spec: ToolSpec, text: str) -> str:
+        """重放也按当前治理脱敏；缓存正文可能已截断，不能把解析失败当作明文许可。"""
+        payload = None
+        if spec.governance.sensitive and not spec.governance.audit_sensitive:
+            try:
+                payload = json.loads(text)
+            except (ValueError, RecursionError):
+                return f"[结果预览不可用：{len(text)} 字符]"
+            if not isinstance(payload, dict):
+                return f"[结果预览不可用：{len(text)} 字符]"
+        return self._event_preview(spec, payload, text)
+
+    def _event_error(self, spec: ToolSpec, text: str) -> str:
+        """错误是非结构化文本，声明了敏感治理就整体折叠；模型正文不变。"""
+        if text and (spec.governance.audit_sensitive or spec.governance.sensitive):
+            return f"[敏感错误已折叠：{len(text)} 字符]"
+        return text
+
     async def execute(
         self,
         name: str,
@@ -512,6 +600,8 @@ class ToolExecutor:
         subject: Any = None,
         budget: Any = None,
         call_id: str = "",
+        _trace: list[_PermissionDependency] | None = None,
+        _timeout: float | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
         """返回 (过程事件列表, 是否成功, 文本结果)。
 
@@ -527,7 +617,8 @@ class ToolExecutor:
         顶层调用会让"一次组合 = 三次业务操作"绕过 max_tool_calls。
 
         ``call_id`` 来自模型的工具调用 id，只用于执行收据/关联审计；直接调用
-        执行器的宿主可以留空。
+        执行器的宿主可以留空。``_timeout`` 是组合步骤的剩余预算上限（内核内部
+        使用），与工具自身声明/全局 ``handler_timeout`` 取更严的一档。
         """
         started = time.monotonic()
         events: list[AgentEvent] = []
@@ -537,6 +628,15 @@ class ToolExecutor:
         spec = self.registry.get(name)
         # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
         arguments = snapshot_arguments(arguments)
+        # 递归调用共用 trace，进入子调用时立即记录，取消/超时也不会丢失依赖。
+        # 参数来自 resolve_args 的真值，不从脱敏事件或截断结果反推。
+        trace = [] if _trace is None else _trace
+        trace_start = len(trace)
+        try:
+            dependency_arguments = deepcopy(arguments)
+        except Exception:  # noqa: BLE001 - 不可复制参数的结果不能安全重放
+            dependency_arguments = None
+        trace.append(_PermissionDependency(name, spec, dependency_arguments))
 
         # 准入判定在权限闸之前：工具自带的 gate 或 approval 说这次调用不该到达业务操作时，
         # 连"要不要问人"都不必问；内核不认识判定来自哪个协议。
@@ -640,7 +740,10 @@ class ToolExecutor:
         fingerprint = _fingerprint_arguments(arguments) if idempotency_key else ""
         cached = self._cache_get(name, idempotency_key, fingerprint)
         if cached is not None:
-            (ok, cached_text, cached_status, cached_error), same_arguments = cached
+            cached_result, same_arguments = cached
+            ok, cached_text, cached_status, cached_error, dependencies = cached_result
+            # 子缓存也必须把历史依赖传给父组合，包括父组合稍后超时的路径。
+            trace[trace_start:] = dependencies
             if not same_arguments:
                 message = (
                     f"幂等键 {idempotency_key!r} 已用于另一组参数，拒绝重放；"
@@ -676,13 +779,36 @@ class ToolExecutor:
                 == PermissionDecision.DENY
             ):
                 return events, False, f"权限策略拒绝执行工具 {name}"
+            rejection = await self._replay_dependency_rejection(dependencies, subject)
+            if rejection:
+                events.append(AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {
+                        "tool": name,
+                        "ok": False,
+                        "error": rejection,
+                        "replay_denied": True,
+                    },
+                ))
+                self._attach_receipt(
+                    events,
+                    self._receipt(
+                        call_id=call_id,
+                        tool=name,
+                        status="not_started",
+                        started=started,
+                        key=idempotency_key,
+                        error=rejection,
+                    ),
+                )
+                return events, False, rejection
             receipt = self._receipt(
                 call_id=call_id,
                 tool=name,
                 status=cached_status,
                 started=started,
                 key=idempotency_key,
-                error=cached_error,
+                error=self._event_error(spec, cached_error),
                 replayed=True,
             )
             payload: dict[str, Any] = {
@@ -692,11 +818,11 @@ class ToolExecutor:
                 "receipt": receipt.to_dict(),
             }
             if ok:
-                payload["preview"] = cached_text[:200]
+                payload["preview"] = self._replay_preview(spec, cached_text)
                 payload["truncated"] = False
                 payload["result_chars"] = len(cached_text)
             else:
-                payload["error"] = cached_text
+                payload["error"] = self._event_error(spec, cached_text)
             events.append(AgentEvent(EventType.TOOL_RESULT, payload))
             return events, ok, cached_text
 
@@ -741,6 +867,7 @@ class ToolExecutor:
                     events=events,
                     preview=preview,
                     call_id=call_id,
+                    trace=trace,
                 )
             else:
                 timeout = declared / 1000.0
@@ -755,14 +882,12 @@ class ToolExecutor:
                             events=events,
                             preview=preview,
                             call_id=call_id,
+                            trace=trace,
                         ),
                         timeout,
                     )
                 except TimeoutError:
-                    message = (
-                        f"组合工具 {spec.name} 超过声明的 {declared}ms 未完成，已停止；"
-                        "已完成步骤的副作用不会回滚，同步步骤可能仍在后台跑完"
-                    )
+                    message = _composite_timeout_message(spec.name, declared)
                     events.append(
                         AgentEvent(
                             EventType.TOOL_RESULT,
@@ -787,6 +912,7 @@ class ToolExecutor:
                         spec.name,
                         idempotency_key,
                         fingerprint,
+                        dependencies=trace[trace_start:],
                         ok=False,
                         text=message,
                         status="unknown",
@@ -807,6 +933,7 @@ class ToolExecutor:
                 spec.name,
                 idempotency_key,
                 fingerprint,
+                dependencies=trace[trace_start:],
                 ok=ok,
                 text=text,
                 status=status,
@@ -914,6 +1041,7 @@ class ToolExecutor:
                 name,
                 idempotency_key,
                 fingerprint,
+                dependencies=trace[trace_start:],
                 ok=ok,
                 text=text,
                 status=status,
@@ -944,10 +1072,13 @@ class ToolExecutor:
             return events, False, message
         if budget is not None:
             budget.record_tool_call()
-        try:
-            result = await self._invoke_handler(
-                handler, arguments, timeout=self._effective_timeout(spec)
+        call_timeout = self._effective_timeout(spec)
+        if _timeout is not None:
+            call_timeout = (
+                _timeout if call_timeout is None else min(call_timeout, _timeout)
             )
+        try:
+            result = await self._invoke_handler(handler, arguments, timeout=call_timeout)
             text = json.dumps(result, ensure_ascii=False, default=str)
         except ToolTimeoutError as exc:
             # 超时单独成支：给模型的话术要说明"这次没做成、且可能仍在后台跑完"，
@@ -972,6 +1103,7 @@ class ToolExecutor:
                 name,
                 idempotency_key,
                 fingerprint,
+                dependencies=trace[trace_start:],
                 ok=False,
                 text=message,
                 status="unknown",
@@ -997,6 +1129,7 @@ class ToolExecutor:
                 name,
                 idempotency_key,
                 fingerprint,
+                dependencies=trace[trace_start:],
                 ok=False,
                 text=message,
                 status="unknown",
@@ -1029,6 +1162,7 @@ class ToolExecutor:
             name,
             idempotency_key,
             fingerprint,
+            dependencies=trace[trace_start:],
             ok=True,
             text=text,
             status="succeeded",
@@ -1132,6 +1266,7 @@ class ToolExecutor:
         events: list[AgentEvent] | None = None,
         preview: ChangePreview | None = None,
         call_id: str = "",
+        trace: list[_PermissionDependency],
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -1149,6 +1284,13 @@ class ToolExecutor:
         steps = spec.steps
         if not steps:
             return events, False, f"组合工具 {spec.name} 缺少步骤"
+        # 声明超时不仅要包住整条工作流，还要下发到每个步骤：同步 handler 默认在
+        # 事件循环线程里直接跑，外包的 wait_for 在它返回前根本没机会触发。
+        declared = spec.governance.timeout_ms
+        if declared is None:
+            deadline = None
+        else:
+            deadline = asyncio.get_running_loop().time() + declared / 1000.0
         step_names = [step.tool for step in steps]
         # 对外副本按**组合工具自己的声明**脱敏（与 authorize 同一口径）：
         # 宿主在清单上写了 sensitive，就不能因为这条路走了组合分支而失效。
@@ -1256,12 +1398,33 @@ class ToolExecutor:
                 return events, False, f"组合工具 {spec.name} 第 {index + 1} 步参数解析失败: {exc}"
 
             step_call_id = f"{call_id}:{index}" if call_id else ""
+            step_timeout = None
+            if deadline is not None:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    assert declared is not None
+                    message = _composite_timeout_message(spec.name, declared)
+                    events.append(
+                        AgentEvent(
+                            EventType.TOOL_RESULT,
+                            {
+                                "tool": spec.name,
+                                "ok": False,
+                                "error": message,
+                                "timed_out": True,
+                            },
+                        )
+                    )
+                    return events, False, message
+                step_timeout = remaining
             sub_events, ok, sub_text = await self.execute(
                 step.tool,
                 resolved,
                 subject=subject,
                 budget=budget,
                 call_id=step_call_id,
+                _trace=trace,
+                _timeout=step_timeout,
             )
             events.extend(sub_events)
             if not ok:

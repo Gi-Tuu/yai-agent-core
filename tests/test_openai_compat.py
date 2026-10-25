@@ -219,15 +219,33 @@ def test_provider_omits_optional_client_kwargs_by_default(monkeypatch) -> None:
     assert "timeout" not in _CapturingAsyncOpenAI.last_kwargs
 
 
-def test_malformed_tool_arguments_fallback_to_empty_dict(monkeypatch) -> None:
-    msg = _FakeMessage(None, [_FakeToolCall("c1", "do_it", "{不是合法 json")])
+@pytest.mark.parametrize("arguments", ['{"limit": 1', "", "null", "[]", '"text"', "1", "true"])
+def test_invalid_tool_arguments_are_rejected(monkeypatch, arguments) -> None:
+    msg = _FakeMessage(None, [_FakeToolCall("c1", "do_it", arguments)])
     provider, _ = _provider_with(monkeypatch, message=msg)
-    resp = asyncio.run(
-        provider.achat([{"role": "user", "content": "x"}], tools=[{"type": "function"}])
-    )
-    assert resp.tool_calls[0].name == "do_it"
-    # 模型给出非法 JSON 时容错为空 dict，绝不让一次坏参数炸掉整轮。
-    assert resp.tool_calls[0].arguments == {}
+    with pytest.raises(ValueError, match="参数必须是合法 JSON 对象"):
+        asyncio.run(provider.achat([{"role": "user", "content": "x"}]))
+
+
+@pytest.mark.parametrize("valid_first", [False, True])
+def test_invalid_tool_arguments_do_not_execute_defaults(monkeypatch, valid_first) -> None:
+    calls = []
+
+    def get_records(limit: int = 100) -> list:
+        calls.append(limit)
+        return []
+
+    tool_calls = [_FakeToolCall("bad", "get_records", '{"limit": 1')]
+    if valid_first:
+        tool_calls.insert(0, _FakeToolCall("good", "get_records", '{"limit": 1}'))
+    provider, _ = _provider_with(monkeypatch, message=_FakeMessage(None, tool_calls))
+    core = AgentCore(provider)
+    core.register_tools([build_spec(get_records)])
+    result = asyncio.run(core.run("查询记录"))
+
+    assert calls == []
+    assert any(event.type.value == "error" for event in result.events)
+    assert not any(event.type.value == "tool_call" for event in result.events)
 
 
 def test_usage_parsed_and_total_falls_back_to_sum(monkeypatch) -> None:
