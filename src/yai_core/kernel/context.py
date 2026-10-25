@@ -38,9 +38,12 @@ class Context:
 
     超预算有两层处理：
     - :meth:`enforce_budget`（硬裁剪，同步、零依赖、确定性）：直接丢弃最旧整轮，
-      是最终安全网，``add`` 时自动触发，也供摘要压缩失败时回退；
+      是最终安全网，``trim_on_add`` 时由 ``add`` 触发，也供摘要压缩失败时回退；
     - 摘要压缩（见 ``kernel/compaction.py``，需模型、异步）：把旧轮压成一条摘要，
       保留要点，经 :meth:`replace_range` 替换。
+
+    ``trim_on_add=False`` 供启用压缩的内核使用：追加时不抢先删旧轮，让压缩器
+    先看到完整历史；调用方必须在模型调用前自行 :meth:`enforce_budget` 兜底。
     """
 
     def __init__(
@@ -49,14 +52,17 @@ class Context:
         *,
         max_chars: int = 24000,
         image_cost_chars: int = IMAGE_CONTEXT_COST_CHARS,
+        trim_on_add: bool = True,
     ) -> None:
         self.max_chars = max_chars
         self.image_cost_chars = image_cost_chars
+        self.trim_on_add = trim_on_add
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system_prompt)]
 
     def add(self, message: ChatMessage) -> None:
         self.messages.append(message)
-        self.enforce_budget()
+        if self.trim_on_add:
+            self.enforce_budget()
 
     def total_chars(self) -> int:
         """当前全部消息的字符总量（朴素口径，用于触发压缩/裁剪）。

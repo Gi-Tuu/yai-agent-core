@@ -120,7 +120,7 @@ This turn's ReAct: the new tools are already in the system prompt and tool list,
 ### 2.5 Context summary compaction (shipped in v0.7, opt-in)
 
 ```
-Before each ReAct model call: is Context.total_chars() above the hard_max_chars high-water mark?
+Before the planning call and each ReAct model call: is Context.total_chars() above the hard_max_chars high-water mark?
    │  no → call the model as usual
    ▼ yes
 select_compaction_range: start = first message of the oldest old user turn,
@@ -139,6 +139,11 @@ The most recent keep_recent_rounds complete turns stay intact, so long conversat
   starts, so the message structure is always valid for the model.
 - The summary is an enhancement, not a dependency: model errors, timeouts and empty summaries all fall
   back to the proven hard truncation `enforce_budget()`.
+- Trigger order: with compaction enabled, `Context` is built with `trim_on_add=False`, so appending a
+  message no longer truncates first — otherwise the total would drop below the watermark, compaction would
+  never trigger, and old turns would be silently deleted. After compaction (and before every model call)
+  `enforce_budget()` caps the context at turn boundaries. A watermark above `Context.max_chars` is clamped
+  to the hard cap. With compaction off, append-time truncation is unchanged.
 - Switch: `AgentCore(context_compaction=True)` uses the default `CompactionPolicy` (hard 24000 / target
   16000 / keep 2 turns), or pass a custom policy; off by default so legacy host behavior is unchanged. The
   Dynamic Island live factory enables it.

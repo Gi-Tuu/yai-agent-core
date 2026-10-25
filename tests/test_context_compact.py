@@ -19,6 +19,13 @@ def _tool_round(marker: str, big: int) -> list[ChatMessage]:
     ]
 
 
+def _plain_round(prefix: str, *, n: int = 120) -> list[ChatMessage]:
+    return [
+        ChatMessage(role="user", content=f"{prefix}-用户-" + "U" * n),
+        ChatMessage(role="assistant", content=f"{prefix}-助手-" + "A" * n),
+    ]
+
+
 def test_compact_drops_whole_round_and_keeps_system() -> None:
     ctx = Context("系统提示", max_chars=10)
     ctx.messages.extend(_tool_round("旧", 50))
@@ -65,3 +72,16 @@ def test_compact_triggered_via_add_path() -> None:
     assert roles[0] == "system"
     assert "tool" not in roles  # 旧工具轮被整轮删掉，没有孤儿 tool 残留
     assert roles[-2:] == ["user", "assistant"]
+
+
+def test_add_can_defer_trim_to_caller() -> None:
+    """开启压缩时由内核推迟裁剪：追加不抢先删，调用方压缩后再兜底硬裁。"""
+    ctx = Context("系统提示", max_chars=600, trim_on_add=False)
+    for i in range(3):
+        for msg in _plain_round(f"r{i}", n=120):
+            ctx.add(msg)
+    joined = "".join(m.content for m in ctx.messages)
+    assert "r0" in joined  # 追加阶段完整保留旧轮，压缩器才有材料可摘要
+    ctx.enforce_budget()
+    joined = "".join(m.content for m in ctx.messages)
+    assert "r0" not in joined and "r1" in joined

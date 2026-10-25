@@ -12,6 +12,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from dataclasses import replace
 
 from yai_core.diagnostics import (
     DiagnosticEvent,
@@ -291,6 +292,9 @@ class AgentLoop:
         宿主状态是**瞬态**的：只塞进本次消息，不写回 ``ctx``；状态内容没变时
         不再重复发 ``HOST_STATE`` 事件，变化或首次注入时才发。
         """
+        # 硬上限是最终安全网：启用压缩时 add 不再即时裁剪，这里保证任何模型调用
+        # 都不超过 Context.max_chars（按轮首对齐，不会拆散工具配对）。
+        ctx.enforce_budget()
         transient = ""
         event: AgentEvent | None = None
         if self.host_state is not None:
@@ -317,6 +321,29 @@ class AgentLoop:
             transient_system=transient,
         )
         return messages, event
+
+    async def _compact_before_model(self, ctx: Context) -> AsyncIterator[AgentEvent]:
+        """模型调用前的上下文准备：先摘要压缩，再硬裁剪兜底。
+
+        压缩启用时 ``Context.add`` 不再即时裁剪（``trim_on_add=False``），否则旧轮
+        会在压缩器看到它之前就被删掉，摘要永远等不到高水位。这里按轮边界先压、再裁，
+        保证发给模型的消息既保留要点又不超硬上限。
+        """
+        policy = self.compaction_policy
+        if policy is not None:
+            if policy.hard_max_chars > ctx.max_chars:
+                # 水位高于 Context 硬上限时永远等不到触发，按硬上限收紧。
+                policy = replace(policy, hard_max_chars=ctx.max_chars)
+            compact_ev = await compact_context(
+                ctx,
+                self.compaction_model or self.model,
+                policy,
+                timeout=self.model_timeout,
+                on_diagnostic=self._on_diagnostic,
+            )
+            if compact_ev is not None:
+                yield compact_ev
+        ctx.enforce_budget()
 
     async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
@@ -414,7 +441,11 @@ class AgentLoop:
 
         # 两层工具目录：系统提示只放 name + 一句话摘要（轻量目录），
         # 完整参数结构在 function-calling 的 tools 参数里按需注入，见 _react_cycle。
-        ctx = Context(_SYSTEM_TEMPLATE.format(tools=self.registry.catalog_text()))
+        ctx = Context(
+            _SYSTEM_TEMPLATE.format(tools=self.registry.catalog_text()),
+            # 压缩启用时推迟到模型调用前：先让压缩器看到完整旧轮，再硬裁剪兜底。
+            trim_on_add=self.compaction_policy is None,
+        )
         for msg in self.memory.history():
             ctx.add(msg)
         # 任务起始主动召回：把与本任务相关的长期记忆作为一条 system 上下文注入，
@@ -679,6 +710,9 @@ class AgentLoop:
         执行计划。规划调用按成本感知策略给档（默认 strong、关闭时沿用路由档），
         并计入 ``tier_counts``，随后发 ``plan_created`` 事件。
         """
+        # 规划也是一次模型调用：长历史先压成摘要，避免规划前就被硬裁剪删掉。
+        async for compact_ev in self._compact_before_model(ctx):
+            yield compact_ev
         prompt = (
             "把下面的任务拆成 2-5 个可执行步骤，每行一个步骤，用 1. 2. 3. 编号，"
             "只输出步骤本身：\n" + task
@@ -807,16 +841,8 @@ class AgentLoop:
         for iteration in range(self.max_iters):
             # 摘要压缩：超高水位时把旧轮压成摘要（最近完整轮保留），避免长对话
             # 硬裁剪丢失早期事实；压缩本身可观测，模型失败回退硬裁剪。
-            if self.compaction_policy is not None:
-                compact_ev = await compact_context(
-                    ctx,
-                    self.compaction_model or self.model,
-                    self.compaction_policy,
-                    timeout=self.model_timeout,
-                    on_diagnostic=self._on_diagnostic,
-                )
-                if compact_ev is not None:
-                    yield compact_ev
+            async for compact_ev in self._compact_before_model(ctx):
+                yield compact_ev
             # 成本·延迟感知选档：默认 standard 省钱，失败纠偏/后段卡住才升 strong；
             # 关闭策略时恒 standard（旧行为）。档位相对上一轮变化时发事件，不啰嗦。
             if tier_policy is not None:
@@ -1303,28 +1329,46 @@ class AgentLoop:
             revision = replanned[0]
         # 重规划属于复杂拆解：成本感知开启时由策略给档（默认 strong），否则 strong。
         plan_tier = tier_policy.for_planning().tier if tier_policy is not None else STRONG
-        ctx.add(
-            ChatMessage(
-                role="user",
-                content=(
-                    "【系统重规划】原计划执行到此因“" + reason + "”需要调整。"
-                    "请保留已经拿到结果、无需重做的步骤，基于当前已获得的观察，"
-                    "重新输出 2-5 步编号计划（每行一个步骤，用 1. 2. 编号），"
-                    "不要重复已完成步骤；只输出步骤本身。"
-                ),
-            )
-        )
         if tier_counts is not None:
             tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
         messages, state_event = await self._model_messages(ctx)
         if state_event is not None:
             yield state_event
+        # 当前批次尚未回齐结果；规划副本只保留已完成配对，不改主上下文的调用批次。
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("tool_calls"):
+                completed_ids = {
+                    message["tool_call_id"]
+                    for message in messages[index + 1:]
+                    if message["role"] == "tool"
+                }
+                assistant = dict(messages[index])
+                completed_calls = [
+                    item for item in assistant["tool_calls"] if item["id"] in completed_ids
+                ]
+                if completed_calls:
+                    assistant["tool_calls"] = completed_calls
+                    messages[index] = assistant
+                elif assistant.get("content"):
+                    del assistant["tool_calls"]
+                    messages[index] = assistant
+                else:
+                    del messages[index]
+                break
+        messages.append({
+            "role": "user",
+            "content": (
+                "【系统重规划】原计划执行到此因“" + reason + "”需要调整。"
+                "请保留已经拿到结果、无需重做的步骤，基于当前已获得的观察，"
+                "重新输出 2-5 步编号计划（每行一个步骤，用 1. 2. 编号），"
+                "不要重复已完成步骤；只输出步骤本身。"
+            ),
+        })
         resp = await self._model_chat(messages, None, tier=plan_tier)
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
         plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-        ctx.add(ChatMessage(role="assistant", content=plan_text))
         yield AgentEvent(
             EventType.PLAN_REVISED,
             {"revision": revision, "reason": reason, "steps": steps},
@@ -1334,7 +1378,8 @@ class AgentLoop:
             ChatMessage(
                 role="tool",
                 content=(
-                    "计划已按当前观察修订（第 " + str(revision) + " 版）。"
+                    "计划已按当前观察修订（第 " + str(revision) + " 版）。\n"
+                    + plan_text + "\n"
                     "请按新计划继续调用工具执行，不要重复已完成步骤，"
                     "拿到全部结果后给出最终汇报。"
                 ),

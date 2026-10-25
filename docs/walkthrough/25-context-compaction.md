@@ -48,7 +48,9 @@ class CompactionPolicy:
 ```
 
 - `frozen=True`：策略对象不可变，只读、安全，可放心共享；
-- `hard_max_chars` 和 `Context.max_chars` 同口径（都是字符数），一个负责"何时压"、一个负责"硬删的底线"。
+- `hard_max_chars` 和 `Context.max_chars` 同口径（都是字符数），一个负责"何时压"、一个负责"硬删的底线"；
+- 两者默认都是 24000。**相等不是问题**——前提是追加阶段不抢先裁剪（见 §4）；
+  若宿主把水位设得比硬上限还高，循环会把它收紧到硬上限，否则压缩永远等不到触发。
 
 ### 3.2 找轮首：`user_round_starts`
 
@@ -130,24 +132,57 @@ if not summary:
 
 ## 4. Context 与 Loop 的配套改动
 
-**`context.py`** 新增三个方法：
+**`context.py`** 提供三个公共方法，外加一个顺序开关：
 
 - `total_chars()`：统一的字符统计口径；
 - `replace_range(start, end, summary)`：`[system…start) + 摘要 + [end…]` 三段拼接，并校验 `start >= 1`（system 永留）、`end > start`；
-- `enforce_budget()`：把原来 `_compact` 的硬删除逻辑改成公共方法，`add()` 仍自动调用它，摘要失败时也复用它。
+- `enforce_budget()`：把原来 `_compact` 的硬删除逻辑改成公共方法，摘要失败时复用它；
+- `trim_on_add`（构造参数，默认 `True` 保持旧行为）：为 `False` 时 `add()` 只追加、不裁剪。
 
-**`loop.py`** 在 ReAct 循环里、**每轮模型调用之前**插一个压缩检查：
+`trim_on_add` 是"先压缩、后裁剪"的关键。默认水位是 24000，`Context.max_chars` 也是
+24000；如果 `add()` 每次超限就先硬删，总量会被压回 24000 以下，压缩条件
+`total > hard_max_chars` 永远不成立——**开启压缩等于没开**，早期轮次被静默删掉。
+更长的历史在载入时同样会被剪掉，摘要器根本没机会看到。
+
+**`loop.py`** 把压缩与裁剪拆成两步，只在模型调用前执行：
 
 ```python
-for _ in range(self.max_iters):
-    if self.compaction_policy is not None:
-        compact_ev = await compact_context(ctx, self.model, self.compaction_policy)
+async def _compact_before_model(self, ctx):
+    policy = self.compaction_policy
+    if policy is not None:
+        if policy.hard_max_chars > ctx.max_chars:
+            policy = replace(policy, hard_max_chars=ctx.max_chars)
+        compact_ev = await compact_context(
+            ctx, self.compaction_model or self.model, policy,
+            timeout=self.model_timeout, on_diagnostic=self._on_diagnostic,
+        )
         if compact_ev is not None:
             yield compact_ev
-    resp = await self.model.achat(ctx.llm_messages(), tools=tools_schema)
+    ctx.enforce_budget()
 ```
 
-放在每轮开头有两个覆盖作用：第一轮处理"从记忆载入的长历史 + 当前任务"，后续轮处理"工具结果不断累积"。`compaction_policy is None`（默认）时这段完全不生效，老用户行为零变化。
+调用点有两处：
+
+- `_react_cycle` 每轮开头：第一轮处理"从记忆载入的长历史 + 当前任务"，
+  后续轮处理"工具结果不断累积"；
+- `_make_plan` 规划调用之前：规划也是一次模型调用，长历史同样要先压后裁。
+
+另外，`_model_messages()` 在产出消息前统一调用一次 `enforce_budget()`，作为**所有**
+模型调用的最终安全网（重规划、迭代上限收尾等路径也覆盖）。它按 `user` 轮首对齐，
+不会切断 `assistant(tool_calls)`/`tool` 配对，也不会裁掉当前轮。
+
+**`Context` 的构造**在压缩开启时传入 `trim_on_add=False`：
+
+```python
+ctx = Context(
+    _SYSTEM_TEMPLATE.format(tools=self.registry.catalog_text()),
+    trim_on_add=self.compaction_policy is None,
+)
+```
+
+`compaction_policy is None`（默认关闭）时完全走旧路径：追加即裁剪，零额外模型调用、
+行为零变化。开启压缩时，历史在内存里短暂超限是**有意的**——那是压缩器的输入；
+真正的硬上限由模型调用前的 `enforce_budget()` 守住。
 
 **`core.py`** 用 `context_compaction` 参数控制，且特意做成三种取值：
 
@@ -164,3 +199,5 @@ for _ in range(self.max_iters):
 3. 摘要消息为什么用 `role="system"` 而不是 `role="user"`？
 4. 模型摘要失败时，系统走到哪条退路？返回什么？
 5. `context_compaction=True` 和传一个 `CompactionPolicy` 对象，效果有何区别？
+6. 为什么开启压缩时 `add()` 不能立刻硬裁剪？如果 `hard_max_chars` 比 `Context.max_chars` 大，会发生什么？
+7. `_model_messages()` 里的 `enforce_budget()` 为什么不会切断工具调用与结果？

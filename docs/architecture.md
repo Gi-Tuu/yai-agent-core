@@ -104,7 +104,7 @@ ToolDiscovery.discover(need, task, available) → list[ToolSpec]
 ### 2.5 上下文摘要压缩（Context Compaction，v0.7 已落地，opt-in）
 
 ```
-ReAct 每轮模型调用前：Context.total_chars() 超 hard_max_chars 高水位？
+规划调用前、ReAct 每轮模型调用前：Context.total_chars() 超 hard_max_chars 高水位？
    │  否 → 照常进入模型
    ▼ 是
 select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_rounds 个 user 轮首
@@ -119,6 +119,7 @@ select_compaction_range：start=最早旧 user 轮首，end=倒数 keep_recent_r
 
 - 三段式窗口：system（index 0）永留 / 旧轮压成一条摘要 / 最近完整轮全保留；`replace_range` 强制 `start≥1`、两端对齐 user 轮首，消息结构对模型永远合法。
 - 摘像是增强不是依赖：模型异常、超时、空摘要一律退回已验证的硬裁剪 `enforce_budget()`。
+- 触发顺序：压缩开启时 `Context` 按 `trim_on_add=False` 构造，追加消息不再抢先硬裁剪——否则总量会被压回水位以下，压缩永远不触发、旧轮被静默删掉；压缩后（及每次模型调用前）再由 `enforce_budget()` 按轮边界守住硬上限。水位高于 `Context.max_chars` 时按硬上限收紧。关闭压缩时仍是追加即裁剪。
 - 开关：`AgentCore(context_compaction=True)` 用默认 `CompactionPolicy`（hard 24000 / target 16000 / keep 2 轮），也可传自定义 policy；默认关闭，老宿主行为不变。灵动岛真机工厂已开启。
 - 摘要可走专用小模型（省钱）：`AgentCore(compaction_model=小模型)` 后，压缩这一次额外调用改走它、主模型专心做任务；不传（`None`）则完全回归主模型。摘要模型是对象参数、不进 `CoreConfig`，且压缩调用与路由分类一样不计入任务预算。
 - 水位便捷构造：`CompactionPolicy.from_context_window(chars, *, hard_ratio=0.6, target_ratio=0.4)` 按"会话字符工作区"比例推算高/低水位，`from_context_window(40000)` 恰等于默认 24000/16000；坚持字符口径、不引入 tokenizer，非法比例 / 过小窗口在装配期抛错。

@@ -10,11 +10,20 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from yai_core import AgentCore, CoreConfig, ModelResponse, ScriptedModel, build_spec
+from yai_core import (
+    AgentCore,
+    CoreConfig,
+    ModelResponse,
+    ScriptedModel,
+    ToolGovernance,
+    build_composite_spec,
+    build_spec,
+)
 from yai_core.config import CoreConfig as Config
 from yai_core.policy import AllowlistPolicy
 from yai_core.tools import ToolExecutor, ToolRegistry
@@ -163,6 +172,98 @@ def test_composite_step_inherits_handler_timeout() -> None:
     assert ok is False and "超过 0.05s" in text
 
 
+def test_composite_declared_timeout_bounds_blocking_sync_step() -> None:
+    """组合声明超时必须约束同步步骤，即使全局 handler_timeout 关闭。"""
+    finished = {"flag": False}
+
+    def blocking(seconds: float) -> dict:
+        """阻塞步骤。"""
+        time.sleep(seconds)
+        finished["flag"] = True
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(build_spec(blocking))
+    composite = build_composite_spec(
+        "wrap", "包一层", [{"tool": "blocking", "args": {"seconds": 0.4}}]
+    )
+    registry.register(replace(composite, governance=ToolGovernance(timeout_ms=50)))
+    executor = ToolExecutor(registry, AllowlistPolicy((), mode="auto"), _Channel())
+
+    async def main() -> None:
+        started = time.monotonic()
+        events, ok, text = await executor.execute("wrap", {})
+        elapsed = time.monotonic() - started
+        assert ok is False
+        assert elapsed < 0.3, f"声明 50ms 超时应立刻回话，实际等了 {elapsed:.2f}s"
+        assert "超过" in text and "无法中断" in text
+        assert finished["flag"] is False
+        assert any(
+            event.type == EventType.TOOL_RESULT and event.data.get("timed_out")
+            for event in events
+        )
+        await asyncio.sleep(0.45)
+        assert finished["flag"] is True
+
+    asyncio.run(main())
+
+
+def test_composite_timeout_message_does_not_claim_forced_stop() -> None:
+    """超时话术必须写明只停止等待：同步步骤杀不掉，不能暗示强制终止。"""
+    from yai_core.tools.executor import _composite_timeout_message
+
+    text = _composite_timeout_message("wrap", 300)
+    assert "不是强制终止" in text
+    assert "无法中断" in text and "可能仍在后台跑完" in text
+
+
+def test_composite_declared_timeout_cancels_async_step() -> None:
+    """异步步骤收到真正的取消；超时话术不能把"停止等待"说成强制终止。"""
+    cancelled = {"flag": False}
+
+    async def slow() -> dict:
+        """慢步骤。"""
+        try:
+            await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            cancelled["flag"] = True
+            raise
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(build_spec(slow))
+    composite = build_composite_spec("wrap", "包一层", [{"tool": "slow", "args": {}}])
+    registry.register(replace(composite, governance=ToolGovernance(timeout_ms=50)))
+    executor = ToolExecutor(registry, AllowlistPolicy((), mode="auto"), _Channel())
+
+    async def main() -> None:
+        started = time.monotonic()
+        _events, ok, text = await executor.execute("wrap", {})
+        elapsed = time.monotonic() - started
+        assert ok is False
+        assert elapsed < 0.3, f"声明 50ms 超时应立刻回话，实际等了 {elapsed:.2f}s"
+        assert "超过" in text and "取消" in text
+        await asyncio.sleep(0.05)
+        assert cancelled["flag"] is True
+
+    asyncio.run(main())
+
+
+def test_composite_declared_timeout_allows_fast_steps() -> None:
+    def quick() -> dict:
+        """快步骤。"""
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    registry.register(build_spec(quick))
+    composite = build_composite_spec("wrap", "包一层", [{"tool": "quick", "args": {}}])
+    registry.register(replace(composite, governance=ToolGovernance(timeout_ms=1000)))
+    executor = ToolExecutor(registry, AllowlistPolicy((), mode="auto"), _Channel())
+
+    _events, ok, text = asyncio.run(executor.execute("wrap", {}))
+    assert ok is True and '"steps"' in text
+
+
 # ---------- CoreConfig / AgentCore 接线 ----------
 
 
@@ -303,3 +404,79 @@ def test_default_built_resources_are_owned_and_closed() -> None:
     assert len(core._owned) >= 1                   # 自建的默认实现归本实例负责
     asyncio.run(core.aclose())
     assert core._closed is True
+
+
+class _GatedCloseModel(_Model):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_started = asyncio.Event()
+        self.release_close = asyncio.Event()
+        self.model_calls = 0
+
+    async def aclose(self) -> None:
+        self.calls += 1
+        self.close_started.set()
+        await self.release_close.wait()
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.model_calls += 1
+        return ModelResponse(content="ok")
+
+
+def test_concurrent_aclose_closes_shared_resources_once() -> None:
+    async def main() -> None:
+        model = _GatedCloseModel()
+        core = _core_with(model=model)
+        first = asyncio.create_task(core.aclose(close_shared=True))
+        await model.close_started.wait()
+        second_started = asyncio.Event()
+
+        async def close_again() -> None:
+            second_started.set()
+            await core.aclose(close_shared=True)
+
+        second = asyncio.create_task(close_again())
+        await second_started.wait()
+        model.release_close.set()
+        await asyncio.gather(first, second)
+        assert model.calls == 1
+
+    asyncio.run(asyncio.wait_for(main(), 1))
+
+
+def test_task_queued_during_close_cannot_use_closed_resources() -> None:
+    async def main() -> None:
+        model = _GatedCloseModel()
+        core = _core_with(model=model)
+        closer = asyncio.create_task(core.aclose(close_shared=True))
+        await model.close_started.wait()
+        run_started = asyncio.Event()
+
+        async def run_task() -> None:
+            run_started.set()
+            await core.run("hello")
+
+        task = asyncio.create_task(run_task())
+        await run_started.wait()
+        model.release_close.set()
+        await closer
+        with pytest.raises(RuntimeError, match="已关闭"):
+            await task
+        assert model.model_calls == 0
+
+    asyncio.run(asyncio.wait_for(main(), 1))
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_closed_core_rejects_new_tasks(streaming) -> None:
+    async def main() -> None:
+        core = _core_with()
+        await core.aclose()
+        with pytest.raises(RuntimeError, match="已关闭"):
+            if streaming:
+                async for _ in core.astream("hello"):
+                    pass
+            else:
+                await core.run("hello")
+
+    asyncio.run(main())
