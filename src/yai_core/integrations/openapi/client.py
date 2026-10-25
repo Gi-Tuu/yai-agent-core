@@ -154,6 +154,10 @@ class OpenApiToolBridge:
                 raise RuntimeError(f"调用 {plan.name} 缺少路径参数：{name}")
             # safe=""：路径段里的 / 也要编码，避免参数值破坏路径结构。
             path = path.replace("{" + name + "}", quote(str(kwargs[name]), safe=""))
+        # quote 保留 .；检查最终段，涵盖空值/多个参数与模板字面量拼出的点段。
+        # 不解码 %xx：此处防 httpx 的字面点段规范化，不承诺服务器的解码行为。
+        if any(segment in {".", ".."} for segment in path.split("/")):
+            raise RuntimeError(f"调用 {plan.name} 的路径包含独立点段（. 或 ..）")
         return path
 
     def _build_query(self, plan: OperationPlan, kwargs: dict) -> dict:
