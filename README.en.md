@@ -188,7 +188,7 @@ embedded in each app (no local port).
   super-agent**.
 
 ```bash
-uv sync --extra desktop
+uv sync --extra desktop --extra llm
 .\.venv\Scripts\python.exe -m shell.desktop            # offline demo: all animations, no API key
 .\.venv\Scripts\python.exe -m shell.desktop --live     # connect a real model
 ```

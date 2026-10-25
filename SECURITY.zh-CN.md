@@ -25,7 +25,9 @@
      drop ALL capabilities、内存/PID 限制），或用 gVisor / Firecracker 实现同一
      `ToolSandbox` 契约。
 3. **发现不等于授权**：动态发现（MCP / OpenAPI）的工具注册后，执行仍统一经过
-   `PermissionPolicy`；高危操作（写入 / 网络 / shell）默认需要宿主显式批准。
+   包含 `PermissionPolicy` 在内的授权检查。默认 Core 策略放行；宿主必须显式配置
+   `policy` 或声明 `approval.required`，才能要求高危操作（写入 / 网络 / shell）经批准。
+   必需审批不能绕过策略拒绝，动态发现也不能绕过统一授权。
 4. **密钥与数据**：`.env` 已在 `.gitignore`，请勿提交真实 API Key；SQLite 访问全部
    使用参数化查询，不拼接 SQL。
 
