@@ -95,7 +95,7 @@ MCP 桥和 OpenAPI 桥共用）。
 模型给出参数 kwargs
   → _auth_for：按 security 挑方案（bearer→Authorization 头；apiKey→头/query），
               令牌只从环境变量读，缺失在【调用期】抛错（注册期不报错，允许先发现后配钥）
-  → _build_path：path 参数 quote(safe="") 填模板（参数里的 / 也编码，防路径穿越）
+  → _build_path：path 参数 quote(safe="") 填模板，再拒绝最终路径中的独立 . / .. 段
   → _build_query：query 参数组装；bool → true/false；list 交给 httpx 展开成重复键
   → _build_body：拍平型按 body_fields 重组 dict；包裹型取 body
   → client.request(method, url, params, json, headers)
@@ -105,6 +105,23 @@ MCP 桥和 OpenAPI 桥共用）。
 
 为什么令牌缺失是**调用期**而不是注册期报错：发现是"看菜单"，调用才是"点菜"；
 宿主可能先把工具清单展示出来，稍后才配置密钥。
+
+`quote(..., safe="")` 仍保留非保留字符 `.`，所以仅编码不能阻止点段规范化：
+httpx 会把 `/pets/../foo` 变成 `/foo`，让调用偏离注册接口。`_build_path` 在**所有参数
+替换完成后**按字面 `/` 分段，遇到恰好为 `.` 或 `..` 的段就抛 `RuntimeError`，不发请求，
+也不通过把点改成 `%2e` 来绕过校验。最终路径中的模板字面点段同样被拒绝。
+
+检查最终段而非单个参数，才能覆盖 `/{a}{b}` 中 `a="."、b="."`，以及 `/.{id}` 中
+`id=""` 形成点段的情况；也不会误禁 `.hidden`、`pet.v1`、`pet..v1`、`...`，或
+`/pet{id}` 中 `id=".."` 这样的普通 ID。空字符串自身形成的空段不在此修复中禁用；
+仍沿用 `str(value)` 语义（例如 `None` 变成 `None` 文本），不额外引入参数类型校验。
+
+边界限定在**客户端实际发送的编码路径**：参数 `a/b` → `a%2Fb`、`../foo` → `..%2Ffoo`，
+httpx 不把其中 `%2F` 当路径分隔符；字面参数 `%2e` → `%252e`（`%` 也编码）。
+httpx 的 `url.path` 是解码后的展示值，不能用它判断传输路径是否穿越；测试断言
+`url.raw_path`。直接传给 httpx 的 `%2e` / `%2e%2e` 也保留在 raw path 中，
+但这不是用编码代替拒绝的理由。本修复不控制代理或服务器后续解码、重复解码及路径规范化；
+宿主仍须信任 spec/base URL，并按服务端路由与授权规则约束输入。
 
 ### E3. 为什么用 httpx 而不是 requests
 
@@ -116,7 +133,8 @@ MCP 桥和 OpenAPI 桥共用）。
 
 1. 在线演示端点 `read_only=True` 硬编码，公网只暴露 GET/HEAD；
 2. 令牌只从环境变量读，不进 spec、不进日志、不进事件；
-3. path 参数全编码；非 2xx 不把响应体直接喂模型（抛错并截断 500 字符）；
+3. path 参数编码分隔符，最终路径拒绝独立点段（仅保证客户端边界，见 E2）；
+   非 2xx 不把响应体直接喂模型（抛错并截断 500 字符）；
 4. 结果文本 16000 字符截断（对照 Context 24000 上限，给模型的工具结果不能反客为主）；
 5. 不支持的鉴权方案显式记 note，绝不"假装支持"发匿名请求到需要鉴权的写接口
    （需要鉴权却没令牌 = 调用期 RuntimeError）。
@@ -126,6 +144,9 @@ MCP 桥和 OpenAPI 桥共用）。
 所有 HTTP 都不真实发出：`httpx.MockTransport(handler)` 接收 request、返回预制 response，
 还能在 handler 里**断言请求本身**（方法、路径、query 重复键、Authorization 头、JSON body）。
 spec 用仓库内 `tests/fixtures/petstore.min.json`（含 $ref、递归 schema、bearer/apiKey、404）。
+路径安全回归另用内联匿名 spec，点段拒绝时断言 MockTransport **零请求**；允许的含点 ID、
+Unicode、空格、斜杠、字面百分号输入断言实际 raw path，并单独刻画 httpx 的规范化边界。
+所有这些测试不读 `.env`，也不需要真实令牌。
 这就是"测试不触网"纪律在集成层的标准打法，和 MCP 桥用内存假 server 是同一个思想。
 
 ## 自检

@@ -37,7 +37,8 @@ class DelegationSupervisor:
 
 
 def build_delegate_tool(
-    root_core, *, depth: int = 1, on_progress=None, supervisor: DelegationSupervisor | None = None
+    root_core, *, depth: int = 1, on_progress=None, supervisor: DelegationSupervisor | None = None,
+    _on_failure=None,
 ) -> ToolSpec:
     """构造 delegate 工具：async handler 闭包绑定根 core、当前深度与可选进度回调。
 
@@ -52,6 +53,7 @@ def build_delegate_tool(
     semaphore = supervisor.semaphore
 
     async def _handler(tasks):  # noqa: ANN001 - 入参形状以 input_schema 为准
+        subject = root_core._task_subject
         normalized = _normalize_tasks(tasks)
 
         async def _run_one(item: dict):
@@ -69,13 +71,19 @@ def build_delegate_tool(
                     on_event=on_progress,
                     budget=budget,
                     supervisor=supervisor,
+                    subject=subject,
                 )
 
-        # 单个子员工的超时/取消已在 run_worker 内用墙钟上限兜底，
-        # gather 不会因一个子任务卡死而无限等待。
-        results = await asyncio.gather(
-            *[_run_one(item) for item in normalized]
-        )
+        pending = [asyncio.create_task(_run_one(item)) for item in normalized]
+        try:
+            results = await asyncio.gather(*pending)
+        except BaseException:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            raise
+        if _on_failure is not None and any(not result.ok for result in results):
+            _on_failure()
         return {"results": [r.to_observation() for r in results]}
 
     schema = {
@@ -190,7 +198,7 @@ def _normalize_tasks(tasks) -> list[dict]:
         normalized.append(
             {
                 "goal": goal,
-                "tools": list(tools) if tools else None,
+                "tools": list(tools) if tools is not None else None,
                 "max_iters": item.get("max_iters"),
                 "max_model_calls": _as_positive_int(item.get("max_model_calls")),
                 "max_tool_calls": _as_positive_int(item.get("max_tool_calls")),
@@ -206,6 +214,7 @@ def attach_delegate(
     depth: int = 1,
     on_progress=None,
     supervisor: DelegationSupervisor | None = None,
+    _on_failure=None,
 ) -> DelegationSupervisor:
     """给根/子 core 注册 delegate 工具（已注册则跳过，避免重复）。
 
@@ -219,7 +228,8 @@ def attach_delegate(
         supervisor = DelegationSupervisor()
     root_core.registry.register(
         build_delegate_tool(
-            root_core, depth=depth, on_progress=on_progress, supervisor=supervisor
+            root_core, depth=depth, on_progress=on_progress, supervisor=supervisor,
+            _on_failure=_on_failure,
         )
     )
     return supervisor

@@ -300,7 +300,7 @@ async def run_probes(probes, *, timeout=DEFAULT_PROBE_TIMEOUT):
 三个隔离保证：
 
 1. **并发**：`asyncio.gather` 同时跑所有探针，总耗时≈最慢的一个，不是之和；
-2. **超时**：每个探针包 `asyncio.wait_for(..., timeout)`，默认 5 秒。一个探针
+2. **超时**：每个探针包 `asyncio.timeout(..., timeout)`，默认 5 秒。一个探针
    `while True` 死循环也不会让 `/readyz` 永远挂起——超时按未就绪计；
 3. **异常隔离**：`_run_one` 内部 `try/except`，探针抛任何异常都转成该探针的
    `{"status":"error"}`，**绝不向上抛**。一个写崩的探针不会让整个 500。

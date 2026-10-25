@@ -9,6 +9,26 @@
 
 ### Fixed
 
+- **Python 3.11 上外部取消会被悄悄吞掉（CI 在 3.11 变红）**：
+  3.11 的 `asyncio.wait_for` 会把协程包进一个额外 Task，再等一个内部 waiter；
+  外层取消恰好落在"内层协程同时完成"时，它走 `if fut.done(): return fut.result()`
+  **把 `CancelledError` 吞掉并返回结果**。内核恰恰靠取消生效：
+  `shell/employee` 委派里"一个子任务失败要中断另一个子任务"就是 `task.cancel()`——
+  一旦被吞，子任务就没人中断，工具会一直跑下去，整次委派挂死。
+  实测在 3.11 上 `tests/test_shell_employee.py::test_delegate_exception_cancels_and_joins_siblings`
+  稳定超时挂死，3.12/3.13 正常。
+  现把内核与 `shell/employee` 路径上所有"包住内联 await 的超时"统一换成
+  `asyncio.timeout`（3.11+ 都有，且与 3.12+ 的 `wait_for` 是同一套语义）：
+  `kernel/loop.py`（模型调用入口）、`kernel/router.py`（路由分类）、
+  `kernel/compaction.py`（上下文压缩）、`kernel/state.py`（宿主状态）、
+  `llm/fallback.py`（多模型降级）、`tools/executor.py`（异步 handler 与组合工具）、
+  `sidecar/channel.py` 与 `sidecar/server.py`（审批 / 追问往返）、
+  `batteries/fastapi_server/readiness.py`（就绪探针）、`shell/employee/worker.py`
+  （子员工墙钟超时）。宿主外壳（桌面 / 示例）不在内核取消契约内，保持原样。
+  新增回归用例 `tests/test_model_timeout.py::test_cancel_at_model_completion_boundary_is_not_swallowed`
+  把取消精确打在"模型调用刚返回"的竞态窗口上，断言取消没有被吞、在飞的工具被真正中断；
+  已实测去掉内核改动后该用例必红。
+
 - **发出去的包，文档链接全是断的**：sdist 白名单里没有 `ROADMAP.md`、`docs/competitions/deployment.md`
   与 `docs/competitions/shanghai/figs/`，而白皮书与部署文档链接到它们。
   对着 **PyPI 上已发布的 0.22.0 sdist** 实测：**包内断链 12 处**（白皮书 9 张赛事配图

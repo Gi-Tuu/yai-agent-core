@@ -68,9 +68,11 @@ class OpenAICompatProvider:
         tool_calls: list[ToolCallRequest] = []
         for tc in getattr(msg, "tool_calls", None) or []:
             try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
+                args = json.loads(tc.function.arguments)
+            except (json.JSONDecodeError, TypeError):
+                raise ValueError("工具调用参数必须是合法 JSON 对象") from None
+            if not isinstance(args, dict):
+                raise ValueError("工具调用参数必须是合法 JSON 对象")
             tool_calls.append(ToolCallRequest(id=tc.id, name=tc.function.name, arguments=args))
 
         # 透传真实 token 用量（任务级 token 预算据此累计）；后端不返回 usage 时留 None，

@@ -82,9 +82,9 @@ replan **刻意不走授权闸**，原因写在 docstring 里：
 
 > 它只重排内部计划、不产生外部副作用。
 
-重规划不会删数据、不会发请求、不会花钱，只是让模型基于已有观察重新写一遍步骤。
-如果连"调整一下内部计划"都要用户点一次批准，执行一份多步计划时就会被频繁打断。
-真正有外部副作用的是计划里的业务工具，那些仍然逐个过授权闸，安全边界没有被绕过。
+重规划不会直接执行删改数据等业务动作，但会调用模型，可能产生请求和费用；
+该调用仍经过模型预算与超时边界。如果连"调整一下内部计划"都要用户点一次批准，
+执行一份多步计划时就会被频繁打断。计划里的业务工具仍逐个过授权闸，不因此获准。
 
 ## C. 关键取舍：只在 PLAN 时按需注册，而不是总是注册
 
@@ -150,32 +150,62 @@ async def _handle_replan(self, call, ctx, task, replanned, tier_policy, tier_cou
 - `replanned` 是个单元素列表 `[0]`（用列表是为了在嵌套调用里可变地累加）。
   每重规划一次就 +1，`revision` 从 1 开始，事件里告诉宿主这是第几版计划。
 
-第二步：让模型基于当前观察产出修正计划。
+第二步：在独立、协议完整的消息视图中产出修正计划。
+
+执行到 replan 时，主上下文已经保存了本轮完整的 `assistant(tool_calls)`，但
+replan 本身及排在它后面的工具还没有结果。此时直接插入 user 指令，会把调用与
+结果拆开，严格校验协议的模型接口会拒绝请求；即便本轮只有 replan 一个调用也一样。
 
 ```python
     plan_tier = (
         tier_policy.for_planning().tier if tier_policy is not None else STRONG
     )
-    ctx.add(
-        ChatMessage(
-            role="user",
-            content=(
-                "【系统重规划】原计划执行到此因“" + reason + "”需要调整。"
-                "请保留已经拿到结果、无需重做的步骤，基于当前已获得的观察，"
-                "重新输出 2-5 步编号计划（每行一个步骤，用 1. 2. 编号），"
-                "不要重复已完成步骤；只输出步骤本身。"
-            ),
-        )
-    )
     if tier_counts is not None:
         tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
-    resp = await self.model.achat(ctx.llm_messages(), tools=None, tier=plan_tier)
+    messages, state_event = await self._model_messages(ctx)
+    if state_event is not None:
+        yield state_event
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("tool_calls"):
+            completed_ids = {
+                message["tool_call_id"]
+                for message in messages[index + 1:]
+                if message["role"] == "tool"
+            }
+            assistant = dict(messages[index])
+            completed_calls = [
+                item for item in assistant["tool_calls"] if item["id"] in completed_ids
+            ]
+            if completed_calls:
+                assistant["tool_calls"] = completed_calls
+                messages[index] = assistant
+            elif assistant.get("content"):
+                del assistant["tool_calls"]
+                messages[index] = assistant
+            else:
+                del messages[index]
+            break
+    messages.append({
+        "role": "user",
+        "content": (
+            "【系统重规划】原计划执行到此因“" + reason + "”需要调整。"
+            "请保留已经拿到结果、无需重做的步骤，基于当前已获得的观察，"
+            "重新输出 2-5 步编号计划（每行一个步骤，用 1. 2. 编号），"
+            "不要重复已完成步骤；只输出步骤本身。"
+        ),
+    })
+    resp = await self._model_chat(messages, None, tier=plan_tier)
 ```
 
-- 重规划属于复杂拆解，档位默认 strong（见第 32 篇）；成本感知关闭时也给 strong。
-- 注入的 user 指令有两个关键点：**保留已完成步骤、不要重做**，以及**只输出
-  编号步骤本身**。前者避免重复劳动，后者保证输出能被稳定解析。
-- 这次 achat `tools=None`——重规划阶段只需要它写计划，不该顺手调工具。
+- `_model_messages` 仍负责多模态转换与宿主实时状态刷新；瞬态状态不写回主上下文。
+- 只在本次请求的副本中缩小最新调用批次，保留已有结果的调用；过去的完整历史和
+  本批已完成的真实观察原样保留。不伪造未执行工具的结果，也不提前执行后续业务工具。
+- 用新字典和新 `tool_calls` 列表替换副本，避免修改与 `Context` 共享的嵌套对象。
+  若本批尚无结果，保留非空 assistant 正文；正文也为空时移除这条空消息。
+- user 指令只进入规划请求。主上下文不插入额外 user 或 assistant 消息，避免
+  打断工具配对，也避免给按 user 轮次裁剪的上下文制造错误边界。
+- 档位默认 strong（见第 32 篇），成本感知关闭时也给 strong；`_model_chat`
+  保留预算、超时及取消机制。`tools=None`，这次请求只写计划，不执行工具。
 
 第三步：解析步骤、发 `plan_revised` 事件。
 
@@ -184,7 +214,6 @@ async def _handle_replan(self, call, ctx, task, replanned, tier_policy, tier_cou
     if not steps:
         steps = [task]
     plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-    ctx.add(ChatMessage(role="assistant", content=plan_text))
     yield AgentEvent(
         EventType.PLAN_REVISED,
         {"revision": revision, "reason": reason, "steps": steps},
@@ -195,8 +224,8 @@ async def _handle_replan(self, call, ctx, task, replanned, tier_policy, tier_cou
   每行编号后面的步骤正文，再 `strip()` 掉多余空白。
 - **兜底**：万一模型输出里解析不出任何编号步骤，`steps` 就回退成原始任务
   `[task]`，保证事件始终携带可执行内容、不会给宿主一个空列表。
-- 修正后的计划同时加进上下文（assistant 消息），并发 `plan_revised` 事件，
-  数据含修订序号、原因、新步骤三步。
+- `plan_revised` 事件包含修订序号、原因、新步骤三个字段；计划正文留给下一步的
+  tool 结果，不再作为普通 assistant 消息插入尚未完成的工具批次。
 
 第四步：回灌一条 tool 结果，把模型推回执行轨道。
 
@@ -205,7 +234,8 @@ async def _handle_replan(self, call, ctx, task, replanned, tier_policy, tier_cou
         ChatMessage(
             role="tool",
             content=(
-                "计划已按当前观察修订（第 " + str(revision) + " 版）。"
+                "计划已按当前观察修订（第 " + str(revision) + " 版）。\n"
+                + plan_text + "\n"
                 "请按新计划继续调用工具执行，不要重复已完成步骤，"
                 "拿到全部结果后给出最终汇报。"
             ),
@@ -215,9 +245,10 @@ async def _handle_replan(self, call, ctx, task, replanned, tier_policy, tier_cou
     )
 ```
 
-replan 这次"工具调用"也需要一个对应的 tool 结果（否则对话格式不完整）。这条
-tool 消息明确告诉模型：计划已更新，按新计划继续、别重复已完成步骤。下一轮
-react 循环模型就会照着修正版计划调用工具。
+每次 replan 只追加一条匹配调用 ID 的 tool 结果，包含完整编号计划和继续执行提示。
+后续同批工具仍按原顺序执行；下一轮模型能看到完整调用批次与一一对应的结果。
+若同批再次 replan，新的规划视图能看到此前已完成的重规划结果与业务观察。
+模型失败、超时、取消或预算阻断时，不发成功修订事件，也不继续执行同批剩余工具。
 
 ## E. 聚焦模式：meta-tool 的 schema 必须始终可见
 
@@ -253,7 +284,8 @@ def _with_meta_schemas(self, schemas: list[dict]) -> list[dict]:
 
 ## F. 测试与口径
 
-`tests/test_replan.py` 用 ScriptedModel 离线覆盖三条主线，**全程不需要 API Key**：
+`tests/test_replan.py` 用 ScriptedModel 离线覆盖以下主线，**全程不需要 API Key**。
+每次模型请求都严格检查工具调用与结果配对，禁止孤立、重复、缺失结果及普通消息插队：
 
 1. **完整重规划闭环**：模型第 0 轮调 replan（带 reason）→ 内核产出 3 步修正
    计划 → 模型按新计划调 search_notes → 收尾。断言：
@@ -266,6 +298,13 @@ def _with_meta_schemas(self, schemas: list[dict]) -> list[dict]:
 3. **关闭成本感知回归**：`cost_aware=False` 时简单 react 全程 standard、
    strong_calls 为 0（该断言用 REACT 场景，因为规则路由对 PLAN 本就标 strong，
    与成本开关无关）。
+4. **同批混合调用**：replan 单独、首位、中间、末位、同批两次；分别测试有无
+   assistant 正文。规划只能看到已经完成的真实观察，业务调用恰好一次且顺序不变，
+   最终上下文保留全部原始调用 ID，计划正文出现在对应 tool 结果中。
+5. **跨轮重规划**：第二次修订保留第一次完整计划，修订序号和调用计数正确。
+6. **失败边界**：模型异常、真实异步超时、取消、模型调用预算耗尽均不继续业务工具，
+   不发成功修订事件；超时确实取消等待，取消继续向上传播。
+7. **宿主现状锚**：规划调用也刷新瞬态状态、发状态变化事件，状态不写入记忆。
 
 ## G. 自检（读完应能回答）
 

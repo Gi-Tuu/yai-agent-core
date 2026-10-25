@@ -178,27 +178,45 @@ WAL 模式下直接 `cp` 数据库文件可能漏掉还在 `-wal` 里的页，�
 复制又违背"在线"诉求。Python 标准库的 `sqlite3.Connection.backup` 做**页级在线拷贝**，
 备份期间数据库可继续读，写被短暂串行（小库毫秒级）：
 
-```python
-def backup_to(self, dest):
-    _reset_db_files(target)              # 清掉目标残留的 db/-wal/-shm
-    with self._lock:                     # 持实例锁，快照与某一时刻一致
-        out = sqlite3.connect(str(target))
-        try:
-            self._require_conn_locked().backup(out)
-        finally:
-            out.close()
-    return target
-```
+`backup_to` 的顺序是：
 
-`:memory:` 库也能 `backup_to` 成文件，方便把测试/临时会话导出留档。
+1. 持 `self._lock`，先检查连接未关闭，再由 `PRAGMA database_list` 取得实际源路径。
+2. 拒绝源=目标及路径/大小写/符号链接/硬链接别名，也保护源的 `-wal/-shm/-journal`。
+   目标不得是符号链接或有硬链接别名；目标存在任何侧车时直接拒绝，不猜它是否陈旧。
+3. 用 `mkstemp` 在**目标同目录**独占创建暂存库，再执行 `Connection.backup`。
+4. 暂存库切到 `journal_mode=DELETE`（backup 会继承源的 WAL 模式），执行
+   `integrity_check` 并检查非空 schema，关闭连接，确认暂存无侧车。
+5. 再检查一次目标及别名/侧车，最后一次 `os.replace` 发布完整的单文件库。
+   复制、校验、连接或替换失败均保留旧目标，只清理本次创建的暂存及其侧车。
 
-### E.2 恢复与崩溃语义
+`:memory:` 库也能 `backup_to` 成文件。**在线指源在线，不是允许覆盖在线目标**；
+SQLite 在线读取可能维护源 SHM 的 read marks，不要求在线源 SHM 字节不变。
 
-- `@classmethod restore_to(backup, dest)`：用 backup API 把备份写成正式库文件；备份不是
-  有效 SQLite 时直接抛 `sqlite3.DatabaseError`，**明确报错而不是静默起一个空库**。
-- 典型恢复流程：停服 → `restore_to(备份, 正式库路径)` → 用该路径重新构造 `SqliteStore`。
-- "崩溃恢复"其实由 WAL + `os.replace` 等原子写已经保证：测试直接验证了"写历史和 KV →
-  close → 同路径重开，数据一条不丢"。
+### E.2 恢复、侧车顺序与原子性边界
+
+`restore_to(backup, dest)` 保持离线契约：
+
+- 先解析源路径，拒绝别名/侧车/硬链接源（硬链接可能隐藏另一路径的 WAL），检查文件存在
+  及 SQLite 文件头；缺失源抛 `OSError`，空白/损坏源抛 `sqlite3.DatabaseError`。
+- 源以 URI `mode=ro&immutable=1` 打开，执行 `integrity_check` 与非空 schema 校验；
+  不做 schema 迁移。合法但没有 schema 的空库也拒绝，业务表存在但没有记录则允许。
+  `mode=ro` 禁止创建源；单独只读仍可能创建/修改 WAL 的 SHM，故增加 `immutable=1`。
+  **immutable 会忽略 WAL，因此恢复源必须已 checkpoint、无侧车且全程不变**。
+- 使用与热备份相同的同目录暂存机制，暂存校验通过并关闭源、目标临时连接后，才发布。
+  源缺失/空白/损坏以及发布前的失败不会改动源和旧目标，也不会留下本次临时文件
+  （前提是操作系统允许清理；强杀或文件系统故障不属于正常异常清理保证）。
+- **侧车不参与替换，也从不自动删除**。先删旧 WAL 会丢失未 checkpoint 数据；先换主库
+  再删旧 WAL 又可能让旧 WAL 配上新主库。多次 rename 加异常回滚仍不是崩溃原子的
+  多文件事务。因此遇到任何 `-wal/-shm/-journal`（包括空文件）直接失败，原样保留。
+- 正常流程：停止访问源/目标的服务并关闭所有连接 → 必要时由运维在独占维护窗口使用
+  SQLite 完成恢复/checkpoint、正常关闭 → 确认无侧车 → `restore_to` → 重新打开目标。
+  不要用手工删除 WAL 的方式绕过检查；若只有一份带 WAL 的备份，先对副本做维护。
+- **边界未消失**：侧车检查不是跨进程互斥锁，检测不到所有无侧车的空闲连接，也不能消除
+  最后检查与 replace 之间的并发打开/换路径竞态。宿主必须保证整个操作期间目标离线，
+  恢复源也保持离线不变；这不是可安全覆盖任意正在使用数据库的 API。
+- `os.replace` 仅提供同文件系统单文件名称切换的原子性，不承诺 WAL 多文件原子恢复、
+  断电持久性或目录 fsync。close 后重开测试只验证正常关闭的数据持久化，**不等于模拟
+  了崩溃或断电**；进程强杀在发布前可能留下可人工清理的 `.yai-snapshot-*` 暂存文件。
 
 ---
 
@@ -212,12 +230,14 @@ def backup_to(self, dest):
   `cryptography` 时再跑真实 Fernet 的 round-trip、篡改报错、`from_env` 成功/缺变量报错。
 - **配置**（`test_core_config.py`）：参数化喂 10 组非法值断言早抛；合法 Budget/Policy/
   `"auto"` 通过；`from_config` 构造的 core 能正常跑一个直答任务且 `max_iters` 透传到 loop。
-- **备份**（`test_sqlite_backup.py`）：文件库 close 后重开数据在；在线备份可被新实例打开
-  且数据一致；内存库可导出；close 后备份抛统一错误；损坏备份恢复抛 `DatabaseError`；
-  重复备份干净覆盖旧目标。
+- **备份**（`test_sqlite_backup.py`，全部使用 `tmp_path`）：文件库正常 close 后重开；
+  在线快照含 WAL 中的数据；内存库可导出；源缺失/空白/损坏/无 schema 时文件不变；
+  关闭后备份不毁旧目标；复制、暂存打开/校验、发布故障保留旧目标并清理私有暂存；
+  拒绝自备份、源/目标别名及源侧车目标；在线目标和未知侧车保留；发布前复查侧车；
+  Unicode/URI 特殊字符源路径可恢复，成功发布无旧表残留、无侧车。
 
-新模块行覆盖率：`budget.py`/`config.py`/`cipher.py`/`sqlite_store.py` 均 100%，
-`fernet_cipher.py` 93%（仅未装包时的 ImportError 引导分支走不到），全仓 96%。
+早期 P1 的覆盖率记录为：`budget.py`/`config.py`/`cipher.py`/`sqlite_store.py` 均 100%，
+`fernet_cipher.py` 93%、全仓 96%；这是历史记录，不代表本次修复后的覆盖率。
 
 ---
 
@@ -230,5 +250,6 @@ def backup_to(self, dest):
 5. vault 解密失败时为什么选择"冷启动为空库"而不是报错退出？这带来什么风险、由谁兜底？
 6. `FernetStorageCipher.from_env` 缺环境变量时为什么要直接报错？
 7. `CoreConfig.validate()` 为什么把 `bool` 排除在"整数次数"之外？
-8. 热备份为什么要持 `self._lock`、为什么先清目标的 `-wal/-shm`？
-9. 损坏的备份在恢复时为什么必须抛错，而不是打开一个空库？
+8. 热备份为什么要持 `self._lock`？为什么不能先删目标的 `-wal/-shm`，而要拒绝带侧车目标？
+9. 缺失/空白/损坏备份为什么必须在替换目标前报错？为什么只读恢复还需要 `immutable` 和离线前提？
+10. 同目录单文件 replace 能保证什么，为什么它不能保证 WAL 多文件原子性或识别所有在线连接？

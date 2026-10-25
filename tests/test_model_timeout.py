@@ -1,11 +1,14 @@
 """P0-2：模型调用硬超时与取消传播，全部离线、零网络、零 API Key。
 
-覆盖三件事：
-1. 模型挂起超过 ``model_timeout`` → wait_for 先取消挂起调用，loop 发 ERROR 事件
+覆盖四件事：
+1. 模型挂起超过 ``model_timeout`` → 超时先取消挂起调用，loop 发 ERROR 事件
    体面收尾（不裸抛穿透宿主），且实例级任务锁随之释放、同一 core 可继续跑下一单；
 2. ``model_timeout=None`` 关闭硬超时，慢但成功的调用照常返回；
 3. 外层任务取消（用户终止 / aclose）→ CancelledError 干净传播、真正中断挂起的
-   模型调用，而不是被改写成超时或被 ``except Exception`` 吞掉。
+   模型调用，而不是被改写成超时或被 ``except Exception`` 吞掉；
+4. 取消恰好落在"模型调用已完成、消费任务尚未恢复"的窗口时也不能被吞掉——
+   3.11 的 ``asyncio.wait_for`` 在该分支会 ``return fut.result()``，被吃掉的
+   取消意味着取消本该中断的工具会一路跑到底。
 """
 
 import asyncio
@@ -13,7 +16,8 @@ import time
 
 import pytest
 
-from yai_core import AgentCore, ModelResponse
+from yai_core import AgentCore, ModelResponse, build_spec
+from yai_core.types import ToolCallRequest
 
 
 class SlowThenOk:
@@ -46,6 +50,29 @@ class SlowOk:
     async def achat(self, messages, tools=None, *, tier="standard"):
         await asyncio.sleep(self.delay)
         return ModelResponse(content="慢但成功")
+
+
+class CancelOnModelDone:
+    """模型调用刚完成时取消消费任务，复现"完成瞬间"的取消竞态窗口。
+
+    取消通过 ``call_soon`` 发出：它一定落在"模型调用已完成、消费任务还没恢复"
+    的那个窗口里，因此不依赖调度运气，每次都能命中同一条竞态路径。
+    """
+
+    yai_multimodal = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.target: asyncio.Task | None = None
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        if self.calls == 1:
+            asyncio.get_running_loop().call_soon(self.target.cancel)
+            return ModelResponse(
+                tool_calls=[ToolCallRequest(id="c1", name="slow_tool", arguments={})]
+            )
+        return ModelResponse(content="收尾")
 
 
 def test_model_timeout_ends_gracefully_and_frees_lock() -> None:
@@ -119,3 +146,50 @@ def test_outer_cancellation_propagates_to_model() -> None:
         return model.cancelled
 
     assert asyncio.run(scenario()) is True
+
+
+def test_cancel_at_model_completion_boundary_is_not_swallowed() -> None:
+    """取消落在"模型调用刚完成"的窗口时，必须真正中断随后的工具调用。
+
+    回归 3.11 的 ``asyncio.wait_for`` 竞态：内层恰好完成时它会走
+    ``if fut.done(): return fut.result()``，把外层取消吃掉。被吃掉的取消会让
+    本该中断的工具一路跑到底——委派里"一个子任务失败要中断另一个子任务"
+    正是靠取消生效，吞掉就等于没人中断，整个委派会挂住。
+    """
+
+    async def scenario() -> int:
+        release = asyncio.Event()
+        interrupted = asyncio.Event()
+        calls = {"tool": 0}
+
+        async def slow_tool() -> str:
+            calls["tool"] += 1
+            try:
+                await release.wait()
+                return "跑完了"
+            finally:
+                interrupted.set()
+
+        model = CancelOnModelDone()
+        core = AgentCore(model, llm_router=False)
+        core.register_tools([build_spec(slow_tool)])
+
+        async def drain() -> None:
+            async for _ in core.astream("跑一下慢工具"):
+                pass
+
+        task = asyncio.create_task(drain())
+        model.target = task
+        try:
+            await asyncio.wait_for(interrupted.wait(), timeout=5)
+        except TimeoutError:
+            release.set()
+            await asyncio.sleep(0)
+            pytest.fail("外部取消被吞掉：在飞的工具没有中断")
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return calls["tool"]
+
+    # 取消打断了工具，且工具只被调用了一次（没有被取消后续跑第二遍）。
+    assert asyncio.run(scenario()) == 1

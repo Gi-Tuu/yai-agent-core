@@ -198,6 +198,40 @@ def test_parse_response_without_usage_keeps_none() -> None:
     assert parsed.usage is None  # 内核不臆造 token 数，预算改用次数兜底
 
 
+@pytest.mark.parametrize("arguments", [None, [], "", "secret-argument", 1, True])
+@pytest.mark.parametrize("dict_block", [False, True])
+def test_parse_response_rejects_non_object_arguments(arguments, dict_block) -> None:
+    block = {"type": "tool_use", "id": "c1", "name": "get_records", "input": arguments}
+    response = types.SimpleNamespace(
+        content=[block if dict_block else types.SimpleNamespace(**block)]
+    )
+    with pytest.raises(ValueError, match="参数必须是合法 JSON 对象") as exc:
+        parse_response(response)
+    assert "secret-argument" not in str(exc.value)
+
+
+@pytest.mark.parametrize("valid_first", [False, True])
+def test_invalid_response_does_not_execute_defaults(valid_first) -> None:
+    calls = []
+
+    def get_records(limit: int = 100) -> list:
+        calls.append(limit)
+        return []
+
+    blocks = [types.SimpleNamespace(type="tool_use", id="bad", name="get_records", input=None)]
+    if valid_first:
+        blocks.insert(0, types.SimpleNamespace(
+            type="tool_use", id="good", name="get_records", input={"limit": 1}
+        ))
+    provider = _provider_with([_Response(blocks)])
+    core = AgentCore(provider)
+    core.register_tools([build_spec(get_records)])
+    result = asyncio.run(core.run("查询记录"))
+    assert calls == []
+    assert any(event.type.value == "error" for event in result.events)
+    assert not any(event.type.value == "tool_call" for event in result.events)
+
+
 def test_achat_puts_system_on_top_level_and_requires_max_tokens() -> None:
     provider = _provider_with([_Response([_Block(type="text", text="ok")])], max_tokens=777)
     asyncio.run(

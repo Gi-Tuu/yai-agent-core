@@ -53,6 +53,15 @@ WorkbenchRuntime（1 个，唯一后台 asyncio 线程）
    而 `get("a").pending_kind` 仍是 `confirm`——决策跟着专员走，不会串到别人身上。
 3. **收尾唯一**：`shutdown()` 终止全部专员，只关那一条共享 loop。
 
+### 2.1 DONE 是展示终态，不是事件流的终点
+
+`SpecialistRuntime._guarded` 收到 `done` 后**不能** `break` 再 `aclose()`：内核的
+学习回灌（`core.astream` 的 `completed` / `_record_feedback`）和 live factory 的
+`save_selector` 都排在 DONE 之后。正确做法是**停止上屏、继续耗尽事件流**，让收尾
+跑完；DONE 之后到达的事件一律不再展示。取消仍会关闭流，所以被取消的任务不记录
+本次学习。回归在 `tests/test_desktop_specialist.py`（收尾标志与晚到事件）和
+`tests/test_desktop_learning_wiring.py`（真实 `startTask` 路径落盘）两处。
+
 ## 3. 交互形态机：球 →（悬停）胶囊 →（点击）面板
 
 `qml/main.qml` 只有一个字符串状态 `shape: "ball" | "capsule" | "panel"`，

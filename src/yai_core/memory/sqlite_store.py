@@ -23,8 +23,10 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -439,51 +441,113 @@ class SqliteStore:
     # ---------- 在线备份 / 恢复（运维，非 MemoryStore 契约） ----------
 
     def backup_to(self, dest: str | Path) -> Path:
-        """在线一致快照：把当前库热备份到 ``dest`` 文件，无需停服、不阻塞读太久。
+        """在线一致快照；源可在线，目标必须离线且无 WAL/SHM/journal 侧车。
 
-        使用标准库 :meth:`sqlite3.Connection.backup`（页级在线拷贝），在实例锁内
-        执行以获得与某一时刻一致的快照；对文件库和 ``:memory:`` 库都适用。目标若
-        已存在（含残留 -wal/-shm）会被干净替换，避免把旧库的表带进新快照。
+        在实例锁内用 backup API 写同目录临时库，校验、关闭后再原子替换目标。
+        拒绝自备份及源侧车别名，不删除目标或其侧车；失败保留旧目标。
+        调用方须保证目标整个操作期间无人打开（侧车检查不是跨进程锁）。
         """
         target = Path(dest).expanduser()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _reset_db_files(target)
         with self._lock:
             src = self._require_conn_locked()
-            out = sqlite3.connect(str(target))
-            try:
-                src.backup(out)
-            finally:
-                out.close()
+            filename = src.execute("PRAGMA database_list").fetchone()[2]
+            source = Path(filename) if filename else None
+            _check_destination(target, source)
+            with _staged_database(target) as staged:
+                _copy_snapshot(src, staged)
+                _check_destination(target, source)
+                os.replace(staged, target)
         return target
 
     @classmethod
     def restore_to(cls, backup: str | Path, dest: str | Path) -> Path:
-        """把一份备份恢复为 ``dest`` 数据库文件（离线恢复，返回 dest 路径）。
+        """离线恢复；源和目标在整个操作期间均须无人打开或修改。
 
-        典型恢复流程：停服 → ``restore_to(备份, 正式库路径)`` → 用该路径重新构造
-        :class:`SqliteStore`。备份不是有效 SQLite 文件时会抛
-        :class:`sqlite3.DatabaseError`，让调用方明确知道备份不可用而非静默起空库。
+        只读打开已 checkpoint、无侧车的备份；缺失、空白、损坏源均报错。
+        校验源 → 同目录暂存 backup → 校验并关闭所有连接 → 单文件替换。
+        有侧车时拒绝操作，绝不先删 WAL/SHM；不提供多文件崩溃原子性，
+        也不能靠侧车检查检测所有空闲连接，宿主必须先停服并关闭连接。
         """
-        source = Path(backup).expanduser()
+        source = Path(backup).expanduser().resolve()
         target = Path(dest).expanduser()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _reset_db_files(target)
-        src = sqlite3.connect(str(source))
-        try:
-            out = sqlite3.connect(str(target))
-            try:
-                src.backup(out)
-            finally:
-                out.close()
-        finally:
-            src.close()
+        _check_destination(target, source)
+        _check_no_sidecars(source)
+        source_stat = source.stat()  # 缺失源直接失败，不交给 SQLite 自动建库。
+        if not source.is_file():
+            raise ValueError("恢复源必须是普通数据库文件")
+        if source_stat.st_nlink > 1:
+            raise ValueError("恢复源不能有硬链接别名（无法确定其 WAL 路径）")
+        with source.open("rb") as stream:
+            if stream.read(16) != b"SQLite format 3\x00":
+                raise sqlite3.DatabaseError("备份为空或不是 SQLite 数据库")
+        # mode=ro 不创建缺失源；immutable 防止只读 WAL 连接仍创建/修改 SHM。
+        # immutable 会忽略 WAL，因此只允许离线且无任何侧车的单文件备份。
+        with _staged_database(target) as staged:
+            with closing(
+                sqlite3.connect(source.as_uri() + "?mode=ro&immutable=1", uri=True)
+            ) as src:
+                _validate_snapshot(src)
+                _copy_snapshot(src, staged)
+            _check_no_sidecars(source)
+            _check_destination(target, source)
+            os.replace(staged, target)
         return target
 
 
-def _reset_db_files(path: Path) -> None:
-    """删除目标数据库及其 WAL/SHM 侧车文件，保证备份/恢复落到干净目标。"""
-    for suffix in ("", "-wal", "-shm"):
-        sidecar = path.with_name(path.name + suffix)
-        if sidecar.exists():
-            sidecar.unlink()
+_DB_SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def _db_sidecars(path: Path) -> list[Path]:
+    return [path.with_name(path.name + suffix) for suffix in _DB_SIDECARS]
+
+
+def _check_no_sidecars(path: Path) -> None:
+    # 连空侧车/悬空符号链接也拒绝；不能假定它们陈旧，更不能自动删除。
+    if any(os.path.lexists(p) for p in _db_sidecars(path)):
+        raise RuntimeError("数据库存在 WAL/SHM/journal；请先离线恢复并 checkpoint")
+
+
+def _check_destination(target: Path, source: Path | None) -> None:
+    if source is not None:
+        for protected in [source, *_db_sidecars(source)]:
+            if target.resolve() == protected.resolve() or (
+                target.exists() and protected.exists() and target.samefile(protected)
+            ):
+                raise ValueError("目标不能是源数据库或其侧车的别名")
+    if target.is_symlink() or (target.exists() and target.stat().st_nlink > 1):
+        raise ValueError("目标不能是符号链接或有硬链接别名")
+    if target.exists() and not target.is_file():
+        raise ValueError("目标必须是普通数据库文件")
+    _check_no_sidecars(target)
+
+
+def _validate_snapshot(conn: sqlite3.Connection) -> None:
+    if conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        raise sqlite3.DatabaseError("备份完整性检查失败")
+    if not conn.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone():
+        raise sqlite3.DatabaseError("备份为空数据库（没有 schema）")
+
+
+def _copy_snapshot(src: sqlite3.Connection, staged: Path) -> None:
+    with closing(sqlite3.connect(str(staged))) as out:
+        src.backup(out)
+        # backup 会继承源的 WAL 模式；发布前变成自包含的单文件数据库。
+        if out.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+            raise sqlite3.DatabaseError("无法把快照转换为单文件数据库")
+        _validate_snapshot(out)
+    _check_no_sidecars(staged)
+
+
+@contextmanager
+def _staged_database(target: Path) -> Iterator[Path]:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".yai-snapshot-", suffix=".db", dir=target.parent)
+    staged = Path(name)
+    try:
+        os.close(fd)
+        yield staged
+    except BaseException:
+        # 仅清理本次独占创建的文件；成功 replace 后不再执行可能失败的文件操作。
+        for path in [*_db_sidecars(staged), staged]:
+            path.unlink(missing_ok=True)
+        raise

@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from yai_core import AgentCore, ModelResponse
+from yai_core import AgentCore, ModelResponse, ToolCallRequest, build_spec
 from yai_core.kernel import CompactionPolicy
 from yai_core.kernel.compaction import (
     compact_context,
@@ -27,9 +27,11 @@ class ScriptedModel:
         self._responses = responses or []
         self._raises = raises
         self.calls = 0
+        self.requests: list[list[dict]] = []
 
     async def achat(self, messages, tools=None, *, tier="standard"):
         self.calls += 1
+        self.requests.append([dict(message) for message in messages])
         if self._raises:
             raise RuntimeError("model boom")
         if not self._responses:
@@ -314,3 +316,127 @@ def test_from_context_window_custom_ratios_and_rounds() -> None:
 def test_from_context_window_rejects_invalid(kwargs) -> None:
     with pytest.raises(ValueError):
         CompactionPolicy.from_context_window(**kwargs)
+
+
+# ---------- 先压缩、后硬裁剪：默认水位也要能触发（A3） ----------
+
+
+async def _long_memory(rounds: int = 4) -> InMemoryStore:
+    """4 轮 × 约 8000 字符，超过默认 24000 水位；首轮带可辨认事实。"""
+    memory = InMemoryStore()
+    await memory.append_history(
+        ChatMessage(role="user", content="KEEP0 关键约束 " + "U" * 4000)
+    )
+    await memory.append_history(
+        ChatMessage(role="assistant", content="EARLY_ASSISTANT 已记录 " + "A" * 4000)
+    )
+    for i in range(1, rounds):
+        for msg in _plain_round(f"r{i}", n=4000):
+            await memory.append_history(msg)
+    return memory
+
+
+def test_default_policy_compacts_before_hard_trim() -> None:
+    async def scenario():
+        model = ScriptedModel(
+            [
+                ModelResponse(content="摘要保留EARLY要点"),
+                ModelResponse(content="最终答复"),
+            ]
+        )
+        core = AgentCore(model, memory=await _long_memory(), context_compaction=True)
+        return await core.run("继续处理"), model
+
+    result, model = asyncio.run(scenario())
+    assert EventType.CONTEXT_COMPACTED in [e.type for e in result.events]
+    # 摘要模型看到最早一轮，而不是等它被 add 的即时硬裁剪删掉。
+    summary_input = "\n".join(str(m.get("content", "")) for m in model.requests[0])
+    assert "KEEP0" in summary_input and "EARLY_ASSISTANT" in summary_input
+    # 主调用拿到摘要，最早一轮不再逐字出现。
+    main_input = "\n".join(str(m.get("content", "")) for m in model.requests[-1])
+    assert "摘要保留EARLY要点" in main_input
+    assert "EARLY_ASSISTANT" not in main_input
+    assert result.final_text == "最终答复"
+
+
+def test_plan_compacts_before_planning_model_call() -> None:
+    def search_notes(keyword: str) -> list:
+        """搜索笔记。"""
+        return []
+
+    async def scenario():
+        model = ScriptedModel(
+            [
+                ModelResponse(content="摘要保留EARLY要点"),
+                ModelResponse(content="1. 搜索笔记\n2. 汇报"),
+                ModelResponse(content="完成。"),
+            ]
+        )
+        core = AgentCore(model, memory=await _long_memory(), context_compaction=True)
+        core.register_tools([build_spec(search_notes)])
+        return await core.run("先搜索笔记，然后汇报"), model
+
+    result, model = asyncio.run(scenario())
+    types = [e.type for e in result.events]
+    assert types.index(EventType.CONTEXT_COMPACTED) < types.index(EventType.PLAN_CREATED)
+    assert "EARLY_ASSISTANT" in "\n".join(
+        str(m.get("content", "")) for m in model.requests[0]
+    )
+    plan_input = "\n".join(str(m.get("content", "")) for m in model.requests[1])
+    assert "摘要保留EARLY要点" in plan_input
+    assert "EARLY_ASSISTANT" not in plan_input
+
+
+def test_policy_watermark_above_context_cap_still_compacts() -> None:
+    """宿主把水位设得比 Context 硬上限还高时，仍要在硬裁剪之前触发压缩。"""
+
+    async def scenario():
+        model = ScriptedModel(
+            [
+                ModelResponse(content="摘要保留EARLY要点"),
+                ModelResponse(content="最终答复"),
+            ]
+        )
+        policy = CompactionPolicy(hard_max_chars=100_000, keep_recent_rounds=2)
+        core = AgentCore(model, memory=await _long_memory(), context_compaction=policy)
+        return await core.run("继续处理")
+
+    result = asyncio.run(scenario())
+    assert EventType.CONTEXT_COMPACTED in [e.type for e in result.events]
+
+
+def test_large_tool_result_does_not_trim_before_compaction() -> None:
+    def big() -> str:
+        """返回大段内容。"""
+        return "B" * 15_000
+
+    async def scenario():
+        memory = InMemoryStore()
+        await memory.append_history(
+            ChatMessage(role="user", content="KEEP0 早期任务 " + "U" * 3000)
+        )
+        await memory.append_history(
+            ChatMessage(role="assistant", content="EARLY_ASSISTANT 收到 " + "A" * 3000)
+        )
+        for msg in _plain_round("r1", n=3000):
+            await memory.append_history(msg)
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[ToolCallRequest(id="t1", name="big", arguments={})],
+                ),
+                ModelResponse(content="摘要保留EARLY要点"),
+                ModelResponse(content="最终答复"),
+            ]
+        )
+        core = AgentCore(model, memory=memory, context_compaction=True)
+        core.register_tools([build_spec(big)])
+        return await core.run("搜索笔记里的比赛内容"), model
+
+    result, model = asyncio.run(scenario())
+    assert EventType.CONTEXT_COMPACTED in [e.type for e in result.events]
+    # 工具结果把总量推过水位后，压缩器仍能看到最早一轮。
+    assert "EARLY_ASSISTANT" in "\n".join(
+        str(m.get("content", "")) for m in model.requests[1]
+    )

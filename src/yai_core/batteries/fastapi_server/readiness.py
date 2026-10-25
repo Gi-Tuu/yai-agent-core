@@ -76,7 +76,8 @@ async def _run_one(name: str, probe: Probe, timeout: float) -> tuple[str, dict[s
     try:
         outcome = probe()
         if inspect.isawaitable(outcome):
-            outcome = await asyncio.wait_for(outcome, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                outcome = await outcome
         return name, _interpret(outcome)
     except TimeoutError:
         return name, {"status": "error", "detail": f"probe timed out after {timeout:g}s"}

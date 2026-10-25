@@ -269,6 +269,7 @@ class AgentCore:
         if self.memory_vault is not None:
             self._owned.append(self.memory_vault)
         self._closed = False
+        self._task_subject: Subject | None = None
 
     # ---------- 生命周期 ----------
 
@@ -286,8 +287,6 @@ class AgentCore:
 
         注意：本方法持有实例串行锁等待当前任务，若任务已卡死，请先取消它。
         """
-        if self._closed:
-            return
         targets: list[Any] = list(self._owned)
         if close_shared:
             for candidate in (
@@ -301,6 +300,8 @@ class AgentCore:
                     targets.append(candidate)
         failures: list[str] = []
         async with self._task_lock:
+            if self._closed:
+                return
             for resource in targets:
                 closer = getattr(resource, "aclose", None) or getattr(resource, "close", None)
                 if closer is None:
@@ -479,10 +480,16 @@ class AgentCore:
 
         流式宿主若提前结束消费（``break`` 或丢弃迭代器），异步生成器被关闭时
         会自动释放该锁；请正常耗尽或显式关闭事件流，否则后续任务会一直等待。
+
+        DONE 是**展示终态**，不是生产者的最后动作：本次运行的学习回灌发生在
+        DONE 之后。消费者收到 DONE 就 break 并关闭流，会跳过这次回灌；只把
+        DONE 当结束的界面应继续耗尽事件流（后续事件可忽略）。
         """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
         async with self._task_lock:
+            if self._closed:
+                raise RuntimeError("AgentCore 已关闭，不能运行任务")
             events: list[AgentEvent] = []
             strategy: Strategy | None = None
             # 反馈要奖励**最先做出的路由决策**：澄清链里原任务先选 clarify，
@@ -493,6 +500,8 @@ class AgentCore:
             # 指标旁路：run 开始打点；任何异常都不允许反噬主流程。
             self._metrics_start()
             try:
+                # 实例锁保证薄壳委派读取的主体属于当前任务，而非模型参数。
+                self._task_subject = subject
                 async for event in self._loop.astream(task, subject=subject):
                     await self.channel.emit(event)
                     events.append(event)
@@ -509,6 +518,7 @@ class AgentCore:
                 run_error = exc
                 raise
             finally:
+                self._task_subject = None
                 self._metrics_finish(run_error)
                 # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
                 # 避免把"用户中途终止"误当成负样本污染学习。

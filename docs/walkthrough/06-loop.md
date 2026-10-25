@@ -269,7 +269,7 @@ async def astream(
 - 档位不再写死 `"strong"`：开成本感知时由 `TierPolicy.for_planning()` 决定（默认 strong），
   关闭时沿用路由给出的 tier。
 - 模型调用统一走 `self._model_chat(messages, None, tier=plan_tier)`——它是内核**唯一**的模型
-  调用入口：任务预算熔断闸、单次调用硬超时（`asyncio.wait_for`）、档位透传都在这一层；
+  调用入口：任务预算熔断闸、单次调用硬超时（`asyncio.timeout`）、档位透传都在这一层；
   超时会被转成带说明的 `TimeoutError`，由上层发 ERROR 事件体面收尾。
 - `_model_messages(ctx)` 负责组装出站消息：先把宿主实时状态渲染成**瞬态** system 块
   塞进本次消息（不进历史、不进记忆），并顺带把 `HOST_STATE` 事件带出来。

@@ -215,7 +215,9 @@ def parse_response(response: Any) -> ModelResponse:
             raw_input = getattr(block, "input", None)
             if raw_input is None and isinstance(block, dict):
                 raw_input = block.get("input")
-            arguments = raw_input if isinstance(raw_input, dict) else {}
+            if not isinstance(raw_input, dict):
+                raise ValueError("工具调用参数必须是合法 JSON 对象")
+            arguments = raw_input
             name = getattr(block, "name", None) or (
                 block.get("name") if isinstance(block, dict) else ""
             )

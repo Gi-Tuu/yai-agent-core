@@ -18,7 +18,7 @@
 | 加固 | 防的故障 | 一句话做法 |
 |---|---|---|
 | P0-1 并发串行契约 | 两条任务在 `await` 点交错，互相踩脏共享的上下文/记忆/注册表/学习态 | 一个 `AgentCore` 实例一把锁，任务全程串行 |
-| P0-2 模型硬超时 | 模型接口挂死，任务永远卡在 `await model.achat(...)`；用户取消传不进去 | loop 层用 `asyncio.wait_for` 统一兜底，超时/取消都清理 |
+| P0-2 模型硬超时 | 模型接口挂死，任务永远卡在 `await model.achat(...)`；用户取消传不进去 | loop 层用 `asyncio.timeout` 统一兜底，超时/取消都清理 |
 | P0-3 本地诊断 | 增强环节悄悄降级（回退规则、发现失败、压缩回退），现场却什么都没留下 | 一个零依赖、永不反噬的旁路回调，把"降级瞬间"喊出来 |
 
 三者都遵守同一条内核红线：**零第三方硬依赖、行为默认与旧版一致（不传开关就安静/安全）、
@@ -78,7 +78,7 @@ SPI 契约 `achat(messages, tools, *, tier="standard")` 已经被多个实现（
 Scripted、Fallback、宿主自定义）实现。一旦给契约方法加 `timeout` 形参，所有实现都要改，
 宿主自己写的 provider 还会签名不兼容。
 
-所以超时放在**调用方**——`AgentLoop` 用 `asyncio.wait_for` 统一包裹：
+所以超时放在**调用方**——`AgentLoop` 用 `asyncio.timeout` 统一包裹：
 
 ```python
 # loop.py __init__
@@ -88,19 +88,33 @@ def __init__(..., model_timeout: float | None = DEFAULT_MODEL_TIMEOUT):
 
 # 唯一的模型调用入口：5 处 achat 全部改走这里
 async def _model_chat(self, messages, tools, *, tier):
-    coro = self.model.achat(messages, tools, tier=tier)
     if self._model_timeout is None:
-        return await coro            # 显式关闭，交给模型客户端自身超时
-    return await asyncio.wait_for(coro, timeout=self._model_timeout)
+        return await self.model.achat(messages, tools=tools, tier=tier)
+    try:
+        async with asyncio.timeout(self._model_timeout):
+            return await self.model.achat(messages, tools=tools, tier=tier)
+    except TimeoutError:
+        raise TimeoutError(
+            f"模型调用超过 {self._model_timeout:g}s 硬超时上限，已终止"
+        ) from None
 ```
 
 - `None` = 不设内核级超时（宿主已在客户端层配好超时的场景）；
-- 超时抛 `TimeoutError`（`wait_for` 原生），消息里带"超时"二字，最终被翻译成一条
+- 超时抛 `TimeoutError`（`asyncio.timeout` 原生），消息里带"超时"二字，最终被翻译成一条
   `ERROR` 事件体面收尾，而不是裸异常穿透宿主；
 - **`CancelledError` 不被吞**。它继承自 `BaseException` 而非 `Exception`，外层
   `except Exception` 抓不到它，所以用户主动取消（外层 `task.cancel()`）会干净地一路传播，
-  同时 `wait_for` 会先把取消真正送达挂起的模型调用——测试用一个记录 `cancelled` 的
+  同时 `asyncio.timeout` 会先把取消真正送达挂起的模型调用——测试用一个记录 `cancelled` 的
   `SlowThenOk` 模型验证了这一点。
+
+> **为什么是 `asyncio.timeout` 而不是 `asyncio.wait_for`**：二者在 3.12+ 语义等价，但在
+> 3.11 上不是。3.11 的 `wait_for` 会把协程包进一个额外的 Task，再等一个内部 waiter；
+> 外层取消恰好落在"内层协程同时完成"时，它会走 `if fut.done(): return fut.result()`
+> 把取消**吞掉并返回结果**。内核恰恰靠取消生效：`shell/employee` 委派里"一个子任务失败
+> 要中断另一个子任务"就是 `task.cancel()`；一旦被吞，子任务就没人中断，工具会一直跑下去，
+> 整次委派挂死。这条在 Python 3.11 上复现并修掉了（`asyncio.timeout` 在 3.11+ 都有，
+> 且和 3.12+ 的 `wait_for` 是同一套语义），回归测试见
+> `tests/test_model_timeout.py::test_cancel_at_model_completion_boundary_is_not_swallowed`。
 
 ### C.2 压缩超时：增强失败必须能回退
 
@@ -230,7 +244,9 @@ if hasattr(self.model, "on_diagnostic"):
   共享状态不串；再断言 `aclose()` 后锁释放、能接下一单。
 - **超时/取消**（`test_model_timeout.py`）：`SlowThenOk` 第一次 sleep 1s 并记录
   `cancelled`，`model_timeout=0.1` 时断言约在 0.1s 终止、收到 ERROR、模型协程确实被取消；
-  `model_timeout=None` 时慢响应照常返回；外层 `cancel()` 时 `CancelledError` 干净传播。
+  `model_timeout=None` 时慢响应照常返回；外层 `cancel()` 时 `CancelledError` 干净传播；
+  第四个用例 `test_cancel_at_model_completion_boundary_is_not_swallowed` 把取消**精确打在
+  "模型调用刚返回"的那个竞态窗口**上，断言取消没有被吞、在飞的工具被真正中断。
 - **诊断**（`test_diagnostics.py`）：自定义 `_SleepModel/_BoomModel/_ConnErrorModel/
   _OkModel/_BrokenDiscovery`，分别触发超时、路由回退、发现失败、多模型降级、压缩回退，
   断言回调收到的 `kind/level/data`；并断言回调抛错被吞、`AgentCore` 把回调注入了
@@ -253,7 +269,8 @@ C 节讲的是模型超时，这里同一思路用在工具上，但两种 handl
 
 ```python
 if inspect.iscoroutinefunction(handler):
-    return await asyncio.wait_for(handler(**arguments), timeout)   # 真取消：协程收到 CancelledError
+    async with asyncio.timeout(timeout):                       # 真取消：协程收到 CancelledError
+        return await handler(**arguments)
 # 同步 handler：丢进线程池，但**不用 wait_for**
 future = loop.run_in_executor(None, functools.partial(handler, **arguments))
 done, _ = await asyncio.wait({future}, timeout=timeout)            # 到点没完成就立刻放弃
@@ -267,7 +284,9 @@ done, _ = await asyncio.wait({future}, timeout=timeout)            # 到点没�
 还有一条不粉饰的边界：被放弃的线程仍在循环默认线程池里，**事件循环收尾会 join 它**。
 所以同步工具的超时是"给模型的止损"，不是进程级立即脱身；可能长时间阻塞的能力应当写成 `async def`。
 超时回给模型的话术也分两种（异步说"已取消"，同步说"仍在后台、先确认状态再重试"），
-否则模型只会原样重试同一个调用。
+否则模型只会原样重试同一个调用。组合工具声明的 `timeout_ms` 也按同一口径把剩余预算
+下发给每个步骤：即使全局 `tool_timeout` 关闭，同步步骤也会在组合到期时止损，而不是
+阻塞事件循环直到 handler 返回。
 
 **F-2 `await core.aclose(*, close_shared=False)`**
 
@@ -285,15 +304,16 @@ if self.memory_vault is not None: self._owned.append(self.memory_vault)
 替别人关资源是误伤。确实要连整张图一起收才传 `close_shared=True`，顺序固定
 channel → discovery → sandbox → memory → model。三条细节：
 
-- 幂等（`_closed` 标记），可以放在 `finally` 里重复调；
-- 拿实例串行锁，所以**不会在当前任务跑到一半时把资源抽走**（要关先取消任务）；
+- 幂等：在实例串行锁内检查 `_closed`，并发关闭也只收尾一次，可以放在 `finally` 里重复调；
+- 拿实例串行锁，所以**不会在当前任务跑到一半时把资源抽走**（要关先取消任务）；`run()` / `astream()` 拿锁后也检查关闭状态，已经关闭或排队期间被关闭的实例会抛出 `RuntimeError`，不再调用模型与通道；
 - 单个资源关不掉不阻止其余收尾，但会在全部尝试之后抛汇总异常——收尾故障要能被运维看见。
 
 ## G. 自检（读完应能回答）
 
 1. 为什么一个 `AgentCore` 实例上要强制任务串行？共享的可变状态有哪几处？
 2. 想要多租户/多专员并发，正确的用法是什么？哪些部件可以共享、哪些必须随实例独立？
-3. 为什么超时放在 loop 层用 `wait_for`，而不是给 `ModelProvider.achat` 加 `timeout` 参数？
+3. 为什么超时放在 loop 层用 `asyncio.timeout`，而不是给 `ModelProvider.achat` 加 `timeout` 参数？
+   （再追问一层：为什么不是 `asyncio.wait_for`？）
 4. 用户主动取消时，`CancelledError` 为什么不会被 `except Exception` 误吞？
 5. 取消一个沙箱子进程，为什么必须 `kill()` 之后再 `communicate()`？
 6. `DiagnosticEvent` 和 `AgentEvent`、OpenTelemetry span 三者各面向谁、回答什么问题？

@@ -209,6 +209,112 @@ def test_path_fill_204_404_and_wrapped_body(spec_dict, monkeypatch):
     _run(bridge.aclose())
 
 
+def _path_bridge(template, names, captured):
+    spec = {
+        "openapi": "3.0.3",
+        "servers": [{"url": "https://example.test/api/v3"}],
+        "paths": {template: {"get": {
+            "operationId": "getPet",
+            "parameters": [
+                {"name": name, "in": "path", "required": True,
+                 "schema": {"type": "string"}}
+                for name in names
+            ],
+            "responses": {"200": {"description": "ok"}},
+        }}},
+    }
+    return _bridge(spec, captured)
+
+
+@pytest.mark.parametrize(("template", "kwargs"), [
+    ("/pets/{id}", {"id": "."}),
+    ("/pets/{id}", {"id": ".."}),
+    ("/pets/{id}/foo", {"id": "."}),
+    ("/pets/{id}/foo", {"id": ".."}),
+    ("/pets/{id}/", {"id": ".."}),
+    ("/{id}/pets", {"id": ".."}),
+    ("/pets/.{id}/foo", {"id": ""}),
+    ("/pets/{id}./foo", {"id": ""}),
+    ("/pets/.{id}/foo", {"id": "."}),
+    ("/pets/{id}./foo", {"id": "."}),
+    ("/pets/{a}{b}/foo", {"a": ".", "b": "."}),
+    ("/pets/{a}{b}/foo", {"a": "", "b": ".."}),
+    ("/pets/{a}{b}/foo", {"a": ".", "b": ""}),
+    ("/pets/{a}.{b}/foo", {"a": "", "b": ""}),
+    ("/pets/{a}.{b}/foo", {"a": "", "b": "."}),
+])
+def test_path_dot_segments_rejected_before_request(template, kwargs):
+    captured: list = []
+    bridge = _path_bridge(template, kwargs, captured)
+
+    async def invoke():
+        async with bridge:
+            with pytest.raises(RuntimeError, match="独立点段"):
+                await bridge.specs[0].handler(**kwargs)
+
+    _run(invoke())
+    assert captured == []  # spec 内联；错误必须发生在 transport 收到请求之前。
+
+
+@pytest.mark.parametrize(("template", "kwargs", "raw_suffix"), [
+    ("{id}", {"id": "pet.v1"}, b"pet.v1"),
+    ("{id}", {"id": ".hidden"}, b".hidden"),
+    ("{id}", {"id": "pet..v1"}, b"pet..v1"),
+    ("{id}", {"id": "pet."}, b"pet."),
+    ("{id}", {"id": "..."}, b"..."),
+    ("{id}", {"id": "猫"}, b"%E7%8C%AB"),
+    ("{id}", {"id": "a b"}, b"a%20b"),
+    ("{id}", {"id": "a/b"}, b"a%2Fb"),
+    ("{id}", {"id": "../foo"}, b"..%2Ffoo"),
+    ("{id}", {"id": "a/../b"}, b"a%2F..%2Fb"),
+    ("{id}", {"id": r"..\foo"}, b"..%5Cfoo"),
+    ("{id}", {"id": "%2e"}, b"%252e"),
+    ("{id}", {"id": "%2E%2e"}, b"%252E%252e"),
+    ("{id}", {"id": ".%2e"}, b".%252e"),
+    ("{id}", {"id": "%2e%2e%2ffoo"}, b"%252e%252e%252ffoo"),
+    ("{id}", {"id": "%252e"}, b"%25252e"),
+    ("{id}", {"id": "?#"}, b"%3F%23"),
+    ("{id}", {"id": ""}, b""),
+    ("{id}", {"id": None}, b"None"),
+    ("{id}", {"id": 7}, b"7"),
+    ("pet{id}", {"id": ".."}, b"pet.."),
+    ("{id}.json", {"id": "."}, b"..json"),
+    ("{a}{b}", {"a": ".", "b": "pet"}, b".pet"),
+    ("{a}{b}", {"a": "", "b": ""}, b""),
+    ("{a}.{b}", {"a": "", "b": "pet"}, b".pet"),
+])
+def test_path_encoding_preserves_non_dot_segments(template, kwargs, raw_suffix):
+    captured: list = []
+    bridge = _path_bridge("/pets/" + template + "/foo", kwargs, captured)
+
+    async def invoke():
+        async with bridge:
+            await bridge.specs[0].handler(**kwargs)
+
+    _run(invoke())
+    assert len(captured) == 1
+    # url.path 是解码后的展示值；raw_path 才能证明编码分隔符没有成为请求路径分隔符。
+    assert captured[0].url.raw_path == b"/api/v3/pets/" + raw_suffix + b"/foo"
+
+
+@pytest.mark.parametrize(("segment", "raw_path", "decoded_path"), [
+    (".", b"/api/v3/pets/foo", "/api/v3/pets/foo"),
+    ("..", b"/api/v3/foo", "/api/v3/foo"),
+    ("%2e", b"/api/v3/pets/%2e/foo", "/api/v3/pets/./foo"),
+    ("%2e%2e", b"/api/v3/pets/%2e%2e/foo", "/api/v3/pets/../foo"),
+    ("..%2Fbar", b"/api/v3/pets/..%2Fbar/foo", "/api/v3/pets/../bar/foo"),
+    ("%252e", b"/api/v3/pets/%252e/foo", "/api/v3/pets/%2e/foo"),
+])
+def test_httpx_dot_normalization_boundary(segment, raw_path, decoded_path):
+    """直接请求刻画 httpx 行为，不通过桥绕过点段校验，也不模拟服务器重复解码。"""
+    captured: list = []
+    with httpx.Client(transport=_transport(captured)) as client:
+        client.get("https://example.test/api/v3/pets/" + segment + "/foo")
+    assert len(captured) == 1
+    assert captured[0].url.raw_path == raw_path
+    assert captured[0].url.path == decoded_path
+
+
 def test_apikey_header_auth(spec_dict, monkeypatch):
     monkeypatch.setenv("OPENAPI_AUTH_TOKEN", "test-token")
     key_spec = json.loads(json.dumps(spec_dict))

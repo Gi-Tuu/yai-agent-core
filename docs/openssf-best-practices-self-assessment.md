@@ -1,7 +1,9 @@
 # OpenSSF Best Practices Badge（原 CII）自评清单 —— YAI Agent Core
 
 > 对照 OpenSSF Best Practices **Passing** 级官方标准（https://www.bestpractices.dev/en/criteria/passing ）
-> 逐条评估本仓库当前 main（v0.8.0）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
+> 逐条评估本仓库当前 main（**v0.22.0**，2026-10-25 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
+> 复核要点见文末「八、复核记录（2026-10-25）」；本次只更新**仓库内**自证文本，
+> **未在 bestpractices.dev 平台上重新提交**（平台提交需本人账号 OAuth，属外部写入）。
 >
 > **如何申请（网页操作，约 15 分钟）**
 > 1. 打开 https://www.bestpractices.dev ，右上角用 **GitHub 账号登录（OAuth）**；
@@ -10,6 +12,12 @@
 > 4. 全部 MUST 为 Met（或 N/A）、SHOULD 为 Met 或 Unmet+理由、SUGGESTED 为 Met 或 Unmet，即可提交获得 **Passing Badge**，把徽章链接放进 README。
 >
 > **结果：已于 2026-10-10 通过自评并获得 Passing（过境）徽章**（项目 [#15360](https://www.bestpractices.dev/projects/15360)），Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足；英文门面已补齐，`english` 条改为 Met；仅 2 条 SUGGESTED（专用动态分析 fuzzer/DAST）为 Unmet，不阻塞 Passing。
+>
+> **2026-10-25 复核**：徽章状态不变（Passing）。仓库侧的证据已更新——测试规模从当时的 ~1 584 项增至
+> **1 881 项（1 876 通过 + 5 跳过）**、行覆盖率 **94.37%**；原先 Unmet 的两条动态分析
+> SUGGESTED **已具备可用工具**（atheris fuzzing 4 个 target + CI `fuzz` job，见第五节的
+> `dynamic_analysis*` 行），本清单据此改判为 Met，**但平台上的自评仍以 2026-10-10 那次提交为准**，
+> 下次自评时再正式勾选。
 
 状态图例：✅ Met · ⚠️ Unmet（需填理由） · ➖ N/A（需填理由）
 
@@ -26,12 +34,12 @@
 | floss_license | 成果以 FLOSS 发布（MUST） | ✅ | MIT（`pyproject.toml` PEP 639 SPDX） |
 | floss_license_osi | 许可证经 OSI 认可（SUGGESTED） | ✅ | MIT 为 OSI 认可许可证 |
 | license_location | 许可证在仓库标准位置（MUST，Met URL） | ✅ | 根目录 `LICENSE` |
-| documentation_basics | 提供基础文档（MUST，可 N/A） | ✅ | README + `docs/` + `docs/walkthrough/00–27` |
+| documentation_basics | 提供基础文档（MUST，可 N/A） | ✅ | README + `docs/` + `docs/walkthrough/00–55`（55 篇逐行讲义 + 00-index） |
 | documentation_interface | 描述外部接口的输入/输出（MUST，可 N/A） | ✅ | `docs/architecture.md`、SPI 契约、FastAPI 端点、walkthrough |
 | sites_https | 站点（网站/仓库/下载）支持 HTTPS/TLS（MUST） | ✅ | GitHub / Gitee / PyPI 均 HTTPS |
 | discussion | 可搜索、URL 可定位、新人可参与、无需专有软件的讨论机制（MUST） | ✅ | GitHub Issues / PR（Gitee 同步） |
 | english | 英文文档、接受英文反馈（SHOULD） | ✅ | **Met**：已提供 README.en.md、CONTRIBUTING.en.md、SECURITY.md、docs/architecture.en.md、docs/comparison.en.md，并接受英文 issue / code review；2026-10-10 随 Passing 自评（#15360）勾选 Met。 |
-| maintained | 项目处于维护状态（MUST） | ✅ | 持续提交（建库 2026-09-09，近一周仍有推送），ROADMAP 活跃 |
+| maintained | 项目处于维护状态（MUST） | ✅ | 持续提交（建库 2026-09-09，403 次提交，2026-10-25 仍有合并），ROADMAP 活跃；GitHub 开放 issue/PR 计数为 0 |
 
 ## 二、Change Control 变更控制
 
@@ -41,9 +49,9 @@
 | repo_track | 记录改动内容/人/时间（MUST） | ✅ | git 历史 |
 | repo_interim | 含版本之间的中间版本，非仅最终发布（MUST） | ✅ | 主干持续 commit |
 | repo_distributed | 使用分布式 VCS（SUGGESTED） | ✅ | git |
-| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.1 → 0.8.0 唯一 |
-| version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（`0.8.0`） |
-| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0`、`v0.8.0` |
+| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.22.0 唯一（17 个发布 tag） |
+| version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（当前 `0.22.0`） |
+| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.22.0`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
 | release_notes | 每版有人可读发布说明，非 git log（MUST，Met URL） | ✅ | `CHANGELOG.md` |
 | release_notes_vulns | 列出本版修复的、已分配 CVE 的公开运行时漏洞（MUST，可 N/A） | ➖ | **N/A 理由**："项目成果自身无已分配 CVE 的公开漏洞；故无此类条目。" |
 | report_process | 提供提交 bug 的流程（MUST，Met URL） | ✅ | GitHub Issues + `.github/ISSUE_TEMPLATE/` |
@@ -62,9 +70,9 @@
 | build | 若需构建，提供可自动重建的工作构建系统（MUST，可 N/A） | ✅ | hatchling 构建后端，`uv build` / pip 安装 |
 | build_common_tools | 使用常见构建工具（SUGGESTED，可 N/A） | ✅ | 标准 Python 打包（hatchling + uv） |
 | build_floss_tools | 仅用 FLOSS 工具即可构建（SHOULD，可 N/A） | ✅ | 工具链全 FLOSS |
-| test | 至少一个 FLOSS 自动测试套件，并说明如何运行（MUST） | ✅ | pytest 套件；CI 与 README/CONTRIBUTING 说明 `uv run pytest` |
+| test | 至少一个 FLOSS 自动测试套件，并说明如何运行（MUST） | ✅ | pytest 套件，**1 881 项（1 876 通过 + 5 跳过，全部离线、不依赖网络与密钥）**；CI 与 README/CONTRIBUTING 说明 `uv run pytest` |
 | test_invocation | 测试套件可以该语言的标准方式调用（SHOULD） | ✅ | `pytest` / `uv run pytest` |
-| test_most | 套件覆盖多数分支/输入/功能（SUGGESTED） | ✅ | 行覆盖率约 92.6%（CI 门禁 90） |
+| test_most | 套件覆盖多数分支/输入/功能（SUGGESTED） | ✅ | 行覆盖率 **94.37%**（2026-10-25 本地全量实测：8 017 语句 / 451 未覆盖；CI 门禁 90） |
 | test_continuous_integration | 实施持续集成（SUGGESTED） | ✅ | GitHub Actions（多版本矩阵） |
 | test_policy | 有"新功能须加测试"的策略（MUST） | ✅ | CONTRIBUTING / AGENTS 纪律："改行为必须同步加/改测试" |
 | tests_are_added | 最近重大改动有遵守加测试的证据（MUST） | ✅ | 近期 compaction / 沙箱 / 动态发现源均带对应测试 |
@@ -102,10 +110,10 @@
 | static_analysis_common_vulnerabilities | 工具含查常见漏洞的规则（SUGGESTED，可 N/A） | ✅ | CodeQL 安全规则集 |
 | static_analysis_fixed | 静态分析发现的中高危漏洞及时修（MUST，可 N/A） | ✅ | CodeQL 0 alerts，无待修项 |
 | static_analysis_often | 每次提交或每日做静态分析（SUGGESTED，可 N/A） | ✅ | CodeQL 在 push/PR 触发 + 每周一定时 |
-| dynamic_analysis | 重大发布前用动态分析工具（SUGGESTED） | ⚠️ | **Unmet**："当前未部署专用动态分析工具（fuzzer/DAST）；测试套件已动态执行全部行为。规划在后续版本引入。"（SUGGESTED，不阻塞） |
+| dynamic_analysis | 重大发布前用动态分析工具（SUGGESTED） | ✅ | **Met**：`fuzzing/` 下 4 个 atheris（libFuzzer）target——`fuzz_features.py`、`fuzz_schema.py`、`fuzz_compaction.py`、`fuzz_sandbox_gate.py`；CI `fuzz` job（Ubuntu / py3.12）每次运行，每个 target 限时 45 秒，覆盖内核里直接面对不可信输入的纯函数与随包发布的沙箱 AST 闸门。 |
 | dynamic_analysis_unsafe | 内存不安全语言用动态工具查内存问题（SUGGESTED，可 N/A） | ➖ | **N/A**：Python 为内存安全语言，无 C/C++ 产物 |
-| dynamic_analysis_enable_assertions | 动态分析配置启用大量断言（SUGGESTED） | ⚠️ | **Unmet**：同 dynamic_analysis，暂未配置专用动态分析 |
-| dynamic_analysis_fixed | 动态分析发现的中高危及时修（MUST，可 N/A） | ➖ | **N/A**：暂无专用动态分析发现项 |
+| dynamic_analysis_enable_assertions | 动态分析配置启用大量断言（SUGGESTED） | ✅ | **Met**：每个 target 同时断言一组不变量（分桶值合法、`key` 固定 9 元组、根节点类型形状保持、区间满足 `0 <= start < end <= n` 等），违反即报错退出。 |
+| dynamic_analysis_fixed | 动态分析发现的中高危及时修（MUST，可 N/A） | ✅ | **Met**：fuzz 实测撞出过深嵌套属性链让 `RecursionError` 穿透代码工具沙箱闸门，现已在闸门内转为拒绝并固化为用例（`tests/test_sandbox_static_gate.py`）；v0.21.0 还修掉了 fuzz 撞出的预言机 NaN 恒等陷阱。 |
 
 ---
 
@@ -120,3 +128,26 @@
 1. 获得 Passing Badge 后，把官方提供的徽章 Markdown/URL 放到 `README.md` 顶部徽章区；
 2. 在 `CHANGELOG.md` 记录"获得 OpenSSF Best Practices Passing Badge"；
 3. 此条同时改进 OpenSSF Scorecard 的 **CII-Best-Practices** 计分项：获得 Passing 徽章后，2026-10-10 的 Scorecard 跑分（commit f052359）已由 0 分转为 **5 分**（Passing 档计 5 分，Silver/Gold 才对应更高分，并非满分）；同次跑分总分由 6.1 升至 **6.5**，**CI-Tests** 项也随已合并 PR 的 CI 全绿转为 10 分。
+
+---
+
+## 八、复核记录（2026-10-25）
+
+| 项 | 复核前（2026-10-10 自评时） | 复核后（2026-10-25 本地实测） |
+|---|---|---|
+| 自评基线 | main v0.8.0 | main v0.22.0（commit a5dacd6） |
+| 测试规模 | ~1 584 项 | **1 881 项**（1 876 通过 + 5 跳过），75.54s，exit 0 |
+| 行覆盖率 | 约 92.6% | **94.37%**（8 017 语句 / 451 未覆盖；CI 门禁 90） |
+| 讲义规模 | `docs/walkthrough/00–27` | `00–55`（55 篇逐行讲义 + 00-index） |
+| 发布 tag | v0.7.0、v0.8.0 | 17 个发布 tag：v0.7.0 … v0.22.0（含 v0.8.1） |
+| 动态分析（SUGGESTED） | ⚠ Unmet：未部署 fuzzer/DAST | ✅ Met：atheris fuzzing 4 个 target + CI `fuzz` job（Ubuntu/py3.12，每个 target 限时 45 秒）；已有 fuzz 撞出缺陷并修复的实例 |
+| 提交活跃度 | 建库 2026-09-09 | 403 次提交，2026-10-25 仍有合并；GitHub 开放 issue/PR 计数 0 |
+
+未变的判定与边界：
+
+- **徽章状态不变**：Passing（#15360，2026-10-10 获得）。本次只把**仓库内**自证文本校准到现状，
+  **未在 bestpractices.dev 重新提交**——平台提交需本人 OAuth 账号，属外部写入，本轮未执行。
+- **Silver / Gold 仍卡在多人审查**：单人项目缺第二审查者，不为拿徽章找挂名审查。
+- **Discussions 仍未开启**：Issue + PR 已满足 `discussion` 条；是否开 Discussions 属维护决策，
+  本轮明确不做。
+- **本文件不构成新的对外承诺**：第三方评分以平台复扫结果为准；自评结论不替代复扫。

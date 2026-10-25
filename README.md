@@ -169,7 +169,7 @@ print(result.final_text)                                # ③ 可交付结果 + 
   灵动岛只做前台 / 交换机，**不做超级 Agent**。
 
 ```bash
-uv sync --extra desktop
+uv sync --extra desktop --extra llm
 .\.venv\Scripts\python.exe -m shell.desktop            # 离线演示：无 Key 看全部动效
 .\.venv\Scripts\python.exe -m shell.desktop --live     # 接真实模型
 ```

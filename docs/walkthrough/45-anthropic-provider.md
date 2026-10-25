@@ -37,14 +37,17 @@ tool      → 转成 user 消息里的一个 tool_result 块（带原 tool_use_i
 - **不生成空文本块**。assistant 只调工具时 `content` 是空串，塞一个空 text 块进去会被上游拒绝；
   所以空文本直接跳过，只留 `tool_use`。
 
-工具参数解析失败（模型吐出坏 JSON）时按 `{}` 处理，**绝不把坏 JSON 原样转发**——
-那是让模型错误升级成协议错误，回灌给模型的就该是一个结构化的空参数。
+这里翻译的是已有上下文；历史工具参数解析失败时仍按 `{}` 序列化，不转发坏 JSON。
+这不代表允许执行非法模型响应：新响应在下面的 `parse_response` 边界严格校验。
 
 ## 2. 响应解析：`parse_response`
 
 响应内容是一串块，本模块只认两种：`text` 拼接成 `content`，`tool_use` 变
 `ToolCallRequest(id, name, input)`。**其它块类型（例如思考块）忽略但保留在 `raw` 里**——
 不在这里猜测语义，也不丢原始响应。
+
+`tool_use.input` 必须是字典；缺失、`null`、数组和标量会抛出不含原始参数的 `ValueError`，
+不再替换成 `{}` 执行默认值。显式空对象合法；整批响应解析成功后才交给内核执行。
 
 token 用量映射成 `TokenUsage(input_tokens → prompt, output_tokens → completion, total=两者相加)`；
 后端没给 usage 时 `usage=None`，**内核不臆造数字**，此时任务级 token 预算不生效、
@@ -84,5 +87,5 @@ class AnthropicProvider:
 
 1. 为什么 `system` 不能留在 messages 里？少了这一步会怎样？
 2. 一次调用产生两个工具结果时，翻译后的消息数组长什么样？
-3. 模型返回坏 JSON 的工具参数，适配器的处理是什么？为什么不是原样转发或抛异常？
+3. 已有历史的参数翻译与新响应的参数校验有什么区别？为什么不能把非法新响应替换成空对象再执行？
 4. 这个 provider 与 OpenAI 那个，在内核眼里有哪几处不同？（答案应该是：没有。）

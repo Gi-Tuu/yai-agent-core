@@ -28,8 +28,10 @@
      read-only root filesystem, drops ALL capabilities, memory/PID limits), or implement the same
      `ToolSandbox` contract with gVisor / Firecracker.
 3. **Discovery is not authorization.** Tools registered via dynamic discovery (MCP / OpenAPI) still
-   execute through the unified `PermissionPolicy`; risky operations (writes / network / shell) require
-   explicit host approval by default.
+   execute through the unified authorization checks, including `PermissionPolicy`. The default Core
+   policy allows calls; hosts must explicitly configure `policy` or declare `approval.required` to
+   require approval for risky operations (writes / network / shell). Required approval cannot bypass
+   a policy denial, and discovery never bypasses authorization.
 4. **Secrets and data.** `.env` is in `.gitignore` — never commit real API keys. All SQLite access uses
    parameterized queries; SQL is never string-concatenated.
 

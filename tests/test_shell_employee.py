@@ -412,3 +412,276 @@ def test_worker_cancellation_propagates() -> None:
             await task
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("decision", ["deny", "ask"])
+def test_worker_cannot_relax_parent_policy(decision) -> None:
+    from yai_core.spi import PermissionDecision
+
+    calls = []
+
+    def remove_record() -> str:
+        calls.append(1)
+        return "removed"
+
+    class Policy:
+        async def check(self, name, arguments):
+            return PermissionDecision(decision)
+
+    root = AgentCore(ScriptedModel([
+        ModelResponse(tool_calls=[ToolCallRequest(id="c", name="remove_record", arguments={})]),
+        ModelResponse(content="finished"),
+    ]), policy=Policy())
+    root.register_tools([build_spec(remove_record)])
+    result = asyncio.run(run_worker(root, goal="删除记录", tools=["remove_record"]))
+    assert calls == []
+    assert "remove_record" in result.denied
+    assert not result.ok
+
+
+@pytest.mark.parametrize("kind", ["approval", "gate"])
+def test_worker_never_auto_confirms_required_approval(kind) -> None:
+    from yai_core.types import ApprovalPolicy, GateDecision, ToolGovernance
+
+    calls = []
+
+    def remove_record() -> str:
+        calls.append(1)
+        return "removed"
+
+    spec = build_spec(remove_record)
+    spec.governance = (
+        ToolGovernance(approval=ApprovalPolicy(required=True)) if kind == "approval"
+        else ToolGovernance(gate=lambda args, subject: GateDecision(require_approval=True))
+    )
+    root = AgentCore(ScriptedModel([
+        ModelResponse(tool_calls=[ToolCallRequest(id="c", name=spec.name, arguments={})]),
+        ModelResponse(content="finished"),
+    ]))
+    root.register_tools([spec])
+    result = asyncio.run(run_worker(root, goal="删除记录", tools=[spec.name]))
+    assert calls == []
+    assert spec.name in result.denied
+    assert not result.ok
+
+
+def test_worker_rechecks_parent_policy_after_assembly() -> None:
+    from yai_core.policy import AllowlistPolicy
+
+    root = _root([ModelResponse(content="ok")])
+    worker = build_worker_core(root, goal="读取", tools=["get_item"])
+    root.executor.policy = AllowlistPolicy(mode="deny_all")
+    _, ok, _ = asyncio.run(worker.executor.execute("get_item", {"key": "private"}))
+    assert not ok
+
+
+def test_requested_delegate_is_rebound_and_cannot_escape_depth() -> None:
+    root = _root([ModelResponse(content="ok")])
+    attach_delegate(root)
+    child = build_worker_core(
+        root, goal="子任务", tools=["list_items", "delegate"], register_delegate=True
+    )
+    assert child.registry.get("delegate") is not root.registry.get("delegate")
+    leaf = build_worker_core(
+        child, goal="孙任务", tools=["list_items", "delegate"], depth=MAX_DEPTH,
+        register_delegate=True,
+    )
+    assert not leaf.registry.has("delegate")
+
+
+def test_empty_delegate_allowlist_does_not_grant_defaults() -> None:
+    root = _root([ModelResponse(content="ok")])
+    attach_delegate(root)
+    out = asyncio.run(root.registry.get("delegate").handler(
+        tasks=[{"goal": "no tools", "tools": []}]
+    ))
+    assert out["results"][0]["granted_tools"] == []
+
+
+@pytest.mark.parametrize("subject_id", ["permitted", "blocked"])
+def test_delegate_inherits_trusted_task_subject(subject_id) -> None:
+    from yai_core.spi import PermissionDecision
+    from yai_core.types import Subject, ToolGovernance
+
+    seen = []
+    called = []
+    subject = Subject(subject_id=subject_id)
+
+    class Policy:
+        yai_subject_aware = True
+
+        async def check(self, name, arguments, *, subject=None):
+            seen.append((name, subject))
+            if name == "delegate" or subject.subject_id == "permitted":
+                return PermissionDecision.ALLOW
+            return PermissionDecision.DENY
+
+    def get_private() -> str:
+        called.append(1)
+        return "private result"
+
+    gate_subjects = []
+    spec = build_spec(get_private)
+    spec.governance = ToolGovernance(gate=lambda args, who: gate_subjects.append(who))
+    root = AgentCore(ScriptedModel([
+        ModelResponse(tool_calls=[ToolCallRequest(id="d", name="delegate", arguments={
+            "tasks": [{"goal": "读取", "tools": [spec.name], "subject": "permitted"}],
+        })]),
+        ModelResponse(tool_calls=[ToolCallRequest(id="c", name=spec.name, arguments={})]),
+        ModelResponse(content="child finished"),
+        ModelResponse(content="root finished"),
+    ]), policy=Policy(), llm_router=False)
+    root.register_tools([spec])
+    attach_delegate(root)
+    asyncio.run(root.run("委派读取资料", subject=subject))
+    assert (spec.name, subject) in seen
+    assert gate_subjects and all(who is subject for who in gate_subjects)
+    assert called == ([1] if subject_id == "permitted" else [])
+    assert root._task_subject is None
+
+
+def test_grandchild_uses_all_ancestor_argument_policies() -> None:
+    from yai_core.spi import PermissionDecision
+
+    class Policy:
+        async def check(self, name, arguments):
+            return (PermissionDecision.DENY if arguments.get("key") == "private"
+                    else PermissionDecision.ALLOW)
+
+    root = _root([ModelResponse(content="ok")])
+    root.executor.policy = Policy()
+    child = build_worker_core(root, goal="子", tools=["get_item"])
+    leaf = build_worker_core(child, goal="孙", tools=["get_item"], depth=MAX_DEPTH)
+    _, allowed, _ = asyncio.run(leaf.executor.execute("get_item", {"key": "public"}))
+    _, denied, _ = asyncio.run(leaf.executor.execute("get_item", {"key": "private"}))
+    assert allowed and not denied
+
+
+def test_rebound_delegate_preserves_parent_approval() -> None:
+    from yai_core.types import ApprovalPolicy, ToolGovernance
+
+    root = _root([ModelResponse(content="ok")])
+    attach_delegate(root)
+    governance = ToolGovernance(approval=ApprovalPolicy(required=True))
+    root.registry.get("delegate").governance = governance
+    child = build_worker_core(root, goal="子", tools=["get_item"], register_delegate=True)
+    assert child.registry.get("delegate").governance is governance
+    _, ok, _ = asyncio.run(child.executor.execute("delegate", {
+        "tasks": [{"goal": "孙", "tools": ["get_item"]}]
+    }))
+    assert not ok
+
+
+@pytest.mark.parametrize("case", ["gate", "missing_call", "unknown_allowlist"])
+def test_worker_reports_failures_without_tool_events(case) -> None:
+    from yai_core.types import GateDecision, ToolGovernance
+
+    root = _root([
+        ModelResponse(tool_calls=[ToolCallRequest(
+            id="c", name="ghost" if case == "missing_call" else "list_items", arguments={}
+        )]),
+        ModelResponse(content="finished"),
+    ])
+    if case == "gate":
+        root.registry.get("list_items").governance = ToolGovernance(
+            gate=lambda args, subject: GateDecision(reject="blocked")
+        )
+    result = asyncio.run(run_worker(
+        root, goal="读取", tools=["ghost"] if case == "unknown_allowlist" else ["list_items"]
+    ))
+    assert not result.ok
+    assert result.denied
+
+
+@pytest.mark.parametrize("case", ["approval", "gate", "missing", "timeout"])
+def test_nested_worker_failure_is_not_reported_as_success(case) -> None:
+    from yai_core.types import ApprovalPolicy, GateDecision, ToolGovernance
+
+    calls = []
+
+    async def remove_record() -> str:
+        if case == "timeout":
+            await asyncio.Event().wait()
+        calls.append(1)
+        return "removed"
+
+    name = "ghost" if case == "missing" else "remove_record"
+    root = AgentCore(ScriptedModel([
+        ModelResponse(tool_calls=[ToolCallRequest(id="d", name="delegate", arguments={
+            "tasks": [{"goal": "删除", "tools": [name], "timeout": 0.01}],
+        })]),
+        ModelResponse(tool_calls=[ToolCallRequest(id="c", name=name, arguments={})]),
+        ModelResponse(content="grandchild finished"),
+        ModelResponse(content="child finished"),
+    ]))
+    spec = build_spec(remove_record)
+    if case == "approval":
+        spec.governance = ToolGovernance(approval=ApprovalPolicy(required=True))
+    elif case == "gate":
+        spec.governance = ToolGovernance(gate=lambda args, subject: GateDecision(reject="blocked"))
+    root.register_tools([spec])
+    attach_delegate(root)
+    result = asyncio.run(run_worker(
+        root, goal="委派删除", tools=[spec.name], register_delegate=True
+    ))
+    assert calls == []
+    assert not result.ok
+    assert "delegate" in result.denied
+
+
+def test_delegate_exception_cancels_and_joins_siblings(monkeypatch) -> None:
+    import shell.employee.delegate as delegate_module
+
+    async def scenario():
+        started, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def remove_record() -> str:
+            started.set()
+            try:
+                await release.wait()
+                calls.append(1)
+                return "removed"
+            finally:
+                cancelled.set()
+
+        root = AgentCore(ScriptedModel([
+            ModelResponse(tool_calls=[ToolCallRequest(id="c", name="remove_record", arguments={})])
+        ]))
+        root.register_tools([build_spec(remove_record)])
+        supervisor = attach_delegate(root)
+        original = delegate_module.run_worker
+
+        async def run(core, **kwargs):
+            if kwargs["goal"] == "invalid":
+                await started.wait()
+            return await original(core, **kwargs)
+
+        monkeypatch.setattr(delegate_module, "run_worker", run)
+        with pytest.raises(ValueError):
+            await root.registry.get("delegate").handler(tasks=[
+                {"goal": "正常", "tools": ["remove_record"]},
+                {"goal": "invalid", "max_iters": -1},
+            ])
+        assert cancelled.is_set()
+        assert supervisor.semaphore._value == supervisor.max_concurrent
+        release.set()
+        assert calls == []
+
+    asyncio.run(asyncio.wait_for(scenario(), 1))
+
+
+def test_task_subject_cleared_when_stream_closed() -> None:
+    from yai_core.types import Subject
+
+    root = _root([ModelResponse(content="ok")])
+    subject = Subject(subject_id="one-task-only")
+
+    async def scenario():
+        stream = root.astream("hello", subject=subject)
+        await anext(stream)
+        assert root._task_subject is subject
+        await stream.aclose()
+        assert root._task_subject is None
+
+    asyncio.run(scenario())

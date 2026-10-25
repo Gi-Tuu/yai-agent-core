@@ -33,6 +33,30 @@
 
 ---
 
+## A.1 委派权限只能收窄
+
+子员工的 `_WorkerPolicy` 先检查本地工具白名单，再用真实参数和可信主体检查父级当前
+`executor.policy`；只有两层都 `ALLOW` 才执行。父级 `DENY` 或 `ASK` 都拒绝回流，
+不以子员工白名单替代父级策略。孙员工递归叠加同一道检查，父级运行期撤权也立即生效。
+
+子通道固定 `CollectChannel(auto_confirm=False)`：工具的 `approval.required` 或 gate
+要求审批时不自动同意，也不直接向用户弹窗。失败工具和审批拒绝进入 `denied`，
+即便模型说“完成”，这次回流的 `ok` 也为 `False`；需要确认的操作由根员工自己处理。
+薄壳包装该实例的 `executor.execute`，按真实返回值收集失败，不依赖可能缺失的事件；
+gate 拒绝、未注册工具与未知授权名单都不能漏记。孙员工失败由 delegate 的内部回调
+直接记入父级失败集合，保留完整结构化结果，不从可能截断的事件预览猜测。
+同批子任务有异常或被取消时，delegate 会取消并等待全部兄弟任务后才退出；
+普通超时仍按失败结果回流，不拖垮其他正常子任务。
+
+`AgentCore.astream` 在实例串行锁内维护当次 `_task_subject`，正常结束、异常、取消或关闭
+事件流都会清空。delegate 从该可信上下文取得主体并传给 `run_worker(subject=...)`，
+工具参数里的身份字段不参与授权；直接调用 `run_worker` 的宿主应显式传入可信主体。
+
+父级 delegate 的闭包不能共享给子级，否则会重新拿到父级工具目录并重置深度。
+子级只在允许的深度重新构造自己的 delegate，并保留父级 delegate 的治理声明；
+达到最大深度即使模型在工具列表里写 `delegate` 也不授予。显式 `tools=[]` 表示不授予
+业务工具，只有省略列表才应用默认只读工具启发式。
+
 ## B. 子员工默认预算（`worker.py`）
 
 ### B.1 为什么默认值不能太松也不能太紧
@@ -88,7 +112,7 @@ class WorkerResult:
         }
 ```
 
-`ok` 的判定仍然是 `bool(final_text) and status == "done"`——预算触顶时即使已经
+`ok` 要求有 `final_text`、`status == "done"` 且没有失败/拒绝工具——预算触顶时即使已经
 产出了部分文本，`ok` 也是 `False`，根不会把"被熔断的半截结果"误当成成功。
 但 `final_text` 与 `budget` 照样回流，根能看到"做到哪了、卡在哪个上限"，
 从而决定：缩小目标重派、放宽预算重派，或如实告诉用户。
@@ -146,7 +170,7 @@ elif kind == "done":
 穿透 `asyncio.gather`、不会把整批并行子员工带崩。
 
 > 墙钟 `timeout` 与预算熔断是两条独立的路：超时抛 `TimeoutError` 被
-> `wait_for` 捕获标 `timeout`；预算熔断是正常事件流，很快返回、不进超时分支。
+> `asyncio.timeout` 捕获标 `timeout`；预算熔断是正常事件流，很快返回、不进超时分支。
 
 ---
 
@@ -279,7 +303,7 @@ def _budget_for_item(item: dict, max_iters: int) -> Budget:
    `DelegationSupervisor(max_concurrent=2)`。断言**峰值 `peak==2`**。
    若哪天回归成"每层一把独立信号量"，根 2 + 子 2 会同时占座，`peak==4`，测试立即红。
 5. **`test_worker_cancellation_propagates`**：外层 `task.cancel()` 一个正在跑慢工具的
-   子员工，断言 `CancelledError` 能穿透 `run_worker`（`wait_for` 只捕 `TimeoutError`，
+   子员工，断言 `CancelledError` 能穿透 `run_worker`（`asyncio.timeout` 只捕 `TimeoutError`，
    不吞取消），不会留下卡死的后台任务。
 
 ---

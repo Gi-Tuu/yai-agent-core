@@ -97,6 +97,45 @@ def test_events_are_delivered_to_qml(qapp, loop) -> None:
     assert '"react"' in received[0][1]
 
 
+def test_done_is_terminal_for_ui_but_stream_is_drained(qapp, loop) -> None:
+    """DONE 后停止上屏，但必须继续耗尽流，让内核回灌与宿主落盘收尾跑完。"""
+    state = {"finalized": False}
+    received: list[str] = []
+
+    async def factory(task: str, channel):
+        yield DemoEvent("done", final_text="完成")
+        # 生产者在 DONE 之后还有收尾（core.astream 的学习回灌 / host 的 save_selector）。
+        yield DemoEvent("model_message", text="DONE 之后的事件不应上屏")
+        state["finalized"] = True
+
+    runtime = _runtime(loop, factory)
+    runtime.eventReceived.connect(lambda name, payload: received.append(name))
+    assert runtime.startTask("任务") is True
+    assert _pump(qapp, lambda: state["finalized"] and not runtime.busy)
+    assert received == ["done"]
+
+
+def test_cancel_after_done_does_not_emit_second_terminal(qapp, loop) -> None:
+    """DONE 后用户再终止：停止收尾即可，不能再发一个 cancelled 覆盖已完成状态。"""
+    state = {"waiting": False, "finalized": False}
+    received: list[str] = []
+
+    async def factory(task: str, channel):
+        yield DemoEvent("done", final_text="完成")
+        state["waiting"] = True
+        await asyncio.sleep(5)
+        state["finalized"] = True
+
+    runtime = _runtime(loop, factory)
+    runtime.eventReceived.connect(lambda name, payload: received.append(name))
+    assert runtime.startTask("任务") is True
+    assert _pump(qapp, lambda: state["waiting"])
+    runtime.cancel()
+    assert _pump(qapp, lambda: not runtime.busy)
+    assert received == ["done"]
+    assert state["finalized"] is False
+
+
 def test_permission_prompt_blocks_until_approved(qapp, loop) -> None:
     seen: dict[str, object] = {}
 
