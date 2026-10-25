@@ -8,9 +8,11 @@
 //
 // 渲染特征对齐 web_preview 的 nebula_engine.js：四色调色板、径向核心光晕、虚线旋转轨道、
 // 顺时针拖尾弧、行星球渐变与暗环、呼吸透明度、纵向波动、超新星粒子爆发与双冲击波。
-// 粒子数与空闲帧率按常驻桌面的 CPU 预算压低（120 粒 / 空闲 20fps）；所有运动按真实 dt 积分，
-// 降帧只损失流畅度、不损失速度。
+// 260 粒 / 全状态 60fps；所有运动按真实 dt 积分，降帧只损失流畅度、不损失速度。
+// 渲染后端是软件光栅（见 shell/desktop/app.py：RHI 会破坏置顶窗的逐像素透明），
+// 所以每帧成本要自己压：预置配色串 + globalAlpha（免逐粒拼 rgba）、未吸积时跳过轨道三角函数。
 import QtQuick
+import QtQuick.Window
 
 Item {
     id: root
@@ -36,12 +38,13 @@ Item {
     property var orbitRadii: [6.2, 9.8, 14.2, 19.5, 25.5]
     property double lastTick: 0.0
 
-    // 左深橙 → 琥珀 → 右侧象牙白
+    // 左深橙 → 琥珀 → 右侧象牙白。预置成不透明色串：逐粒拼 "rgba(r,g,b,a)"
+    // 每帧要拼 260 次再解析 260 次，改用 globalAlpha 表达同一透明度，绘制结果一致。
     readonly property var nebulaPalette: [
-        { r: 255, g: 72, b: 0 },
-        { r: 255, g: 112, b: 36 },
-        { r: 255, g: 162, b: 96 },
-        { r: 250, g: 244, b: 236 }
+        "rgb(255, 72, 0)",
+        "rgb(255, 112, 36)",
+        "rgb(255, 162, 96)",
+        "rgb(250, 244, 236)"
     ]
 
     Component.onCompleted: {
@@ -98,9 +101,13 @@ Item {
     }
 
     Timer {
-        // 工作中 60fps；空闲/完成 30fps；冻结减速到 0 后彻底停画。
-        interval: root.phase === "working" ? 16 : 33
-        running: root.visible && !(root.phase === "frozen" && root.timeScale <= 0.002)
+        // Item.visible 不反映所属窗口隐藏或最小化，必须同时检查窗口。
+        // 空闲同样 60fps：星云一直在飘，降帧会让左深右浅的漂移出现顿挫。
+        interval: 16
+        running: root.visible && root.Window.window !== null
+                 && root.Window.window.visible
+                 && root.Window.window.visibility !== Window.Minimized
+                 && !(root.phase === "frozen" && root.timeScale <= 0.002)
         repeat: true
         onTriggered: orbCanvas.requestPaint()
     }
@@ -248,10 +255,16 @@ Item {
                 }
 
                 var tailStretchX = (root.isWide && p.u > 0.55) ? ((p.u - 0.55) * 105 * root.accretionBlend) : 0;
-                var ox = root.coreX + Math.cos(p.angle) * p.currentR + tailStretchX;
-                var oy = root.coreY + Math.sin(p.angle) * p.currentR;
-                p.x = p.driftX * (1 - root.accretionBlend) + ox * root.accretionBlend;
-                p.y = p.driftY * (1 - root.accretionBlend) + oy * root.accretionBlend;
+                if (root.accretionBlend > 0.001) {
+                    var ox = root.coreX + Math.cos(p.angle) * p.currentR + tailStretchX;
+                    var oy = root.coreY + Math.sin(p.angle) * p.currentR;
+                    p.x = p.driftX * (1 - root.accretionBlend) + ox * root.accretionBlend;
+                    p.y = p.driftY * (1 - root.accretionBlend) + oy * root.accretionBlend;
+                } else {
+                    // 未吸积时位置就是漂移位置，省掉每粒两次三角函数。
+                    p.x = p.driftX;
+                    p.y = p.driftY;
+                }
 
                 if (p.x > maxVisibleX) continue;
 
@@ -263,30 +276,33 @@ Item {
                 var alpha = Math.min(0.95, Math.max(0.04, p.baseAlpha * fadeFactor + root.supernovaFlash * 0.25));
 
                 // 配色：左侧深橙、中段琥珀、右侧与内圈偏象牙白
-                var col = root.nebulaPalette[0];
+                var colIdx = 0;
                 if (root.accretionBlend > 0.5 && p.u < 0.16) {
-                    col = root.nebulaPalette[3];
+                    colIdx = 3;
                 } else if (xNorm > 0.55) {
-                    col = root.nebulaPalette[2];
+                    colIdx = 2;
                 } else if (xNorm > 0.25) {
-                    col = root.nebulaPalette[1];
+                    colIdx = 1;
                 }
 
                 // 顺时针拖尾弧
                 if (root.accretionBlend > 0.25 && p.isTrackRider && p.currentR < 24) {
                     var trailArcLen = 0.28 * root.accretionBlend;
-                    ctx.strokeStyle = "rgba(" + col.r + ", " + col.g + ", " + col.b + ", " + (alpha * 0.55) + ")";
+                    ctx.globalAlpha = alpha * 0.55;
+                    ctx.strokeStyle = root.nebulaPalette[colIdx];
                     ctx.lineWidth = p.size * 0.85;
                     ctx.beginPath();
                     ctx.arc(root.coreX + tailStretchX, root.coreY, p.currentR, p.angle - trailArcLen, p.angle);
                     ctx.stroke();
                 }
 
-                ctx.fillStyle = "rgba(" + col.r + ", " + col.g + ", " + col.b + ", " + alpha + ")";
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = root.nebulaPalette[colIdx];
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 ctx.fill();
             }
+            ctx.globalAlpha = 1;
 
             // 7. 俯视行星核：球面渐变 + 与内圈分离的暗环
             var targetR = (root.accretionBlend > 0.08) ? (3.6 * root.accretionBlend) : 0;

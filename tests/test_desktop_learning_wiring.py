@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -31,6 +34,7 @@ from shell.desktop.host import (  # noqa: E402
     prepare_paths,
 )
 from shell.desktop.learning_vault import summarize  # noqa: E402
+from shell.desktop.specialist import SpecialistRuntime, SpecialistSpec  # noqa: E402
 
 from yai_core import ModelResponse, ToolCallRequest  # noqa: E402
 
@@ -41,6 +45,34 @@ import runner_common  # noqa: E402
 @pytest.fixture(scope="module")
 def qapp() -> QCoreApplication:
     return QCoreApplication.instance() or QCoreApplication([])
+
+
+@pytest.fixture(scope="module")
+def loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """桌面工作台同款的共享后台循环，用于走真实 startTask → _guarded 路径。"""
+    event_loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=_run_loop, args=(event_loop,), daemon=True)
+    thread.start()
+    yield event_loop
+    event_loop.call_soon_threadsafe(event_loop.stop)
+    thread.join(timeout=2)
+    event_loop.close()
+
+
+def _run_loop(event_loop: asyncio.AbstractEventLoop) -> None:
+    asyncio.set_event_loop(event_loop)
+    event_loop.run_forever()
+
+
+def _pump(app: QCoreApplication, predicate, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    app.processEvents()
+    return bool(predicate())
 
 
 class _Channel:
@@ -99,6 +131,26 @@ def test_live_factory_persists_learning(qapp, monkeypatch, tmp_path) -> None:
     status = summarize(path)
     assert status["enabled"] is True
     assert status["learned_tasks"] == 1
+
+
+def test_specialist_runtime_persists_learning_after_done(
+    qapp, loop, monkeypatch, tmp_path
+) -> None:
+    """走桌面真实消费路径（不是 _collect）：DONE 之后仍必须落盘学习。"""
+    _patch(monkeypatch, _ScriptedNotesModel())
+    path = tmp_path / "notes_learning.json"
+    factory = _live_factory(DemoNotes(), ("search_notes",), learning_path=path)
+    spec = SpecialistSpec(id="notes", name="笔记专员", glyph="笔", demo_factory=factory)
+    runtime = SpecialistRuntime(spec, loop, factory=factory, run_mode="live")
+
+    assert runtime.startTask("搜一下周报") is True
+    assert _pump(qapp, lambda: not runtime.busy)
+    assert path.exists()
+    assert summarize(path)["learned_tasks"] == 1
+
+    assert runtime.startTask("再搜一次周报") is True
+    assert _pump(qapp, lambda: not runtime.busy)
+    assert summarize(path)["learned_tasks"] == 2
 
 
 def test_learning_accumulates_across_tasks(qapp, monkeypatch, tmp_path) -> None:

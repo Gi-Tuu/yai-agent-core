@@ -228,24 +228,35 @@ class SpecialistRuntime(QObject):
             return
         stream = self._factory(task_text, QtChannel(self))
         ended = False
+        done_seen = False
         try:
             async for event in stream:
                 name = event_name(event)
+                if done_seen:
+                    # DONE 是展示终态，不是生产者的最后动作：继续耗尽事件流，
+                    # 让内核回灌学习、让宿主落盘收尾；晚到的事件不再上屏。
+                    continue
                 self.eventReceived.emit(name, dump(getattr(event, "data", {})))
                 if name in _TERMINAL_EVENTS:
                     ended = True
                     if name == "error":
                         self._can_retry = True
-                    if name == "done":
-                        break
+                    elif name == "done":
+                        done_seen = True
         except asyncio.CancelledError:
             ended = True
-            self._finish("cancelled", {"reason": "任务已被用户终止"})
+            if not done_seen:
+                # DONE 后用户再点终止：只停收尾，不再发第二个终结事件。
+                self._finish("cancelled", {"reason": "任务已被用户终止"})
             raise
         except Exception as exc:  # noqa: BLE001 - 界面需看到错误而非静止不动
             ended = True
-            self._can_retry = True
-            self._finish("error", {"error": f"{type(exc).__name__}: {exc}"})
+            if done_seen:
+                # 收尾失败不能把已经完成的终态覆盖成错误；只做一次可见提示。
+                self.noticeRaised.emit(f"收尾失败：{type(exc).__name__}: {exc}")
+            else:
+                self._can_retry = True
+                self._finish("error", {"error": f"{type(exc).__name__}: {exc}"})
         finally:
             await stream.aclose()
             if not ended:

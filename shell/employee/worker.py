@@ -3,8 +3,8 @@
 与"对等多智能体"的本质区别（层级纪律）：
 
 - 单一根员工对用户负责；子员工不直接与用户对话，结果只回流给根；
-- 子员工工具白名单 ⊆ 根，权限单调收窄（``deny_all``：白名单内放行、越权直接拒，
-  不挂起、不弹窗）；
+- 子员工工具白名单 ⊆ 根，并逐次叠加父级权限；越权或需要审批时拒绝回流，
+  不挂起、不弹窗；
 - 独立小上下文（``InMemoryStore``）、更小迭代预算，不能自行发现新工具；
 - 深度 ≤ :data:`MAX_DEPTH`，同时存活 ≤ :data:`MAX_CONCURRENT`，完成即销毁。
 """
@@ -20,6 +20,9 @@ from yai_core.channels import CollectChannel
 from yai_core.kernel.budget import Budget
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
+from yai_core.policy.authorize import policy_decision
+from yai_core.spi import PermissionDecision
+from yai_core.types import Subject
 
 if TYPE_CHECKING:
     from yai_core import AgentCore
@@ -108,6 +111,24 @@ def _select_shared_specs(
     return [by_name[t] for t in granted], unknown
 
 
+class _WorkerPolicy(AllowlistPolicy):
+    yai_subject_aware = True
+
+    def __init__(self, parent, allowed) -> None:
+        super().__init__(allowed, mode="deny_all")
+        self.parent = parent
+
+    async def check(self, tool_name: str, arguments: dict, *, subject=None):
+        decision = await super().check(tool_name, arguments)
+        if decision == PermissionDecision.ALLOW:
+            decision = await policy_decision(
+                self.parent.executor.policy, tool_name, arguments, subject
+            )
+        if decision != PermissionDecision.ALLOW:
+            return PermissionDecision.DENY
+        return PermissionDecision.ALLOW
+
+
 def _type_value(event) -> str:
     t = getattr(event, "type", "")
     return t.value if hasattr(t, "value") else str(t)
@@ -123,10 +144,10 @@ def _assemble_worker(
     register_delegate: bool = False,
     budget: Budget | None = None,
     supervisor=None,
-) -> tuple[AgentCore, list[str], list[str]]:
+) -> tuple[AgentCore, list[str], list[str], set[str]]:
     """构建被收窄的子员工 core（只构建、不运行）。
 
-    返回 ``(worker, granted_names, unknown)``：授予工具名与请求了但根不具备的工具名。
+    返回 ``(worker, granted_names, unknown, failures)``，最后一项记录实际调用失败。
 
     ``budget`` 为 None 时按 ``max_iters`` 推导一份保守硬预算（子员工默认总有花费
     兜底）；``supervisor`` 是跨层级共享的委派并发闸，派生孙员工时原样透传，使
@@ -140,14 +161,14 @@ def _assemble_worker(
     if tools is None:
         tools = default_read_tools(all_names)
     specs, unknown = _select_shared_specs(root_core, tools)
+    # delegate 闭包绑定父 core，不能当普通工具共享给子级。
+    specs = [spec for spec in specs if spec.name != "delegate"]
     granted_names = [s.name for s in specs]
 
-    # deny_all：白名单内 ALLOW，其余直接 DENY——子员工不挂起、不弹窗、不直接问用户，
-    # 越权信息随结果回流根，由根决定是否经主浮窗向用户申请扩权后重派。
-    policy = AllowlistPolicy(granted_names, mode="deny_all")
+    policy = _WorkerPolicy(root_core, granted_names)
     worker = AgentCore(
         root_core.model,
-        channel=CollectChannel(),
+        channel=CollectChannel(auto_confirm=False),
         memory=InMemoryStore(),
         policy=policy,
         llm_router=False,   # 子任务由根分解、目标明确，省一次路由调用
@@ -157,18 +178,37 @@ def _assemble_worker(
         budget=budget,      # 每个子员工独立硬预算，触顶回流 budget_exceeded 不崩根
     )
     worker.register_tools(specs)
+    failures: set[str] = set(unknown)
+    execute = worker.executor.execute
+
+    async def execute_and_record(name, arguments, **kwargs):
+        result = await execute(name, arguments, **kwargs)
+        if not result[1]:
+            failures.add(name)
+        return result
+
+    # 准入拒绝可能没有事件，必须以执行器真实返回值记失败，不能靠模型措辞判断。
+    worker.executor.execute = execute_and_record
     # 深度收窄：仅当未到最大深度时，子员工才持有 delegate（可派生更窄的孙员工）。
     # supervisor 原样透传，保证多层委派共用同一个全局并发闸。
     if register_delegate and depth < MAX_DEPTH:
         from shell.employee.delegate import attach_delegate
 
-        attach_delegate(worker, depth=depth + 1, supervisor=supervisor)
-    return worker, granted_names, unknown
+        attach_delegate(
+            worker, depth=depth + 1, supervisor=supervisor,
+            _on_failure=lambda: failures.add("delegate"),
+        )
+        policy.allowed.add("delegate")
+        if root_core.registry.has("delegate"):
+            worker.registry.get("delegate").governance = (
+                root_core.registry.get("delegate").governance
+            )
+    return worker, granted_names, unknown, failures
 
 
 def build_worker_core(root_core, **kwargs) -> AgentCore:
     """构建一个被收窄的子员工 core（只构建、不运行），返回 worker 本身。"""
-    worker, _granted, _unknown = _assemble_worker(root_core, **kwargs)
+    worker, _granted, _unknown, _failures = _assemble_worker(root_core, **kwargs)
     return worker
 
 
@@ -184,6 +224,7 @@ async def run_worker(
     on_event=None,
     budget: Budget | None = None,
     supervisor=None,
+    subject: Subject | None = None,
 ) -> WorkerResult:
     """构建并运行一个子员工，返回回流结果；完成即销毁（局部对象被回收）。
 
@@ -195,8 +236,9 @@ async def run_worker(
       ``status=budget_exceeded``、已产出文本随结果回流，根可据此缩小任务重派，
       熔断不作为异常穿透、也不拖垮并行 gather。
     - ``supervisor`` 为跨层级共享并发闸，派生孙员工时透传。
+    - ``subject`` 必须来自宿主可信上下文；delegate 自动传递根任务主体。
     """
-    worker, granted_names, unknown = _assemble_worker(
+    worker, granted_names, unknown, failures = _assemble_worker(
         root_core,
         goal=goal,
         tools=tools,
@@ -214,7 +256,7 @@ async def run_worker(
 
     async def _drive() -> None:
         nonlocal final_text, status, budget_snap
-        async for ev in worker.astream(goal):
+        async for ev in worker.astream(goal, subject=subject):
             kind = _type_value(ev)
             data = getattr(ev, "data", {}) or {}
             if on_event is not None:
@@ -227,7 +269,9 @@ async def run_worker(
                     pass
             if kind == "tool_call":
                 steps.append(str(data.get("tool", "?")))
-            elif kind == "tool_result" and data.get("ok") is False:
+            elif kind == "permission_asked" or (
+                kind == "tool_result" and data.get("ok") is False
+            ):
                 failed.append(str(data.get("tool", "?")))
             elif kind == "model_message" and data.get("text"):
                 final_text = str(data["text"])  # 兜底，done 的 final_text 会覆盖
@@ -254,14 +298,15 @@ async def run_worker(
     except TimeoutError:
         status = "timeout"
 
+    failed = list(dict.fromkeys([*unknown, *failed, *sorted(failures)]))
     final_text = final_text.strip()
-    ok = bool(final_text) and status == "done"
+    ok = bool(final_text) and status == "done" and not failed
     return WorkerResult(
         goal=goal,
         ok=ok,
         final_text=final_text,
         granted_tools=granted_names,
-        denied=unknown + failed,
+        denied=failed,
         steps=steps,
         status=status,
         budget=budget_snap,
