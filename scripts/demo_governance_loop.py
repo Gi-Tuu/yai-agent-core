@@ -52,7 +52,8 @@ class ApprovalChannel(CollectChannel):
     async def confirm(self, tool_name: str, arguments: dict) -> bool:
         self.asked.append((tool_name, dict(arguments)))
         print(f"  ⏸  内核拦下：{tool_name} 需要人工批准")
-        print(f"     冻结参数：{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}")
+        # 参数取值属于审计数据：只进 trace 文件，不打到终端（终端可能被日志采集）。
+        print(f"     冻结参数：{len(arguments)} 项（完整取值见 trace）")
         print(f"     操作人回答：{'批准' if self.approve else '拒绝'}")
         return self.approve
 
@@ -117,11 +118,11 @@ def _describe(event) -> str | None:
     if kind == EventType.STRATEGY_SELECTED:
         return f"策略：{data.get('strategy')}（来源 {data.get('source')}）"
     if kind == EventType.TOOL_CALL:
-        return f"调用：{data.get('tool')} {json.dumps(data.get('arguments'), ensure_ascii=False)}"
+        return f"调用：{data.get('tool')}（参数取值见 trace）"
     if kind == EventType.PERMISSION_ASKED:
         return (
             f"审批拦截：{data.get('tool')} "
-            f"{json.dumps(data.get('arguments'), ensure_ascii=False)}"
+            f"（参数取值见 trace）"
         )
     if kind == EventType.TOOL_RESULT:
         detail = data.get("error") or data.get("preview")
