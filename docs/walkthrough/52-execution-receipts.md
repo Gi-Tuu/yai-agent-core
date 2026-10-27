@@ -148,6 +148,18 @@ ASK / `require_approval` **不视为 DENY**，仍不弹审批、不生成新预�
 收据把同一事实变成机器可读字段，宿主可以把 `status=unknown` 接到告警、人工工单
 或业务状态查询，不必解析自然语言。
 
+## 5.5 收据串成哈希链（防篡改）
+
+每条收据带两个字段：
+
+- `prev_hash`：上一条收据的 `receipt_hash`；第一条是空串；
+- `receipt_hash`：本条收据全部事实（含 `prev_hash`）的 SHA-256。
+
+宿主导出一批收据后，用 `verify_receipt_chain(receipts)` 一次校验：首条 prev 为空、
+逐条指向前一条、自身哈希可重算。**改一个字段 / 抽掉中间一条 / 调换顺序**都会返回 False。
+这是把"审计日志"升级成"可验证审计"的最小代价做法（思路对齐 IETF Agent Audit Trail 草案的
+`prev_hash`），不引入任何依赖，也不改变单条收据的字段语义。
+
 ## 6. 自检
 
 1. 为什么 `not_started` 与 `unknown` 必须分开？

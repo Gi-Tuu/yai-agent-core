@@ -20,6 +20,7 @@ from yai_core import (
     build_composite_spec,
     build_spec,
     check_tool_specs,
+    verify_receipt_chain,
 )
 from yai_core.channels import CollectChannel
 from yai_core.policy import AllowlistPolicy
@@ -757,3 +758,39 @@ def test_dependency_gate_exception_fails_closed_without_sensitive_error() -> Non
 
     spec.governance = ToolGovernance(gate=broken_gate)
     _assert_dependency_denied(asyncio.run(executor.execute("flow", {})), calls, [1])
+
+
+def test_receipt_chain_links_and_detects_tampering() -> None:
+    """同一执行器产出的收据串成哈希链；改内容 / 换序 / 抽条都会让校验失败。"""
+
+    def apply(value: str = "") -> dict:
+        """写入。"""
+        return {"value": value}
+
+    executor = _executor([build_spec(apply)])
+    first_events, _, _ = asyncio.run(
+        executor.execute("apply", {"value": "a"}, call_id="c1")
+    )
+    second_events, _, _ = asyncio.run(
+        executor.execute("apply", {"value": "b"}, call_id="c2")
+    )
+    third_events, _, _ = asyncio.run(
+        executor.execute("apply", {"value": "c"}, call_id="c3")
+    )
+    first, second, third = (
+        _receipt(first_events),
+        _receipt(second_events),
+        _receipt(third_events),
+    )
+
+    assert first["prev_hash"] == ""
+    assert second["prev_hash"] == first["receipt_hash"]
+    assert third["prev_hash"] == second["receipt_hash"]
+    assert verify_receipt_chain([first, second, third]) is True
+    assert verify_receipt_chain([]) is True
+
+    tampered = dict(second, status="failed")
+    assert verify_receipt_chain([first, tampered, third]) is False
+    assert verify_receipt_chain([second, first, third]) is False
+    assert verify_receipt_chain([first, third]) is False
+    assert verify_receipt_chain([dict(first, receipt_hash="")]) is False

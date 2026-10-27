@@ -79,6 +79,7 @@ from yai_core.types import (
     ToolGovernance,
     ToolSpec,
     parts_to_text,
+    verify_receipt_chain,
 )
 
 __version__ = "0.23.0"
@@ -134,6 +135,7 @@ __all__ = [
     "ChangePreview",
     "ChatMessage",
     "ExecutionReceipt",
+    "verify_receipt_chain",
     "ContentPart",
     "EventType",
     "GateDecision",
