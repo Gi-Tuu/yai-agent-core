@@ -19,6 +19,7 @@
 | 组合工具（只编排已注册工具） | 已验证 | `tests/test_composite.py`、`test_composite_discovery.py` | 不生成代码、不做可视化编排 |
 | 幂等重放 + 权限依赖复核 | 已验证 | `tests/test_execution_receipts.py` | 只对声明幂等的调用生效 |
 | 任务内重规划 | 已验证 | `tests/test_replan.py` | 只带已完成的工具配对 |
+| 提示缓存（Anthropic 适配层） | 已验证 | `tests/test_anthropic_provider.py`（默认 / 关闭 / 断点位置 3 例） | 厂商专有扩展，只在适配器里；兼容代理可 `prompt_cache=False` |
 
 ## 二、工具接入与发现
 
@@ -41,6 +42,8 @@
 | 可信变更预览 + 脱敏 | 已验证 | `tests/test_trusted_preview.py`、`test_redaction.py` | 预览是私有数据，不上送模型 |
 | 子员工权限逐层叠加 | 已验证 | `tests/test_shell_employee.py` | 父级运行期撤权立即生效 |
 | 沙箱契约 | 已验证（契约层） | `tests/test_sandbox_spi.py`、`test_sandbox_static_gate.py` | 内核只定义契约，**不内置执行器** |
+| 工具输出按不可信数据处理 | 已验证 | `tests/test_loop.py`（默认包裹 / 可关两例） | 只改 prompt 形态，不改事件与收据里的原值 |
+| 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
 
 ## 四、记忆与上下文
@@ -70,6 +73,7 @@
 |---|---|---|---|
 | 20 类结构化事件、单一出口 | 已验证 | `tests/test_spi_surface.py`（含"无死事件"断言） | 事件是唯一对外流 |
 | 本地诊断回调 | 已验证 | `tests/test_diagnostics.py` | 回调自身抛错被吞，绝不反噬任务 |
+| GenAI 语义约定属性（agent / tool） | 已验证 | `tests/test_tracing_otel.py` | 只发稳定字段；usage / model 不臆造 |
 | OpenTelemetry 追踪 / 指标 | 已验证（假导出器） | `tests/test_tracing_otel.py`、`test_metrics_recorder.py` | 需装 `[otel]` extra |
 | 就绪/指标 HTTP 端点 | 已验证 | `tests/test_readiness_metrics_api.py`、`test_battery_api.py` | 属 batteries，不是内核必需 |
 

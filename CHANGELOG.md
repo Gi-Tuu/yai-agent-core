@@ -5,6 +5,24 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **提示缓存**（`AnthropicProvider(prompt_cache=True)`）：system 与工具清单打上
+  `cache_control: {"type": "ephemeral"}`，这两段是每轮完全相同的前缀，命中后按官方计价
+  输入 token 可省一个数量级。块状 system 不被某些兼容代理接受时，传 `prompt_cache=False`
+  退回纯字符串。配套 3 例测试（默认形态 / 关闭 / 只在最后一个工具打断点）。
+- **工具输出当"不可信数据"处理**（`AgentCore(tool_output_guard=True)`，默认开）：工具返回值
+  回灌上下文前包成 `<tool_output untrusted="true">…</tool_output>`，把间接提示注入的成功率
+  往下压（Spotlighting 类防御的最小实现）。宿主可关掉；事件流与审计收据里的原始值不受影响。
+- **执行收据哈希链**：每条收据带 `prev_hash` 与 `receipt_hash`（SHA-256，含前一条哈希），
+  用 `verify_receipt_chain(receipts)` 一条命令校验整串有没有被改动 / 抽条 / 换序。
+  对应 IETF Agent Audit Trail 草案里"prev_hash 串链"的思路，不引入任何新依赖。
+- **OpenTelemetry GenAI 语义约定**：trace 上补 `gen_ai.operation.name` / `gen_ai.agent.name`
+  （root）与 `gen_ai.tool.name` / `gen_ai.tool.type` / `gen_ai.tool.call.id`（工具 span），
+  Jaeger / Grafana 一类后端可按标准识别 agent 与工具调用。
+
 ## [v0.23.0] - 2026-10-27
 
 本版把"**能不能当场验证**"做成仓库的一等公民：一条命令跑完治理闭环、一条命令跑完全部门禁、
