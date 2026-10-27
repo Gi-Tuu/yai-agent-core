@@ -204,6 +204,8 @@ class AgentLoop:
         self.host_state = host_state
         # 工具输出是否包成不可信数据块（见 wrap_tool_output）。默认开。
         self.tool_output_guard = tool_output_guard
+        # 当前任务原文：长任务被裁剪/压缩后，用它把目标重新锚回 prompt（见 _model_messages）。
+        self._current_task = ""
         # 同一次任务里状态没变就不重复发事件（避免每轮刷一条同样的注入记录）。
         self._last_state_fingerprint: str | None = None
         # 鸭子接线：把同一回调交给路由与模型后端，只要它们暴露可写的
@@ -330,6 +332,15 @@ class AgentLoop:
                 if fingerprint != self._last_state_fingerprint:
                     self._last_state_fingerprint = fingerprint
                     event = AgentEvent(EventType.HOST_STATE, info)
+        # 上下文腐化防护：长任务被裁剪 / 压缩后，原始任务可能已经不在消息里。
+        # 与其让模型靠猜，不如把目标重新锚到 system 位（模型对头部注意力最强）。
+        task = self._current_task
+        if task and not any(
+            message.role == "user" and task[:40] in (message.content or "")
+            for message in ctx.messages[1:]
+        ):
+            anchor = f"【当前任务】{task[:500]}"
+            transient = transient + "\n\n" + anchor if transient else anchor
         messages = ctx.llm_messages(
             multimodal=bool(getattr(self.model, "yai_multimodal", False)),
             transient_system=transient,
@@ -412,6 +423,7 @@ class AgentLoop:
         """
         # 任务级预算：仅顶层（depth==0）新建计数器；澄清递归复用同一个，
         # 防止靠"多反问几轮"重置预算。loop 实例串行复用，无并发竞争。
+        self._current_task = task
         if _clarify_depth == 0:
             self._active_budget = self.budget.start() if self.budget is not None else None
             # 新任务重新计一次宿主状态事件：即使状态与上个任务相同也要发。

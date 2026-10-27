@@ -192,6 +192,14 @@ ctx = Context(
 
 灵动岛真机工厂（`shell/desktop/host.py`）显式开启，离线 ScriptedModel 演示不开（没有意义）。
 
+## 并行压缩与任务锚点（两项后补的优化）
+
+**并行压缩**：`CompactionPolicy(parallel=N)` 把待压缩区间按 `user` 轮首切成至多 N 段，
+`asyncio.gather` 并发摘要后按序拼接。切段只改变"几次模型调用"，不改变哪些消息被压缩——
+各段合起来仍等于原来的 `[start, end)`，保留策略与消息结构一字不动。默认 `parallel=1`，
+与旧行为逐字一致；`CONTEXT_COMPACTED` 事件新增 `parallel_segments` 便于观测。
+
+
 ## 5. 自检（答得上再往下走）
 
 1. 摘要压缩和硬裁剪，分别在什么情况下触发？为什么两者都要保留？
@@ -201,3 +209,8 @@ ctx = Context(
 5. `context_compaction=True` 和传一个 `CompactionPolicy` 对象，效果有何区别？
 6. 为什么开启压缩时 `add()` 不能立刻硬裁剪？如果 `hard_max_chars` 比 `Context.max_chars` 大，会发生什么？
 7. `_model_messages()` 里的 `enforce_budget()` 为什么不会切断工具调用与结果？
+
+**任务锚点（上下文腐化防护）**：硬裁剪只保留 `messages[0]`（system）与最近若干轮，
+原始任务在被裁剪 / 压缩后可能已经不在消息里。`_model_messages` 因此判断一次：若
+`ctx.messages[1:]` 里已经找不到任务原文，就把「当前任务」插进**瞬态 system**（放在基础
+system 之后、历史之前，只影响本次调用）。任务还在上下文时不注入，避免每轮白花 token。

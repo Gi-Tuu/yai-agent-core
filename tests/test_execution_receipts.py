@@ -794,3 +794,98 @@ def test_receipt_chain_links_and_detects_tampering() -> None:
     assert verify_receipt_chain([second, first, third]) is False
     assert verify_receipt_chain([first, third]) is False
     assert verify_receipt_chain([dict(first, receipt_hash="")]) is False
+
+
+def _slow_spec(check):
+    def slow() -> dict:
+        """慢。"""
+        time.sleep(0.2)
+        return {"ok": True}
+
+    spec = build_spec(slow)
+    spec.governance = ToolGovernance(postcondition=check)
+    return spec
+
+
+def test_postcondition_confirms_side_effect_after_timeout() -> None:
+    """超时（unknown）+ 后置条件确认副作用已发生 → 收据改判 succeeded，模型看到成功。"""
+    events, ok, text = asyncio.run(
+        _executor([_slow_spec(lambda arguments: True)], timeout=0.05).execute("slow", {})
+    )
+    receipt = _receipt(events)
+    result = [e for e in events if e.type == EventType.TOOL_RESULT][-1]
+    assert ok is True
+    assert result.data["ok"] is True
+    assert result.data["verified"] is True
+    assert receipt["status"] == "succeeded"
+    assert receipt["postcondition"] == "confirmed"
+    assert "后置条件已确认" in text
+
+
+def test_postcondition_rejects_keeps_unknown() -> None:
+    """后置条件说没发生 → 保持 unknown，只记录 rejected，不替宿主猜。"""
+    events, ok, _ = asyncio.run(
+        _executor([_slow_spec(lambda arguments: False)], timeout=0.05).execute("slow", {})
+    )
+    receipt = _receipt(events)
+    assert ok is False
+    assert receipt["status"] == "unknown"
+    assert receipt["postcondition"] == "rejected"
+
+
+def test_postcondition_error_keeps_unknown_without_raising() -> None:
+    """后置条件自己抛错 → 仍是 unknown，postcondition=error，不把异常抛给调用方。"""
+    def boom(arguments):
+        raise RuntimeError("check exploded")
+
+    events, ok, _ = asyncio.run(
+        _executor([_slow_spec(boom)], timeout=0.05).execute("slow", {})
+    )
+    receipt = _receipt(events)
+    assert ok is False
+    assert receipt["status"] == "unknown"
+    assert receipt["postcondition"] == "error"
+
+
+def test_async_postcondition_is_supported() -> None:
+    """后置条件可以是协程函数。"""
+    async def check(arguments):
+        await asyncio.sleep(0)
+        return True
+
+    events, ok, _ = asyncio.run(
+        _executor([_slow_spec(check)], timeout=0.05).execute("slow", {})
+    )
+    assert ok is True
+    assert _receipt(events)["status"] == "succeeded"
+
+
+def test_upgraded_receipt_keeps_chain_valid() -> None:
+    """改判后的收据重新接链，整串仍然可验证。"""
+    executor = _executor([_slow_spec(lambda arguments: True)], timeout=0.05)
+    first_events, _, _ = asyncio.run(executor.execute("slow", {}, call_id="c1"))
+    second_events, _, _ = asyncio.run(executor.execute("slow", {}, call_id="c2"))
+    first, second = _receipt(first_events), _receipt(second_events)
+    assert first["status"] == "succeeded"
+    assert second["prev_hash"] == first["receipt_hash"]
+    assert verify_receipt_chain([first, second]) is True
+
+
+def test_postcondition_only_applies_to_unknown() -> None:
+    """正常成功的调用不会去跑后置条件（零额外开销，也避免误判）。"""
+    calls = {"n": 0}
+
+    def fast(value: str = "") -> dict:
+        """快。"""
+        return {"value": value}
+
+    def check(arguments):
+        calls["n"] += 1
+        return True
+
+    spec = build_spec(fast)
+    spec.governance = ToolGovernance(postcondition=check)
+    events, ok, _ = asyncio.run(_executor([spec]).execute("fast", {"value": "x"}))
+    assert ok is True
+    assert calls["n"] == 0
+    assert _receipt(events)["postcondition"] == ""

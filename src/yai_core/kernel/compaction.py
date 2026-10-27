@@ -46,6 +46,13 @@ class CompactionPolicy:
     hard_max_chars: int = 24000
     target_chars: int = 16000
     keep_recent_rounds: int = 2
+    #: 并行摘要的段数：>1 时把待压缩的旧轮按轮首切成多段并发摘要，再按顺序拼接。
+    #: 只影响墙钟时间，不影响保留策略；默认 1（与旧行为逐字一致）。
+    parallel: int = 1
+
+    def __post_init__(self) -> None:
+        if isinstance(self.parallel, bool) or self.parallel < 1:
+            raise ValueError("parallel 必须是 >=1 的整数")
 
     @classmethod
     def from_context_window(
@@ -55,6 +62,7 @@ class CompactionPolicy:
         keep_recent_rounds: int = 2,
         hard_ratio: float = 0.6,
         target_ratio: float = 0.4,
+        parallel: int = 1,
     ) -> CompactionPolicy:
         """按"会话工作区字符预算"按比例推算高/低水位（字符口径，不引入 tokenizer）。
 
@@ -79,6 +87,7 @@ class CompactionPolicy:
             hard_max_chars=hard,
             target_chars=target,
             keep_recent_rounds=keep_recent_rounds,
+            parallel=parallel,
         )
 
 
@@ -113,6 +122,32 @@ def select_compaction_range(
     if keep_from <= start:
         return None
     return (start, keep_from)
+
+
+def split_compaction_segments(
+    messages: list[ChatMessage], start: int, end: int, parallel: int
+) -> list[tuple[int, int]]:
+    """把 ``[start, end)`` 按 user 轮首切成至多 ``parallel`` 段（每段保持整轮）。
+
+    切段只影响"几次模型调用"，不影响哪些消息被压缩——所有段合起来仍然等于
+    ``[start, end)``。段落数不足或 ``parallel<=1`` 时退回单段。
+    """
+    if parallel <= 1:
+        return [(start, end)]
+    cuts = [start] + [i for i in range(start + 1, end) if messages[i].role == "user"]
+    cuts.append(end)
+    rounds = len(cuts) - 1
+    if rounds <= 1:
+        return [(start, end)]
+    parts = min(parallel, rounds)
+    size, extra = divmod(rounds, parts)
+    segments: list[tuple[int, int]] = []
+    index = 0
+    for i in range(parts):
+        take = size + (1 if i < extra else 0)
+        segments.append((cuts[index], cuts[index + take]))
+        index += take
+    return segments
 
 
 def render_for_summary(messages: list[ChatMessage], start: int, end: int) -> str:
@@ -169,25 +204,39 @@ async def compact_context(
         message_cost(m, image_cost_chars=ctx.image_cost_chars)
         for m in ctx.messages[start:end]
     )
-    history_text = render_for_summary(ctx.messages, start, end)
+    segments = split_compaction_segments(ctx.messages, start, end, policy.parallel)
 
-    async def _summarize() -> object:
-        return await model.achat(  # type: ignore[attr-defined]
+    async def _summarize(text: str) -> str:
+        resp = await model.achat(  # type: ignore[attr-defined]
             [
                 {"role": "system", "content": _SUMMARY_SYSTEM},
-                {"role": "user", "content": history_text},
+                {"role": "user", "content": text},
             ],
             tools=None,
             tier="standard",
         )
+        return (getattr(resp, "content", "") or "").strip()
+
+    async def _summarize_all() -> list[str]:
+        if len(segments) <= 1:
+            text = render_for_summary(ctx.messages, start, end)
+            return [await _summarize(text)]
+        return list(
+            await asyncio.gather(
+                *[
+                    _summarize(render_for_summary(ctx.messages, seg_start, seg_end))
+                    for seg_start, seg_end in segments
+                ]
+            )
+        )
 
     try:
         if timeout is None:
-            resp = await _summarize()
+            parts = await _summarize_all()
         else:
             async with asyncio.timeout(timeout):
-                resp = await _summarize()
-        summary = (getattr(resp, "content", "") or "").strip()
+                parts = await _summarize_all()
+        summary = "\n\n".join(part for part in parts if part).strip()
     except Exception as exc:  # noqa: BLE001 - 摘要超时/失败都是增强失败，回退硬裁剪
         emit(
             on_diagnostic,
@@ -220,6 +269,7 @@ async def compact_context(
             "compacted_chars": before_chars,
             "summary_chars": len(summary),
             "kept_recent_rounds": policy.keep_recent_rounds,
+            "parallel_segments": len(segments),
             "total_chars_after": ctx.total_chars(),
         },
     )

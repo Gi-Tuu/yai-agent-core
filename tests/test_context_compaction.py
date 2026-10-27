@@ -13,6 +13,7 @@ from yai_core.kernel.compaction import (
     compact_context,
     render_for_summary,
     select_compaction_range,
+    split_compaction_segments,
     user_round_starts,
 )
 from yai_core.kernel.context import Context
@@ -440,3 +441,135 @@ def test_large_tool_result_does_not_trim_before_compaction() -> None:
     assert "EARLY_ASSISTANT" in "\n".join(
         str(m.get("content", "")) for m in model.requests[1]
     )
+
+
+def _rounds_ctx(n: int) -> Context:
+    ctx = Context("系统提示")
+    for i in range(1, n + 1):
+        for m in _plain_round(f"r{i}"):
+            ctx.add(m)
+    return ctx
+
+
+class _DelayModel:
+    """每段摘要固定延迟，用来量并行 vs 串行的墙钟差。"""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+        self.calls = 0
+        self.requests: list[list[dict]] = []
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        self.requests.append([dict(message) for message in messages])
+        await asyncio.sleep(self.delay)
+        return ModelResponse(content=f"摘要-{self.calls}")
+
+
+def test_split_segments_cover_range_and_align_to_rounds() -> None:
+    """切段必须铺满 [start,end) 且每段从 user 轮首开始。"""
+    ctx = _rounds_ctx(6)
+    msgs = ctx.messages
+    start, end = 0, len(msgs)
+    segments = split_compaction_segments(msgs, start, end, 3)
+    assert len(segments) == 3
+    assert segments[0][0] == start
+    assert segments[-1][1] == end
+    for (_s1, e1), (s2, _e2) in zip(segments[:-1], segments[1:], strict=True):
+        assert e1 == s2                      # 首尾相接，不漏不重
+    for seg_start, _seg_end in segments[1:]:
+        assert msgs[seg_start].role == "user"  # 段首对齐轮首
+
+    assert split_compaction_segments(msgs, start, end, 1) == [(start, end)]
+
+
+def test_parallel_compaction_runs_segments_concurrently() -> None:
+    """parallel=3 时三段并发：调用次数对得上，墙钟明显短于串行。"""
+    import time as _time
+
+    async def run(parallel: int):
+        ctx = _rounds_ctx(6)
+        model = _DelayModel(0.05)
+        policy = CompactionPolicy(
+            hard_max_chars=200,
+            target_chars=100,
+            keep_recent_rounds=1,
+            parallel=parallel,
+        )
+        started = _time.monotonic()
+        event = await compact_context(ctx, model, policy)
+        return event, _time.monotonic() - started, model, ctx
+
+    event, elapsed, model, ctx = asyncio.run(run(3))
+    assert event is not None
+    assert event.type == EventType.CONTEXT_COMPACTED
+    assert event.data["parallel_segments"] == 3
+    assert model.calls == 3
+    # 三段各 50ms：串行至少 150ms，并发应显著更短。
+    assert elapsed < 0.13
+    # 摘要按段顺序拼接在一条 system 消息里。
+    system_msgs = [m for m in ctx.messages if m.role == "system"]
+    assert system_msgs and "摘要-" in system_msgs[-1].content
+
+
+def test_task_anchor_is_reinjected_after_history_is_trimmed() -> None:
+    """原始任务被裁掉后，下一次模型调用会在 system 位把目标重新锚回来。"""
+    from yai_core.channels.collect import CollectChannel
+    from yai_core.kernel import AdaptiveRouter, AgentLoop
+    from yai_core.policy import AllowlistPolicy
+    from yai_core.tools import ToolExecutor, ToolRegistry
+
+    model = ScriptedModel([ModelResponse(content="ok")])
+    registry = ToolRegistry()
+    channel = CollectChannel()
+    loop = AgentLoop(
+        model,
+        registry,
+        ToolExecutor(registry, AllowlistPolicy((), mode="auto"), channel),
+        channel,
+        InMemoryStore(),
+        router=AdaptiveRouter(),
+    )
+
+    ctx = Context("系统提示", max_chars=400)
+    task = "把这份长报告里第三季度的所有异常订单找出来并按金额排序，最后给出处理建议。"
+    loop._current_task = task
+    # 任务不在上下文里（被裁掉了）：锚点必须出现。
+    for i in range(8):
+        for m in _plain_round(f"r{i}", n=120):
+            ctx.add(m)
+
+    messages, _ = asyncio.run(loop._model_messages(ctx))
+    # 瞬态 system 是插在基础 system 之后的独立消息。
+    systems = [m["content"] for m in messages if m["role"] == "system"]
+    assert any("【当前任务】" in text for text in systems)
+    assert any(task[:40] in text for text in systems)
+
+
+def test_task_anchor_absent_when_task_still_in_context() -> None:
+    """任务还在上下文里时不重复注入，避免每轮白花 token。"""
+    from yai_core.channels.collect import CollectChannel
+    from yai_core.kernel import AdaptiveRouter, AgentLoop
+    from yai_core.policy import AllowlistPolicy
+    from yai_core.tools import ToolExecutor, ToolRegistry
+
+    model = ScriptedModel([ModelResponse(content="ok")])
+    registry = ToolRegistry()
+    channel = CollectChannel()
+    loop = AgentLoop(
+        model,
+        registry,
+        ToolExecutor(registry, AllowlistPolicy((), mode="auto"), channel),
+        channel,
+        InMemoryStore(),
+        router=AdaptiveRouter(),
+    )
+
+    ctx = Context("系统提示", max_chars=100_000)
+    task = "统计本周新增订单数量。"
+    loop._current_task = task
+    ctx.add(ChatMessage(role="user", content=task))
+    ctx.add(ChatMessage(role="assistant", content="好的"))
+
+    messages, _ = asyncio.run(loop._model_messages(ctx))
+    assert not any("【当前任务】" in m["content"] for m in messages)

@@ -5,7 +5,11 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.24.0] - 2026-10-27
+
+本版把"可信"往前推了三步：**成本**（提示缓存）、**注入**（工具输出按不可信数据处理 +
+离线回归集）、**审计**（执行收据哈希链 + 权限拒绝成为可见事件），外加两项长会话优化
+（并行压缩、任务锚点）。零新增运行时依赖，内核 `dependencies` 仍为空。
 
 ### Added
 
@@ -19,9 +23,27 @@
 - **执行收据哈希链**：每条收据带 `prev_hash` 与 `receipt_hash`（SHA-256，含前一条哈希），
   用 `verify_receipt_chain(receipts)` 一条命令校验整串有没有被改动 / 抽条 / 换序。
   对应 IETF Agent Audit Trail 草案里"prev_hash 串链"的思路，不引入任何新依赖。
+- **执行后验证（后置条件）**：`ToolGovernance.postcondition` 可声明
+  `(arguments) -> bool | Awaitable[bool]`。只在该次调用结果为 `unknown`（超时 /
+  同步 handler 被放弃 / handler 抛错 / 沙箱异常）时运行：确认副作用已发生 → 收据改判
+  `succeeded` 并重新接链，模型看到成功；确认没发生或检查自身出错 → 保持 `unknown`，
+  只记录 `postcondition=rejected|error`，绝不替宿主猜。
+- **权限拒绝成为可见事件**（`PERMISSION_DENIED`，第 21 类事件）：此前被策略 / 能力闸 /
+  频率上限 / 审批拒绝的调用只把原因回给模型，**事件流里完全看不见**，宿主没法审计
+  "这次调用为什么没发生"。现在这四条路径各发一条 `permission_denied`
+  （`tool` / `source` / `reason` / 按声明脱敏后的 `arguments`）。事件类型守卫同步到 21 类。
 - **OpenTelemetry GenAI 语义约定**：trace 上补 `gen_ai.operation.name` / `gen_ai.agent.name`
   （root）与 `gen_ai.tool.name` / `gen_ai.tool.type` / `gen_ai.tool.call.id`（工具 span），
   Jaeger / Grafana 一类后端可按标准识别 agent 与工具调用。
+- **并行摘要压缩**：`CompactionPolicy(parallel=N)` 把待压缩的旧轮按轮首切成至多 N 段
+  并发摘要、按序拼接；墙钟随段数下降，保留策略与消息结构完全不变（默认 1 = 旧行为）。
+  `CONTEXT_COMPACTED` 事件新增 `parallel_segments` 字段。
+- **任务锚点（上下文腐化防护）**：长任务被裁剪 / 压缩后，若原始任务已不在消息里，
+  下一次模型调用会把「当前任务」重新锚到瞬态 system 位；任务仍在上下文时不重复注入。
+- **注入型工具输出的离线回归集**（`tests/test_injection_regression.py`）：假设模型
+  **完全照注入的话去做**，验证内核的确定性防线仍然拦得住——策略 DENY、资源作用域闸、
+  审批拒绝三条路径各一例，断言业务 handler 一次都没被执行、模型收到拒绝原因、
+  事件流里有 `permission_denied`；另断言注入文本进入模型前已被包成不可信数据块。
 
 ## [v0.23.0] - 2026-10-27
 

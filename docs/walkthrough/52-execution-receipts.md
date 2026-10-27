@@ -160,6 +160,22 @@ ASK / `require_approval` **不视为 DENY**，仍不弹审批、不生成新预�
 这是把"审计日志"升级成"可验证审计"的最小代价做法（思路对齐 IETF Agent Audit Trail 草案的
 `prev_hash`），不引入任何依赖，也不改变单条收据的字段语义。
 
+## 5.6 执行后验证：把 unknown 变成"确认过的 succeeded"
+
+`unknown` 的含义是"副作用可能已经发生"。如果宿主能查清事实，就不该让模型和人都去猜：
+`ToolGovernance(postcondition=...)` 声明一个 `(arguments) -> bool | Awaitable[bool]`
+的检查，执行器**只在该次结果为 `unknown` 时**运行它。
+
+| 检查结果 | 收据 | 模型看到 |
+|---|---|---|
+| 返回 True | 改判 `succeeded`、`postcondition=confirmed`、重新接链 | `ok=True`，正文注明"后置条件已确认" |
+| 返回 False | 保持 `unknown`、`postcondition=rejected` | 仍是失败 |
+| 抛异常 | 保持 `unknown`、`postcondition=error` | 仍是失败，异常不外抛 |
+| 结果本来就不是 unknown | **不运行**（零额外开销） | 原样 |
+
+两个关键约束：检查只是**确认事实**，不重放、不重试、不改变参数；改判后的收据会按
+`prev_hash` 重新接链，整串仍然可以通过 `verify_receipt_chain()` 校验。
+
 ## 6. 自检
 
 1. 为什么 `not_started` 与 `unknown` 必须分开？

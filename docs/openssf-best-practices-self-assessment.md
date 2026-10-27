@@ -1,7 +1,7 @@
 # OpenSSF Best Practices Badge（原 CII）自评清单 —— YAI Agent Core
 
 > 对照 OpenSSF Best Practices **Passing** 级官方标准（https://www.bestpractices.dev/en/criteria/passing ）
-> 逐条评估本仓库当前 main（**v0.23.0**，2026-10-27 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
+> 逐条评估本仓库当前 main（**v0.24.0**，2026-10-27 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
 > 复核要点见文末「八、复核记录（2026-10-25）」；仓库内文本与**平台记录**已于
 > 2026-10-25 一并更新（平台侧由项目所有者本人 GitHub 账号登录后提交，见第八节）。
 >
@@ -17,7 +17,7 @@
 > **结果：已于 2026-10-10 通过自评并获得 Passing（过境）徽章**（项目 [#15360](https://www.bestpractices.dev/projects/15360)），Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足；英文门面已补齐，`english` 条改为 Met；仅 2 条 SUGGESTED（专用动态分析 fuzzer/DAST）为 Unmet，不阻塞 Passing。
 >
 > **2026-10-25 复核**：徽章状态不变（Passing）。仓库侧的证据已更新——测试规模从当时的 ~1 584 项增至
-> **1 915 项（1 910 通过 + 5 跳过）**、行覆盖率 **95.65%**；原先 Unmet 的两条动态分析
+> **1 935 项（1 930 通过 + 5 跳过）**、行覆盖率 **95.63%**；原先 Unmet 的两条动态分析
 > SUGGESTED **已具备可用工具**（atheris fuzzing 4 个 target + CI `fuzz` job，见第五节的
 > `dynamic_analysis*` 行），本清单据此改判为 Met。
 > **平台侧同步已完成**：2026-10-25 13:58 UTC 由项目所有者本人登录后提交，五处更新（`maintained`
@@ -54,9 +54,9 @@
 | repo_track | 记录改动内容/人/时间（MUST） | ✅ | git 历史 |
 | repo_interim | 含版本之间的中间版本，非仅最终发布（MUST） | ✅ | 主干持续 commit |
 | repo_distributed | 使用分布式 VCS（SUGGESTED） | ✅ | git |
-| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.23.0 唯一（19 个发布 tag） |
+| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.24.0 唯一（20 个发布 tag） |
 | version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（当前 `0.22.1`） |
-| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.23.0`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
+| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.24.0`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
 | release_notes | 每版有人可读发布说明，非 git log（MUST，Met URL） | ✅ | `CHANGELOG.md` |
 | release_notes_vulns | 列出本版修复的、已分配 CVE 的公开运行时漏洞（MUST，可 N/A） | ➖ | **N/A 理由**："项目成果自身无已分配 CVE 的公开漏洞；故无此类条目。" |
 | report_process | 提供提交 bug 的流程（MUST，Met URL） | ✅ | GitHub Issues + `.github/ISSUE_TEMPLATE/` |
@@ -140,11 +140,11 @@
 
 | 项 | 复核前（2026-10-10 自评时） | 复核后（2026-10-25 实测） |
 |---|---|---|
-| 自评基线 | main v0.8.0 | main v0.23.0（代码同 `a94651d`，发版提交只改版本串） |
-| 测试规模 | ~1 584 项 | **1 915 项**（1 910 通过 + 5 跳过），exit 0 |
+| 自评基线 | main v0.8.0 | main v0.24.0（代码同 `01904c2`，发版提交只改版本串） |
+| 测试规模 | ~1 584 项 | **1 935 项**（1 930 通过 + 5 跳过），exit 0 |
 | 行覆盖率 | 约 92.6% | **95.65%**（8 029 语句 / 349 未覆盖；CI 门禁 90） |
 | 讲义规模 | `docs/walkthrough/00–27` | `00–55`（55 篇逐行讲义 + 00-index） |
-| 发布 tag | v0.7.0、v0.8.0 | **19 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.23.0（含 v0.8.1） |
+| 发布 tag | v0.7.0、v0.8.0 | **20 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.24.0（含 v0.8.1） |
 | 动态分析（SUGGESTED） | ⚠ Unmet：未部署 fuzzer/DAST | ✅ Met：atheris fuzzing 4 个 target + CI `fuzz` job（Ubuntu/py3.12，每个 target 限时 45 秒）；已有 fuzz 撞出缺陷并修复的实例 |
 | 提交活跃度 | 建库 2026-09-09 | **414 次提交**，2026-10-25 仍有合并；GitHub 开放 issue/PR 计数 0 |
 

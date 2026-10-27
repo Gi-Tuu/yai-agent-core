@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from yai_core.policy.approval import (
@@ -383,6 +383,64 @@ class ToolExecutor:
             raise _IdempotencyError("幂等键必须是非空字符串（或 None）")
         return value.strip()
 
+    async def _apply_postcondition(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        events: list[AgentEvent],
+        ok: bool,
+        text: str,
+    ) -> tuple[bool, str]:
+        """在 ``unknown`` 结果上跑宿主的后置条件检查，决定是否把收据改判为 succeeded。"""
+        spec = self.registry.get(name) if self.registry.has(name) else None
+        if spec is None or spec.governance is None:
+            return ok, text
+        check = spec.governance.postcondition
+        if check is None:
+            return ok, text
+        final = next(
+            (e for e in reversed(events) if e.type == EventType.TOOL_RESULT), None
+        )
+        if final is None or not isinstance(final.data.get("receipt"), dict):
+            return ok, text
+        try:
+            receipt = ExecutionReceipt.from_dict(final.data["receipt"])
+        except (TypeError, ValueError):
+            return ok, text
+        if receipt.status != "unknown":
+            return ok, text
+
+        try:
+            outcome = check(dict(arguments))
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+            confirmed = bool(outcome)
+            verdict = "confirmed" if confirmed else "rejected"
+        except Exception:  # noqa: BLE001 - 检查失败只能保持 unknown，不能替宿主猜
+            confirmed = False
+            verdict = "error"
+
+        if confirmed:
+            updated = replace(
+                receipt,
+                status="succeeded",
+                retryable=False,
+                error="",
+                postcondition=verdict,
+            ).seal(receipt.prev_hash)
+        else:
+            updated = replace(receipt, postcondition=verdict).seal(receipt.prev_hash)
+        # 这条是链尾：重新密封后把链尾指回去，后续收据继续接在它后面。
+        self._last_receipt_hash = updated.receipt_hash
+        final.data["receipt"] = updated.to_dict()
+        final.data["postcondition"] = verdict
+        if not confirmed:
+            return ok, text
+        final.data["ok"] = True
+        final.data["verified"] = True
+        final.data.pop("error", None)
+        return True, text + "\n（后置条件已确认副作用发生，收据改判为 succeeded）"
+
     def _receipt(
         self,
         *,
@@ -408,6 +466,29 @@ class ToolExecutor:
         # 信封串成链：宿主导出收据后用 verify_receipt_chain() 即可发现任何改动。
         self._last_receipt_hash = receipt.receipt_hash
         return receipt
+
+    def _denied_event(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        reason: str,
+        source: str,
+    ) -> AgentEvent:
+        """构造一条 ``PERMISSION_DENIED``：拒绝也是一次治理决策，必须可见。
+
+        ``arguments`` 按工具声明的敏感路径脱敏后再进事件——拒绝事件同样会进宿主
+        日志，不能因为"这次没执行"就漏掉脱敏。
+        """
+        return AgentEvent(
+            EventType.PERMISSION_DENIED,
+            {
+                "tool": name,
+                "source": source,
+                "reason": reason,
+                "arguments": redact_arguments(arguments, spec.governance.sensitive),
+            },
+        )
 
     def _attach_receipt(
         self, events: list[AgentEvent], receipt: ExecutionReceipt
@@ -614,6 +695,38 @@ class ToolExecutor:
         _trace: list[_PermissionDependency] | None = None,
         _timeout: float | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
+        """对外入口：执行一次工具调用，必要时做"执行后验证"。
+
+        ``unknown``（超时 / 同步 handler 被放弃 / handler 抛错 / 沙箱异常）意味着
+        **副作用可能已经发生**。如果工具声明了 ``postcondition``，这里会跑一次宿主
+        提供的检查来确认"到底发生了没有"：确认发生 → 收据升级为 ``succeeded`` 并标
+        ``verified=True``；确认没发生或检查失败 → 保持 ``unknown``，只记录
+        ``postcondition`` 的结果，绝不替宿主猜。
+        """
+        events, ok, text = await self._execute_impl(
+            name,
+            arguments,
+            subject=subject,
+            budget=budget,
+            call_id=call_id,
+            _trace=_trace,
+            _timeout=_timeout,
+        )
+        if not ok:
+            ok, text = await self._apply_postcondition(name, arguments, events, ok, text)
+        return events, ok, text
+
+    async def _execute_impl(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        subject: Any = None,
+        budget: Any = None,
+        call_id: str = "",
+        _trace: list[_PermissionDependency] | None = None,
+        _timeout: float | None = None,
+    ) -> tuple[list[AgentEvent], bool, str]:
         """返回 (过程事件列表, 是否成功, 文本结果)。
 
         普通执行错误一律回灌给模型、不向上抛；唯一的例外是任务级
@@ -655,6 +768,9 @@ class ToolExecutor:
         decision = gate_fn(arguments, subject) if gate_fn is not None else None
         decision = _tighten(decision, _native_approval(spec, arguments))
         if decision is not None and decision.reject:
+            events.append(
+                self._denied_event(spec, name, arguments, decision.reject, "gate")
+            )
             return events, False, decision.reject
 
         # 入参校验是所有调用路径共同的下限，而不是"挂了审批条件才顺带检查"。
@@ -703,6 +819,9 @@ class ToolExecutor:
                     EventType.TOOL_RESULT,
                     {"tool": name, "ok": False, "error": message, "rate_limited": True},
                 )
+            )
+            events.append(
+                self._denied_event(spec, name, arguments, message, "rate_limit")
             )
             self._attach_receipt(
                 events,
@@ -968,6 +1087,12 @@ class ToolExecutor:
         )
         events.extend(auth_events)
         if not approved:
+            source = (
+                "approval"
+                if any(e.type == EventType.PERMISSION_ASKED for e in auth_events)
+                else "policy"
+            )
+            events.append(self._denied_event(spec, name, arguments, reason, source))
             return events, False, reason
 
         if preview is not None and any(
