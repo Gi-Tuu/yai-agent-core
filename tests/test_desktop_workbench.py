@@ -21,7 +21,13 @@ pytest.importorskip("PySide6.QtCore", reason="需要 PySide6（uv sync --extra d
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from shell.demo_script import DemoEvent  # noqa: E402
 from shell.desktop.specialist import SpecialistSpec  # noqa: E402
-from shell.desktop.workbench import WorkbenchRuntime  # noqa: E402
+from shell.desktop.workbench import (  # noqa: E402
+    DEFAULT_NEBULA_PARTICLES,
+    NEBULA_PARTICLES_MAX,
+    NEBULA_PARTICLES_MIN,
+    WorkbenchRuntime,
+    coerce_nebula_particles,
+)
 
 
 @pytest.fixture(scope="module")
@@ -55,9 +61,10 @@ def _spec(sid: str, factory) -> SpecialistSpec:
                           demo_factory=factory)
 
 
-def _workbench(*pairs) -> WorkbenchRuntime:
+def _workbench(*pairs, settings=None) -> WorkbenchRuntime:
     return WorkbenchRuntime(
-        [_spec(sid, factory) for sid, factory in pairs], mode="demo")
+        [_spec(sid, factory) for sid, factory in pairs], mode="demo",
+        settings=settings)
 
 
 def test_registration_and_list_model_roles(qapp) -> None:
@@ -401,3 +408,42 @@ def test_auto_collapse_preference_flips_and_persists(qapp) -> None:
         # 恢复真机原有偏好，避免测试污染用户设置
         settings.setValue("ui/autoCollapse", original)
         settings.sync()
+
+
+def test_nebula_particles_defaults_clamps_and_persists(qapp, tmp_path) -> None:
+    """星云粒子数：默认 260、越界收敛、落盘后新实例读回；全程用临时 INI 不碰注册表。"""
+    from PySide6.QtCore import QSettings
+
+    ini = str(tmp_path / "prefs.ini")
+    settings = QSettings(ini, QSettings.IniFormat)
+
+    wb = _workbench(("a", lambda task, channel: _script([])), settings=settings)
+    try:
+        assert wb.property("nebulaParticles") == DEFAULT_NEBULA_PARTICLES
+
+        wb.setNebulaParticles(520)
+        assert wb.property("nebulaParticles") == 520
+        assert QSettings(ini, QSettings.IniFormat).value("ui/nebulaParticles") == 520
+
+        wb.setNebulaParticles(10**6)               # 上限收敛
+        assert wb.property("nebulaParticles") == NEBULA_PARTICLES_MAX
+        wb.setNebulaParticles(-5)                  # 下限收敛
+        assert wb.property("nebulaParticles") == NEBULA_PARTICLES_MIN
+    finally:
+        wb.shutdown()
+
+    settings.setValue("ui/nebulaParticles", 520)
+    settings.sync()
+    wb2 = _workbench(("a", lambda task, channel: _script([])), settings=settings)
+    try:
+        assert wb2.property("nebulaParticles") == 520
+    finally:
+        wb2.shutdown()
+
+
+def test_nebula_particles_coercion_rejects_junk() -> None:
+    """坏值（非数字）回默认值，不抛异常。"""
+    for junk in (None, "many", "", object(), 3.7):
+        value = coerce_nebula_particles(junk)
+        assert isinstance(value, int)
+        assert NEBULA_PARTICLES_MIN <= value <= NEBULA_PARTICLES_MAX
