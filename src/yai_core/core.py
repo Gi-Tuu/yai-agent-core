@@ -104,6 +104,7 @@ class AgentCore:
         model_timeout: float | None = DEFAULT_MODEL_TIMEOUT,
         tool_timeout: float | None = None,
         on_diagnostic: DiagnosticSink | None = None,
+        tool_output_guard: bool = True,
         budget: Budget | None = None,
         metrics: MetricsRecorder | None = None,
     ) -> None:
@@ -253,6 +254,7 @@ class AgentCore:
             ),
             auto_recall_k=auto_recall_k,
             host_state=self.host_state,
+            tool_output_guard=tool_output_guard,
         )
         self.cost_aware = cost_aware
         self.model_timeout = model_timeout

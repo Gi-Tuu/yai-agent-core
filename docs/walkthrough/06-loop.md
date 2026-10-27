@@ -410,6 +410,21 @@ yield AgentEvent(
 | 执行后 | + tool：工具返回的 JSON |
 | 第2轮模型给最终答案 | + assistant：最终自然语言 → MODEL_MESSAGE，结束 |
 
+## 工具结果进上下文前要"包一层"
+
+工具体返回的文本是**外部数据**——网页、远端 API 的错误、第三方 MCP 服务的输出——里面完全
+可以藏"忽略之前的指令"这类内容。所以回灌前统一包成：
+
+```text
+<tool_output untrusted="true">
+…原始返回值…
+</tool_output>
+```
+
+这是 Spotlighting 类防御的最小实现：不改变工具语义，也不改事件流与审计收据里的原值，
+只改变它进 prompt 的形态。默认开启，`AgentCore(tool_output_guard=False)` 可关。
+注意工具返回值在消息里是 **JSON 序列化后的文本**（字符串带引号），包层只加在消息层。
+
 ## 自检（这篇必须全懂再往下）
 
 1. 异步生成器和普通 async 函数的区别？为什么 Agent 过程适合"边跑边 yield"？

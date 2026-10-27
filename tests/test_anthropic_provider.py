@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from yai_core import AgentCore, AnthropicProvider, build_spec
+from yai_core.kernel.loop import wrap_tool_output
 from yai_core.llm.anthropic import (
     parse_response,
     split_system,
@@ -335,7 +336,8 @@ def test_tool_roundtrip_through_agent_core(monkeypatch: pytest.MonkeyPatch) -> N
     assert second["messages"][-1]["content"][0] == {
         "type": "tool_result",
         "tool_use_id": "c1",
-        "content": "3",
+        # 工具返回值统一包成不可信数据块后再回灌（Spotlighting 防御）。
+        "content": wrap_tool_output("3"),
     }
     # 第一次请求就要带上工具描述，且形状是 Anthropic 的 name/input_schema
     assert provider.client.messages.calls[0]["tools"][0]["name"] == "count_notes"
