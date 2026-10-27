@@ -222,3 +222,30 @@ def test_redaction_is_per_layer_not_taint_tracking() -> None:
     step_call2 = next(e for e in covered if e.type == EventType.TOOL_CALL)
     assert SECRET not in str(step_call2.data)
     assert step_call2.data["arguments"]["token"].startswith("[redacted")
+
+
+# ---------- 拒绝事件也必须脱敏 ----------
+
+def test_permission_denied_event_is_redacted() -> None:
+    """被拒绝的调用不执行，但它的事件同样进宿主日志——敏感路径必须已经盖住。"""
+    def rotate(token: str = "") -> dict:
+        """轮换密钥。"""
+        return {"ok": True}
+
+    spec = build_spec(rotate)
+    spec.governance = ToolGovernance(sensitive=("token",))
+    registry = ToolRegistry()
+    registry.register(spec)
+    executor = ToolExecutor(registry, AllowlistPolicy((), mode="deny_all"), CollectChannel())
+
+    events, ok, _reason = asyncio.run(
+        executor.execute("rotate", {"token": SECRET}, call_id="c1")
+    )
+    assert ok is False
+    denied = [e for e in events if e.type == EventType.PERMISSION_DENIED]
+    assert denied, "被拒绝的调用没有发 permission_denied"
+    data = denied[0].data
+    assert data["source"] == "policy"
+    assert data["tool"] == "rotate"
+    assert data["arguments"]["token"].startswith("[redacted")
+    assert SECRET not in str(data)

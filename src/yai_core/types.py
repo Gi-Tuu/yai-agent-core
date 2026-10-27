@@ -35,6 +35,8 @@ class EventType(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PERMISSION_ASKED = "permission_asked"
+    #: 调用在**执行前**被拒（策略 / 闸门 / 审批 / 频率），是一次真正的治理决策。
+    PERMISSION_DENIED = "permission_denied"
     CLARIFY_REQUESTED = "clarify_requested"
     CAPABILITY_MISSING = "capability_missing"
     TOOL_DISCOVERED = "tool_discovered"

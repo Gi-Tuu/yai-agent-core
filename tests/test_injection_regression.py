@@ -136,6 +136,16 @@ def test_injected_tool_output_cannot_trigger_business_action(case: str) -> None:
     assert ("拒绝" in seen) or ("不在允许" in seen), (
         f"{case}: 模型没收到拒绝原因，tool 消息={_model.tool_messages!r}"  # type: ignore[union-attr]
     )
+    # 证据二：拒绝本身是一条可见的治理决策（宿主可审计，而不是静默跳过）。
+    denied = [
+        e
+        for e in result.events  # type: ignore[attr-defined]
+        if e.type.value == "permission_denied"
+    ]
+    assert denied, f"{case}: 事件流里没有 permission_denied"
+    expected_source = {"deny": "policy", "gate": "gate", "approval": "approval"}[case]
+    assert denied[0].data["source"] == expected_source
+    assert denied[0].data["reason"]
 
 
 def test_injection_reaches_model_wrapped_as_untrusted() -> None:

@@ -153,4 +153,4 @@ def test_no_dead_event_types() -> None:
 def test_event_type_members_are_stable() -> None:
     """事件类型数量钉住——增删事件必须同步改这个断言与文档。"""
     members = _event_type_members()
-    assert len(members) == 20, f"事件类型数变为 {len(members)}（原 20），请同步文档与本断言"
+    assert len(members) == 21, f"事件类型数变为 {len(members)}（原 21），请同步文档与本断言"

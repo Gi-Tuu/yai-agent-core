@@ -467,6 +467,29 @@ class ToolExecutor:
         self._last_receipt_hash = receipt.receipt_hash
         return receipt
 
+    def _denied_event(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        reason: str,
+        source: str,
+    ) -> AgentEvent:
+        """构造一条 ``PERMISSION_DENIED``：拒绝也是一次治理决策，必须可见。
+
+        ``arguments`` 按工具声明的敏感路径脱敏后再进事件——拒绝事件同样会进宿主
+        日志，不能因为"这次没执行"就漏掉脱敏。
+        """
+        return AgentEvent(
+            EventType.PERMISSION_DENIED,
+            {
+                "tool": name,
+                "source": source,
+                "reason": reason,
+                "arguments": redact_arguments(arguments, spec.governance.sensitive),
+            },
+        )
+
     def _attach_receipt(
         self, events: list[AgentEvent], receipt: ExecutionReceipt
     ) -> None:
@@ -745,6 +768,9 @@ class ToolExecutor:
         decision = gate_fn(arguments, subject) if gate_fn is not None else None
         decision = _tighten(decision, _native_approval(spec, arguments))
         if decision is not None and decision.reject:
+            events.append(
+                self._denied_event(spec, name, arguments, decision.reject, "gate")
+            )
             return events, False, decision.reject
 
         # 入参校验是所有调用路径共同的下限，而不是"挂了审批条件才顺带检查"。
@@ -793,6 +819,9 @@ class ToolExecutor:
                     EventType.TOOL_RESULT,
                     {"tool": name, "ok": False, "error": message, "rate_limited": True},
                 )
+            )
+            events.append(
+                self._denied_event(spec, name, arguments, message, "rate_limit")
             )
             self._attach_receipt(
                 events,
@@ -1058,6 +1087,12 @@ class ToolExecutor:
         )
         events.extend(auth_events)
         if not approved:
+            source = (
+                "approval"
+                if any(e.type == EventType.PERMISSION_ASKED for e in auth_events)
+                else "policy"
+            )
+            events.append(self._denied_event(spec, name, arguments, reason, source))
             return events, False, reason
 
         if preview is not None and any(

@@ -138,7 +138,8 @@ def test_policy_decides_on_authoritative_arguments() -> None:
     )
     assert ok is False and calls == []
     assert policy.seen == APPROVED
-    assert [e.type for e in events] == []  # DENY 不发任何调用事件
+    # DENY 不发调用事件，但拒绝本身必须是可见的治理决策
+    assert [e.type for e in events] == [EventType.PERMISSION_DENIED]
 
 
 def test_model_supplied_dict_is_not_mutated_by_execution() -> None:

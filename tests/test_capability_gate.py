@@ -227,7 +227,11 @@ def test_gate_approval_declined_runs_nothing() -> None:
         _executor(spec, _Policy(PermissionDecision.ALLOW), channel), "refund", {"amount": 10}
     )
     assert ok is False and "拒绝" in reason
-    assert [e.type for e in events] == [EventType.PERMISSION_ASKED]
+    assert [e.type for e in events] == [
+        EventType.PERMISSION_ASKED,
+        EventType.PERMISSION_DENIED,
+    ]
+    assert events[-1].data["source"] == "approval"
 
 
 def test_policy_deny_beats_gate_approval() -> None:
@@ -249,7 +253,9 @@ def test_policy_deny_beats_gate_approval() -> None:
         _executor(spec, _Policy(PermissionDecision.DENY), channel), "refund", {"amount": 10}
     )
     assert ok is False and "权限策略拒绝" in reason
-    assert events == [] and channel.confirms == []
+    assert channel.confirms == []
+    assert [e.type for e in events] == [EventType.PERMISSION_DENIED]
+    assert events[0].data["source"] == "policy"
 
 
 def test_gate_reject_happens_before_policy_and_handler() -> None:
@@ -277,7 +283,9 @@ def test_gate_reject_happens_before_policy_and_handler() -> None:
     )
     events, ok, reason = _run(_executor(spec, policy, channel), "refund", {"amount": 10})
     assert ok is False and "可信操作主体" in reason
-    assert calls == [] and policy.seen == [] and events == []
+    assert calls == [] and policy.seen == []
+    assert [e.type for e in events] == [EventType.PERMISSION_DENIED]
+    assert events[0].data["source"] == "gate"
 
 
 def test_prompt_placeholder_uses_the_redacted_copy() -> None:
