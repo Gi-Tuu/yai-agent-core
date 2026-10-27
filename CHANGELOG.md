@@ -5,14 +5,21 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.23.0] - 2026-10-27
+
+本版把"**能不能当场验证**"做成仓库的一等公民：一条命令跑完治理闭环、一条命令跑完全部门禁、
+一份能力与证据索引；桌面星云加了粒子数偏好；仓库内容整理为通用口径
+（部署手册与配图迁到通用位置、移除过期清单与提交目录）。
+
+**升级注意**：部署验证端点改名为 `/.well-known/yai-verification.json`
+（原路径不再提供）。其余为新增能力与文档整理，无内核 API 变更。
 
 ### Added
 
 - **一条命令跑完治理闭环**（`scripts/demo_governance_loop.py`）：离线脚本模型发起一次退款调用 →
   内核在参数级审批处拦下并冻结参数 → 批准才执行、拒绝零副作用 → 全过程写成可回查的
   JSONL trace。带 `--refuse`（验证零副作用）与 `--trace`（落盘路径）；退出码即断言。
-  配套 `tests/test_demo_governance_loop.py` 两例回归。
+  参数取值只进 trace，不打到终端。配套 `tests/test_demo_governance_loop.py` 两例回归。
 - **一条命令跑完全部门禁**（`scripts/check_all.py`）：锁定文件 → lint → 类型检查 → 版本与打包守卫
   → 全量离线测试 + 覆盖率门禁 → 两宿主冒烟，任何一步失败立即停下并给出退出码；`--fast` 跳过全量测试。
 - **能力与证据索引**（`docs/IMPLEMENTATION_STATUS.md`）：把"已验证 / 已实现·未真机验证 / 明确不做"
@@ -24,12 +31,11 @@
 
 ### Changed
 
-- **仓库改为通用开源口径，移除全部赛事描述**：原赛事材料目录里只有两类内容值得留下，已迁到通用位置——
+- **仓库内容整理为通用口径**：原材料目录里只有两类内容值得留下，已迁到通用位置——
   部署手册 → `docs/demo-deployment.md`，白皮书配图与绘图脚本 → `docs/figs/` + `scripts/draw_figs.py`；
-  赛事清单、视频录制脚本、黑客松提交目录（`submissions/`）与对应构建脚本一并移出仓库
-  （内容仍在 git 历史里，可按需取回）。代码与文档里的"评审/参赛"措辞统一改为"公网演示 / 探活"。
-- **部署验证端点更名**：改为 `/.well-known/yai-verification.json`（原名带外部赛事标识），
-  鉴权白名单与三条测试同步。
+  过期清单、视频录制脚本、提交目录（`submissions/`）与对应构建脚本一并移出仓库
+  （内容仍在 git 历史里，可按需取回）。代码与文档里的措辞统一为"公网演示 / 探活"。
+- **部署验证端点更名**：改为 `/.well-known/yai-verification.json`，鉴权白名单与三条测试同步。
 - **构建脚本改名**：`build_competition_docx.py` → `build_docx.py`，`build_submission_form.py` → `build_form_pdf.py`。
 
 ### Fixed
@@ -37,6 +43,8 @@
 - **链接守卫只检查被跟踪的 markdown**：此前它把本地过程稿也扫进去，而且 `docs/exports` 的跳过条件
   用 `in parts` 比较多段路径，永远匹配不上。现在有 git 时按 `git ls-files` 取文件，
   解包 sdist（无 git）时退回遍历。
+- **治理闭环演示不把参数取值打到终端**：参数属于审计数据，只写进 JSONL trace，
+  终端只报"几项"与工具名（CodeQL `py/clear-text-logging-sensitive-data`）。
 
 ## [v0.22.1] - 2026-10-25
 

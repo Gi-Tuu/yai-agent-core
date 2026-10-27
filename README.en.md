@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.22.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.23.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -305,12 +305,13 @@ For optional environment variables (persistent memory, history trimming / TTL, r
   event instead of a dead one, the sdist's bundled test suite went from 21 collection errors to 0
   (full suite exits 0 from the unpacked package), dependency CVEs are cleared, and every
   Chinese/English facade's facts and wording were reconciled
-- **v0.22.1 (done, current release)**: the second audit remediation batch — tighter execution
+- **v0.22.1 (done)**: the second audit remediation batch — tighter execution
   semantics (malformed tool JSON rejected at the parse boundary, idempotent replays re-check their
   permission dependencies, composite tools hand the remaining timeout budget to each step), fixes to
   context ordering / replanning / closed-core behaviour, atomic SQLite backup and restore, per-layer
   worker permissions, **a real fix for external cancellation being swallowed by `asyncio.wait_for`
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
+- **v0.23.0 (done, current release)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **Next-version candidates (unordered)**: cross-instance distributed rate limiting; production-grade
   sandbox adapter tiers (gVisor / micro-VM / remote execution); visual composition authoring (host
   side); closing the public instance's exposure surface; wider adoption of host-side resolvers for

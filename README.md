@@ -7,7 +7,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15360/badge)](https://www.bestpractices.dev/projects/15360)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.22.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.23.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -244,7 +244,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.20（已完成）**：桌面壳视觉重构（Optical Obsidian / Braun Signal Orange），球 / 胶囊 / 面板共用四态星云
 - **v0.21.0（已完成）**：Office 文档文本抽取 Battery（docx / xlsx / pptx 零依赖，PDF 走可选 extra）、桌面星云动效按设计稿对齐（按真实 dt 积分，修正漂移速度）
 - **v0.22.0（已完成）**：全面体检整改批次——红线 1（内核零第三方硬依赖）补上全库守门测试、`CODE_TOOL_RETIRED` 从死事件变成真事件、sdist 自带测试从 21 个收集错误修到 0（包内跑全量 exit 0）、依赖 CVE 清零、中英门面的事实与措辞全量校准
-- **v0.22.1（已完成，当前发布版本）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
+- **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
+- **v0.23.0（已完成，当前发布版本）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **下个版本候选（未排序）**：跨实例分布式限流、生产级沙箱适配器递进（gVisor / 微 VM / 远程执行）、组合工具的可视化编排（宿主侧）、公网实例的暴露面收口、多模态资源引用的宿主侧解析器推广
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
