@@ -102,10 +102,13 @@ model = AnthropicProvider()         # 读 ANTHROPIC_API_KEY / ANTHROPIC_MODEL / 
 uv venv
 uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py   # 同一 Core 自适应多个不同宿主
+uv run python scripts/demo_governance_loop.py  # 一条命令看完治理闭环：请求 → 审批拦截 → 执行 → trace
+uv run python scripts/check_all.py    # 一条命令跑完全部门禁：lint / 类型 / 测试 / 覆盖率 / 冒烟
 uv run pytest                         # 全量测试，不需要 API Key
 ```
 
-第一次读代码：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线，[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是逐行讲解。
+第一次读代码：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线，[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是逐行讲解，
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) 是**能力与证据索引**（已验证 / 未真机验证 / 不做 三档）。
 
 ## 核心能力
 

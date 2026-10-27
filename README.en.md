@@ -113,11 +113,15 @@ model = AnthropicProvider()         # reads ANTHROPIC_API_KEY / ANTHROPIC_MODEL 
 uv venv
 uv pip install -e ".[dev,llm,server]"
 uv run python scripts/smoke_test.py   # one Core adapting to several different hosts
+uv run python scripts/demo_governance_loop.py  # the whole governance loop in one command: request → approval → execute → trace
+uv run python scripts/check_all.py    # every local gate in one command: lint / types / tests / coverage / smoke
 uv run pytest                         # full test suite, no API key needed
 ```
 
 New to the code? [`docs/reading-guide.md`](docs/reading-guide.md) is the learning path (zh-CN) and
 [`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) is the line-by-line walkthrough (zh-CN).
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) is the capability/evidence index
+(verified · implemented but not machine-verified · explicitly not done).
 For architecture in English see [`docs/architecture.en.md`](docs/architecture.en.md) and
 [`docs/comparison.en.md`](docs/comparison.en.md).
 
