@@ -142,6 +142,8 @@ class ExecutionReceipt:
     error: str = ""
     duration_ms: float = 0.0
     replayed: bool = False
+    #: 后置条件检查结论：``""``（未跑 / 不适用）、``confirmed``、``rejected``、``error``。
+    postcondition: str = ""
     #: 上一条收据的 ``receipt_hash``；第一条为空串。串起来就是一条防篡改链。
     prev_hash: str = ""
     #: 本条收据内容的 SHA-256（含 ``prev_hash``），由 :meth:`seal` 计算。
@@ -158,6 +160,7 @@ class ExecutionReceipt:
             "error": self.error,
             "duration_ms": self.duration_ms,
             "replayed": self.replayed,
+            "postcondition": self.postcondition,
             "prev_hash": prev_hash,
         }
 
@@ -197,6 +200,7 @@ class ExecutionReceipt:
             error=str(data.get("error", "")),
             duration_ms=float(data.get("duration_ms", 0.0)),
             replayed=bool(data.get("replayed", False)),
+            postcondition=str(data.get("postcondition", "")),
             prev_hash=str(data.get("prev_hash", "")),
             receipt_hash=str(data.get("receipt_hash", "")),
         )
@@ -413,6 +417,11 @@ class ToolGovernance:
     #: 本工具不做幂等去重；非空时执行器会在进程内缓存结果，重试同一 key 不再
     #: 进入 handler。跨进程/多实例去重必须由宿主用同一个 key 自己实现。
     idempotency_key: Callable[[dict[str, Any], Any], Any] | None = None
+    #: 后置条件检查 ``(arguments) -> bool | Awaitable[bool]``。只在该次调用结果为
+    #: ``unknown``（超时 / 同步 handler 被放弃 / handler 抛错 / 沙箱异常）时运行：
+    #: 确认副作用已发生 → 收据改判 ``succeeded`` 并标 ``verified``；确认没发生或检查
+    #: 自身出错 → 保持 ``unknown``，只记录 ``postcondition`` 的结论。函数，不随清单导出。
+    postcondition: Callable[[dict[str, Any]], Any] | None = None
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
