@@ -510,3 +510,66 @@ def test_parallel_compaction_runs_segments_concurrently() -> None:
     # 摘要按段顺序拼接在一条 system 消息里。
     system_msgs = [m for m in ctx.messages if m.role == "system"]
     assert system_msgs and "摘要-" in system_msgs[-1].content
+
+
+def test_task_anchor_is_reinjected_after_history_is_trimmed() -> None:
+    """原始任务被裁掉后，下一次模型调用会在 system 位把目标重新锚回来。"""
+    from yai_core.channels.collect import CollectChannel
+    from yai_core.kernel import AdaptiveRouter, AgentLoop
+    from yai_core.policy import AllowlistPolicy
+    from yai_core.tools import ToolExecutor, ToolRegistry
+
+    model = ScriptedModel([ModelResponse(content="ok")])
+    registry = ToolRegistry()
+    channel = CollectChannel()
+    loop = AgentLoop(
+        model,
+        registry,
+        ToolExecutor(registry, AllowlistPolicy((), mode="auto"), channel),
+        channel,
+        InMemoryStore(),
+        router=AdaptiveRouter(),
+    )
+
+    ctx = Context("系统提示", max_chars=400)
+    task = "把这份长报告里第三季度的所有异常订单找出来并按金额排序，最后给出处理建议。"
+    loop._current_task = task
+    # 任务不在上下文里（被裁掉了）：锚点必须出现。
+    for i in range(8):
+        for m in _plain_round(f"r{i}", n=120):
+            ctx.add(m)
+
+    messages, _ = asyncio.run(loop._model_messages(ctx))
+    # 瞬态 system 是插在基础 system 之后的独立消息。
+    systems = [m["content"] for m in messages if m["role"] == "system"]
+    assert any("【当前任务】" in text for text in systems)
+    assert any(task[:40] in text for text in systems)
+
+
+def test_task_anchor_absent_when_task_still_in_context() -> None:
+    """任务还在上下文里时不重复注入，避免每轮白花 token。"""
+    from yai_core.channels.collect import CollectChannel
+    from yai_core.kernel import AdaptiveRouter, AgentLoop
+    from yai_core.policy import AllowlistPolicy
+    from yai_core.tools import ToolExecutor, ToolRegistry
+
+    model = ScriptedModel([ModelResponse(content="ok")])
+    registry = ToolRegistry()
+    channel = CollectChannel()
+    loop = AgentLoop(
+        model,
+        registry,
+        ToolExecutor(registry, AllowlistPolicy((), mode="auto"), channel),
+        channel,
+        InMemoryStore(),
+        router=AdaptiveRouter(),
+    )
+
+    ctx = Context("系统提示", max_chars=100_000)
+    task = "统计本周新增订单数量。"
+    loop._current_task = task
+    ctx.add(ChatMessage(role="user", content=task))
+    ctx.add(ChatMessage(role="assistant", content="好的"))
+
+    messages, _ = asyncio.run(loop._model_messages(ctx))
+    assert not any("【当前任务】" in m["content"] for m in messages)
