@@ -87,8 +87,8 @@
 |---|---|---|---|
 | 版本串一致（pyproject / `__version__` / lock / 双 README） | 已验证 | `tests/test_version_consistency.py` | 发版必跑 |
 | sdist 链接完整 + 包内可跑测试 | 已验证 | `tests/test_sdist_link_integrity.py`（19 例）；实测包内全量 exit 0 | 仅带已跟踪的公开内容 |
-| SLSA provenance + cosign 签名 | 已验证 | v0.22.1 Release 15 个资产，含 `slsa-provenance.intoto.jsonl` | 第三方扫描识别有延迟 |
-| OpenSSF 徽章 / Scorecard | 外部评分 | CII Passing（#15360）；Scorecard 7.6/10 | 以第三方复扫为准 |
+| SLSA provenance + cosign 签名 | 已验证 | v0.24.0 Release 15 个资产，含 `slsa-provenance.intoto.jsonl` | 第三方扫描识别有延迟 |
+| OpenSSF 徽章 / Scorecard | 外部评分 | CII Passing（#15360）；Scorecard 7.7/10（2026-10-28 复扫，Signed-Releases 9/10） | 以第三方复扫为准 |
 
 ## 八、明确不做
 
