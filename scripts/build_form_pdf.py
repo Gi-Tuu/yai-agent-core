@@ -1,11 +1,11 @@
-"""把"申报表"式 markdown 渲染成 A4 表单 PDF（表格框线 + 标签列底纹）。
+"""把"栏目式" markdown 渲染成 A4 表单 PDF（表格框线 + 标签列底纹）。
 
-与 `build_competition_docx.py` 的分工：那个出"白皮书/长文"（封面 + 目录 + 章节另起页），
+与 `build_docx.py` 的分工：那个出"白皮书/长文"（封面 + 目录 + 章节另起页），
 本脚本出"表单"——栏目即表格行，一页一屏，不带封面与目录。
 
 用法：
-  .venv/Scripts/python.exe scripts/build_submission_form.py \\
-      docs/competitions/shanghai/申报表.md docs/competitions/shanghai/申报表.pdf
+  .venv/Scripts/python.exe scripts/build_form_pdf.py \\
+      docs/examples/form.md docs/exports/form.pdf
 
 markdown 约定（刻意宽松，只吃三种结构）：
 - `#` 一级标题 → 表头大标题（居中）；`##` → 分节标题（居中）；
@@ -13,7 +13,7 @@ markdown 约定（刻意宽松，只吃三种结构）：
   四列表按 13/37/13/37 分宽，两列表按 15/85；
 - 单元格内允许 `**粗体**`、`` `代码` `` 与 `<br>`（换行），其余按纯文本转义。
 
-为什么走 HTML → LibreOffice 而不是 python-docx：申报表要的是"网格 + 底纹 + 中文正文"，
+为什么走 HTML → LibreOffice 而不是 python-docx：这类表单要的是"网格 + 底纹 + 中文正文"，
 HTML 路线零新增依赖（不装 python-docx），且 @page 直接控制 A4 页边距。
 注意 LibreOffice 的 Writer/Web 导入会忽略 CSS 的 border-collapse 与 background，
 因此边框/底纹写成传统 `border` / `background-color` 内联属性，否则导出后线全丢。

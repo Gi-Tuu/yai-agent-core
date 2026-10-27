@@ -133,7 +133,7 @@ def llm_messages(self) -> list[dict]:
 class RouteDecision:
     strategy: Strategy   # 四种策略之一
     source: str          # "llm"（模型分类）或 "rules"（规则，含兜底）
-    reason: str          # 人话理由，随事件流给用户/评委看
+    reason: str          # 人话理由，随事件流给用户看
     tier: str = "standard"   # 建议模型档位：standard 便宜快 / strong 给规划等重活
     # 仅 LLM 路径可填：模型判断现有工具不足以完成任务时，对缺失能力的一句话描述。
     # 规则路径恒为 None；AgentLoop 据此向宿主发 capability_missing 事件。
@@ -236,7 +236,7 @@ if missing is not None and str(missing).strip().lower() not in ("null", "none", 
 
 ### C7. 实测（DeepSeek）
 - "你好，简单介绍一下你自己" → `direct / llm / "闲聊自我介绍，无需调用工具"`；
-- "搜索笔记里关于比赛的内容并总结" → `react / llm / "搜索笔记即可，单步工具调用"`；
+- "搜索笔记里关于项目的内容并总结" → `react / llm / "搜索笔记即可，单步工具调用"`；
 - 分类输出乱码/超时时自动回退规则，事件 reason 以"LLM 分类失败（…），回退规则："开头。
 
 ## 两个文件如何协作

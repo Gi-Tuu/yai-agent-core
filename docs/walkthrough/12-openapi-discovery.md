@@ -129,7 +129,7 @@ httpx 的 `url.path` 是解码后的展示值，不能用它判断传输路径�
 - `MockTransport`：测试可以不触网地断言 method/url/headers/body，这是选型的决定性理由；
 - 同步拉 spec 用短生命周期的 `httpx.Client`（只在启动时跑一次），执行期统一 AsyncClient。
 
-## F. 安全边界（写进比赛材料）
+## F. 安全边界（写进设计文档）
 
 1. 在线演示端点 `read_only=True` 硬编码，公网只暴露 GET/HEAD；
 2. 令牌只从环境变量读，不进 spec、不进日志、不进事件；

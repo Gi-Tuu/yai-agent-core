@@ -1,8 +1,8 @@
 """FastAPI Battery：把内嵌 Core 暴露为在线 API。
 
-内置 X-Agent AI MCP Hackathon 要求的两个验证端点：
+内置两个部署验证端点：
 - GET /health                                 -> {"status":"ok","commit":"<40位>"}
-- GET /.well-known/xagent-verification.json   -> {"schemaVersion":1,"slug":...,"commit":...}
+- GET /.well-known/yai-verification.json   -> {"schemaVersion":1,"slug":...,"commit":...}
 
 注意：本模块属于可选 Battery，允许依赖 fastapi/pydantic；yai_core 内核仍零硬依赖。
 """
@@ -38,7 +38,7 @@ from yai_core.batteries.fastapi_server.readiness import (
 )
 
 # 限流只拦这一条 POST：三个 GET 端点（health / verification / tools）是
-# X-Agent 评审硬门槛路径，任何超限状态下都必须无条件 200。
+# 探活与能力清单端点：任何限流状态下都必须无条件 200。
 _LIMITED_METHOD = "POST"
 _LIMITED_PATHS = frozenset({"/v1/agent/run"})
 
@@ -73,12 +73,12 @@ def create_app(
         "on",
     )
 
-    # 评审期限流（opt-out via env）：None -> 从环境变量读默认策略；
+    # 公网演示限流（opt-out via env）：None -> 从环境变量读默认策略；
     # enabled=False 时不注册中间件，零开销、零行为变化。
     config = rate_limit if rate_limit is not None else RateLimitConfig.from_env()
     # 响应体大小守卫（opt-out via env）：默认开启，正常小响应不受影响。
     guard_config = guard if guard is not None else ResponseGuardConfig.from_env()
-    # API Key 鉴权（opt-in via env）：未配置 Key 时关闭、全公开，本地/评审零门槛。
+    # API Key 鉴权（opt-in via env）：未配置 Key 时关闭、全公开，本地/演示零门槛。
     auth_cfg = auth if auth is not None else ApiKeyAuth.from_env()
     # 中间件注册顺序很关键：Starlette / FastAPI 里**后注册的中间件处在更外层**
     # （请求先经过它）。必须让限流位于最外层，使鉴权失败的请求也计入限流——
@@ -115,8 +115,8 @@ def create_app(
 
     # 2) 限流（外层）：最后注册 => 最外层。所有 POST /v1/agent/run（含未授权
     #    请求）都先计数，超限直接 429，连鉴权与 core 都不再进入。
-    #    只挂在这条 POST 白名单内：三个 GET 端点是评审硬门槛路径，
-    #    全局兜底也**不许**扩到它们上面（否则评审官会看到 429）。
+    #    只挂在这条 POST 白名单内：三个 GET 端点是探活硬门槛，
+    #    全局兜底也**不许**扩到它们上面（否则访问者会看到 429）。
     if config.enabled:
         limiter = SlidingWindowLimiter(config)
         # 全局兜底（默认关闭）：跨所有来源的总配额，进程内计数。
@@ -167,7 +167,7 @@ def create_app(
     async def health() -> dict:
         return {"status": "ok", "commit": commit}
 
-    @app.get("/.well-known/xagent-verification.json")
+    @app.get("/.well-known/yai-verification.json")
     async def verification() -> dict:
         return {"schemaVersion": 1, "slug": slug, "commit": commit}
 

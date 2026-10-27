@@ -6,7 +6,7 @@
 # - RENDER_GIT_COMMIT 由 Render 自动注入为本次部署的 commit，/health 直接读取，无需手填；
 # - 免费实例 15 分钟无流量会休眠（冷启动实测约 50 秒，见 .github/workflows/keepwarm.yml
 #   的实际唤醒频率说明）。重要演示前先手动访问一次 /health；正式部署建议常驻 VPS
-#   （见 docs/competitions/deployment.md）。
+#   （见 docs/demo-deployment.md）。
 services:
   - type: web
     name: yai-agent-core
@@ -36,7 +36,7 @@ services:
         value: https://mcp.deepwiki.com/mcp
       - key: YAI_DB_PATH
         # 持久化记忆（v0.2）：容器内相对路径 -> /app/data/yai.db，进程启动时自动建目录。
-        # 注意：Render 免费层磁盘是临时盘，redeploy 后会丢库，演示口径见 docs/competitions/deployment.md
+        # 注意：Render 免费层磁盘是临时盘，redeploy 后会丢库，演示口径见 docs/demo-deployment.md
         value: data/yai.db
       - key: YAI_HISTORY_MAX_MESSAGES
         # 历史保留策略（v0.3）：保留最近 N 条消息，按对话轮对齐裁剪（不拆散工具调用对）

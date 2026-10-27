@@ -1,5 +1,5 @@
 # Caddy 反代配置：自动向 Let's Encrypt 申请并续期 HTTPS 证书
-# 用法见 docs/competitions/deployment.md
+# 用法见 docs/demo-deployment.md
 # 把下面的域名换成你自己的域名 / DuckDNS 免费子域名；
 # Caddy 与 app 在同一个 compose 网络里，直接用服务名:容器端口访问。
 

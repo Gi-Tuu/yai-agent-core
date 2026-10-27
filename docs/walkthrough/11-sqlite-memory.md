@@ -160,7 +160,7 @@ def from_env(cls, env=None):
 - `close()` 不是契约方法（Protocol 里没有），所以 serve_example 用
   `getattr(_store, "close", None)` 探测式调用，InMemoryStore 没有这个方法就跳过。
 
-## H. 诚实的边界（写进比赛材料也不心虚）
+## H. 诚实的边界（写进设计文档也不心虚）
 
 1. **Render 免费层磁盘是临时的**：redeploy/休眠回收后文件丢失，要"永久记忆"得挂持久卷或 VPS；
 2. **历史裁剪已落地、摘要归档未做**：Context 层有 24000 字符压缩兜底；持久层的条数上限/TTL

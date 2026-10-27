@@ -48,7 +48,7 @@ class ScriptedModel:
         return resp
 
 
-NOTES = {"比赛": ["X-Agent 开发窗口 0919 关闭"]}
+NOTES = {"项目": ["版本 0.22.1 已发布"]}
 
 
 def search_notes(keyword: str) -> list:
@@ -72,7 +72,7 @@ def test_replan_emits_revised_plan_and_continues() -> None:
                 ],
             ),
             ModelResponse(  # 3 重规划产出修正计划(strong)
-                content="1. 搜索比赛笔记\n2. 整理结果\n3. 汇报"
+                content="1. 搜索项目笔记\n2. 整理结果\n3. 汇报"
             ),
             ModelResponse(  # 4 react 第1轮：按新计划调搜索
                 content="",
@@ -80,11 +80,11 @@ def test_replan_emits_revised_plan_and_continues() -> None:
                     ToolCallRequest(
                         id="s1",
                         name="search_notes",
-                        arguments={"keyword": "比赛"},
+                        arguments={"keyword": "项目"},
                     )
                 ],
             ),
-            ModelResponse(content="已找到比赛笔记并完成汇报。"),        # 5 react 第2轮收尾
+            ModelResponse(content="已找到项目笔记并完成汇报。"),        # 5 react 第2轮收尾
         ]
     )
     core = AgentCore(model)
@@ -101,12 +101,12 @@ def test_replan_emits_revised_plan_and_continues() -> None:
     data = revised[0].data
     assert data["revision"] == 1
     assert data["reason"] == "原计划漏了先确认关键词"
-    assert data["steps"] == ["搜索比赛笔记", "整理结果", "汇报"]
+    assert data["steps"] == ["搜索项目笔记", "整理结果", "汇报"]
 
     # 重规划后工具仍真正执行
     assert "tool_call" in event_types
     assert "tool_result" in event_types
-    assert "比赛" in result.final_text
+    assert "项目" in result.final_text
 
     # 档位事件：只有起始一次 standard（重规划 achat 不经过档位变化检测）
     tier_sequence = [
@@ -135,7 +135,7 @@ def test_replan_without_reason_uses_default() -> None:
                 content="",
                 tool_calls=[
                     ToolCallRequest(
-                        id="s1", name="search_notes", arguments={"keyword": "比赛"}
+                        id="s1", name="search_notes", arguments={"keyword": "项目"}
                     )
                 ],
             ),
@@ -161,7 +161,7 @@ def test_cost_aware_disabled_keeps_standard() -> None:
                 content="",
                 tool_calls=[
                     ToolCallRequest(
-                        id="s1", name="search_notes", arguments={"keyword": "比赛"}
+                        id="s1", name="search_notes", arguments={"keyword": "项目"}
                     )
                 ],
             ),
@@ -171,7 +171,7 @@ def test_cost_aware_disabled_keeps_standard() -> None:
     core = AgentCore(model, cost_aware=False)
     core.register_tools([build_spec(search_notes)])
 
-    result = asyncio.run(core.run("搜索笔记里的比赛内容"))
+    result = asyncio.run(core.run("搜索笔记里的项目内容"))
 
     assert result.strategy.value == "react"
     tier_sequence = [

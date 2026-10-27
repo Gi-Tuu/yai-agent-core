@@ -3,7 +3,7 @@
 > English: [deployment-scaling.en.md](deployment-scaling.en.md)
 
 > 事实基线：yai-agent-core **v0.11.0**，最后核实 **2026-10-16**（本地仓库实测）。
-> 单实例公网部署（Render / VPS + Caddy）见 [`docs/competitions/deployment.md`](competitions/deployment.md)；
+> 单实例公网部署（Render / VPS + Caddy）见 [`docs/demo-deployment.md`](demo-deployment.md)；
 > 本文回答更进一步的三个问题：**内核为什么能水平扩展、多租户怎么隔离、生产形态怎么搭。**
 >
 > **一句话立场**：内核永远是"进程内、单租户"的 SQLite 式内核，**`tenant_id` 不会出现在任何

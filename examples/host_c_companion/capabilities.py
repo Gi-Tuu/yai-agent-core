@@ -12,14 +12,14 @@ from datetime import date
 _PROFILE = {"name": "小拥", "mood": "平静", "energy": 62, "bond_days": 128}
 
 _MOOD_LOG = [
-    {"day": "09-06", "mood": "焦虑", "note": "担心三个比赛来不及"},
+    {"day": "09-06", "mood": "焦虑", "note": "担心三个项目来不及"},
     {"day": "09-07", "mood": "开心", "note": "YAI Core 骨架跑通了"},
 ]
 
 _MEMORIES = [
     {"id": 1, "kind": "偏好", "content": "深夜写代码时喜欢听 lofi，不喜欢被催进度"},
     {"id": 2, "kind": "约定", "content": "每周五晚上一起做一周复盘"},
-    {"id": 3, "kind": "经历", "content": "一起从零做 AMBRACE，报名了三个比赛"},
+    {"id": 3, "kind": "经历", "content": "一起从零做 AMBRACE，报名了三个项目"},
 ]
 
 

@@ -50,7 +50,7 @@ def test_protected_and_public_paths() -> None:
     assert auth.should_protect("/v1/tools")
     assert auth.should_protect("/v1/agent/run")
     assert not auth.should_protect("/health")
-    assert not auth.should_protect("/.well-known/xagent-verification.json")
+    assert not auth.should_protect("/.well-known/yai-verification.json")
     assert not auth.should_protect("/other")
 
 
@@ -66,9 +66,9 @@ def test_check_header_variants() -> None:
 
 def test_endpoint_requires_key_when_enabled() -> None:
     client = _client(ApiKeyAuth(("secret",)))
-    # 评审硬门槛路径即使开启鉴权也公开
+    # 探活硬门槛路径即使开启鉴权也公开
     assert client.get("/health").status_code == 200
-    assert client.get("/.well-known/xagent-verification.json").status_code == 200
+    assert client.get("/.well-known/yai-verification.json").status_code == 200
     # /v1/* 无 Key -> 401
     assert client.get("/v1/tools").status_code == 401
     assert client.post("/v1/agent/run", json={"task": "hi"}).status_code == 401
