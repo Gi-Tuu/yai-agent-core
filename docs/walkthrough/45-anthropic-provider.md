@@ -79,8 +79,11 @@ class AnthropicProvider:
 1. **不做流式**：`achat` 一次性返回，内核照旧在拿到完整响应后发 `MODEL_MESSAGE`；
    接流式要先决定"增量事件怎么进唯一出口"，那是内核级改动，不塞在适配器里。
 2. **不做多模态输入**：`content` 目前按纯文本处理，图片/PDF 块要等消息层的 `parts`（任务 M）。
-3. **不做提示缓存 / `cache_control`、不做 thinking 参数**：这些是厂商专有扩展，
-   等内核有"能力旗标"级别的表达需求再谈，不在通用契约里塞私有字段。
+3. **提示缓存默认开（`prompt_cache=True`）**：system 与工具清单是每轮完全相同的前缀，
+   给它们打 `cache_control: {"type": "ephemeral"}` 后，缓存命中时的输入 token 按官方计价
+   便宜一个数量级。这是 Anthropic 专有字段，因此**只出现在这层适配器**里，通用契约
+   （`ModelProvider.achat`）不加任何参数；兼容代理不接受块状 system 时传 `prompt_cache=False`
+   退回纯字符串。thinking 参数仍不做。
 4. **不自动重试**：重试交给 SDK 或外层 `FallbackModelProvider`（后者可传 `max_retries=0` 快速降级）。
 
 ## 6. 自检（读完本篇应能回答）

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from yai_core import AgentCore, AnthropicProvider, build_spec
+from yai_core.kernel.loop import wrap_tool_output
 from yai_core.llm.anthropic import (
     parse_response,
     split_system,
@@ -243,9 +244,50 @@ def test_achat_puts_system_on_top_level_and_requires_max_tokens() -> None:
         )
     )
     sent = provider.client.messages.calls[0]
-    assert sent["system"] == "你是笔记助手"
+    # 默认开启提示缓存：system 走块状挂 cache_control，仍然是顶层参数。
+    assert sent["system"] == [
+        {
+            "type": "text",
+            "text": "你是笔记助手",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     assert sent["max_tokens"] == 777
     assert all(message["role"] != "system" for message in sent["messages"])
+
+
+def test_prompt_cache_can_be_disabled() -> None:
+    """兼容代理不接受块状 system 时，退回纯字符串且不给工具打 cache_control。"""
+    provider = _provider_with([_Response([_Block(type="text", text="ok")])], prompt_cache=False)
+    asyncio.run(
+        provider.achat(
+            [
+                {"role": "system", "content": "你是笔记助手"},
+                {"role": "user", "content": "数一下"},
+            ],
+            [{"type": "function", "function": {"name": "a", "parameters": {}}}],
+        )
+    )
+    sent = provider.client.messages.calls[0]
+    assert sent["system"] == "你是笔记助手"
+    assert "cache_control" not in sent["tools"][-1]
+
+
+def test_prompt_cache_marks_last_tool_only() -> None:
+    """工具清单只在上一个工具打缓存断点，system 与工具共同组成稳定前缀。"""
+    provider = _provider_with([_Response([_Block(type="text", text="ok")])])
+    asyncio.run(
+        provider.achat(
+            [{"role": "user", "content": "x"}],
+            [
+                {"type": "function", "function": {"name": "a", "parameters": {}}},
+                {"type": "function", "function": {"name": "b", "parameters": {}}},
+            ],
+        )
+    )
+    sent = provider.client.messages.calls[0]
+    assert sent["tools"][0].get("cache_control") is None
+    assert sent["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_tier_selects_strong_model() -> None:
@@ -335,7 +377,8 @@ def test_tool_roundtrip_through_agent_core(monkeypatch: pytest.MonkeyPatch) -> N
     assert second["messages"][-1]["content"][0] == {
         "type": "tool_result",
         "tool_use_id": "c1",
-        "content": "3",
+        # 工具返回值统一包成不可信数据块后再回灌（Spotlighting 防御）。
+        "content": wrap_tool_output("3"),
     }
     # 第一次请求就要带上工具描述，且形状是 Anthropic 的 name/input_schema
     assert provider.client.messages.calls[0]["tools"][0]["name"] == "count_notes"

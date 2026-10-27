@@ -36,6 +36,16 @@ _ATTR_LIMIT = 2000
 #: 不直接塞进 span event 的事件字段（体积大或已单独成属性）。
 _EVENT_SKIP_KEYS = frozenset({"final_text"})
 
+#: OpenTelemetry GenAI 语义约定中与本内核相关的最小属性集（agent / tool 子集）。
+#: 只发这几个稳定字段，不臆造 usage / model 等我们拿不到或不稳定的数据。
+GEN_AI_OPERATION_NAME = "gen_ai.operation.name"
+GEN_AI_AGENT_NAME = "gen_ai.agent.name"
+GEN_AI_TOOL_NAME = "gen_ai.tool.name"
+GEN_AI_TOOL_TYPE = "gen_ai.tool.type"
+GEN_AI_TOOL_CALL_ID = "gen_ai.tool.call.id"
+#: 本内核在 trace 里对外呈现的 agent 名。
+AGENT_NAME = "yai-agent-core"
+
 
 def _load_otel(tracer: Any | None) -> tuple[Any, Any]:
     """懒加载 OpenTelemetry API，返回 ``(trace 模块, tracer 实例)``。
@@ -96,6 +106,9 @@ class _RunRecorder:
         self._attach = self._trace.use_span(self._root, end_on_exit=False)
         self._attach.__enter__()
         self._root.set_attribute("yai.task", _attr_value(task))
+        # GenAI 语义约定：让 Jaeger / Grafana 等后端按标准识别"这是一次 agent 调用"。
+        self._root.set_attribute(GEN_AI_OPERATION_NAME, "invoke_agent")
+        self._root.set_attribute(GEN_AI_AGENT_NAME, AGENT_NAME)
         for key, value in self._root_attributes.items():
             self._root.set_attribute(str(key), _attr_value(value))
 
@@ -113,6 +126,8 @@ class _RunRecorder:
         name = str(data.get("tool", "unknown"))
         span = self._tracer.start_span(f"{TOOL_SPAN_PREFIX}.{name}")
         span.set_attribute("yai.tool", name)
+        span.set_attribute(GEN_AI_TOOL_NAME, name)
+        span.set_attribute(GEN_AI_TOOL_TYPE, "function")
         if "arguments" in data:
             span.set_attribute("yai.arguments", _attr_value(data["arguments"]))
         self._open_tools.append((name, span))
@@ -124,7 +139,12 @@ class _RunRecorder:
             # 无配对 TOOL_CALL（组合工具 / 内核 meta-tool 的结果）：补即时子 span。
             span = self._tracer.start_span(f"{TOOL_SPAN_PREFIX}.{name}")
             span.set_attribute("yai.tool", name)
+            span.set_attribute(GEN_AI_TOOL_NAME, name)
+            span.set_attribute(GEN_AI_TOOL_TYPE, "function")
             span.set_attribute("yai.without_call_event", True)
+        receipt = data.get("receipt")
+        if isinstance(receipt, dict) and receipt.get("call_id"):
+            span.set_attribute(GEN_AI_TOOL_CALL_ID, str(receipt["call_id"]))
         ok = bool(data.get("ok", True))
         span.set_attribute("yai.ok", ok)
         if ok:

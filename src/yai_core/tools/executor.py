@@ -218,6 +218,8 @@ class ToolExecutor:
         self.code_timeout = code_timeout
         # 单个工具结果回灌上下文前的统一上界（None=关闭）。
         self.result_char_limit = result_char_limit
+        # 收据哈希链：上一条的 receipt_hash，串起本次进程内的执行审计链。
+        self._last_receipt_hash = ""
         # 普通工具 handler 的墙上超时（None=关闭，默认关闭以保证零行为变化）。
         # 代码工具的超时走 code_timeout + 沙箱，两者是不同链路。
         self.handler_timeout = handler_timeout
@@ -392,7 +394,7 @@ class ToolExecutor:
         error: str = "",
         replayed: bool = False,
     ) -> ExecutionReceipt:
-        return ExecutionReceipt(
+        receipt = ExecutionReceipt(
             call_id=call_id,
             tool=tool,
             status=status,
@@ -402,7 +404,10 @@ class ToolExecutor:
             error=error,
             duration_ms=round((time.monotonic() - started) * 1000, 3),
             replayed=replayed,
-        )
+        ).seal(self._last_receipt_hash)
+        # 信封串成链：宿主导出收据后用 verify_receipt_chain() 即可发现任何改动。
+        self._last_receipt_hash = receipt.receipt_hash
+        return receipt
 
     def _attach_receipt(
         self, events: list[AgentEvent], receipt: ExecutionReceipt

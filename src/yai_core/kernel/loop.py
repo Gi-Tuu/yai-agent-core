@@ -111,6 +111,17 @@ _BUDGET_STOP_TEXT = (
 )
 
 
+#: 工具输出在上下文里的包裹标记：显式把工具返回值标成"数据"而不是指令。
+#: 这是 Spotlighting 类防御的最小实现——不改变工具语义，只改变它进 prompt 的形态。
+_UNTRUSTED_TOOL_OPEN = '<tool_output untrusted="true">'
+_UNTRUSTED_TOOL_CLOSE = "</tool_output>"
+
+
+def wrap_tool_output(text: str) -> str:
+    """把工具返回值包成不可信数据块，降低间接提示注入的成功率。"""
+    return _UNTRUSTED_TOOL_OPEN + "\n" + text + "\n" + _UNTRUSTED_TOOL_CLOSE
+
+
 #: 单次模型调用的默认硬超时（秒）：防止模型 / 网络永久挂起把任务拖死。
 #: 传 None 可关闭（由模型客户端自身的超时负责）；对第三方自定义模型同样生效，
 #: 因为超时在 loop 层用 asyncio.timeout 统一兜底，而不是依赖各模型实现。
@@ -148,6 +159,7 @@ class AgentLoop:
         auto_recall: Callable[[str], Awaitable[list[dict[str, object]]]] | None = None,
         auto_recall_k: int = DEFAULT_AUTO_RECALL_K,
         host_state: HostStateRegistry | None = None,
+        tool_output_guard: bool = True,
         # max_clarify_rounds：澄清反问的最大轮数（正整数）；0 或负数等价于不澄清、
         # 路由判 clarify 时立即降级直接回答。
         # full_schema_budget：工具数不超过该值时，一次性把全部完整 JSON Schema
@@ -190,6 +202,8 @@ class AgentLoop:
         self._on_diagnostic = on_diagnostic
         # 宿主实时状态：注册表由 AgentCore 持有，这里只读渲染；None = 不注入。
         self.host_state = host_state
+        # 工具输出是否包成不可信数据块（见 wrap_tool_output）。默认开。
+        self.tool_output_guard = tool_output_guard
         # 同一次任务里状态没变就不重复发事件（避免每轮刷一条同样的注入记录）。
         self._last_state_fingerprint: str | None = None
         # 鸭子接线：把同一回调交给路由与模型后端，只要它们暴露可写的
@@ -1042,7 +1056,11 @@ class AgentLoop:
             ctx.add(
                 ChatMessage(
                     role="tool",
-                    content=result_text,
+                    content=(
+                        wrap_tool_output(result_text)
+                        if self.tool_output_guard
+                        else result_text
+                    ),
                     tool_call_id=call.id,
                     name=call.name,
                 )

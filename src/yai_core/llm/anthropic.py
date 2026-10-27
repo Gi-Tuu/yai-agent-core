@@ -272,6 +272,7 @@ class AnthropicProvider:
         max_retries: int | None = None,
         timeout: float | None = None,
         client: Any = None,
+        prompt_cache: bool = True,
     ) -> None:
         if client is None:
             try:
@@ -302,6 +303,10 @@ class AnthropicProvider:
             max_tokens if max_tokens is not None else os.getenv("ANTHROPIC_MAX_TOKENS")
         )
         self.max_tokens = int(configured_max) if configured_max else _DEFAULT_MAX_TOKENS
+        # 提示缓存：system 与工具清单是每轮都相同的前缀，打上 cache_control 后
+        # 输入 token 按官方计价可省一个数量级（缓存命中时）。兼容代理若拒绝块状
+        # system，传 False 退回纯字符串。
+        self.prompt_cache = prompt_cache
 
     async def achat(
         self,
@@ -319,9 +324,25 @@ class AnthropicProvider:
             "max_tokens": self.max_tokens,
         }
         if system:
-            kwargs["system"] = system
+            if self.prompt_cache:
+                # 块状 system 才能挂 cache_control；断点打在 system 末尾。
+                kwargs["system"] = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                kwargs["system"] = system
         converted_tools = to_anthropic_tools(tools) if tools else []
         if converted_tools:
+            if self.prompt_cache:
+                # 工具定义紧随 system，一起构成稳定前缀；断点只打最后一个工具。
+                converted_tools[-1] = {
+                    **converted_tools[-1],
+                    "cache_control": {"type": "ephemeral"},
+                }
             kwargs["tools"] = converted_tools
         response = await self.client.messages.create(**kwargs)
         return parse_response(response)

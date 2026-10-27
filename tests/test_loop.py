@@ -16,6 +16,7 @@ from yai_core import (
 )
 from yai_core.channels.collect import CollectChannel
 from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
+from yai_core.kernel.loop import wrap_tool_output
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
 from yai_core.tools import (
@@ -1072,3 +1073,63 @@ def test_request_capability_no_match_reply() -> None:
     assert cap and cap[0].data.get("phase") == "react"
     assert not [e for e in result.events if e.type.value == "tool_discovered"]
     assert model.calls == 2
+
+
+def test_tool_output_is_wrapped_as_untrusted_data() -> None:
+    """工具返回值回灌给模型时必须包成不可信数据块（Spotlighting 最小实现）。"""
+    captured: dict[str, str] = {}
+
+    class _Capture(ScriptedModel):
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    tool_calls=[ToolCallRequest(id="c1", name="echo", arguments={})]
+                )
+            tool_msg = next(
+                m for m in reversed(messages) if m.get("role") == "tool"
+            )
+            captured["content"] = tool_msg["content"]
+            return ModelResponse(content="ok")
+
+    async def echo() -> str:
+        """返回一句话。"""
+        return "结果是 42"
+
+    core = AgentCore(_Capture([]), llm_router=False)
+    core.register_tools([build_spec(echo)])
+    asyncio.run(core.run("调用 echo 工具"))
+
+    # 执行器把工具返回值序列化成 JSON 文本，所以原文带引号。
+    raw = '"结果是 42"'
+    content = captured["content"]
+    assert content.startswith('<tool_output untrusted="true">')
+    assert raw in content
+    assert content.rstrip().endswith("</tool_output>")
+    assert content == wrap_tool_output(raw)
+
+
+def test_tool_output_guard_can_be_disabled() -> None:
+    """宿主可以关掉包裹，模型看到的就是裸返回值。"""
+    captured: dict[str, str] = {}
+
+    class _Capture(ScriptedModel):
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    tool_calls=[ToolCallRequest(id="c1", name="echo", arguments={})]
+                )
+            captured["content"] = next(
+                m for m in reversed(messages) if m.get("role") == "tool"
+            )["content"]
+            return ModelResponse(content="ok")
+
+    async def echo() -> str:
+        """返回一句话。"""
+        return "结果是 42"
+
+    core = AgentCore(_Capture([]), llm_router=False, tool_output_guard=False)
+    core.register_tools([build_spec(echo)])
+    asyncio.run(core.run("调用 echo 工具"))
+    assert captured["content"] == '"结果是 42"'

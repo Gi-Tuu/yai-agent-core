@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from yai_core import AgentCore, OpenAICompatProvider, build_spec
+from yai_core.kernel.loop import wrap_tool_output
 
 # ---------- 假 openai SDK ----------
 
@@ -129,7 +130,7 @@ def test_tool_call_roundtrip_and_tool_message_feedback(monkeypatch) -> None:
     tool_messages = [m for m in second_messages if m["role"] == "tool"]
     assert len(tool_messages) == 1
     assert tool_messages[0]["tool_call_id"] == "call_1"
-    assert tool_messages[0]["content"] == "3"
+    assert tool_messages[0]["content"] == wrap_tool_output("3")
 
 
 def test_plain_answer_sends_no_tools(monkeypatch) -> None:
