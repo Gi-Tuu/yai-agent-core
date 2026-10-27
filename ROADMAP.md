@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-27（对应已发布版本 **v0.23.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-27（对应已发布版本 **v0.24.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -235,7 +235,7 @@
 - **数据与状态**：SQLite 备份/恢复原子替换；子员工权限逐层叠加；关闭后再运行直接报错。
 - **打包与供应链**：sdist 包内断链 12 → 0；Release 起上传 `provenance/*.intoto.jsonl`；sidecar 五模块覆盖率 100%。
 
-### v0.23.0 — 把"能当场验证"做进仓库（tag 2026-10-27，当前发布版本）
+### v0.23.0 — 把"能当场验证"做进仓库（tag 2026-10-27，已完成）
 
 - **一条命令跑完治理闭环**：`scripts/demo_governance_loop.py`——请求 → 审批拦截并冻结参数 → 批准执行 /
   拒绝零副作用 → JSONL trace；退出码即断言。
@@ -245,6 +245,15 @@
 - **桌面星云粒子数可配置**：`ui/nebulaParticles`（默认 260，区间 24–1200）。
 - **仓库内容整理**：部署手册迁到 `docs/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
   `/.well-known/yai-verification.json`。
+
+### v0.24.0 — 把"可信"做进三个层面（tag 2026-10-27，当前发布版本）
+
+- **成本**：Anthropic 适配层启用提示缓存（`cache_control: ephemeral`），契约不变。
+- **注入**：工具输出按不可信数据处理（`tool_output_guard`，默认开）；新增离线注入回归集
+  （假设模型完全照注入的话去做，验证策略 / 闸门 / 审批仍能拦住）。
+- **审计**：执行收据哈希链 + `verify_receipt_chain()`；`unknown` 可由宿主 `postcondition`
+  确认副作用；**新增第 21 类事件 `PERMISSION_DENIED`**（拒绝成为可见决策，参数按声明脱敏）。
+- **长会话**：`CompactionPolicy(parallel=N)` 并行摘要；任务锚点在原任务被裁掉后自动补回。
 
 ## 下一步
 
