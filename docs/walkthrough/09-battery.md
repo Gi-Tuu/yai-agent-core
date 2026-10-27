@@ -34,25 +34,25 @@ def create_app(core: Any, lifespan: Any = None) -> FastAPI:
 ```
 - **应用工厂**：传入一个已组装好的 core，返回一个 HTTP app。这样同一份代码可以挂不同宿主的 core。
 - `core: Any`：Battery 不反向依赖内核具体类型，避免循环依赖，也方便测试时传假 core。
-- commit/slug 从环境变量读，部署 X-Agent 时注入真实 pinned commit；本地缺省 "dev"。
+- commit/slug 从环境变量读，部署演示服务时注入真实的 pinned commit；本地缺省 "dev"。
 - 可选 `lifespan` 形参（v0.2 加）：把 FastAPI 的生命周期钩子（启动挂载外部 MCP、
   关闭断开连接）留给宿主脚本注入，电池本身不认识 MCP——依赖方向仍然是"宿主 → 电池 → 内核"。
   具体用法见第 10 章块 10。
 
 ## 块 4 · 四个路由（L33-L54）
 
-### 4.1 健康检查（X-Agent 硬门槛）
+### 4.1 健康检查（探活硬门槛）
 ```python
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "commit": commit}
 ```
 - `@app.get(...)`：路由装饰器，把 URL 和函数绑定。
-- 返回 dict，FastAPI 自动转 JSON。X-Agent 审核机就靠这个端点确认服务在线且 commit 与提交一致。
+- 返回 dict，FastAPI 自动转 JSON。外部检查就靠这个端点确认服务在线，且 commit 与发布记录一致。
 
-### 4.2 验证文件（X-Agent 硬门槛）
+### 4.2 验证文件（探活硬门槛）
 ```python
-@app.get("/.well-known/xagent-verification.json")
+@app.get("/.well-known/yai-verification.json")
 async def verification() -> dict:
     return {"schemaVersion": 1, "slug": slug, "commit": commit}
 ```
@@ -64,7 +64,7 @@ async def verification() -> dict:
 async def list_tools() -> list[dict]:
     return core.list_tools()
 ```
-- 直接复用门面方法，把"自动发现了哪些能力"暴露出去，评委 curl 一下就能看到宿主能力集。
+- 直接复用门面方法，把"自动发现了哪些能力"暴露出去，用 curl 一下就能看到宿主能力集。
 
 ### 4.4 执行任务
 ```python
@@ -146,7 +146,7 @@ HEALTHCHECK ... CMD python -c "urllib 请求 /health ..."   # 容器级健康检
 
 1. 为什么 Pydantic 模型必须放模块级而不能放在 create_app 里？
 2. `/health` 里的 commit 为什么要从环境变量读，而不是写死？
-3. 为什么响应里要带 events？这对比赛评审意味着什么？
+3. 为什么响应里要带 events？这对线上排查意味着什么？
 4. `_jsonable` 防的是什么问题？删掉它、在事件 data 里放一个枚举会怎样？
 5. 把 host_c_companion 也包成一个 app（改 serve_example 即可），用 curl 跑通。
 6. 为什么 commit 要在构建镜像时用 ARG/ENV 固化，而不是容器启动后再读 git？

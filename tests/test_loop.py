@@ -77,30 +77,30 @@ def test_plan_strategy_still_executes_tools() -> None:
 
     def search_notes(keyword: str) -> list:
         """搜索宿主笔记库。"""
-        return ["X-Agent 0919 截止"] if keyword == "比赛" else []
+        return ["版本 0.22.1 已发布"] if keyword == "项目" else []
 
     model = ScriptedModel(
         [
-            ModelResponse(content="1. 搜索比赛笔记\n2. 统计总数并汇报"),  # 规划轮（无 tools）
+            ModelResponse(content="1. 搜索项目笔记\n2. 统计总数并汇报"),  # 规划轮（无 tools）
             ModelResponse(
                 content="",
                 tool_calls=[ToolCallRequest(id="p1", name="search_notes",
-                                            arguments={"keyword": "比赛"})],
+                                            arguments={"keyword": "项目"})],
             ),
-            ModelResponse(content="找到 1 条比赛相关笔记。"),
+            ModelResponse(content="找到 1 条项目相关笔记。"),
         ]
     )
     core = AgentCore(model)
     core.register_tools([build_spec(search_notes)])
 
-    result = asyncio.run(core.run("先搜索比赛笔记，然后汇报"))
+    result = asyncio.run(core.run("先搜索项目笔记，然后汇报"))
 
     assert result.strategy.value == "plan"
     event_types = [e.type.value for e in result.events]
     assert "plan_created" in event_types
     assert "tool_call" in event_types
     assert "tool_result" in event_types
-    assert "比赛" in result.final_text
+    assert "项目" in result.final_text
 
 
 def test_direct_answer_without_tools() -> None:
@@ -126,7 +126,7 @@ def test_llm_router_decision_flows_through_loop() -> None:
                 )
             # 第 2 次是规划轮
             if self.calls == 2:
-                return ModelResponse(content="1. 搜索比赛笔记\n2. 汇报结果")
+                return ModelResponse(content="1. 搜索项目笔记\n2. 汇报结果")
             # 之后走父类的脚本队列（工具调用 + 最终答复）
             return self._responses[min(self.calls - 1, len(self._responses) - 1)]
 
@@ -139,15 +139,15 @@ def test_llm_router_decision_flows_through_loop() -> None:
             ModelResponse(
                 content="",
                 tool_calls=[ToolCallRequest(id="p1", name="search_notes",
-                                            arguments={"keyword": "比赛"})],
+                                            arguments={"keyword": "项目"})],
             ),
-            ModelResponse(content="找到 1 条比赛笔记。"),
+            ModelResponse(content="找到 1 条项目笔记。"),
         ]
     )
     core = AgentCore(model, llm_router=True)
     core.register_tools([build_spec(search_notes)])
 
-    result = asyncio.run(core.run("先搜索比赛笔记，然后汇报"))
+    result = asyncio.run(core.run("先搜索项目笔记，然后汇报"))
 
     selected = next(e for e in result.events if e.type.value == "strategy_selected")
     assert selected.data["source"] == "llm"

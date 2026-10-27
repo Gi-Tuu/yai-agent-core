@@ -1,4 +1,4 @@
-# YAI Agent Core —— 在线 API 示例镜像（X-Agent 部署形态）
+# YAI Agent Core —— 在线 API 示例镜像（公网演示部署形态）
 # 内核零硬依赖；镜像装 server + llm + mcp + openapi 四组可选依赖。
 # 构建：docker build -t yai-agent-core .
 # 运行：docker run --rm -p 8000:8000 --env-file .env yai-agent-core
@@ -17,7 +17,7 @@ ENV UV_PROJECT_ENVIRONMENT=/usr/local \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
-# 构建时固化 pinned commit（X-Agent 硬门槛：部署版本与提交哈希一致）
+# 构建时固化 commit（部署版本与提交哈希一致）
 # docker build --build-arg YAI_GIT_COMMIT=$(git rev-parse HEAD) -t yai-agent-core .
 ARG YAI_GIT_COMMIT=dev
 ENV YAI_GIT_COMMIT=${YAI_GIT_COMMIT}
@@ -39,7 +39,7 @@ RUN uv pip install --system -e ".[server,llm,mcp,openapi]"
 # 默认 8000；托管平台（如 Render）通过 PORT 环境变量指定端口，CMD/HEALTHCHECK 均兼容
 EXPOSE 8000
 
-# 容器级健康检查，直接打 X-Agent 要求的 /health 端点（shell 形式，运行时展开 $PORT）
+# 容器级健康检查，直接打 /health 端点（shell 形式，运行时展开 $PORT）
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,urllib.request,sys; p=os.environ.get('PORT','8000'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=4).status == 200 else 1)"
 

@@ -1,11 +1,13 @@
 """为《YAI Agent Core 技术白皮书》生成学术风格架构图（PNG）。
 
 运行：
-  .venv/Scripts/python.exe docs/competitions/shanghai/draw_figs.py
+  .venv/Scripts/python.exe scripts/draw_figs.py
 
-产物：docs/competitions/shanghai/figs/fig*.png
+产物：docs/figs/fig*.png
 仅用于文档构建，不进入内核依赖；matplotlib 为文档工具依赖。
 """
+
+# ruff: noqa: E501 —— 行超长的是图内整句中文标签，拆行会改变图上显示的内容。
 
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ GREEN = "#3E6B4F"    # 墨绿（成功/落地）
 GREY = "#66707C"     # 中灰
 LINE = "#33506E"
 
-OUT = Path(__file__).resolve().parent / "figs"
+OUT = Path(__file__).resolve().parents[1] / "docs" / "figs"
 OUT.mkdir(parents=True, exist_ok=True)
 
 

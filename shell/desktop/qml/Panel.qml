@@ -132,6 +132,7 @@ Item {
                 Layout.preferredHeight: 52
                 isWide: false
                 phase: panel.host ? String(panel.host.orbPhase || "idle") : "idle"
+                particleCount: workbench.nebulaParticles
             }
             Text {
                 text: "YAI.CORE"

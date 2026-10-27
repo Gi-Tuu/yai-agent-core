@@ -4,7 +4,7 @@
 
 > Baseline of fact: yai-agent-core **v0.11.0**, last verified **2026-10-16** (against the local repository).
 > Single-instance public deployment (Render / VPS + Caddy) is covered in
-> [`docs/competitions/deployment.md`](competitions/deployment.md); this document answers three questions
+> [`docs/demo-deployment.md`](demo-deployment.md); this document answers three questions
 > one level further: **why the kernel scales horizontally, how tenants are isolated, and how to build the
 > production shape.**
 >

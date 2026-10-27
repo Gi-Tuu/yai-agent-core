@@ -8,7 +8,7 @@
 //
 // 渲染特征对齐 web_preview 的 nebula_engine.js：四色调色板、径向核心光晕、虚线旋转轨道、
 // 顺时针拖尾弧、行星球渐变与暗环、呼吸透明度、纵向波动、超新星粒子爆发与双冲击波。
-// 260 粒 / 全状态 60fps；所有运动按真实 dt 积分，降帧只损失流畅度、不损失速度。
+// 默认 260 粒 / 全状态 60fps；所有运动按真实 dt 积分，降帧只损失流畅度、不损失速度。
 // 渲染后端是软件光栅（见 shell/desktop/app.py：RHI 会破坏置顶窗的逐像素透明），
 // 所以每帧成本要自己压：预置配色串 + globalAlpha（免逐粒拼 rgba）、未吸积时跳过轨道三角函数。
 import QtQuick
@@ -21,6 +21,8 @@ Item {
 
     property string phase: "idle"     // "idle" | "working" | "complete" | "frozen"
     property bool isWide: true        // false in Ball (52x52), true in Capsule/Panel (440x52)
+    // 粒子数：默认 260（与 web 演示同密度）。宿主可用 workbench.nebulaParticles 覆盖。
+    property int particleCount: 260
 
     readonly property real coreX: 26
     readonly property real coreY: 26
@@ -39,7 +41,7 @@ Item {
     property double lastTick: 0.0
 
     // 左深橙 → 琥珀 → 右侧象牙白。预置成不透明色串：逐粒拼 "rgba(r,g,b,a)"
-    // 每帧要拼 260 次再解析 260 次，改用 globalAlpha 表达同一透明度，绘制结果一致。
+    // 每帧要拼 N 次再解析 N 次，改用 globalAlpha 表达同一透明度，绘制结果一致。
     readonly property var nebulaPalette: [
         "rgb(255, 72, 0)",
         "rgb(255, 112, 36)",
@@ -47,10 +49,14 @@ Item {
         "rgb(250, 244, 236)"
     ]
 
-    Component.onCompleted: {
+    Component.onCompleted: rebuildParticles()
+    onParticleCountChanged: rebuildParticles()
+
+    function rebuildParticles() {
+        var count = Math.max(24, Math.min(1200, root.particleCount));
         var arr = [];
-        // 260 粒：与 web 演示同密度；实测粒子数几乎不影响 CPU，帧率才是成本杠杆。
-        var count = 260;
+        // 实测：260 → 520 仍是 60fps，但单核 CPU 约 14% → 20%。粒子数会真花 CPU，
+        // 只是不如帧率陡；默认值保持与 web 演示同密度。
         for (var i = 0; i < count; i++) {
             var u = (i + 0.5) / count;
             var driftX = 4 + Math.pow(Math.random(), 1.55) * 410;

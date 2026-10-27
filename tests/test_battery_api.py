@@ -37,11 +37,11 @@ def test_health(monkeypatch) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert len(body["commit"]) == 40  # X-Agent 硬门槛：40 位 commit
+    assert len(body["commit"]) == 40  # 探活硬门槛：40 位 commit
 
 
-def test_xagent_verification(monkeypatch) -> None:
-    resp = _client(monkeypatch).get("/.well-known/xagent-verification.json")
+def test_verification_endpoint(monkeypatch) -> None:
+    resp = _client(monkeypatch).get("/.well-known/yai-verification.json")
     assert resp.status_code == 200
     body = resp.json()
     assert body == {"schemaVersion": 1, "slug": "yai-test", "commit": "0" * 40}

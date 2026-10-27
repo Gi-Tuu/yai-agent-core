@@ -61,14 +61,10 @@ inbox/
 /docs/YAI灵动岛多专员-落地方案.md
 /docs/YAI项目全景分析与发展规划.md
 /docs/产品化更新方案.md
-/docs/内部备战-主张证据与评委十问.md
+/docs/内部-主张与证据对照.md
 /docs/宣传视频-代码生成提示词.md
 /docs/工具管理永久保留-落地方案.md
 /docs/终端工艺视觉-设计系统与改造任务书.md
 
 # 赛事过程材料（报名 / 邮件 / 录制 / 脚本，可能含私密信息，不入库）
-/docs/competitions/beijing/
-/docs/competitions/shanghai/录制清单.md
-/docs/competitions/shanghai/更新邮件*.md
-/docs/competitions/shanghai/视频脚本.md
-/docs/competitions/shanghai/邮件正文.md
+/docs/competitions/

@@ -9,7 +9,7 @@ SQLite 记忆落地后出现一个新问题：`history` 表只增不减。Loop �
 （user 任务 + assistant 最终答复，见 `kernel/loop.py` 末尾），下一轮启动时
 `for msg in self.memory.history()` 全量回放给模型。跑得越久：
 
-1. 每次请求的 token 越多，越慢越贵（评审期每一分钱都是 DeepSeek 额度）；
+1. 每次请求的 token 越多，越慢越贵（线上每一分钱都是模型额度）；
 2. 超长上下文更容易触发模型的"注意力稀释"，答非所问；
 3. 几个月前的陈旧对话永远占着上下文。
 

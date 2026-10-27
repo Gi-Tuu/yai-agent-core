@@ -501,6 +501,7 @@ YaiWindow {
                 anchors.fill: parent
                 isWide: root.shape !== "ball"
                 phase: root.orbPhase
+                particleCount: workbench.nebulaParticles
             }
 
             // 胶囊：编号 + 当前活动 + OPEN + 收起箭头（无多余波形/状态点）。

@@ -1,7 +1,7 @@
 """发出去的包自己得能用：sdist 内的**文档相对链接**必须全部可达。
 
 背景（2026-10-25 实测）：v0.22.0 的 sdist 里，文档相对链接断链 16 处——
-README 白皮书引用的 9 张赛事配图、部署文档引用的 competitions/deployment.md、
+README 白皮书引用的 9 张架构配图、部署文档引用的 demo-deployment.md、
 以及白皮书/plans 引用的 ROADMAP.md，全都不在包里。包是发出去了，但读者一翻就是断图死链。
 
 本文件把这件事钉住：
@@ -15,6 +15,7 @@ README 白皮书引用的 9 张赛事配图、部署文档引用的 competitions
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -52,14 +53,16 @@ def _in_sdist(rel: str, patterns: list[str]) -> bool:
 
 
 def _md_files() -> list[Path]:
-    out = []
-    for p in ROOT.rglob("*.md"):
-        rel = p.relative_to(ROOT)
-        parts = rel.parts
-        if any(x in parts for x in (".venv", "node_modules", "docs/exports", "models")):
-            continue
-        out.append(p)
-    return sorted(out)
+    """仓库里**被跟踪**的 markdown；没有 git（解包后的 sdist）时退回遍历。
+
+    只查被跟踪文件：本地过程稿与构建产物不在仓库里，不该把这条守卫弄红。
+    """
+    if (ROOT / ".git").exists():
+        listed = subprocess.run(
+            ["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True
+        ).stdout.splitlines()
+        return sorted(ROOT / rel for rel in listed if rel)
+    return sorted(ROOT.rglob("*.md"))
 
 
 def _link_targets(md: Path) -> list[str]:
@@ -126,8 +129,8 @@ def test_sdist_internal_links_resolve() -> None:
         "docs/whitepaper.md",
         "docs/walkthrough/00-index.md",
         "docs/releases/v0.22.0.md",
-        "docs/competitions/deployment.md",
-        "docs/competitions/shanghai/figs/fig1_position.png",
+        "docs/demo-deployment.md",
+        "docs/figs/fig1_position.png",
     ],
 )
 def test_key_documents_are_in_sdist(target: str) -> None:

@@ -1,8 +1,8 @@
-"""把任意 markdown 构建成带学术封面、自动目录与页码的 Word，并可选转 PDF（比赛材料通用）。
+"""把任意 markdown 构建成带封面、自动目录与页码的 Word，并可选转 PDF（通用文档构建）。
 
 用法：
-  .venv/Scripts/python.exe scripts/build_competition_docx.py \\
-      docs/competitions/shanghai/作品介绍.md docs/exports/作品介绍.docx --pdf
+  .venv/Scripts/python.exe scripts/build_docx.py \\
+      docs/whitepaper.md docs/exports/whitepaper.docx --pdf
 
 约定：
 - markdown 第一个一级标题作为封面主标题；
@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 允许直接运行（python scripts/build_competition_docx.py）时 import 同目录脚本
+# 允许直接运行（python scripts/build_docx.py）时 import 同目录脚本
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_walkthrough_docx import (  # noqa: E402
@@ -384,7 +384,7 @@ def convert_pdf(out_docx: Path) -> Path | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="markdown → 比赛材料 Word/PDF")
+    parser = argparse.ArgumentParser(description="markdown → 长文 Word/PDF")
     parser.add_argument("md", type=Path)
     parser.add_argument("docx", type=Path)
     parser.add_argument("--pdf", action="store_true", help="同时用 LibreOffice 转 PDF")

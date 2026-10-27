@@ -99,7 +99,7 @@
 | `integrations/mcp/client.py` | 接入外部 MCP Server 的工具 | 外接设备转接头 |
 | `integrations/openapi/` | OpenAPI 发现（opt-in） | REST API 的自动翻译官 |
 | `batteries/fastapi_server/app.py` | 包成 HTTP 服务 | 对外营业窗口 |
-| `batteries/fastapi_server/ratelimit.py` | 评审期限流（每 IP 滑动窗口） | 门口的取号机 |
+| `batteries/fastapi_server/ratelimit.py` | 公网演示限流（每 IP 滑动窗口） | 门口的取号机 |
 | `batteries/fastapi_server/payload_guard.py` | 响应体大小守卫（三级截断、标记不静默） | 行李限重秤 |
 | `batteries/fastapi_server/auth.py` | API Key 鉴权（Bearer / X-API-Key，常量时间比较） | 门卫查证件 |
 | `discovery/remote_sources.py` | 远程发现源：MCP / OpenAPI 懒连接、按 need 双通道收窄（空命中回退全量） | 外部供应商名录 |

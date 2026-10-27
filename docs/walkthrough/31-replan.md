@@ -290,7 +290,7 @@ def _with_meta_schemas(self, schemas: list[dict]) -> list[dict]:
 1. **完整重规划闭环**：模型第 0 轮调 replan（带 reason）→ 内核产出 3 步修正
    计划 → 模型按新计划调 search_notes → 收尾。断言：
    - `plan_revised` 恰好一次，`revision=1`、reason 正确、steps 解析为
-     `["搜索比赛笔记", "整理结果", "汇报"]`；
+     `["搜索项目笔记", "整理结果", "汇报"]`；
    - 重规划后工具仍真正执行（tool_call / tool_result 都在）；
    - DONE 的成本计数 `model_calls=5、strong_calls=2、standard_calls=3`。
 2. **默认理由与步骤兜底**：replan 不带 reason 时用默认理由；模型修正计划里

@@ -239,13 +239,13 @@ app = create_app(core)
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 
-v0.3 评审期限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗口（`enabled=True`、
+v0.3 公网演示限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗口（`enabled=True`、
 `per_minute=30`、`window_seconds=60`，可用 `YAI_RATE_LIMIT_*` 调整或关闭）。中间件只拦
 `POST /v1/agent/run`，超限返回 429 + `Retry-After`（与响应体同源），被限请求不触达
-模型；三个 GET 验证端点永不限流（评审硬门槛）。客户端身份取 XFF 最左非空、回退对端
+模型；三个 GET 验证端点永不限流（探活硬门槛）。客户端身份取 XFF 最左非空、回退对端
 地址；状态只在内存，重启清零；全局限流兜底不做（单实例）。
 
-## 6. 与生态的差异化（诚实对比，用于比赛材料）
+## 6. 与生态的差异化（诚实对比）
 
 - 模型厂商自带的 Agent SDK、图编排框架：developer-builds-agent，工具/编排需显式定义，且常绑定自家生态；
 - 同类嵌入式 Agent 运行时：嵌入式运行时理念相近，但多以 TypeScript 为主，能力自发现与策略自适应并非其默认形态；

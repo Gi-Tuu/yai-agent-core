@@ -52,7 +52,7 @@ class TierDecision:
   `model`、strong → `strong_model`，没配 strong 时安全回退同档）。这样内核不
   依赖任何一家 API。
 - `TierDecision` 是不可变 dataclass，除了档位还带一句 `reason`。理由会进
-  `tier_changed` 事件，宿主和评委能看清"这一轮为什么升档"，而不是看到一个
+  `tier_changed` 事件，宿主和用户能看清"这一轮为什么升档"，而不是看到一个
   凭空的档位变化。
 
 ## C. `TierPolicy`：三条保守升级规则

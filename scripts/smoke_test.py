@@ -64,7 +64,7 @@ async def run_host(title: str, host: object, task: str) -> None:
 
 
 async def main() -> None:
-    await run_host("宿主 A 笔记应用", notes_app, "搜索笔记里和比赛有关的内容")
+    await run_host("宿主 A 笔记应用", notes_app, "搜索笔记里和项目有关的内容")
     await run_host(
         "宿主 C AI 陪伴（AMBRACE 预演）",
         companion_app,

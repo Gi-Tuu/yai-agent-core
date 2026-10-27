@@ -5,7 +5,7 @@
 
 运行（必须用 LibreOffice 自带 python，它才有 uno）：
   "C:\\Program Files\\LibreOffice\\program\\python.exe" \\
-      scripts/lo_pdf_export.py docs/exports/作品介绍.docx docs/exports/作品介绍.pdf
+      scripts/lo_pdf_export.py docs/exports/whitepaper.docx docs/exports/whitepaper.pdf
 """
 
 from __future__ import annotations

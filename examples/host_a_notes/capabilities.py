@@ -8,7 +8,7 @@ from __future__ import annotations
 
 _NOTES: list[dict] = [
     {"id": 1, "title": "Core 骨架", "content": "完成 SPI 四契约与 Agent Loop", "tag": "工作"},
-    {"id": 2, "title": "比赛清单", "content": "X-Agent 0919 截止，需要部署健康端点", "tag": "工作"},
+    {"id": 2, "title": "项目清单", "content": "v0.22.1 已发布，需要核对部署端点", "tag": "工作"},
     {"id": 3, "title": "购物", "content": "买咖啡豆和牛奶", "tag": "生活"},
 ]
 

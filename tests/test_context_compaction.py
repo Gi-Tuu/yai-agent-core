@@ -432,7 +432,7 @@ def test_large_tool_result_does_not_trim_before_compaction() -> None:
         )
         core = AgentCore(model, memory=memory, context_compaction=True)
         core.register_tools([build_spec(big)])
-        return await core.run("搜索笔记里的比赛内容"), model
+        return await core.run("搜索笔记里的项目内容"), model
 
     result, model = asyncio.run(scenario())
     assert EventType.CONTEXT_COMPACTED in [e.type for e in result.events]

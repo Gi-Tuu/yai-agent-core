@@ -5,6 +5,39 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **一条命令跑完治理闭环**（`scripts/demo_governance_loop.py`）：离线脚本模型发起一次退款调用 →
+  内核在参数级审批处拦下并冻结参数 → 批准才执行、拒绝零副作用 → 全过程写成可回查的
+  JSONL trace。带 `--refuse`（验证零副作用）与 `--trace`（落盘路径）；退出码即断言。
+  配套 `tests/test_demo_governance_loop.py` 两例回归。
+- **一条命令跑完全部门禁**（`scripts/check_all.py`）：锁定文件 → lint → 类型检查 → 版本与打包守卫
+  → 全量离线测试 + 覆盖率门禁 → 两宿主冒烟，任何一步失败立即停下并给出退出码；`--fast` 跳过全量测试。
+- **能力与证据索引**（`docs/IMPLEMENTATION_STATUS.md`）：把"已验证 / 已实现·未真机验证 / 明确不做"
+  分三档列出，每条能力都给出对应测试或实测证据与边界，避免把"支持"读成"验证过"。
+- **桌面星云粒子数可配置**（`ui/nebulaParticles`，默认 260）：`NebulaOrbCanvas` 的粒子数改由
+  `particleCount` 属性驱动，胶囊与面板顶栏两处都绑到 `workbench.nebulaParticles`；写入范围收敛
+  24–1200。实测 260 → 520 仍是 60fps，但单核 CPU 约 13.8% → 20.3%——粒子数是真成本，
+  默认值保持与设计稿同源的 260。
+
+### Changed
+
+- **仓库改为通用开源口径，移除全部赛事描述**：原赛事材料目录里只有两类内容值得留下，已迁到通用位置——
+  部署手册 → `docs/demo-deployment.md`，白皮书配图与绘图脚本 → `docs/figs/` + `scripts/draw_figs.py`；
+  赛事清单、视频录制脚本、黑客松提交目录（`submissions/`）与对应构建脚本一并移出仓库
+  （内容仍在 git 历史里，可按需取回）。代码与文档里的"评审/参赛"措辞统一改为"公网演示 / 探活"。
+- **部署验证端点更名**：改为 `/.well-known/yai-verification.json`（原名带外部赛事标识），
+  鉴权白名单与三条测试同步。
+- **构建脚本改名**：`build_competition_docx.py` → `build_docx.py`，`build_submission_form.py` → `build_form_pdf.py`。
+
+### Fixed
+
+- **链接守卫只检查被跟踪的 markdown**：此前它把本地过程稿也扫进去，而且 `docs/exports` 的跳过条件
+  用 `in parts` 比较多段路径，永远匹配不上。现在有 git 时按 `git ls-files` 取文件，
+  解包 sdist（无 git）时退回遍历。
+
 ## [v0.22.1] - 2026-10-25
 
 本版收口 **v0.22.0 之后审计整改的第二批次**（PR #102，合并提交 `16d3b82`）：13 个提交全部是
@@ -75,11 +108,10 @@
   `break` / `aclose` 会跳过这次回灌——改为停止上屏、继续耗尽事件流；收尾失败不覆盖已完成的终态。
   星云画布改四态统一 60fps（粒子数取设计稿同源的 260；预置色串 + `globalAlpha` 代替逐粒子 rgba；
   未吸积时跳过轨道三角函数），窗口隐藏或最小化时停帧。
-- **发出去的包，文档链接全是断的**：sdist 白名单里没有 `ROADMAP.md`、`docs/competitions/deployment.md`
-  与 `docs/competitions/shanghai/figs/`，而白皮书与部署文档链接到它们。
+- **发出去的包，文档链接全是断的**：sdist 白名单里没有 `ROADMAP.md`、部署手册与白皮书配图目录，而白皮书与部署文档链接到它们。
   对着 **PyPI 上已发布的 0.22.0 sdist** 实测：**包内断链 12 处**（白皮书 9 张赛事配图
   + 部署文档 2 处 + 白皮书引 ROADMAP 1 处）。
-  这三处**都只含已被 git 跟踪的公开内容**（含个人信息的申报表 / 作品介绍 / 更新邮件等本地稿
+  这三处**都只含已被 git 跟踪的公开内容**（含个人信息的本地材料 / 更新邮件等过程稿
   全部未被跟踪，仍不进包），现补进白名单：**包内断链 12 → 0**。
 - 新增 `tests/test_sdist_link_integrity.py`（19 例）把这件事钉住：
   仓库内所有 markdown 的相对链接必须可达；**进了包的文档，其链接目标也必须在包里**
@@ -211,7 +243,7 @@
   新增 `tests/_local_http.py`（环回 fail-closed + `http.client` 显式 host/port），
   五个测试文件的本地 HTTP helper 收编至此；假凭据改环境注入（`YAI_TEST_API_KEY` /
   `YAI_TEST_REDACTION_KEY`）；`shell/desktop/crm_client.py` 构造期强制 http + 环回；
-  `scripts/build_xagent_submission.py` 的 `http_json` 加 https 官方域白名单并修复一处
+  发布脚本的 `http_json` 加 https 官方域白名单并修复一处
   latent `union-attr`；`docs/exports/render_mermaid.py` 改常量 host 直连 kroki.io。
   `fuzzing/fuzz_schema.py` 标量不变量改为 `is` 恒等判（`json.loads("NaN")` 的
   `float('nan')` 与自身 `==` 恒 False，fuzzer 实测撞出）。
@@ -431,7 +463,7 @@
 
 ### Changed
 
-- **清除杭州相关材料与引用**：赛事材料（`docs/competitions/hangzhou*`）已从仓库删除，示例演示数据、上海演示脚本、`.gitignore` 规则与发布说明里的相关引用一并清理；GitHub 上以该赛事命名的 Release 也已删除（**tag 仍留在 git 历史里**——历史不可改，也不该改）。
+- **清除杭州相关材料与引用**：早期过程材料目录已从仓库删除，示例演示数据、演示脚本、`.gitignore` 规则与发布说明里的相关引用一并清理；GitHub 上对应的 Release 也已删除（**tag 仍留在 git 历史里**——历史不可改，也不该改）。
 
 ## [v0.12.0] - 2026-10-22
 
@@ -572,7 +604,7 @@
 
 ### Changed
 
-- **对外文档改为"按类别"对比，不再点名同类项目**：`docs/comparison.md` / `.en.md` 重写为**类别描述**（通用框架 / 图编排运行时 / 多智能体框架 / 自托管平台 / 托管无代码平台），同时删除他方的自我宣传文案、星标数与指向他站的链接；README、`docs/architecture`、v0.6.0 发布说明、参赛材料里的同类项目名字一并改为中性类别说法。YAI 一侧的事实（零硬依赖、九契约、benchmark 数字、测试数、宿主数）逐条保留并复核，中英两份同步。**刻意保留**两类名字：我们实现/依赖的接口与库名（模型兼容接口、MCP、OpenAPI、PySide6 等），以及作为类比对象的嵌入式数据库名。已生成的 PDF 与参赛图 PNG 不在本轮重导（文本层已改，图里仍有旧名字，重导需另行确认）。
+- **对外文档改为"按类别"对比，不再点名同类项目**：`docs/comparison.md` / `.en.md` 重写为**类别描述**（通用框架 / 图编排运行时 / 多智能体框架 / 自托管平台 / 托管无代码平台），同时删除他方的自我宣传文案、星标数与指向他站的链接；README、`docs/architecture`、v0.6.0 发布说明、对外材料里的同类项目名字一并改为中性类别说法。YAI 一侧的事实（零硬依赖、九契约、benchmark 数字、测试数、宿主数）逐条保留并复核，中英两份同步。**刻意保留**两类名字：我们实现/依赖的接口与库名（模型兼容接口、MCP、OpenAPI、PySide6 等），以及作为类比对象的嵌入式数据库名。已生成的 PDF 与示意图 PNG 不在本轮重导（文本层已改，图里仍有旧名字，重导需另行确认）。
 
 ### Security
 
@@ -635,7 +667,7 @@
 ### Added
 
 - 通过 **OpenSSF Best Practices 自评并获得 Passing（过境）徽章**（项目编号 [#15360](https://www.bestpractices.dev/projects/15360)，2026-10-10，Basics/Change Control/Reporting/Quality/Security/Analysis 六区全部满足）；中英 README 顶部加入 Passing 徽章。
-- **英文门面文档**：新增 `README.en.md`、`CONTRIBUTING.en.md`、`docs/architecture.en.md`、`docs/comparison.en.md`，`SECURITY.md` 英文化（中文另存 `SECURITY.zh-CN.md`），各份顶部双向互链并约定事实性内容中英同步、防漂移；逐行讲义与比赛过程文档不翻译。
+- **英文门面文档**：新增 `README.en.md`、`CONTRIBUTING.en.md`、`docs/architecture.en.md`、`docs/comparison.en.md`，`SECURITY.md` 英文化（中文另存 `SECURITY.zh-CN.md`），各份顶部双向互链并约定事实性内容中英同步、防漂移；逐行讲义与过程文档不翻译。
 - **发布资产签名 + SLSA 来源证明**：`publish.yml` 发版时对 wheel / tar.gz 生成 build provenance（`attest-build-provenance`），并用 cosign keyless 对 wheel / tar.gz / SHA256SUMS 逐个签名（随附签名束 `.bundle`，含签名与证书），全部作为已签名资产随 GitHub Release 发布；补齐 PyPI `Project-URL: Documentation`。
 - **SAST 与供应链安全体检**：接入 CodeQL（python，0 alerts）与 OpenSSF Scorecard（Linux 跑分、公开发布结果并加 badge），workflow 的 token 权限收敛到 job 级最小集。
 - **atheris 模糊测试**：新增 `fuzzing/`（schema / 路由特征 / 上下文压缩三组 harness）与非门禁 CI fuzz job；atheris 仅有 Linux x86_64、py3.12+ 的 wheel，Windows / macOS 不跑。

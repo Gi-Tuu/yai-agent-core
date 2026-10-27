@@ -1,16 +1,16 @@
-# 公网部署手册（X-Agent 硬门槛落地指南）
+# 公网部署手册（在线演示环境）
 
 > 最后核实：2026-09-10。免费政策变化快，动手前点文末来源链接复核。
-> 目标：让 `https://<你的域名>/health` 等四个端点公网可访问，且返回的 commit 与提交 PR 里的 pinned commit 完全一致。
+> 目标：让 `https://<你的域名>/health` 等四个端点公网可访问，且返回的 commit 与所部署的代码一致。
 
-## 0. 要满足的硬门槛（对应 X-Agent 7 项硬门槛中的部署部分）
+## 0. 部署要满足的四件事
 
 | 门槛 | 本项目落地方式 |
 |---|---|
 | 已部署、公网可调用的 API | Docker Compose 常驻 VPS，Caddy 反代 443 |
 | `GET /health` 返回 status + 40 位 commit | Battery 已实现；commit 构建时由 `--build-arg YAI_GIT_COMMIT` 固化 |
-| `/.well-known/xagent-verification.json` 同源同 commit | Battery 已实现，与 /health 读同一个环境变量 |
-| pinned commit | 部署哪个 commit，PR 的 `source/` 就放哪个 commit 的源码 |
+| `/.well-known/yai-verification.json` 同源同 commit | Battery 已实现，与 /health 读同一个环境变量 |
+| commit 可核对 | `/health` 与验证文件返回同一个 40 位 commit，且与仓库主线一致 |
 | 可复现说明 | 本手册 + README 的两条 compose 命令 |
 
 ## 1. 免费方案选型（2026-09 官方页面核实）
@@ -19,13 +19,13 @@
 |---|---|---|---|---|
 | **Oracle Cloud Always Free** | 永久免费：2 台 AMD micro（1/8 OCPU、1GB）+ ARM Ampere A1（总量最多 4 OCPU/24GB，可开 1-2 台）、200GB 块存储、约 10TB/月出站流量 | 常驻不休眠 | 自备域名（免费 DuckDNS 即可），Caddy 自动签证书 | **正式部署首选** |
 | Google Cloud e2-micro | 永久免费 1 台（限定美国 3 个区，1GB） | 常驻 | 同上 | 备选，注册同样要卡 |
-| Render Free Web Service | 免费 | **15 分钟无流量休眠，冷启动约 30–90 秒（波动大）**；750 实例小时/月 | 自带 `*.onrender.com` 证书 | **今天做演练用**，评审期有被休眠打到的风险 |
+| Render Free Web Service | 免费 | **15 分钟无流量休眠，冷启动约 30–90 秒（波动大）**；750 实例小时/月 | 自带 `*.onrender.com` 证书 | **适合临时演练**，演示访问可能被休眠打断 |
 | Fly.io | 无免费层，shared-cpu-1x 256MB 约 $3.14/月起 | 常驻 | 自带 `*.fly.dev` 证书 | 不想折腾 Oracle 时的便宜替代 |
 | Koyeb | 免费实例已取消（官网只剩付费计划） | — | — | 排除 |
 | Hugging Face Spaces | Docker/Gradio Space 创建已需付费计划；免费硬件会休眠 | 休眠 | 自带 | 排除 |
-| 阿里云/腾讯云学生机 | 约 ¥10/月级 | 常驻 | **大陆机房域名走 443 需 ICP 备案（赶不上 09-19/10-04）**；海外地域免备案但学生价通常限大陆地域 | 不推荐用于本次比赛 |
+| 阿里云/腾讯云学生机 | 约 ¥10/月级 | 常驻 | **大陆机房域名走 443 需 ICP 备案（赶不上 09-19/10-04）**；海外地域免备案但学生价通常限大陆地域 | 不推荐用于长期演示 |
 
-**建议路线**：今天先用 **Render 免费层 30 分钟拿到公网 HTTPS 地址**跑通全流程；正式提交前迁到 **Oracle Always Free + Caddy** 常驻。我们的服务只是转发到 DeepSeek，本机不跑模型，AMD 1GB 小机器都够用。
+**建议路线**：今天先用 **Render 免费层 30 分钟拿到公网 HTTPS 地址**跑通全流程；正式演示前迁到 **Oracle Always Free + Caddy** 常驻。我们的服务只是转发到 DeepSeek，本机不跑模型，AMD 1GB 小机器都够用。
 
 ## 2. 路线 A：Render 免费层快速演练（零成本、约 30 分钟）
 
@@ -47,8 +47,8 @@
      注意解析时只接受完整 40 位小写哈希——镜像里烤的默认值 `dev` 不是合法哈希会被跳过
      （首部署实测：若不跳过，非空的 `dev` 会遮蔽平台注入的真实 SHA）。
 6. 部署完成后得到 `https://yai-agent-core.onrender.com`（名字以实际为准），按第 4 节验证四个端点。
-7. 风险：15 分钟无流量会休眠，评审机第一次访问可能撞上约 30–90 秒冷启动页（不是我们的 JSON）。
-   **正式评审前必须换到常驻 VPS。**
+7. 风险：15 分钟无流量会休眠，第一次访问可能撞上约 30–90 秒冷启动页（不是我们的 JSON）。
+   **正式演示前请换到常驻 VPS。**
 
 > 若不用 Blueprint、手动 New → Web Service：Language 选 Docker、Dockerfile Path 留空（根目录）、
 > Plan 选 Free，然后在 Environment 里补齐上面同样的变量即可，效果相同。
@@ -79,7 +79,7 @@ cp .env.example .env
 nano .env          # 填 OPENAI_API_KEY、YAI_PROJECT_SLUG；YAI_GIT_COMMIT 保持注释
 nano deploy/Caddyfile   # 把域名换成你的（见 3.4）
 
-git rev-parse HEAD   # 记下这 40 位 commit，X-Agent 提交 PR 时用同一个
+git rev-parse HEAD   # 记下这 40 位 commit，用于核对线上与仓库一致
 YAI_GIT_COMMIT=$(git rev-parse HEAD) \
   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d --build
 ```
@@ -101,26 +101,26 @@ YAI_GIT_COMMIT=$(git rev-parse HEAD) \
 4. `docker compose -f docker-compose.yml -f docker-compose.deploy.yml restart caddy`，
    首次 HTTPS 访问时 Caddy 自动签好证书（`docker compose logs caddy` 可看到证书申请记录）。
 
-### 3.5 更新版本（比赛迭代时反复用）
+### 3.5 更新版本（发布迭代时反复用）
 ```bash
 git pull
 YAI_GIT_COMMIT=$(git rev-parse HEAD) \
   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d --build
 ```
-重新构建后 /health 的 commit 自动变成新版本——**每次重新部署，X-Agent PR 里的 pinned commit 也要同步更新**。
+重新构建后 /health 的 commit 自动变成新版本——**每次重新部署，记录里的 commit 也要同步更新**。
 
 ## 4. 部署后验证清单（在自己电脑上跑）
 
 ```bash
 BASE=https://<你的域名>
 curl $BASE/health                                 # 期望 {"status":"ok","commit":"<40位>"}
-curl $BASE/.well-known/xagent-verification.json   # 期望 schemaVersion/slug/commit，commit 与上面一致
+curl $BASE/.well-known/yai-verification.json   # 期望 schemaVersion/slug/commit，commit 与上面一致
 curl $BASE/v1/tools                                # 期望工具清单
 curl -X POST $BASE/v1/agent/run -H "Content-Type: application/json" \
   -d '{"task":"列出我的全部笔记"}'                  # 期望 strategy/events/final_text
 docker compose ps                                   # caddy 与 app 均 healthy
 ```
-四项全过 = X-Agent 部署类硬门槛达标。
+四项全过 = 公网演示部署达标。
 
 - [x] `YAI_DB_PATH`：Render Blueprint 已默认开启（`data/yai.db` → 容器内 `/app/data`，启动时自动建目录）；本地/容器不设置该变量时仍是进程内内存。
   **Render 免费层是临时盘，redeploy 后会丢库**：重建后历史清空属预期行为，对外演示口径需如实说明；VPS 形态请把该路径放在挂载卷上。

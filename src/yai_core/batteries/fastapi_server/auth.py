@@ -1,14 +1,14 @@
-"""API Key 鉴权（v0.7，纯标准库）：opt-in，保护 /v1/*，评审硬门槛路径保持公开。
+"""API Key 鉴权（v0.7，纯标准库）：opt-in，保护 /v1/*，探活硬门槛保持公开。
 
-安全默认：未设置 YAI_API_KEY / YAI_API_KEYS 时鉴权**关闭**（本地开发与评审零门槛、
+安全默认：未设置 YAI_API_KEY / YAI_API_KEYS 时鉴权**关闭**（本地开发与演示零门槛、
 行为与旧版一致）。设置后，受保护路径要求以下任一头部携带正确 Key，否则返回 401、
 请求不进 core（不花模型钱）：
 
 - ``Authorization: Bearer <key>``（也容忍裸 key）
 - ``X-API-Key: <key>``
 
-即使开启鉴权，``/health`` 与 ``/.well-known/xagent-verification.json`` 也必须无条件
-公开（X-Agent 技术验证硬门槛），因此列入公开白名单、跳过校验。Key 比较用
+即使开启鉴权，``/health`` 与 ``/.well-known/yai-verification.json`` 也必须无条件
+公开（技术验证硬门槛），因此列入公开白名单、跳过校验。Key 比较用
 ``hmac.compare_digest`` 做常量时间比较，避免按长度/前缀泄露。
 """
 
@@ -18,8 +18,8 @@ import hmac
 import os
 from dataclasses import dataclass, field
 
-#: 开启鉴权也必须无条件公开的路径（X-Agent 技术验证硬门槛）。
-PUBLIC_PATHS = frozenset({"/health", "/.well-known/xagent-verification.json"})
+#: 开启鉴权也必须无条件公开的路径（技术验证硬门槛）。
+PUBLIC_PATHS = frozenset({"/health", "/.well-known/yai-verification.json"})
 _PROTECTED_PREFIX = "/v1/"
 
 _API_KEY_ENV = "YAI_API_KEY"

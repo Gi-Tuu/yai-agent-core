@@ -79,7 +79,7 @@ def test_over_limit_returns_429_then_recovers(monkeypatch) -> None:
     assert client.post("/v1/agent/run", json={"task": "4"}).status_code == 200
 
 
-# ---------- 3. 429 状态下三个 GET 端点仍 200（评审硬门槛） ----------
+# ---------- 3. 429 状态下三个 GET 端点仍 200（探活硬门槛） ----------
 
 def test_get_endpoints_never_limited(monkeypatch) -> None:
     monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
@@ -91,7 +91,7 @@ def test_get_endpoints_never_limited(monkeypatch) -> None:
     assert client.post("/v1/agent/run", json={"task": "2"}).status_code == 429
 
     assert client.get("/health").status_code == 200
-    assert client.get("/.well-known/xagent-verification.json").status_code == 200
+    assert client.get("/.well-known/yai-verification.json").status_code == 200
     assert client.get("/v1/tools").status_code == 200
 
 
@@ -325,7 +325,7 @@ def test_get_endpoints_never_hit_global_gate(monkeypatch) -> None:
     assert client.post("/v1/agent/run", json={"task": "1"}).status_code == 200
     assert client.post("/v1/agent/run", json={"task": "2"}).status_code == 429
     assert client.get("/health").status_code == 200
-    assert client.get("/.well-known/xagent-verification.json").status_code == 200
+    assert client.get("/.well-known/yai-verification.json").status_code == 200
     assert client.get("/v1/tools").status_code == 200
 
 

@@ -88,7 +88,7 @@ class McpServerConfig:
     server: Any = None                  # ③ MCPServer 实例，内存直连（测试用）
 ```
 三种 target 对应 MCP 的三种接法：
-1. **url**：`https://host/mcp`，跨网络调远端服务（X-Agent 生态里的 MCP 服务多是这种）；
+1. **url**：`https://host/mcp`，跨网络调远端服务（公网上的 MCP 服务多是这种）；
 2. **command+args**：SDK 帮你拉起一个本地子进程，通过 stdin/stdout 通信（stdio）。
    好处是工具运行在独立进程，崩了不拖垮宿主；`env` 可以给它单独传密钥；
 3. **server**：直接传 MCPServer 实例做内存直连，不起进程、不触网——**测试专用**，
@@ -168,7 +168,7 @@ def _to_spec(self, tool: Any) -> ToolSpec:
   返回值交回 Executor 统一 `json.dumps`（所以字符串结果会被 JSON 编码成带引号形式，
   这是既有契约，测试里用 `json.loads` 断言）。
 - `source="mcp"`：ToolSpec 早预留好的字段，`core.list_tools()` 会如实标注来源，
-  评委一眼能看出哪些是外部生态工具。
+  一眼能看出哪些是外部生态工具。
 
 ## 块 7 · 生命周期与便捷函数（L134-L139、L187-L203）
 ```python
@@ -301,7 +301,7 @@ app = create_app(core, lifespan=app_lifespan)
 3. 重跑：路由 `react` → DeepSeek 发出标准 function call → HTTP 调远程
    `ask_question` → 真实 wiki 内容回灌 → 模型产出中文结论与代码。
 这条链路（本服务 → LLM 规划 → Streamable HTTP MCP → 结果回灌 → 模型总结）
-就是 X-Agent "MCP 产品化"评分项最硬的证据，且可被评审用 curl 复现。
+就是"MCP 产品化"最硬的证据，且可用 curl 复现。
 
 ## 测试策略（`tests/test_mcp_bridge.py` + `tests/test_battery_api.py`）
 - 文件首行 `pytest.importorskip("mcp")`：最小安装（无 mcp extra）的环境整文件跳过，

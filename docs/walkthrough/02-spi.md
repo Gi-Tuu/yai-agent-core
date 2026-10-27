@@ -99,7 +99,7 @@ from yai_core.spi.policy import PermissionDecision, PermissionPolicy
 - 把四个协议集中到 `yai_core.spi` 包名下，外部一行导入：`from yai_core.spi import ModelProvider, Channel`。
 - `__init__.py` 的作用：把一个文件夹标记为 Python 包，并决定"对外暴露什么"。
 
-## 设计思想小结（比赛材料也用得上）
+## 设计思想小结（写设计文档也用得上）
 
 > Core 面向协议编程，不面向具体实现编程。新增一种模型/UI/数据库 = 新写一个满足协议的小类，内核零修改——这正是"可扩展、可内嵌"的根。
 

@@ -1,4 +1,4 @@
-"""在线 API 启动示例（X-Agent 部署形态）。
+"""在线 API 启动示例（公网演示部署形态）。
 
 本地直跑（宿主机统一用 8001，容器内才是 8000）：
     uv run uvicorn scripts.serve_example:app --host 127.0.0.1 --port 8001
@@ -6,7 +6,7 @@
     docker compose up --build   # 容器内监听 8000，宿主机映射 8001:8000
 环境变量（写在项目根 .env 即可，脚本启动时自动加载）：
     OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL   真实模型（缺省走离线演示模型）
-    YAI_GIT_COMMIT=<40位 commit>  YAI_PROJECT_SLUG=<slug>   X-Agent 验证端点
+    YAI_GIT_COMMIT=<40位 commit>  YAI_PROJECT_SLUG=<slug>   部署验证端点
     commit 解析顺序：YAI_GIT_COMMIT → 平台注入（如 RENDER_GIT_COMMIT）→ 当前 git HEAD → dev
     （只接受完整 40 位哈希，镜像默认值 dev 等占位会被跳过）
 """
@@ -148,7 +148,7 @@ async def app_lifespan(_app):
             close_store()
 
 
-# 评审期限流（默认开启）：显式 from_env 并打印一行策略，便于部署核对。
+# 公网演示限流（默认开启）：显式 from_env 并打印一行策略，便于部署核对。
 _rate_limit = RateLimitConfig.from_env()
 print(
     f"限流策略：enabled={_rate_limit.enabled}，"

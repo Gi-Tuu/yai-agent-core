@@ -45,6 +45,21 @@ _ROLES = {
     Qt.UserRole + 9: b"runMode",
 }
 
+#: 星云默认粒子数（与 web 演示同密度，也是文档里的口径）。
+DEFAULT_NEBULA_PARTICLES = 260
+#: 合法区间：低于 24 看不出星云；高于 1200 在软件光栅下会明显掉帧。
+NEBULA_PARTICLES_MIN = 24
+NEBULA_PARTICLES_MAX = 1200
+
+
+def coerce_nebula_particles(value: object) -> int:
+    """把偏好里的任意值收成合法粒子数；无法解析时回默认值。"""
+    try:
+        count = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_NEBULA_PARTICLES
+    return max(NEBULA_PARTICLES_MIN, min(NEBULA_PARTICLES_MAX, count))
+
 
 class SpecialistListModel(QAbstractListModel):
     """给 QML 专员切换条的列表模型（一行一个专员）。"""
@@ -117,6 +132,8 @@ class WorkbenchRuntime(QObject):
     learningUpdated = Signal(str)
     #: 全局界面偏好：指针离开后是否自动收回（与具体专员无关）
     autoCollapseChanged = Signal()
+    #: 全局界面偏好：星云粒子数（个人偏好，默认 260）
+    nebulaParticlesChanged = Signal()
 
     def __init__(
         self,
@@ -125,18 +142,24 @@ class WorkbenchRuntime(QObject):
         mode: str = "live",
         active_id: str | None = None,
         permission_mode: str = "partial",
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__()
         if not specs:
             raise ValueError("工作台至少需要一个专员")
         self._launch_mode = mode
-        self._settings = QSettings("YAI", "Desktop")
+        # 测试可注入临时 INI 的 QSettings，避免碰真实用户偏好（注册表）。
+        self._settings = settings if settings is not None else QSettings("YAI", "Desktop")
         self._onboarding_done = bool(
             self._settings.value("onboarding/done", False, type=bool)
         )
         # 指针离开灵动岛后是否自动收回；默认开，关掉则只在手动/Esc 时收回。
         self._auto_collapse = bool(
             self._settings.value("ui/autoCollapse", True, type=bool)
+        )
+        # 星云粒子数：默认 260，可用 QSettings("YAI","Desktop") 的 ui/nebulaParticles 覆盖。
+        self._nebula_particles = coerce_nebula_particles(
+            self._settings.value("ui/nebulaParticles", DEFAULT_NEBULA_PARTICLES)
         )
         self._specialists: dict[str, SpecialistRuntime] = {}
         self._order: list[str] = []
@@ -284,6 +307,9 @@ class WorkbenchRuntime(QObject):
     launchLive = Property(bool, _get_launch_live, constant=True)
     onboardingDone = Property(bool, _get_onboarding_done, notify=stateChanged)
     autoCollapse = Property(bool, _get_auto_collapse, notify=autoCollapseChanged)
+    nebulaParticles = Property(
+        int, lambda self: self._nebula_particles, notify=nebulaParticlesChanged
+    )
 
     def _get_code_vault(self) -> str:
         return self._vault_json
@@ -359,6 +385,16 @@ class WorkbenchRuntime(QObject):
         self._auto_collapse = bool(on)
         self._settings.setValue("ui/autoCollapse", self._auto_collapse)
         self.autoCollapseChanged.emit()
+
+    @Slot(int)
+    def setNebulaParticles(self, count: int) -> None:
+        """设置星云粒子数并落盘（个人偏好，全局生效）。"""
+        value = coerce_nebula_particles(count)
+        if value == self._nebula_particles:
+            return
+        self._nebula_particles = value
+        self._settings.setValue("ui/nebulaParticles", value)
+        self.nebulaParticlesChanged.emit()
 
     @Slot()
     def requestQuit(self) -> None:
