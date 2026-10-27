@@ -5,6 +5,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
+  `docs/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，
+  跑 `important_instructions` 攻击；报告给出 raw ASR / 结果达成 / 无警示三层口径、
+  四个 suite 的 clean utility / 攻击下 utility 与失败归因。harness 不进运行时依赖，
+  也不进离线 CI（需真实模型）。
+
 ## [v0.24.0] - 2026-10-27
 
 本版把"可信"往前推了三步：**成本**（提示缓存）、**注入**（工具输出按不可信数据处理 +
