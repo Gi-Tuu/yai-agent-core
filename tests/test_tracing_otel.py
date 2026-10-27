@@ -20,7 +20,15 @@ from yai_core import (
     build_spec,
 )
 from yai_core.integrations.tracing import ROOT_SPAN_NAME, traced_astream, traced_run
-from yai_core.integrations.tracing.otel import TOOL_SPAN_PREFIX
+from yai_core.integrations.tracing.otel import (
+    AGENT_NAME,
+    GEN_AI_AGENT_NAME,
+    GEN_AI_OPERATION_NAME,
+    GEN_AI_TOOL_CALL_ID,
+    GEN_AI_TOOL_NAME,
+    GEN_AI_TOOL_TYPE,
+    TOOL_SPAN_PREFIX,
+)
 
 
 def add(a: int, b: int) -> int:
@@ -101,6 +109,9 @@ def test_trace_maps_run_to_root_and_tool_child_spans() -> None:
     root = roots[0]
     assert root.parent is None or root.parent == INVALID_SPAN_CONTEXT
     assert root.attributes["yai.strategy"] == "react"
+    # GenAI 语义约定：agent 侧的标准字段。
+    assert root.attributes[GEN_AI_OPERATION_NAME] == "invoke_agent"
+    assert root.attributes[GEN_AI_AGENT_NAME] == AGENT_NAME
     assert root.attributes["yai.final_text_len"] == len("结果是 3，但 boom 失败了")
     assert root.status.status_code == StatusCode.OK
 
@@ -110,6 +121,10 @@ def test_trace_maps_run_to_root_and_tool_child_spans() -> None:
     assert add_span.parent.span_id == root.context.span_id
     assert boom_span.parent.span_id == root.context.span_id
     assert add_span.attributes["yai.ok"] is True
+    # GenAI 语义约定：工具侧的标准字段（含调用 id，来自执行收据）。
+    assert add_span.attributes[GEN_AI_TOOL_NAME] == "add"
+    assert add_span.attributes[GEN_AI_TOOL_TYPE] == "function"
+    assert add_span.attributes[GEN_AI_TOOL_CALL_ID] == "1"
     assert add_span.attributes["yai.preview"] == "3"
     assert boom_span.attributes["yai.ok"] is False
     assert "boom exploded" in boom_span.attributes["yai.error"]

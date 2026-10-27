@@ -297,6 +297,20 @@ tracer = provider.get_tracer("test")
 unclosed 收尾、ERROR 事件不被 OK 覆盖、不传 tracer 回退全局。全程**不需要 API Key、不连
 任何后端**；没装 `[otel]` 时需要 SDK 的用例自动跳过，唯独"缺依赖要给安装提示"始终运行。
 
+## GenAI 语义约定（给后端看的标准字段）
+
+除了 `yai.*` 自有属性，root 与工具 span 还带 OpenTelemetry GenAI 约定的一小组字段：
+
+| span | 属性 | 值 |
+|---|---|---|
+| root | `gen_ai.operation.name` | `invoke_agent` |
+| root | `gen_ai.agent.name` | `yai-agent-core` |
+| tool | `gen_ai.tool.name` | 工具名 |
+| tool | `gen_ai.tool.type` | `function` |
+| tool | `gen_ai.tool.call.id` | 来自执行收据的 `call_id` |
+
+只发这几个稳定字段：usage / model 等数据的后端形态不一，拿不到就不臆造。
+
 ## 自检（读完本篇应能回答）
 
 1. 为什么 tracing 不需要修改 `kernel/loop.py`？它从哪里拿到运行过程？
