@@ -192,6 +192,14 @@ ctx = Context(
 
 灵动岛真机工厂（`shell/desktop/host.py`）显式开启，离线 ScriptedModel 演示不开（没有意义）。
 
+## 并行压缩与任务锚点（两项后补的优化）
+
+**并行压缩**：`CompactionPolicy(parallel=N)` 把待压缩区间按 `user` 轮首切成至多 N 段，
+`asyncio.gather` 并发摘要后按序拼接。切段只改变"几次模型调用"，不改变哪些消息被压缩——
+各段合起来仍等于原来的 `[start, end)`，保留策略与消息结构一字不动。默认 `parallel=1`，
+与旧行为逐字一致；`CONTEXT_COMPACTED` 事件新增 `parallel_segments` 便于观测。
+
+
 ## 5. 自检（答得上再往下走）
 
 1. 摘要压缩和硬裁剪，分别在什么情况下触发？为什么两者都要保留？

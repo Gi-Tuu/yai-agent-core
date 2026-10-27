@@ -13,6 +13,7 @@ from yai_core.kernel.compaction import (
     compact_context,
     render_for_summary,
     select_compaction_range,
+    split_compaction_segments,
     user_round_starts,
 )
 from yai_core.kernel.context import Context
@@ -440,3 +441,72 @@ def test_large_tool_result_does_not_trim_before_compaction() -> None:
     assert "EARLY_ASSISTANT" in "\n".join(
         str(m.get("content", "")) for m in model.requests[1]
     )
+
+
+def _rounds_ctx(n: int) -> Context:
+    ctx = Context("系统提示")
+    for i in range(1, n + 1):
+        for m in _plain_round(f"r{i}"):
+            ctx.add(m)
+    return ctx
+
+
+class _DelayModel:
+    """每段摘要固定延迟，用来量并行 vs 串行的墙钟差。"""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+        self.calls = 0
+        self.requests: list[list[dict]] = []
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.calls += 1
+        self.requests.append([dict(message) for message in messages])
+        await asyncio.sleep(self.delay)
+        return ModelResponse(content=f"摘要-{self.calls}")
+
+
+def test_split_segments_cover_range_and_align_to_rounds() -> None:
+    """切段必须铺满 [start,end) 且每段从 user 轮首开始。"""
+    ctx = _rounds_ctx(6)
+    msgs = ctx.messages
+    start, end = 0, len(msgs)
+    segments = split_compaction_segments(msgs, start, end, 3)
+    assert len(segments) == 3
+    assert segments[0][0] == start
+    assert segments[-1][1] == end
+    for (_s1, e1), (s2, _e2) in zip(segments[:-1], segments[1:], strict=True):
+        assert e1 == s2                      # 首尾相接，不漏不重
+    for seg_start, _seg_end in segments[1:]:
+        assert msgs[seg_start].role == "user"  # 段首对齐轮首
+
+    assert split_compaction_segments(msgs, start, end, 1) == [(start, end)]
+
+
+def test_parallel_compaction_runs_segments_concurrently() -> None:
+    """parallel=3 时三段并发：调用次数对得上，墙钟明显短于串行。"""
+    import time as _time
+
+    async def run(parallel: int):
+        ctx = _rounds_ctx(6)
+        model = _DelayModel(0.05)
+        policy = CompactionPolicy(
+            hard_max_chars=200,
+            target_chars=100,
+            keep_recent_rounds=1,
+            parallel=parallel,
+        )
+        started = _time.monotonic()
+        event = await compact_context(ctx, model, policy)
+        return event, _time.monotonic() - started, model, ctx
+
+    event, elapsed, model, ctx = asyncio.run(run(3))
+    assert event is not None
+    assert event.type == EventType.CONTEXT_COMPACTED
+    assert event.data["parallel_segments"] == 3
+    assert model.calls == 3
+    # 三段各 50ms：串行至少 150ms，并发应显著更短。
+    assert elapsed < 0.13
+    # 摘要按段顺序拼接在一条 system 消息里。
+    system_msgs = [m for m in ctx.messages if m.role == "system"]
+    assert system_msgs and "摘要-" in system_msgs[-1].content
