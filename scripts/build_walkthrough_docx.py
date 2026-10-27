@@ -41,6 +41,12 @@ def set_east_asian(style, ascii_font: str, ea_font: str, size: Pt,
     if rfonts is None:
         rfonts = OxmlElement("w:rFonts")
         rpr.append(rfonts)
+    # 主题字体属性优先于显式字体；不清掉会让 LibreOffice 解析回 MS Gothic，
+    # 中文逐字回退导致字叠字（PDF 视觉损坏）。
+    for attr in ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"):
+        key = qn(f"w:{attr}")
+        if key in rfonts.attrib:
+            del rfonts.attrib[key]
     rfonts.set(qn("w:ascii"), ascii_font)
     rfonts.set(qn("w:hAnsi"), ascii_font)
     rfonts.set(qn("w:eastAsia"), ea_font)
