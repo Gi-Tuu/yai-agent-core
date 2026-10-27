@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-25（对应已发布版本 **v0.22.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-10-27（对应已发布版本 **v0.23.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -226,7 +226,7 @@
 - **依赖 CVE 清零**：`opentelemetry-api 1.45.1`、`filelock 4.2.4`，OSV 扫描 0 命中；`anthropic` 补上界 `<2`。
 - **中英门面全量校准**：README / comparison / SECURITY / CONTRIBUTING / architecture / 白皮书的事实与措辞，讲义第 06/18/21/22/41 篇与源码重新对齐。
 
-### v0.22.1 — 审计整改第二批次（tag 2026-10-25，当前发布版本）
+### v0.22.1 — 审计整改第二批次（tag 2026-10-25，已完成）
 
 13 个提交，全部是修复 / 测试 / 文档 / CI，没有新增对外能力：
 
@@ -234,6 +234,17 @@
 - **取消与超时**：修掉 Python 3.11 上 `asyncio.wait_for` 吞掉外部取消的缺陷（内核 + `shell/employee` 共 10 个文件统一改用 `asyncio.timeout`）。
 - **数据与状态**：SQLite 备份/恢复原子替换；子员工权限逐层叠加；关闭后再运行直接报错。
 - **打包与供应链**：sdist 包内断链 12 → 0；Release 起上传 `provenance/*.intoto.jsonl`；sidecar 五模块覆盖率 100%。
+
+### v0.23.0 — 把"能当场验证"做进仓库（tag 2026-10-27，当前发布版本）
+
+- **一条命令跑完治理闭环**：`scripts/demo_governance_loop.py`——请求 → 审批拦截并冻结参数 → 批准执行 /
+  拒绝零副作用 → JSONL trace；退出码即断言。
+- **一条命令跑完全部门禁**：`scripts/check_all.py`——锁定文件 / lint / 类型 / 版本与打包守卫 /
+  全量测试+覆盖率 / 冒烟；`--fast` 跳过全量。
+- **能力与证据索引**：`docs/IMPLEMENTATION_STATUS.md` 分"已验证 / 未真机验证 / 不做"三档并给证据。
+- **桌面星云粒子数可配置**：`ui/nebulaParticles`（默认 260，区间 24–1200）。
+- **仓库内容整理**：部署手册迁到 `docs/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
+  `/.well-known/yai-verification.json`。
 
 ## 下一步
 
