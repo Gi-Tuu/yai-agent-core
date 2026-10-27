@@ -23,6 +23,19 @@
   （root）与 `gen_ai.tool.name` / `gen_ai.tool.type` / `gen_ai.tool.call.id`（工具 span），
   Jaeger / Grafana 一类后端可按标准识别 agent 与工具调用。
 
+### Added
+
+- **执行后验证（后置条件）**：`ToolGovernance.postcondition` 可声明
+  `(arguments) -> bool | Awaitable[bool]`。只在该次调用结果为 `unknown`（超时 /
+  同步 handler 被放弃 / handler 抛错 / 沙箱异常）时运行：确认副作用已发生 → 收据改判
+  `succeeded` 并重新接链，模型看到成功；确认没发生或检查自身出错 → 保持 `unknown`，
+  只记录 `postcondition=rejected|error`，绝不替宿主猜。
+- **并行摘要压缩**：`CompactionPolicy(parallel=N)` 把待压缩的旧轮按轮首切成至多 N 段
+  并发摘要、按序拼接；墙钟随段数下降，保留策略与消息结构完全不变（默认 1 = 旧行为）。
+  `CONTEXT_COMPACTED` 事件新增 `parallel_segments` 字段。
+- **任务锚点（上下文腐化防护）**：长任务被裁剪 / 压缩后，若原始任务已不在消息里，
+  下一次模型调用会把「当前任务」重新锚到瞬态 system 位；任务仍在上下文时不重复注入。
+
 ## [v0.23.0] - 2026-10-27
 
 本版把"**能不能当场验证**"做成仓库的一等公民：一条命令跑完治理闭环、一条命令跑完全部门禁、
