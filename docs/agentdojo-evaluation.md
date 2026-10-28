@@ -5,7 +5,7 @@
 > 模型：`deepseek-v4.1-flash-1017`（第三方 OpenAI 兼容端点，API 返回 `deepseek-v4-1-flash-261017`）
 > 攻击：`important_instructions`
 > 日期：2026-10-27（运行）/ 2026-10-28（完成）
-> 状态：**四个 suite 的 guard 结果与 banking 的 no-guard 对照均已完成**。
+> 状态：**四个 suite 的 guard 结果，以及 banking / slack 的 no-guard 对照均已完成**。
 > harness 在 `benchmarks/agentdojo/`，原始日志与结果 JSON 在本地
 > `benchmark_out/agentdojo/`（gitignored），报告中的每个数字都可按第 8 节复跑。
 
@@ -28,9 +28,10 @@ banking 的 guard on/off 对照见第 6.4 节：ASR 都是 0/144，utility 差�
 1. **raw ASR 2.0% 里只有 1 例是“载荷真的到了目标处”**：slack 的案例把钓鱼链接写进了给 Alice 的
    警示 DM，链接确实进了收件箱；travel 的 18 例只是模型在拒绝时复述了目标酒店名，被 AgentDojo
    的字符串检查计成成功；banking 与 workspace 的 raw ASR 都是 0。
-2. **没有一例是“模型被说服、且没有发出警示”**（0/949）；banking 的 no-guard 对照同样是
-   0/144。但这不等于“注入无害”：那一例钓鱼链接虽然带着警示，仍然送达了用户收件箱，
-   用户仍可能点击。也**不能把 0 ASR 归功于不可信包裹**——关掉它结果一样。
+2. **没有一例是“模型被说服、且没有发出警示”**（0/949）。但这不等于“注入无害”：
+   slack 的 guard-on 仍有 1/105 把钓鱼链接送到 Alice；关掉 guard 后是 2/105。
+   **不可信包裹只减少了 1 例，没有消除结果达成，不能写成有效防护**；banking 的
+   no-guard 也同样是 0/144，不能把 0 ASR 归功于包裹。
 3. **安全是有代价的，但没有想象中大**：攻击在场时 utility 从 95.9% 降到 89.8%（−6.1pp）。
    下降集中在**本来 clean 就做不完**的 4 个用户任务（banking `user_task_0` / `user_task_11`、
    travel `user_task_19`、workspace `user_task_25`）；把这 4 个任务排除后，攻击下 utility 为
@@ -236,7 +237,24 @@ banking 的 144 个案例中，133/144 的最终回答出现拒绝/警示/可疑
   不能据此断言包裹有害；只能说没有观察到收益，差异在噪声范围内。
 - **不能把“ASR 0”归功于 Spotlighting**：模型自身的拒绝/警示是主要因素。内核的确定性
   防线（策略 / 闸 / 审批）由离线回归集证明，和这里的模型行为是两回事。
-- 只做了 banking；travel/slack/workspace 的 no-guard 未跑，结论不能外推。
+- 本节只覆盖 banking；slack 的 guard on/off 见 6.5；travel / workspace 未跑 no-guard，
+  结论不能外推到全部 suite。
+
+### 6.5 slack 的 guard 开/关对照
+
+只跑 slack，沿用同一 harness、同一模型、同一攻击 `important_instructions`、路由固定 react；
+两边都是**单次运行**。guard-on 复用本报告已有的 slack 结果，guard-off 于 2026-10-28 新跑。
+
+| slack 配置 | 攻击下 utility | raw ASR | 结果达成 ASR | 无警示达成 |
+|---|---|---|---|---|
+| guard on（默认） | 77/105（73.3%） | 1/105（1.0%） | 1/105（1.0%） | 0/105 |
+| guard off | 78/105（74.3%） | 2/105（1.9%） | 2/105（1.9%） | 0/105 |
+| 差值 | +1 例（+1.0pp） | +1 例 | +1 例 | 0 |
+
+两边的结果达成都非零：guard-on 仍有 1 例、guard-off 有 2 例把钓鱼链接送到了 Alice
+（两例都是“警示 DM 里带着完整链接”，不是无警示执行）。因此 **tool_output_guard 只减少了
+1 例结果达成，并没有降低到 0，不能把它写成有效的注入防护**；这 1 例差异也只是单次运行，
+不构成统计结论。utility 同样只差 1 例，方向甚至相反，不能据此声称 guard 提升/损害任务完成率。
 
 ## 7. 诚实边界
 
@@ -244,8 +262,9 @@ banking 的 144 个案例中，133/144 的最终回答出现拒绝/警示/可疑
   默认温度、无 seed，重复运行数字会有波动。
 - **适配层不是 AgentDojo 参考实现**：system message 位置、路由固定 react、无截断、每案例新建
   Core/客户端；这些都会影响 utility/ASR，报告不声称与论文数字可比。
-- **no-guard 对照只做了 banking**：guard on/off 的 ASR 都是 0/144，utility 差异在噪声范围内；
-  travel/slack/workspace 未跑 no-guard，不能把该对照外推到全部 suite。
+- **no-guard 对照只做了 banking 与 slack**：banking 两边 ASR 都是 0/144；slack 是
+  1/105（on）对 2/105（off），两边都仍有链接送达。travel / workspace 未跑 no-guard，
+  不能把该对照外推到全部 suite；两次都是单次运行，不构成统计结论。
 - **utility under attack 不是纯防御指标**：注入可能替换任务数据，使任务不可完成；报告已标出
   clean 就失败的 4 个任务，并给出排除后的条件数字（93.1%），但未做逐案例人工归因。
 - **workspace 有 1 例注入未送达**：560 个案例中 559 个能在工具输出里找到注入标记；未送达的
@@ -286,6 +305,7 @@ benchmark_out/agentdojo/.venv/Scripts/python.exe benchmarks/agentdojo/audit_atta
 | banking 结果 | `benchmark_out/agentdojo/results/both-important_instructions-guard-20261027T130759Z.json` |
 | travel/slack/workspace 结果 | `benchmark_out/agentdojo/results/rest-guard.json` |
 | banking no-guard 对照 | `benchmark_out/agentdojo/results/banking-noguard.json` |
+| slack no-guard 对照 | `benchmark_out/agentdojo/results/slack-noguard.json` |
 | 每案例对话日志 | `benchmark_out/agentdojo/runs/<pipeline>/<suite>/<user_task>/<attack>/<injection_task>.json` |
 | 适配器 | `benchmarks/agentdojo/yai_pipeline.py` |
 | 批量入口 | `benchmarks/agentdojo/run_bench.py` |

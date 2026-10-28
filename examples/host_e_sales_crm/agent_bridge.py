@@ -645,12 +645,18 @@ class AgentBridge:
         cancelled = False
         final_text = ""
         strategy = None
+        done_data: dict = {}
         try:
             async for event in core.astream(task):
-                run["queue"].put({"type": event_type_name(event), "data": event.data})
                 if event.type == EventType.DONE:
+                    # 不要先把内核 DONE 下发：SSE 消费端见到 done 就断开，
+                    # 会和 finally 里的学习落盘赛跑，负载高时文件还没写就返回。
+                    # 先留住数据，落盘完成后再发唯一的宿主 done。
+                    done_data = dict(event.data)
                     final_text = event.data.get("final_text", "")
                     strategy = event.data.get("strategy")
+                    continue
+                run["queue"].put({"type": event_type_name(event), "data": event.data})
         except asyncio.CancelledError:
             cancelled = True
             run["queue"].put({
@@ -664,9 +670,12 @@ class AgentBridge:
             run["active"] = False
             run["task"] = None
             # 正常结束（非取消）时内核已回灌本次反馈，这里落盘让学习跨重启保留。
+            # 落盘必须发生在 done 入队之前，测试与前端都以 done 作为“任务真正结束”的信号。
             if not cancelled:
                 self._save_learning()
-                run["queue"].put({
-                    "type": "done",
-                    "data": {"final_text": final_text, "strategy": strategy},
-                })
+                payload = {
+                    **done_data,
+                    "final_text": final_text,
+                    "strategy": strategy,
+                }
+                run["queue"].put({"type": "done", "data": payload})

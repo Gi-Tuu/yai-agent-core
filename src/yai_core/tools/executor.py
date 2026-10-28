@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from yai_core.policy.approval import (
@@ -27,16 +27,23 @@ from yai_core.policy.authorize import (
     policy_decision,
     snapshot_arguments,
 )
+from yai_core.policy.egress import check_egress, record_tool_output
 from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionDecision, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composer import resolve_args
+from yai_core.tools.execution_audit import (
+    ExecutionAudit,
+    event_error,
+    event_preview,
+    infer_status,
+    replay_preview,
+)
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import (
     AgentEvent,
     ChangePreview,
     EventType,
-    ExecutionReceipt,
     GateDecision,
     ReceiptStatus,
     ToolSpec,
@@ -122,6 +129,15 @@ class _PermissionDependency:
     name: str
     spec: ToolSpec
     arguments: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class _CacheLookup:
+    """一次幂等查找的结果；hit 非空表示可直接返回 (ok, text)。"""
+
+    key: str
+    fingerprint: str
+    hit: tuple[bool, str] | None = None
 
 
 def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
@@ -218,8 +234,7 @@ class ToolExecutor:
         self.code_timeout = code_timeout
         # 单个工具结果回灌上下文前的统一上界（None=关闭）。
         self.result_char_limit = result_char_limit
-        # 收据哈希链：上一条的 receipt_hash，串起本次进程内的执行审计链。
-        self._last_receipt_hash = ""
+        self._audit = ExecutionAudit(registry)
         # 普通工具 handler 的墙上超时（None=关闭，默认关闭以保证零行为变化）。
         # 代码工具的超时走 code_timeout + 沙箱，两者是不同链路。
         self.handler_timeout = handler_timeout
@@ -383,139 +398,6 @@ class ToolExecutor:
             raise _IdempotencyError("幂等键必须是非空字符串（或 None）")
         return value.strip()
 
-    async def _apply_postcondition(
-        self,
-        name: str,
-        arguments: dict[str, Any],
-        events: list[AgentEvent],
-        ok: bool,
-        text: str,
-    ) -> tuple[bool, str]:
-        """在 ``unknown`` 结果上跑宿主的后置条件检查，决定是否把收据改判为 succeeded。"""
-        spec = self.registry.get(name) if self.registry.has(name) else None
-        if spec is None or spec.governance is None:
-            return ok, text
-        check = spec.governance.postcondition
-        if check is None:
-            return ok, text
-        final = next(
-            (e for e in reversed(events) if e.type == EventType.TOOL_RESULT), None
-        )
-        if final is None or not isinstance(final.data.get("receipt"), dict):
-            return ok, text
-        try:
-            receipt = ExecutionReceipt.from_dict(final.data["receipt"])
-        except (TypeError, ValueError):
-            return ok, text
-        if receipt.status != "unknown":
-            return ok, text
-
-        try:
-            outcome = check(dict(arguments))
-            if inspect.isawaitable(outcome):
-                outcome = await outcome
-            confirmed = bool(outcome)
-            verdict = "confirmed" if confirmed else "rejected"
-        except Exception:  # noqa: BLE001 - 检查失败只能保持 unknown，不能替宿主猜
-            confirmed = False
-            verdict = "error"
-
-        if confirmed:
-            updated = replace(
-                receipt,
-                status="succeeded",
-                retryable=False,
-                error="",
-                postcondition=verdict,
-            ).seal(receipt.prev_hash)
-        else:
-            updated = replace(receipt, postcondition=verdict).seal(receipt.prev_hash)
-        # 这条是链尾：重新密封后把链尾指回去，后续收据继续接在它后面。
-        self._last_receipt_hash = updated.receipt_hash
-        final.data["receipt"] = updated.to_dict()
-        final.data["postcondition"] = verdict
-        if not confirmed:
-            return ok, text
-        final.data["ok"] = True
-        final.data["verified"] = True
-        final.data.pop("error", None)
-        return True, text + "\n（后置条件已确认副作用发生，收据改判为 succeeded）"
-
-    def _receipt(
-        self,
-        *,
-        call_id: str,
-        tool: str,
-        status: ReceiptStatus,
-        started: float,
-        key: str = "",
-        error: str = "",
-        replayed: bool = False,
-    ) -> ExecutionReceipt:
-        receipt = ExecutionReceipt(
-            call_id=call_id,
-            tool=tool,
-            status=status,
-            # 只有宿主给出稳定 key 时，重试才有去重保护。
-            retryable=bool(key) and status in ("failed", "unknown", "partial"),
-            idempotency_key=key,
-            error=error,
-            duration_ms=round((time.monotonic() - started) * 1000, 3),
-            replayed=replayed,
-        ).seal(self._last_receipt_hash)
-        # 信封串成链：宿主导出收据后用 verify_receipt_chain() 即可发现任何改动。
-        self._last_receipt_hash = receipt.receipt_hash
-        return receipt
-
-    def _denied_event(
-        self,
-        spec: ToolSpec,
-        name: str,
-        arguments: dict[str, Any],
-        reason: str,
-        source: str,
-    ) -> AgentEvent:
-        """构造一条 ``PERMISSION_DENIED``：拒绝也是一次治理决策，必须可见。
-
-        ``arguments`` 按工具声明的敏感路径脱敏后再进事件——拒绝事件同样会进宿主
-        日志，不能因为"这次没执行"就漏掉脱敏。
-        """
-        return AgentEvent(
-            EventType.PERMISSION_DENIED,
-            {
-                "tool": name,
-                "source": source,
-                "reason": reason,
-                "arguments": redact_arguments(arguments, spec.governance.sensitive),
-            },
-        )
-
-    def _attach_receipt(
-        self, events: list[AgentEvent], receipt: ExecutionReceipt
-    ) -> None:
-        # 代码工具可能刚因 TTL 过期被注销；其固定退役提示不需要治理脱敏。
-        spec = self.registry.get(receipt.tool) if self.registry.has(receipt.tool) else None
-        data = receipt.to_dict()
-        if spec is not None:
-            data["error"] = self._event_error(spec, receipt.error)
-        for event in reversed(events):
-            if event.type == EventType.TOOL_RESULT:
-                if spec is not None and "error" in event.data:
-                    event.data["error"] = self._event_error(spec, event.data["error"])
-                event.data["receipt"] = data
-                return
-        events.append(
-            AgentEvent(
-                EventType.TOOL_RESULT,
-                {
-                    "tool": receipt.tool,
-                    "ok": receipt.status == "succeeded",
-                    "error": data["error"],
-                    "receipt": data,
-                },
-            )
-        )
-
     def _cache_get(
         self, tool: str, key: str, fingerprint: str
     ) -> tuple[
@@ -590,100 +472,6 @@ class ToolExecutor:
                 return f"缓存依赖工具 {name} 的权限复核失败，拒绝重放"
         return ""
 
-    def _infer_status(
-        self, events: list[AgentEvent], *, ok: bool, text: str, source: str
-    ) -> ReceiptStatus:
-        """从子执行器的现有事件推断收据状态（不改它们的返回签名）。"""
-        if ok:
-            return "succeeded"
-        if any(e.data.get("timed_out") for e in events):
-            return "unknown"
-        if any(
-            e.data.get("preview_stale") or e.data.get("preview_failed")
-            for e in events
-        ):
-            return "not_started"
-        if source == "code":
-            if "存活期" in text or "未提供代码沙箱" in text:
-                return "not_started"
-            if "沙箱调用失败" in text:
-                return "unknown"
-            return "failed"
-        if source == "composite":
-            child_statuses = [
-                e.data["receipt"].get("status")
-                for e in events
-                if e.type == EventType.TOOL_RESULT
-                and isinstance(e.data.get("receipt"), dict)
-            ]
-            if "partial" in child_statuses:
-                return "partial"
-            has_success = any(s == "succeeded" for s in child_statuses)
-            has_problem = any(
-                s in ("failed", "unknown", "not_started") for s in child_statuses
-            )
-            if has_success and has_problem:
-                return "partial"
-            if "unknown" in child_statuses:
-                return "unknown"
-            has_call = any(e.type == EventType.TOOL_CALL for e in events)
-            if not has_call and any(
-                e.type == EventType.PERMISSION_ASKED for e in events
-            ):
-                return "not_started"
-            if child_statuses and all(s == "not_started" for s in child_statuses):
-                return "not_started"
-            has_successful_result = any(
-                e.type == EventType.TOOL_RESULT and e.data.get("ok") is True
-                for e in events
-            )
-            return "partial" if has_successful_result else "failed"
-        return "failed"
-
-    def _event_preview(self, spec: ToolSpec, payload: Any, text: str) -> str:
-        """给 ``TOOL_RESULT`` 事件用的**预览**：按治理声明脱敏后的前 200 字符。
-
-        为什么不能直接用 ``text[:200]``：工具常常把入参原样回显（调试工具、HTTP 客户端
-        回显请求头、``echo``），于是**密钥会随结果原样进入事件流 / 追踪 span**——
-        入参侧脱敏了、结果侧没有，等于只堵了半个口子。
-
-        口径：
-
-        - ``audit_sensitive``（宽口径审计提示）→ 结果整体折叠成"已折叠 + 字符数"；
-        - 声明了 ``sensitive`` 路径且结果是对象 → 按同一批路径脱敏后再取前 200 字符；
-        - 没有声明 → 保持原样（内核不按字段名猜密钥，"未声明即不脱敏"是刻意的边界）。
-
-        注意：这只影响**对外事件副本**；返回给模型的正文仍是真实结果。
-        """
-        governance = spec.governance
-        if governance.audit_sensitive:
-            return f"[敏感结果已折叠：{len(text)} 字符]"
-        if governance.sensitive and isinstance(payload, dict):
-            try:
-                redacted = redact_arguments(payload, governance.sensitive)
-                return json.dumps(redacted, ensure_ascii=False, default=str)[:200]
-            except Exception:  # noqa: BLE001 - 脱敏失败不能反噬主流程
-                return f"[结果预览不可用：{len(text)} 字符]"
-        return text[:200]
-
-    def _replay_preview(self, spec: ToolSpec, text: str) -> str:
-        """重放也按当前治理脱敏；缓存正文可能已截断，不能把解析失败当作明文许可。"""
-        payload = None
-        if spec.governance.sensitive and not spec.governance.audit_sensitive:
-            try:
-                payload = json.loads(text)
-            except (ValueError, RecursionError):
-                return f"[结果预览不可用：{len(text)} 字符]"
-            if not isinstance(payload, dict):
-                return f"[结果预览不可用：{len(text)} 字符]"
-        return self._event_preview(spec, payload, text)
-
-    def _event_error(self, spec: ToolSpec, text: str) -> str:
-        """错误是非结构化文本，声明了敏感治理就整体折叠；模型正文不变。"""
-        if text and (spec.governance.audit_sensitive or spec.governance.sensitive):
-            return f"[敏感错误已折叠：{len(text)} 字符]"
-        return text
-
     async def execute(
         self,
         name: str,
@@ -713,8 +501,261 @@ class ToolExecutor:
             _timeout=_timeout,
         )
         if not ok:
-            ok, text = await self._apply_postcondition(name, arguments, events, ok, text)
+            ok, text = await self._audit.apply_postcondition(name, arguments, events, ok, text)
+        record_tool_output(text)
         return events, ok, text
+
+    def _check_admission(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        subject: Any,
+        events: list[AgentEvent],
+        started: float,
+        call_id: str,
+    ) -> tuple[GateDecision | None, str | None]:
+        """工具自带闸、参数校验、频率上限三道前置闸。"""
+        gate_fn = spec.governance.gate
+        decision = gate_fn(arguments, subject) if gate_fn is not None else None
+        decision = _tighten(decision, _native_approval(spec, arguments))
+        if decision is not None and decision.reject:
+            events.append(
+                self._audit.denied_event(spec, name, arguments, decision.reject, "gate")
+            )
+            return decision, decision.reject
+
+        egress_reason = check_egress(spec, arguments)
+        if egress_reason is not None:
+            events.append(
+                self._audit.denied_event(spec, name, arguments, egress_reason, "egress")
+            )
+            return decision, egress_reason
+
+        errors = argument_errors(arguments, spec.input_schema)
+        if errors:
+            message = f"工具 {name} 的调用参数不合法：" + "；".join(errors)
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                message=message,
+                flags={"invalid_arguments": True},
+            )
+            return decision, message
+
+        rate_hint = spec.governance.rate_limit
+        if rate_hint is not None and self._rate_limit_exceeded(name, rate_hint):
+            message = (
+                f"工具 {name} 超出调用频率上限"
+                f"（{rate_hint.count} 次 / {rate_hint.window}），本次未执行"
+            )
+            events.append(
+                AgentEvent(
+                    EventType.TOOL_RESULT,
+                    {"tool": name, "ok": False, "error": message, "rate_limited": True},
+                )
+            )
+            events.append(
+                self._audit.denied_event(spec, name, arguments, message, "rate_limit")
+            )
+            self._audit.attach(
+                events,
+                self._audit.receipt(
+                    call_id=call_id,
+                    tool=name,
+                    status="not_started",
+                    started=started,
+                    error=message,
+                ),
+            )
+            return decision, message
+        return decision, None
+
+    async def _lookup_cache(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        subject: Any,
+        events: list[AgentEvent],
+        trace: list[_PermissionDependency],
+        trace_start: int,
+        started: float,
+        call_id: str,
+    ) -> _CacheLookup:
+        """幂等键生成与缓存重放；命中时直接给出 (ok, text)。"""
+        try:
+            idempotency_key = await self._idempotency_key(spec, arguments, subject)
+        except _IdempotencyError as exc:
+            message = str(exc)
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                message=message,
+                flags={"receipt_failed": True},
+            )
+            return _CacheLookup("", "", (False, message))
+
+        fingerprint = _fingerprint_arguments(arguments) if idempotency_key else ""
+        cached = self._cache_get(name, idempotency_key, fingerprint)
+        if cached is None:
+            return _CacheLookup(idempotency_key, fingerprint)
+
+        cached_result, same_arguments = cached
+        ok, cached_text, cached_status, cached_error, dependencies = cached_result
+        # 子缓存也必须把历史依赖传给父组合，包括父组合稍后超时的路径。
+        trace[trace_start:] = dependencies
+        if not same_arguments:
+            message = (
+                f"幂等键 {idempotency_key!r} 已用于另一组参数，拒绝重放；"
+                "不同操作请使用不同的幂等键"
+            )
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=idempotency_key,
+                message=message,
+                flags={"idempotency_conflict": True},
+            )
+            return _CacheLookup(idempotency_key, fingerprint, (False, message))
+
+        # 重放只交付已有结果，不再弹审批；但当前策略的 DENY 仍然生效——
+        # 缓存是去重，不是绕过权限收紧的后门。
+        if (
+            await policy_decision(self.policy, name, arguments, subject)
+            == PermissionDecision.DENY
+        ):
+            return _CacheLookup(
+                idempotency_key,
+                fingerprint,
+                (False, f"权限策略拒绝执行工具 {name}"),
+            )
+        rejection = await self._replay_dependency_rejection(dependencies, subject)
+        if rejection:
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=idempotency_key,
+                message=rejection,
+                flags={"replay_denied": True},
+            )
+            return _CacheLookup(idempotency_key, fingerprint, (False, rejection))
+
+        receipt = self._audit.receipt(
+            call_id=call_id,
+            tool=name,
+            status=cached_status,
+            started=started,
+            key=idempotency_key,
+            error=event_error(spec, cached_error),
+            replayed=True,
+        )
+        payload: dict[str, Any] = {
+            "tool": name,
+            "ok": ok,
+            "replayed": True,
+            "receipt": receipt.to_dict(),
+        }
+        if ok:
+            payload["preview"] = replay_preview(spec, cached_text)
+            payload["truncated"] = False
+            payload["result_chars"] = len(cached_text)
+        else:
+            payload["error"] = event_error(spec, cached_text)
+        events.append(AgentEvent(EventType.TOOL_RESULT, payload))
+        return _CacheLookup(idempotency_key, fingerprint, (ok, cached_text))
+
+    async def _preview_or_reject(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        subject: Any,
+        events: list[AgentEvent],
+        started: float,
+        call_id: str,
+        key: str,
+    ) -> tuple[ChangePreview | None, str | None]:
+        """生成审批预览；失败时按失败关闭返回拒绝原因。"""
+        try:
+            return await self._generate_preview(spec, arguments, subject), None
+        except _PreviewError as exc:
+            message = str(exc)
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=key,
+                message=message,
+                flags={"preview_failed": True},
+            )
+            return None, message
+
+    async def _recheck_approved_preview(
+        self,
+        spec: ToolSpec,
+        name: str,
+        arguments: dict[str, Any],
+        subject: Any,
+        preview: ChangePreview | None,
+        auth_events: list[AgentEvent],
+        events: list[AgentEvent],
+        started: float,
+        call_id: str,
+        key: str,
+    ) -> str | None:
+        """审批后复核预览 token：目标或参数变了就不能执行。"""
+        if preview is None or not any(
+            event.type == EventType.PERMISSION_ASKED for event in auth_events
+        ):
+            return None
+        try:
+            current_preview = await self._generate_preview(spec, arguments, subject)
+        except _PreviewError as exc:
+            message = str(exc)
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=key,
+                message=message,
+                flags={"preview_failed": True},
+            )
+            return message
+        assert current_preview is not None
+        if current_preview.token != preview.token:
+            message = (
+                "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
+                "本次未执行；请重新发起以查看最新预览并再次确认"
+            )
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=key,
+                message=message,
+                flags={"preview_stale": True},
+            )
+            return message
+        return None
 
     async def _execute_impl(
         self,
@@ -762,228 +803,29 @@ class ToolExecutor:
             dependency_arguments = None
         trace.append(_PermissionDependency(name, spec, dependency_arguments))
 
-        # 准入判定在权限闸之前：工具自带的 gate 或 approval 说这次调用不该到达业务操作时，
-        # 连"要不要问人"都不必问；内核不认识判定来自哪个协议。
-        gate_fn = spec.governance.gate
-        decision = gate_fn(arguments, subject) if gate_fn is not None else None
-        decision = _tighten(decision, _native_approval(spec, arguments))
-        if decision is not None and decision.reject:
-            events.append(
-                self._denied_event(spec, name, arguments, decision.reject, "gate")
-            )
-            return events, False, decision.reject
-
-        # 入参校验是所有调用路径共同的下限，而不是"挂了审批条件才顺带检查"。
-        # 放在审批拒绝之后：有条件审批时保留它更具体的"审批闸拒绝"话术；
-        # 没有审批/闸门时，声明过的取值域仍然必须对每一次调用生效。
-        errors = argument_errors(arguments, spec.input_schema)
-        if errors:
-            message = f"工具 {name} 的调用参数不合法：" + "；".join(errors)
-            events.append(
-                AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {
-                        "tool": name,
-                        "ok": False,
-                        "error": message,
-                        "invalid_arguments": True,
-                    },
-                )
-            )
-            self._attach_receipt(
-                events,
-                self._receipt(
-                    call_id=call_id,
-                    tool=name,
-                    status="not_started",
-                    started=started,
-                    error=message,
-                ),
-            )
-            return events, False, message
-
-        # 频率上限闸：超限的调用**不执行**（不进 handler，也不发 TOOL_CALL）。
-        #
-        # 放在**授权之前**：被频率闸拦下的调用既不该先问人要批准（问了也白问，
-        # 它不会执行），也不该留下 TOOL_CALL 审计记录（它没发生）。口径是 ACC 的
-        # "窗口内最大调用次数"——按**尝试**计，所以被权限策略拒绝的调用也算一次
-        # （它确实消耗了系统的处理能力）；这也让"刷量"本身被这道闸挡住。
-        rate_hint = spec.governance.rate_limit
-        if rate_hint is not None and self._rate_limit_exceeded(name, rate_hint):
-            message = (
-                f"工具 {name} 超出调用频率上限"
-                f"（{rate_hint.count} 次 / {rate_hint.window}），本次未执行"
-            )
-            events.append(
-                AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {"tool": name, "ok": False, "error": message, "rate_limited": True},
-                )
-            )
-            events.append(
-                self._denied_event(spec, name, arguments, message, "rate_limit")
-            )
-            self._attach_receipt(
-                events,
-                self._receipt(
-                    call_id=call_id,
-                    tool=name,
-                    status="not_started",
-                    started=started,
-                    error=message,
-                ),
-            )
-            return events, False, message
+        decision, denial = self._check_admission(
+            spec, name, arguments, subject, events, started, call_id
+        )
+        if denial is not None:
+            return events, False, denial
 
         # 组合工具自身不占一次业务调用（真实操作在每一步），但预算已耗尽时
         # 不该先弹审批卡再在第一步失败——这里只做前置检查，不计数。
         if budget is not None:
             budget.before_tool_call()
 
-        try:
-            idempotency_key = await self._idempotency_key(spec, arguments, subject)
-        except _IdempotencyError as exc:
-            message = str(exc)
-            events.append(
-                AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {
-                        "tool": name,
-                        "ok": False,
-                        "error": message,
-                        "receipt_failed": True,
-                    },
-                )
-            )
-            self._attach_receipt(
-                events,
-                self._receipt(
-                    call_id=call_id,
-                    tool=name,
-                    status="not_started",
-                    started=started,
-                    error=message,
-                ),
-            )
-            return events, False, message
+        lookup = await self._lookup_cache(
+            spec, name, arguments, subject, events, trace, trace_start, started, call_id
+        )
+        idempotency_key, fingerprint = lookup.key, lookup.fingerprint
+        if lookup.hit is not None:
+            return events, *lookup.hit
 
-        fingerprint = _fingerprint_arguments(arguments) if idempotency_key else ""
-        cached = self._cache_get(name, idempotency_key, fingerprint)
-        if cached is not None:
-            cached_result, same_arguments = cached
-            ok, cached_text, cached_status, cached_error, dependencies = cached_result
-            # 子缓存也必须把历史依赖传给父组合，包括父组合稍后超时的路径。
-            trace[trace_start:] = dependencies
-            if not same_arguments:
-                message = (
-                    f"幂等键 {idempotency_key!r} 已用于另一组参数，拒绝重放；"
-                    "不同操作请使用不同的幂等键"
-                )
-                events.append(
-                    AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {
-                            "tool": name,
-                            "ok": False,
-                            "error": message,
-                            "idempotency_conflict": True,
-                        },
-                    )
-                )
-                self._attach_receipt(
-                    events,
-                    self._receipt(
-                        call_id=call_id,
-                        tool=name,
-                        status="not_started",
-                        started=started,
-                        key=idempotency_key,
-                        error=message,
-                    ),
-                )
-                return events, False, message
-            # 重放只交付已有结果，不再弹审批；但当前策略的 DENY 仍然生效——
-            # 缓存是去重，不是绕过权限收紧的后门。
-            if (
-                await policy_decision(self.policy, name, arguments, subject)
-                == PermissionDecision.DENY
-            ):
-                return events, False, f"权限策略拒绝执行工具 {name}"
-            rejection = await self._replay_dependency_rejection(dependencies, subject)
-            if rejection:
-                events.append(AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {
-                        "tool": name,
-                        "ok": False,
-                        "error": rejection,
-                        "replay_denied": True,
-                    },
-                ))
-                self._attach_receipt(
-                    events,
-                    self._receipt(
-                        call_id=call_id,
-                        tool=name,
-                        status="not_started",
-                        started=started,
-                        key=idempotency_key,
-                        error=rejection,
-                    ),
-                )
-                return events, False, rejection
-            receipt = self._receipt(
-                call_id=call_id,
-                tool=name,
-                status=cached_status,
-                started=started,
-                key=idempotency_key,
-                error=self._event_error(spec, cached_error),
-                replayed=True,
-            )
-            payload: dict[str, Any] = {
-                "tool": name,
-                "ok": ok,
-                "replayed": True,
-                "receipt": receipt.to_dict(),
-            }
-            if ok:
-                payload["preview"] = self._replay_preview(spec, cached_text)
-                payload["truncated"] = False
-                payload["result_chars"] = len(cached_text)
-            else:
-                payload["error"] = self._event_error(spec, cached_text)
-            events.append(AgentEvent(EventType.TOOL_RESULT, payload))
-            return events, ok, cached_text
-
-        preview: ChangePreview | None
-        try:
-            preview = await self._generate_preview(spec, arguments, subject)
-        except _PreviewError as exc:
-            message = str(exc)
-            events.append(
-                AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {
-                        "tool": name,
-                        "ok": False,
-                        "error": message,
-                        "preview_failed": True,
-                    },
-                )
-            )
-            self._attach_receipt(
-                events,
-                self._receipt(
-                    call_id=call_id,
-                    tool=name,
-                    status="not_started",
-                    started=started,
-                    key=idempotency_key,
-                    error=message,
-                ),
-            )
-            return events, False, message
+        preview, denial = await self._preview_or_reject(
+            spec, name, arguments, subject, events, started, call_id, idempotency_key
+        )
+        if denial is not None:
+            return events, False, denial
 
         if spec.source == "composite" and spec.steps:
             declared = spec.governance.timeout_ms
@@ -1027,7 +869,7 @@ class ToolExecutor:
                             },
                         )
                     )
-                    receipt = self._receipt(
+                    receipt = self._audit.receipt(
                         call_id=call_id,
                         tool=spec.name,
                         status="unknown",
@@ -1035,7 +877,7 @@ class ToolExecutor:
                         key=idempotency_key,
                         error=message,
                     )
-                    self._attach_receipt(events, receipt)
+                    self._audit.attach(events, receipt)
                     self._cache_put(
                         spec.name,
                         idempotency_key,
@@ -1047,8 +889,8 @@ class ToolExecutor:
                         error=message,
                     )
                     return events, False, message
-            status = self._infer_status(comp_events, ok=ok, text=text, source="composite")
-            receipt = self._receipt(
+            status = infer_status(comp_events, ok=ok, text=text, source="composite")
+            receipt = self._audit.receipt(
                 call_id=call_id,
                 tool=spec.name,
                 status=status,
@@ -1056,7 +898,7 @@ class ToolExecutor:
                 key=idempotency_key,
                 error="" if ok else text,
             )
-            self._attach_receipt(comp_events, receipt)
+            self._audit.attach(comp_events, receipt)
             self._cache_put(
                 spec.name,
                 idempotency_key,
@@ -1092,77 +934,30 @@ class ToolExecutor:
                 if any(e.type == EventType.PERMISSION_ASKED for e in auth_events)
                 else "policy"
             )
-            events.append(self._denied_event(spec, name, arguments, reason, source))
+            events.append(self._audit.denied_event(spec, name, arguments, reason, source))
             return events, False, reason
 
-        if preview is not None and any(
-            event.type == EventType.PERMISSION_ASKED for event in auth_events
-        ):
-            try:
-                current_preview = await self._generate_preview(
-                    spec, arguments, subject
-                )
-            except _PreviewError as exc:
-                events.append(
-                    AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {
-                            "tool": name,
-                            "ok": False,
-                            "error": str(exc),
-                            "preview_failed": True,
-                        },
-                    )
-                )
-                message = str(exc)
-                self._attach_receipt(
-                    events,
-                    self._receipt(
-                        call_id=call_id,
-                        tool=name,
-                        status="not_started",
-                        started=started,
-                        key=idempotency_key,
-                        error=message,
-                    ),
-                )
-                return events, False, message
-            assert current_preview is not None
-            if current_preview.token != preview.token:
-                message = (
-                    "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
-                    "本次未执行；请重新发起以查看最新预览并再次确认"
-                )
-                events.append(
-                    AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {
-                            "tool": name,
-                            "ok": False,
-                            "error": message,
-                            "preview_stale": True,
-                        },
-                    )
-                )
-                self._attach_receipt(
-                    events,
-                    self._receipt(
-                        call_id=call_id,
-                        tool=name,
-                        status="not_started",
-                        started=started,
-                        key=idempotency_key,
-                        error=message,
-                    ),
-                )
-                return events, False, message
+        denial = await self._recheck_approved_preview(
+            spec,
+            name,
+            arguments,
+            subject,
+            preview,
+            auth_events,
+            events,
+            started,
+            call_id,
+            idempotency_key,
+        )
+        if denial is not None:
+            return events, False, denial
 
         if spec.source == "code":
             if budget is not None:
                 budget.record_tool_call()
             code_events, ok, text = await self._execute_code(spec, arguments, events)
-            status = self._infer_status(code_events, ok=ok, text=text, source="code")
-            receipt = self._receipt(
+            status = infer_status(code_events, ok=ok, text=text, source="code")
+            receipt = self._audit.receipt(
                 call_id=call_id,
                 tool=name,
                 status=status,
@@ -1170,7 +965,7 @@ class ToolExecutor:
                 key=idempotency_key,
                 error="" if ok else text,
             )
-            self._attach_receipt(code_events, receipt)
+            self._audit.attach(code_events, receipt)
             self._cache_put(
                 name,
                 idempotency_key,
@@ -1192,9 +987,9 @@ class ToolExecutor:
                     {"tool": name, "ok": False, "error": message},
                 )
             )
-            self._attach_receipt(
+            self._audit.attach(
                 events,
-                self._receipt(
+                self._audit.receipt(
                     call_id=call_id,
                     tool=name,
                     status="not_started",
@@ -1224,7 +1019,7 @@ class ToolExecutor:
                     {"tool": name, "ok": False, "error": message, "timed_out": True},
                 )
             )
-            receipt = self._receipt(
+            receipt = self._audit.receipt(
                 call_id=call_id,
                 tool=name,
                 status="unknown",
@@ -1232,7 +1027,7 @@ class ToolExecutor:
                 key=idempotency_key,
                 error=message,
             )
-            self._attach_receipt(events, receipt)
+            self._audit.attach(events, receipt)
             self._cache_put(
                 name,
                 idempotency_key,
@@ -1250,7 +1045,7 @@ class ToolExecutor:
                 AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": False,
                                                    "error": message})
             )
-            receipt = self._receipt(
+            receipt = self._audit.receipt(
                 call_id=call_id,
                 tool=name,
                 status="unknown",
@@ -1258,7 +1053,7 @@ class ToolExecutor:
                 key=idempotency_key,
                 error=message,
             )
-            self._attach_receipt(events, receipt)
+            self._audit.attach(events, receipt)
             self._cache_put(
                 name,
                 idempotency_key,
@@ -1278,20 +1073,20 @@ class ToolExecutor:
                 {
                     "tool": name,
                     "ok": True,
-                    "preview": self._event_preview(spec, result, text),
+                    "preview": event_preview(spec, result, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },
             )
         )
-        receipt = self._receipt(
+        receipt = self._audit.receipt(
             call_id=call_id,
             tool=name,
             status="succeeded",
             started=started,
             key=idempotency_key,
         )
-        self._attach_receipt(events, receipt)
+        self._audit.attach(events, receipt)
         self._cache_put(
             name,
             idempotency_key,
@@ -1381,7 +1176,7 @@ class ToolExecutor:
                 {
                     "tool": spec.name,
                     "ok": True,
-                    "preview": self._event_preview(spec, sb.output, text),
+                    "preview": event_preview(spec, sb.output, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },
@@ -1588,7 +1383,7 @@ class ToolExecutor:
                 {
                     "tool": spec.name,
                     "ok": True,
-                    "preview": self._event_preview(spec, final, text),
+                    "preview": event_preview(spec, final, text),
                     "truncated": truncated,
                     "result_chars": result_chars,
                 },

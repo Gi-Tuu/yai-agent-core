@@ -32,6 +32,7 @@ from yai_core.learning import RouteOutcome, extract_route_outcome
 from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.metrics import MetricsRecorder
 from yai_core.policy import AllowlistPolicy
+from yai_core.policy.egress import egress_scope
 from yai_core.spi import (
     Channel,
     EmbeddingProvider,
@@ -504,16 +505,20 @@ class AgentCore:
             try:
                 # 实例锁保证薄壳委派读取的主体属于当前任务，而非模型参数。
                 self._task_subject = subject
-                async for event in self._loop.astream(task, subject=subject):
-                    await self.channel.emit(event)
-                    events.append(event)
-                    self._metrics_event(event)
-                    data = event.data or {}
-                    if "strategy" in data:
-                        strategy = Strategy(data["strategy"])
-                        if decision_strategy is None and event.type == EventType.STRATEGY_SELECTED:
-                            decision_strategy = strategy
-                    yield event
+                with egress_scope(task):
+                    async for event in self._loop.astream(task, subject=subject):
+                        await self.channel.emit(event)
+                        events.append(event)
+                        self._metrics_event(event)
+                        data = event.data or {}
+                        if "strategy" in data:
+                            strategy = Strategy(data["strategy"])
+                            if (
+                                decision_strategy is None
+                                and event.type == EventType.STRATEGY_SELECTED
+                            ):
+                                decision_strategy = strategy
+                        yield event
                 completed = True
             except BaseException as exc:
                 # 记录取消 / 失败后原样抛出（CancelledError/GeneratorExit 必须继续传播）。

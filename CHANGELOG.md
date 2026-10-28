@@ -14,6 +14,21 @@
   跑 `important_instructions` 攻击；报告给出 raw ASR / 结果达成 / 无警示三层口径、
   四个 suite 的 clean utility / 攻击下 utility 与失败归因。harness 不进运行时依赖，
   也不进离线 CI（需真实模型）。
+- **外发 URL 来源闸**（`ToolGovernance.egress_text`）：声明要外发的文本参数路径后，
+  内核在策略闸比对任务原文与工具输出；URL 只在不可信工具输出出现、任务原文没有时，
+  直接拒绝并发出 `PERMISSION_DENIED`（`source=egress`），不依赖模型自己加警示。
+
+### Changed
+
+- **loop / executor 旁路拆分**：执行收据哈希链、postcondition 改判、`PERMISSION_DENIED`
+  组装移到 `tools/execution_audit.py`；meta-tool（发现/代码工具/重规划）移到
+  `kernel/meta_tools.py`。主循环语义与事件顺序不变；radon：loop MI B(17.82)、
+  executor MI B(10.01)、`_execute_impl` CC 34（原 F 50）。
+
+### Fixed
+
+- **host_e 学习状态跨重启落盘竞态**：SSE 的 `done` 现在只在学习状态写盘之后下发，
+  避免任务结束瞬间读到 `route_learning.json` 不存在；不改变学习算法。
 
 ## [v0.24.0] - 2026-10-27
 
