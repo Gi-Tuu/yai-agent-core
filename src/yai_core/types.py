@@ -424,6 +424,11 @@ class ToolGovernance:
     #: 确认副作用已发生 → 收据改判 ``succeeded`` 并标 ``verified``；确认没发生或检查
     #: 自身出错 → 保持 ``unknown``，只记录 ``postcondition`` 的结论。函数，不随清单导出。
     postcondition: Callable[[dict[str, Any]], Any] | None = None
+    #: 即将对外发送的**文本参数路径**（dot-notation，如 ``body`` / ``message.text``）。
+    #: 声明后内核在策略闸里做确定性比对：这些字段里的 URL 若只出现在不可信工具输出、
+    #: 用户任务原文里没有，就拒绝本次外发（``PERMISSION_DENIED``，source=egress）。
+    #: 这是数据，随能力清单走；不声明 = 不做这项保护（不按字段名猜）。
+    egress_text: tuple[str, ...] = ()
 
 
 #: 清单里可携带的治理字段白名单；不在表内的键**拒绝加载**（见
@@ -435,6 +440,7 @@ _GOVERNANCE_KEYS = (
     "approval",
     "timeout_ms",
     "rate_limit",
+    "egress_text",
 )
 
 _APPROVAL_KEYS = ("required", "prompt", "when")
@@ -590,6 +596,8 @@ def governance_to_manifest(governance: ToolGovernance) -> dict[str, Any]:
         out["timeout_ms"] = int(governance.timeout_ms)
     if governance.rate_limit is not None:
         out["rate_limit"] = governance.rate_limit.to_reference()
+    if governance.egress_text:
+        out["egress_text"] = list(governance.egress_text)
     return out
 
 
@@ -641,6 +649,22 @@ def governance_from_manifest(
             paths.append(item.strip())
         sensitive = tuple(paths)
 
+    egress_text: tuple[str, ...] = ()
+    if raw.get("egress_text") is not None:
+        items = raw["egress_text"]
+        if not isinstance(items, (list, tuple)):
+            raise ValueError(
+                f"工具 {name!r} 的 governance.egress_text 必须是字符串数组"
+            )
+        paths = []
+        for item in items:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"工具 {name!r} 的 governance.egress_text 含空或非法路径: {item!r}"
+                )
+            paths.append(item.strip())
+        egress_text = tuple(paths)
+
     audit_sensitive = raw.get("audit_sensitive", False)
     if not isinstance(audit_sensitive, bool):
         raise ValueError(
@@ -678,6 +702,7 @@ def governance_from_manifest(
         gate=None,
         timeout_ms=timeout_ms,
         rate_limit=rate_limit,
+        egress_text=egress_text,
     )
 
 
