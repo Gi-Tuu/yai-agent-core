@@ -222,9 +222,13 @@ def key(self) -> tuple:
 ### 3.2 成败判定
 
 ```python
+limit_wrapped = any(
+    e.type == EventType.MODEL_MESSAGE and e.data.get("iteration_limit")
+    for e in events
+)
 success = (
     not aborted
-    and not hit_max_iters
+    and not limit_wrapped
     and not final_empty
     and tool_failures == 0
     and errors == 0
@@ -235,7 +239,12 @@ success = (
 逐条解释：
 
 - `aborted`：最终以 clarify 收尾，说明用户没补信息、任务被放弃了；
-- `hit_max_iters`：工具调用撞满了迭代上限（典型是"该 plan 却只 react"，循环收不拢）；
+- `limit_wrapped`：最终答案来自"已达上限、请立即收尾"的强制路径（事件带
+  `iteration_limit=True` 标记，见第 06 篇 5.6 节）——全部轮次都耗在工具调用上、
+  没能自然完成，对路由学习是负信号；典型是"该 plan 却只 react"，循环收不拢；
+- `hit_max_iters`（工具调用数 ≥ max_iters）**只作成本信号，不参与成败判定**：
+  一轮可以合法调多个工具，"第一轮调两个工具、第二轮正常回答"没有撞限，是成功任务
+  （2026-10-31 复审修正：旧的次数启发式会误杀这类任务）；
 - `final_empty`：最终给了空答案；
 - `tool_failures == 0`、`errors == 0`：没有工具失败、没有报错；
 - 最后一条最关键：**只有当路由选了 direct 时**，最终文案里出现"无法/没有数据/缺少权限"
