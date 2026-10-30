@@ -413,6 +413,10 @@ yield AgentEvent(
 - 最终 `MODEL_MESSAGE` 附 `iteration_limit=True`、`max_iters`、`reason="iteration_limit"`。
   收尾模型异常时先发带相同标记的空文本，再由 `astream` 统一报错；不伪造成功答案，
   也不吞取消或预算熔断。上面的代码只展示原有调用顺序。
+- 限尾收尾与正常轮走**同一道协议检查**（`_looks_like_raw_tool_call`）：模型若把
+  `<tool_call>` 写进正文而不是返回结构化 tool_calls，这里同样 fail-closed——发
+  `ERROR`（`raw_tool_markup=True`）、把提示语（而非伪协议原文）作为最终答案与历史，
+  绝不让假调用混进最终输出（2026-10-31 补齐，此前只挡正常轮）。
 
 ## 一张时序表（react 两轮的消息本变化）
 
