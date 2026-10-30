@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING
 
 from yai_core.kernel.context import Context
 from yai_core.kernel.tiering import STRONG, TierPolicy
@@ -24,28 +25,37 @@ from yai_core.types import (
     ToolCallRequest,
 )
 
+if TYPE_CHECKING:
+    from yai_core.spi import Channel, ToolDiscovery
+    from yai_core.tools.executor import ToolExecutor
+    from yai_core.tools.registry import ToolRegistry
 
-class MetaToolRuntime:
+
+class MetaToolRuntime(ABC):
     """AgentLoop 的 meta-tool 处理能力；依赖由 AgentLoop 初始化时注入。"""
 
-    executor: Any
-    channel: Any
-    registry: Any
-    discovery: Any
+    executor: ToolExecutor
+    channel: Channel
+    registry: ToolRegistry
+    discovery: ToolDiscovery | None
 
+    @abstractmethod
     async def _model_messages(
         self, ctx: Context
     ) -> tuple[list[dict], AgentEvent | None]:
         raise NotImplementedError
 
+    @abstractmethod
     async def _model_chat(
         self, messages: list[dict], tools: list[dict] | None, *, tier: str
     ) -> ModelResponse:
         raise NotImplementedError
 
+    @abstractmethod
     def _discover_tools(
         self, need: str, task: str
     ) -> AsyncIterator[AgentEvent]:
+        # 调用直接返回异步迭代器，与子类含 yield 的 async def 签名一致。
         raise NotImplementedError
 
     async def _handle_meta_tool(

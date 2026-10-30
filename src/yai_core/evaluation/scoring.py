@@ -76,7 +76,8 @@ def collect_trace(events: Iterable[AgentEvent]) -> Trace:
             else:
                 trace.failed_tools.append(name)
         elif ev.type == EventType.MODEL_MESSAGE:
-            trace.model_texts.append(data.get("text", "") or "")
+            if data.get("kind") != "schema_focus":
+                trace.model_texts.append(data.get("text", "") or "")
         elif ev.type == EventType.DONE:
             trace.ended_done = True
             trace.strategy = data.get("strategy")

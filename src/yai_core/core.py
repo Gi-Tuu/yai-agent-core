@@ -505,20 +505,31 @@ class AgentCore:
             try:
                 # 实例锁保证薄壳委派读取的主体属于当前任务，而非模型参数。
                 self._task_subject = subject
-                with egress_scope(task):
-                    async for event in self._loop.astream(task, subject=subject):
-                        await self.channel.emit(event)
-                        events.append(event)
-                        self._metrics_event(event)
-                        data = event.data or {}
-                        if "strategy" in data:
-                            strategy = Strategy(data["strategy"])
-                            if (
-                                decision_strategy is None
-                                and event.type == EventType.STRATEGY_SELECTED
-                            ):
-                                decision_strategy = strategy
+                with egress_scope(task) as egress_context:
+                    stream = self._loop.astream(task, subject=subject)
+                try:
+                    while True:
+                        with egress_scope(egress_context):
+                            try:
+                                event = await anext(stream)
+                            except StopAsyncIteration:
+                                break
+                            await self.channel.emit(event)
+                            events.append(event)
+                            self._metrics_event(event)
+                            data = event.data or {}
+                            if "strategy" in data:
+                                strategy = Strategy(data["strategy"])
+                                if (
+                                    decision_strategy is None
+                                    and event.type == EventType.STRATEGY_SELECTED
+                                ):
+                                    decision_strategy = strategy
+                        # 不把生产者的 ContextVar 暴露给暂停期间的消费者。
                         yield event
+                finally:
+                    with egress_scope(egress_context):
+                        await stream.aclose()
                 completed = True
             except BaseException as exc:
                 # 记录取消 / 失败后原样抛出（CancelledError/GeneratorExit 必须继续传播）。

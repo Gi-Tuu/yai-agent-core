@@ -27,6 +27,7 @@ class ScriptedModel:
         self._responses = responses
         self.calls = 0
         self.requests: list[list[dict[str, Any]]] = []
+        self.schemas: list[list[dict] | None] = []
 
     async def achat(
         self, messages: list[dict[str, Any]], tools: Any = None, *, tier: str = "standard"
@@ -43,6 +44,7 @@ class ScriptedModel:
                 assert len(pending) == len(calls), "重复的工具调用 ID"
         assert not pending, "存在尚未返回结果的工具调用"
         self.requests.append(deepcopy(messages))
+        self.schemas.append(deepcopy(tools))
         resp = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
         return resp
@@ -56,11 +58,13 @@ def search_notes(keyword: str) -> list:
     return NOTES.get(keyword, [])
 
 
-def test_replan_emits_revised_plan_and_continues() -> None:
+@pytest.mark.parametrize("focus", [False, True])
+def test_replan_emits_revised_plan_and_continues(focus: bool) -> None:
     """计划走不通时显式重规划：发修订事件、保留步骤、按新计划完成、计数正确。"""
     model = ScriptedModel(
         [
             ModelResponse(content="1. 搜索笔记\n2. 汇报"),                # 1 规划(strong)
+            *([ModelResponse(content='["search_notes"]')] if focus else []),
             ModelResponse(  # 2 react 第0轮：发现原计划漏前置，请求重规划
                 content="",
                 tool_calls=[
@@ -87,7 +91,7 @@ def test_replan_emits_revised_plan_and_continues() -> None:
             ModelResponse(content="已找到项目笔记并完成汇报。"),        # 5 react 第2轮收尾
         ]
     )
-    core = AgentCore(model)
+    core = AgentCore(model, full_schema_budget=1 if focus else 24)
     core.register_tools([build_spec(search_notes)])
 
     result = asyncio.run(core.run("先搜索笔记，然后汇报"))
@@ -116,9 +120,22 @@ def test_replan_emits_revised_plan_and_continues() -> None:
 
     # DONE 成本汇总：规划 strong + 重规划 strong = 2；执行 3 轮 standard
     done = result.events[-1].data
-    assert done["model_calls"] == 5
+    assert done["model_calls"] == model.calls == 5 + int(focus)
     assert done["strong_calls"] == 2
-    assert done["standard_calls"] == 3
+    assert done["standard_calls"] == 3 + int(focus)
+    focused = [event for event in result.events if event.data.get("kind") == "schema_focus"]
+    assert len(focused) == int(focus)
+    if focus:
+        assert focused[0].data["schema_focus"] == {
+            "mode": "focused", "reason": "selected",
+            "selected": ["search_notes", "replan"], "available_count": 2,
+        }
+        # 模型没选 replan 也必须保留，聚焦不会改变重规划入口或回灌协议。
+        assert [schema["function"]["name"] for schema in model.schemas[2]] == [
+            "search_notes", "replan",
+        ]
+        assert model.schemas[3] is None
+        assert not any("工具范围选择：" in str(request) for request in model.requests)
 
 
 def test_replan_without_reason_uses_default() -> None:

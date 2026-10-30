@@ -1,6 +1,6 @@
 # 逐行讲解 52 · 执行收据与进程内幂等
 
-> 对应源码：`types.py::ExecutionReceipt`、`tools/executor.py`、
+> 对应源码：`types.py::ExecutionReceipt`、`tools/executor.py`、`tools/execution_audit.py`、
 > `ToolGovernance.idempotency_key`、`kernel/loop.py` 的 `call_id` 透传。
 >
 > 这一篇回答一个运维问题：**工具调用失败后，到底能不能重试？**
@@ -44,7 +44,11 @@ class ExecutionReceipt:
 | `partial` | 组合工具前几步成功、后续步骤失败 |
 
 收据随 `TOOL_RESULT.data["receipt"]` 流出；`call_id` 来自模型工具调用 id，
-组合步骤使用 `父 call_id:步骤下标`。
+组合步骤使用 `父 call_id:步骤下标`。调用被能力闸、外发闸、策略、审批或频率限制拒绝时，
+同样产生 `not_started` 收据；未知工具也有对应调用收据，但不伪造权限决策事件。
+普通、代码、组合执行与超时/异常共享 `_finalize_execution()`：先密封并挂载，再缓存原始结果；
+`not_started` 不进入幂等缓存。父收据只挂本工具尚未密封的结果，不覆盖子步骤的收据。
+任务预算异常仍向 Loop 冒泡，由预算事件收尾，不伪造一次工具执行。
 
 ## 2. `retryable` 不是“建议重试”
 
@@ -84,6 +88,8 @@ tool.governance = ToolGovernance(
 - 宿主若要用新 key 重试，必须自己确认副作用状态；
 - **重放不会重新进入 handler，也不会重新走人工审批**——同一 key 被视为同一笔
   已批准操作。但**当前策略的 DENY 仍然生效**：缓存是去重，不是绕过权限收紧的后门；
+  拒绝时发 `PERMISSION_DENIED(source="policy")`，并追加本轮 `not_started` 收据，
+  不交付缓存正文、不进入 handler，也不把拒绝误标成已重放；
 - 缓存条目绑定**参数指纹**：同一个 key 换了参数会被拒绝（`idempotency_conflict`，
   `not_started`），不会把上一组参数的结果当成这次的结果返回；
 - 权限会随运行期变化或多租户的宿主，应把主体/权限版本纳入 key，或关闭 idempotency。
@@ -106,7 +112,8 @@ tool.governance = ToolGovernance(
 也拒绝。复核回调拿独立副本，不能改写缓存参数。无法复制参数或子依赖复核异常时
 失败关闭；拒绝消息不包含真实参数、gate 拒绝详情或异常正文。
 
-依赖拒绝产生 `TOOL_RESULT`（`replay_denied=True`）及本轮 `not_started` 收据；
+依赖拒绝产生 `PERMISSION_DENIED`（`source="replay_dependency"`）、
+`TOOL_RESULT`（`replay_denied=True`）及本轮 `not_started` 收据；
 不交付缓存敏感正文、不删除条目后回退重执行，也不执行任何 handler。允许重放时，
 ASK / `require_approval` **不视为 DENY**，仍不弹审批、不生成新预览、不调用子幂等键
 生成器、不重新计子步骤的执行预算/频率，不刷新子代码工具 TTL；这里是结果交付准入，
@@ -136,10 +143,12 @@ ASK / `require_approval` **不视为 DENY**，仍不弹审批、不生成新预�
 失败正文通常是非结构化异常文本，无法可靠按字段路径处理。因此只要声明了上述任一
 敏感治理，首次与重放的错误事件副本、`receipt.error` 都整体折叠，避免错误信息或
 收据成为旁路。无声明时保留原错误诊断；给模型的错误正文与缓存正文都不改。
+`ExecutionAudit.receipt()` 先折叠错误再 `seal()`；`attach()` 只挂载密封后的收据，
+不能再改其中的错误字段。重放传入缓存原始错误，由同一入口折叠一次，避免二次折叠。
 
 这套处理覆盖普通、代码与组合工具的缓存结果，不改变 `status`、`retryable`、幂等键
 或执行次数；重放仍使用新的 `call_id` / 耗时并标记 `replayed=True`。治理收紧时，
-收据的错误**展示副本**也随之收紧。组合子步骤的事件仍按各子工具自己的治理声明处理，
+新生成收据的错误也随之收紧，不追改已导出的历史收据。组合子步骤的事件仍按各子工具自己的治理声明处理，
 组合工具的声明不替代子工具声明。
 
 ## 5. 模型侧话术与工具侧收据

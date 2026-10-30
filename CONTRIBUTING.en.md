@@ -21,8 +21,8 @@ git clone https://github.com/Gi-Tuu/yai-agent-core.git
 cd yai-agent-core
 uv venv
 uv sync --extra dev --extra llm --extra anthropic --extra server --extra mcp --extra openapi   # install everything at once
-uv run pytest                                   # ① the full offline suite should be all green
-uv run python scripts/smoke_test.py             # ② one kernel runs smoke scenarios across three hosts
+uv run pytest                                   # ① the full offline suite should pass; use the live output for counts
+uv run python scripts/smoke_test.py             # ② one kernel runs smoke scenarios across two hosts
 uv run python examples/host_e_sales_crm/standalone_cli.py   # ③ the native CRM menu without AI ("the app as it is")
 ```
 
@@ -61,9 +61,9 @@ uv run pytest
 uv run python scripts/smoke_test.py
 ```
 
-The suite currently has **1,500+ tests (a handful skipped, 0 failures)**; the exact count grows over
-time, so the live `pytest` output is authoritative. Tests are fully offline and skip only when an environment piece is
-missing (no Docker daemon, no local bge-m3 weights, etc.).
+The full suite is offline; the live `pytest` output is authoritative for pass and skip counts.
+Matching the CI extras does not guarantee zero skips: some tests also need environment resources
+such as a Docker daemon or local bge-m3 weights.
 
 To run against a real model (an OpenAI-compatible endpoint such as DeepSeek), copy `.env.example` to
 `.env` and fill in a key:

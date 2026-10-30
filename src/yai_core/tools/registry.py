@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from yai_core.types import ToolSpec
+from yai_core.types import ToolSpec, validate_egress_paths
 
 # 轻量目录里每条摘要的最大长度：工具数量增长后，目录只保留一句话能力说明。
 _CATALOG_SUMMARY_CHARS = 80
@@ -24,6 +24,7 @@ class ToolRegistry:
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
             raise ValueError(f"工具 {spec.name!r} 已注册，名称必须唯一")
+        validate_egress_paths(spec.name, spec.governance.egress_text, spec.input_schema)
         self._tools[spec.name] = spec
 
     def register_many(self, specs: Iterable[ToolSpec]) -> None:

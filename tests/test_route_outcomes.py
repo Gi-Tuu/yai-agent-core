@@ -63,6 +63,17 @@ def test_empty_final_text_is_unsuccessful() -> None:
     assert out.success is False and out.final_empty is True
 
 
+@pytest.mark.parametrize("final_text", ["", "已完成"])
+def test_schema_focus_does_not_change_learning_outcome(final_text) -> None:
+    original = _done(Strategy.REACT, final_text)
+    process = ev(EventType.MODEL_MESSAGE, kind="schema_focus", text="工具范围选择：已聚焦。")
+    expected = extract_route_outcome(original, Strategy.REACT)
+    actual = extract_route_outcome([process, *original], Strategy.REACT)
+    assert actual == expected
+    assert actual.success is bool(final_text)
+    assert not extract_route_outcome([process], Strategy.REACT).success
+
+
 # ---------- direct 误判（无能话术） ----------
 
 @pytest.mark.parametrize(
@@ -130,9 +141,24 @@ def test_hit_max_iters() -> None:
     events: list[AgentEvent] = []
     for _ in range(6):
         events += _ok_tool("search_notes")
-    events += _done(Strategy.REACT, "结果")
+    # 限尾收尾：最终答案来自"已达上限、请立即收尾"的强制路径（带标记）。
+    events += [
+        ev(EventType.MODEL_MESSAGE, text="结果", iteration_limit=True,
+           reason="iteration_limit"),
+        ev(EventType.DONE, strategy=Strategy.REACT.value, final_text="结果"),
+    ]
     out = extract_route_outcome(events, Strategy.REACT, max_iters=6)
     assert out.hit_max_iters is True and out.success is False
+
+
+def test_multi_tool_round_without_limit_marker_succeeds() -> None:
+    # 一轮内合法调多个工具、下一轮自然回答：没撞限，是成功任务（复审 P2-8）。
+    events: list[AgentEvent] = []
+    for _ in range(2):
+        events += _ok_tool("search_notes")
+    events += _done(Strategy.REACT, "结果")
+    out = extract_route_outcome(events, Strategy.REACT, max_iters=6)
+    assert out.success is True and out.hit_max_iters is False
 
 
 # ---------- 奖励区间 & 序列化 ----------

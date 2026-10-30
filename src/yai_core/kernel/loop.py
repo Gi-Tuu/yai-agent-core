@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import replace
 
 from yai_core.diagnostics import (
@@ -365,7 +365,9 @@ class AgentLoop(MetaToolRuntime):
                 yield compact_ev
         ctx.enforce_budget()
 
-    async def _model_chat(self, messages, tools, *, tier: str) -> ModelResponse:
+    async def _model_chat(
+        self, messages: list[dict], tools: list[dict] | None, *, tier: str
+    ) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
 
         - 超时：``asyncio.timeout`` 会先取消挂起的模型调用协程，再抛 TimeoutError，
@@ -404,7 +406,7 @@ class AgentLoop(MetaToolRuntime):
         *,
         _clarify_depth: int = 0,
         subject: Subject | None = None,
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncGenerator[AgentEvent, None]:
         """任务执行的统一入口：路由一次，按策略分发，最后落记忆并发 DONE。
 
         流程为 ``aclassify`` 得到策略（来源/理由/档位随事件流出，可审计）→
@@ -515,9 +517,14 @@ class AgentLoop(MetaToolRuntime):
                 subject=subject,
             ):
                 yield ev
-                if ev.type == EventType.MODEL_MESSAGE:
+                # 工具范围选择是过程决策，不是答案，也不能写进对话历史。
+                if ev.type == EventType.MODEL_MESSAGE and ev.data.get("kind") != "schema_focus":
                     final_text = ev.data.get("text", final_text)
         except BudgetExceeded as exc:
+            # 执行器在熔断前已密封、还没来得及外发的事件（组合工具的中途子收据）
+            # 挂在异常上随行到这里：先补发它们，收据链才不缺环。
+            for pending_ev in getattr(exc, "partial_events", None) or []:
+                yield pending_ev
             # 预算硬墙：规划/聚焦/执行/收尾任一处触发都在此统一熔断，
             # 不再发起新的模型或工具调用，用固定诚实文案收尾并发可审计事件。
             label = _BUDGET_SCOPE_LABELS.get(exc.scope, exc.scope)
@@ -759,20 +766,22 @@ class AgentLoop(MetaToolRuntime):
 
     async def _focus_tool_schemas(
         self, task: str, tier_counts: dict[str, int] | None = None
-    ) -> tuple[list[dict], list[str] | None]:
+    ) -> tuple[list[dict], list[str] | None, dict[str, object] | None]:
         """两层工具目录的第二层：决定本轮注入哪些工具的完整 JSON Schema。
 
-        返回 ``(schemas, focused_names)``；``focused_names`` 为 None 表示全量
+        返回 ``(schemas, focused_names, decision)``；``focused_names`` 为 None 表示全量
         （预算内或聚焦失败回退），否则是聚焦选中的工具名，供执行中发现新工具后
-        把新 schema 追加进同一集合。
+        把新 schema 追加进同一集合。``decision`` 只在实际聚焦调用后返回，由主循环
+        发事件；selected 是本次实际注入的工具名快照（含保留的 meta-tool）。
 
         - 工具数在预算内：直接返回全部完整 schema（零额外模型调用，当前宿主都走这条）；
         - 工具数超预算：先让模型只看轻量目录、选出本任务要用的工具名，再用
           ``schemas_for`` 只注入这些工具的完整 schema，给大规模工具集上下文瘦身。
         - 选择失败 / 一个都没选中：回退全量 schema，宁多勿漏（瘦身为增强而非依赖）。
         """
-        if len(self.registry) <= self.full_schema_budget:
-            return self.registry.llm_schemas(), None
+        available_count = len(self.registry)
+        if available_count <= self.full_schema_budget:
+            return self.registry.llm_schemas(), None, None
         catalog = self.registry.catalog_text()
         prompt = (
             "下面是宿主可用工具的能力目录（名称: 一句话摘要）：\n"
@@ -804,7 +813,10 @@ class AgentLoop(MetaToolRuntime):
                 level=DiagnosticLevel.DEBUG,
                 error=f"{type(exc).__name__}: {exc}",
             )
-            return self.registry.llm_schemas(), None
+            names = []
+            reason = "error"
+        else:
+            reason = "selected"
         chosen: list[str] = []
         seen: set[str] = set()
         for name in names:
@@ -812,11 +824,19 @@ class AgentLoop(MetaToolRuntime):
                 continue
             seen.add(name)
             chosen.append(name)
-        if not chosen:
-            return self.registry.llm_schemas(), None
-        # meta-tool（replan/request_capability/create_code_tool）始终注入，
-        # 聚焦裁剪只针对业务工具，避免计划走不通时看不到重规划入口。
-        return self._with_meta_schemas(self.registry.schemas_for(chosen)), chosen
+        if chosen:
+            # meta-tool 始终注入，聚焦裁剪只针对业务工具。
+            schemas = self._with_meta_schemas(self.registry.schemas_for(chosen))
+        else:
+            schemas = self.registry.llm_schemas()
+            if reason != "error":
+                reason = "empty_selection"
+        return schemas, chosen or None, {
+            "mode": "focused" if chosen else "fallback",
+            "reason": reason,
+            "selected": [schema["function"]["name"] for schema in schemas],
+            "available_count": available_count,
+        }
 
     @staticmethod
     def _parse_tool_names(content: str) -> list[str]:
@@ -851,7 +871,19 @@ class AgentLoop(MetaToolRuntime):
         ``use_tools=False``（DIRECT）时不注入任何工具。
         """
         if use_tools:
-            tools_schema, focused_names = await self._focus_tool_schemas(task, tier_counts)
+            tools_schema, focused_names, focus_decision = await self._focus_tool_schemas(
+                task, tier_counts
+            )
+            if focus_decision is not None:
+                focus_text = {
+                    "selected": "工具范围选择：已聚焦。",
+                    "empty_selection": "工具范围选择：空选择，回退全量。",
+                    "error": "工具范围选择：聚焦失败，回退全量。",
+                }[str(focus_decision["reason"])]
+                yield AgentEvent(
+                    EventType.MODEL_MESSAGE,
+                    {"text": focus_text, "kind": "schema_focus", "schema_focus": focus_decision},
+                )
         else:
             tools_schema, focused_names = None, None
         # 跨轮状态：是否已发生工具失败（决定纠偏升档）、上一轮档位（仅变化时发事件）。
@@ -1147,11 +1179,44 @@ class AgentLoop(MetaToolRuntime):
         )
         if tier_counts is not None:
             tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
-        messages, state_event = await self._model_messages(ctx)
-        if state_event is not None:
-            yield state_event
-        resp = await self._model_chat(messages, None, tier=STANDARD)
+        limit_data = {
+            "tier": STANDARD,
+            "iteration_limit": True,
+            "max_iters": self.max_iters,
+            "reason": "iteration_limit",
+        }
+        try:
+            messages, state_event = await self._model_messages(ctx)
+            if state_event is not None:
+                yield state_event
+            resp = await self._model_chat(messages, None, tier=STANDARD)
+        except BudgetExceeded:
+            # 预算熔断仍由 astream 统一收尾；取消也不转成普通失败。
+            raise
+        except Exception:  # noqa: BLE001 - 保留上限决策，错误仍交给 astream 统一处理
+            # 没有模型答案就保持原有空收尾，不把合成文案写入历史。
+            yield AgentEvent(EventType.MODEL_MESSAGE, {"text": "", **limit_data})
+            raise
+        final_text = resp.content.strip()
+        if _looks_like_raw_tool_call(final_text):
+            # 限尾收尾与正常轮走同一道协议检查：模型把 <tool_call> 写进正文时，
+            # 既不能当最终答案展示（用户会看到一段假调用），也不能写进历史——
+            # 否则伪协议文本会绕过 _looks_like_raw_tool_call 的唯一防线。
+            yield AgentEvent(
+                EventType.ERROR,
+                {
+                    "stage": "model_protocol",
+                    "error": _RAW_TOOL_CALL_NOTICE,
+                    "raw_tool_markup": True,
+                },
+            )
+            ctx.add(ChatMessage(role="assistant", content=_RAW_TOOL_CALL_NOTICE))
+            yield AgentEvent(
+                EventType.MODEL_MESSAGE,
+                {"text": _RAW_TOOL_CALL_NOTICE, **limit_data},
+            )
+            return
         yield AgentEvent(
             EventType.MODEL_MESSAGE,
-            {"text": resp.content.strip(), "tier": STANDARD},
+            {"text": final_text, **limit_data},
         )

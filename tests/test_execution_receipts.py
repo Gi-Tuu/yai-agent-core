@@ -11,6 +11,8 @@ import pytest
 
 from yai_core import (
     AgentCore,
+    BudgetExceeded,
+    ChangePreview,
     ExecutionReceipt,
     ModelResponse,
     SandboxResult,
@@ -24,6 +26,7 @@ from yai_core import (
 )
 from yai_core.channels import CollectChannel
 from yai_core.policy import AllowlistPolicy
+from yai_core.policy.egress import egress_scope, record_tool_output
 from yai_core.spi import PermissionDecision
 from yai_core.tools import ToolExecutor, ToolRegistry
 from yai_core.types import (
@@ -131,16 +134,28 @@ def test_idempotent_replay_is_blocked_by_current_deny_policy() -> None:
     policy = SwitchPolicy()
     executor = ToolExecutor(registry, policy, CollectChannel())
 
-    _, first_ok, _ = asyncio.run(executor.execute("apply", {"key": "k1"}, call_id="c1"))
+    first_events, first_ok, _ = asyncio.run(
+        executor.execute("apply", {"key": "k1"}, call_id="c1")
+    )
     assert first_ok is True
 
     policy.deny = True
-    _, replay_ok, reason = asyncio.run(
+    denied_events, replay_ok, reason = asyncio.run(
         executor.execute("apply", {"key": "k1"}, call_id="c2")
     )
     assert replay_ok is False
     assert "权限策略拒绝" in reason
     assert calls == [1], "被拒绝的重放不能进入 handler"
+    assert [e.type for e in denied_events] == [
+        EventType.PERMISSION_DENIED, EventType.TOOL_RESULT,
+    ]
+    assert denied_events[0].data["source"] == "policy"
+    denied = _receipt(denied_events)
+    assert denied["status"] == "not_started"
+    assert denied["call_id"] == "c2"
+    assert denied["idempotency_key"] == "k1"
+    assert denied["retryable"] is False and denied["replayed"] is False
+    assert verify_receipt_chain([_receipt(first_events), denied]) is True
 
 
 def test_same_idempotency_key_with_different_arguments_is_rejected() -> None:
@@ -448,6 +463,21 @@ def test_sensitive_failure_replay_and_receipt_are_safe(source, audit) -> None:
     for events in (first[0], second[0]):
         assert secret not in json.dumps([e.data for e in events], ensure_ascii=False)
     assert "敏感错误已折叠" in _receipt(second[0])["error"]
+    assert _receipt(second[0])["error"] == f"[敏感错误已折叠：{len(first[2])} 字符]"
+    # 包含组合子收据在内，导出整条链，而不只检查最后一条重放收据。
+    def followup() -> dict:
+        """后续独立调用。"""
+        return {"ok": True}
+
+    executor.registry.register(build_spec(followup))
+    third = asyncio.run(executor.execute("followup", {}, call_id="c3"))
+    receipts = [
+        e.data["receipt"]
+        for result in (first, second, third)
+        for e in result[0]
+        if e.type == EventType.TOOL_RESULT and "receipt" in e.data
+    ]
+    assert verify_receipt_chain(json.loads(json.dumps(receipts))) is True
 
 
 @pytest.mark.parametrize("protection", ["audit", "paths", "added_path"])
@@ -512,6 +542,12 @@ def _assert_dependency_denied(result, calls, expected_calls, secret="dependency-
     assert _receipt(events)["status"] == "not_started"
     assert _receipt(events)["replayed"] is False
     assert events[-1].data["replay_denied"] is True
+    denied = [e for e in events if e.type == EventType.PERMISSION_DENIED]
+    assert len(denied) == 1
+    assert denied[0].data["source"] == "replay_dependency"
+    assert denied[0].data["tool"] == _receipt(events)["tool"]
+    assert denied[0].data["reason"]
+    assert isinstance(denied[0].data["arguments"], dict)
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -869,6 +905,241 @@ def test_upgraded_receipt_keeps_chain_valid() -> None:
     assert first["status"] == "succeeded"
     assert second["prev_hash"] == first["receipt_hash"]
     assert verify_receipt_chain([first, second]) is True
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+@pytest.mark.parametrize("audit", [False, True])
+def test_sensitive_postcondition_replay_keeps_exported_chain_valid(confirmed, audit) -> None:
+    calls = []
+    checks = []
+
+    def apply() -> dict:
+        """失败后的副作用由宿主确认。"""
+        calls.append(1)
+        raise RuntimeError("postcondition-secret")
+
+    def check(arguments):
+        checks.append(arguments)
+        return confirmed
+
+    spec = build_spec(apply)
+    spec.governance = ToolGovernance(
+        audit_sensitive=audit,
+        sensitive=() if audit else ("token",),
+        idempotency_key=lambda args, subject: "key",
+        postcondition=check,
+    )
+    executor = _executor([spec])
+    results = [
+        asyncio.run(executor.execute("apply", {}, call_id=f"c{i}"))
+        for i in range(3)
+    ]
+    receipts = [_receipt(result[0]) for result in results]
+    assert calls == [1]
+    assert len(checks) == 3, "保留重放时重新检查后置条件的既有行为"
+    assert [r["replayed"] for r in receipts] == [False, True, True]
+    for result, receipt in zip(results, receipts, strict=True):
+        assert result[1] is confirmed
+        assert receipt["status"] == ("succeeded" if confirmed else "unknown")
+        assert receipt["postcondition"] == ("confirmed" if confirmed else "rejected")
+        assert "postcondition-secret" not in json.dumps([e.data for e in result[0]])
+        if confirmed:
+            assert receipt["error"] == ""
+        else:
+            assert receipt["error"] == f"[敏感错误已折叠：{len(result[2])} 字符]"
+    assert verify_receipt_chain(json.loads(json.dumps(receipts))) is True
+
+
+def test_composite_approval_rejection_emits_denial_and_receipt() -> None:
+    calls = []
+
+    def leaf() -> dict:
+        """拒绝时不执行。"""
+        calls.append(1)
+        return {}
+
+    flow = build_composite_spec("flow", "流程", [{"tool": "leaf"}])
+    flow.governance = ToolGovernance(
+        approval=ApprovalPolicy(required=True), sensitive=("token",),
+    )
+    executor = _executor([build_spec(leaf), flow])
+    executor.channel = CollectChannel(auto_confirm=False)
+    events, ok, _ = asyncio.run(
+        executor.execute("flow", {"token": "approval-secret"}, call_id="denied")
+    )
+    assert not ok and calls == []
+    assert [e.type for e in events] == [
+        EventType.PERMISSION_ASKED, EventType.PERMISSION_DENIED, EventType.TOOL_RESULT,
+    ]
+    assert events[1].data["source"] == "approval"
+    assert events[1].data["tool"] == "flow"
+    assert "approval-secret" not in json.dumps([e.data for e in events])
+    receipt = _receipt(events)
+    assert receipt["status"] == "not_started"
+    assert receipt["call_id"] == "denied"
+    assert verify_receipt_chain([receipt]) is True
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "source", ["policy", "gate", "egress", "approval", "unknown", "no_handler"]
+)
+def test_rejected_calls_preserve_exported_chain(source, nested) -> None:
+    calls = []
+    secret = "https://denial-secret.example/private"
+
+    def leaf(token: str = "") -> dict:
+        calls.append(token)
+        return {}
+
+    def sentinel() -> dict:
+        return {}
+
+    spec = build_spec(leaf)
+    spec.governance = ToolGovernance(sensitive=("token",))
+    if source == "gate":
+        spec.governance = replace(
+            spec.governance, gate=lambda args, subject: GateDecision(reject=secret)
+        )
+    elif source == "egress":
+        spec.governance = replace(spec.governance, egress_text=("token",))
+    elif source == "approval":
+        spec.governance = replace(spec.governance, approval=ApprovalPolicy(required=True))
+    elif source == "no_handler":
+        spec.handler = None
+    flow = build_composite_spec("flow", "流程", [
+        {"tool": "leaf", "args": {"token": secret}},
+        {"tool": "leaf", "args": {"token": "must-not-run"}},
+    ])
+    flow.governance = ToolGovernance(audit_sensitive=True)
+    executor = _executor([spec, flow, build_spec(sentinel)])
+
+    class Policy:
+        async def check(self, name, arguments):
+            if name == "leaf" and source == "policy":
+                return PermissionDecision.DENY
+            return PermissionDecision.ALLOW
+
+    executor.policy = Policy()
+    executor.channel = CollectChannel(auto_confirm=False)
+    if source == "unknown":
+        executor.registry.unregister("leaf")
+    before = asyncio.run(executor.execute("sentinel", {}, call_id="before"))[0]
+
+    async def reject():
+        with egress_scope("perform the task"):
+            record_tool_output(secret)
+            return await executor.execute(
+                "flow" if nested else "leaf",
+                {} if nested else {"token": secret}, call_id="denied",
+            )
+
+    events, ok, _ = asyncio.run(reject())
+    after = asyncio.run(executor.execute("sentinel", {}, call_id="after"))[0]
+    assert not ok and calls == []
+    receipts = [e.data["receipt"] for e in events if "receipt" in e.data]
+    assert [r["call_id"] for r in receipts] == (
+        ["denied:0", "denied"] if nested else ["denied"]
+    )
+    assert all(r["status"] == "not_started" for r in receipts)
+    assert all(not r["retryable"] and not r["replayed"] for r in receipts)
+    assert secret not in json.dumps([e.data for e in events])
+    denials = [e for e in events if e.type == EventType.PERMISSION_DENIED]
+    if source in ("policy", "gate", "egress", "approval"):
+        assert len(denials) == 1
+        assert denials[0].data["source"] == source
+        assert denials[0].data["tool"] == "leaf"
+    else:
+        assert denials == []
+    chain = json.loads(json.dumps([_receipt(before), *receipts, _receipt(after)]))
+    assert verify_receipt_chain(chain) is True
+    assert verify_receipt_chain([chain[0], *chain[2:]]) is False
+
+
+@pytest.mark.parametrize("composite", [False, True])
+@pytest.mark.parametrize("failure", ["initial", "recheck", "stale"])
+def test_preview_rejection_seals_once_and_does_not_cache(composite, failure) -> None:
+    calls = []
+    previews = []
+    reject = True
+
+    def leaf() -> dict:
+        calls.append(1)
+        return {}
+
+    def preview(arguments, subject):
+        previews.append(1)
+        if reject and (failure == "initial" or (failure == "recheck" and len(previews) == 2)):
+            raise ValueError("preview-secret")
+        token = str(len(previews)) if reject and failure == "stale" else "stable"
+        return ChangePreview(summary="change", token=token)
+
+    leaf_spec = build_spec(leaf)
+    spec = build_composite_spec("flow", "流程", [{"tool": "leaf"}]) if composite else leaf_spec
+    spec.governance = ToolGovernance(
+        approval=ApprovalPolicy(required=True), preview=preview,
+        idempotency_key=lambda args, subject: "key", audit_sensitive=True,
+    )
+    executor = _executor([leaf_spec, spec] if composite else [spec])
+    executor.channel = CollectChannel(auto_confirm=True)
+    events, ok, _ = asyncio.run(executor.execute(spec.name, {}, call_id="denied"))
+    assert not ok and calls == []
+    receipts = [e.data["receipt"] for e in events if "receipt" in e.data]
+    assert len(receipts) == 1 and receipts[0]["status"] == "not_started"
+    assert events[-1].data["preview_stale" if failure == "stale" else "preview_failed"]
+    assert "preview-secret" not in json.dumps([e.data for e in events])
+    reject = False
+    later, ok, _ = asyncio.run(executor.execute(spec.name, {}, call_id="later"))
+    assert ok and calls == [1]
+    chain = receipts + [e.data["receipt"] for e in later if "receipt" in e.data]
+    assert all(not r["replayed"] for r in chain)
+    assert verify_receipt_chain(json.loads(json.dumps(chain))) is True
+
+
+@pytest.mark.parametrize("same_tool", [False, True])
+def test_parent_attach_never_overwrites_child_receipt(same_tool) -> None:
+    from yai_core.tools.execution_audit import ExecutionAudit
+
+    audit = ExecutionAudit(ToolRegistry())
+    events = []
+    child = audit.receipt(
+        call_id="parent:0", tool="leaf", status="not_started", started=time.monotonic()
+    )
+    audit.attach(events, child)
+    parent = audit.receipt(
+        call_id="parent", tool="leaf" if same_tool else "flow",
+        status="not_started", started=time.monotonic(),
+    )
+    audit.attach(events, parent)
+    assert len(events) == 2
+    receipts = [e.data["receipt"] for e in events]
+    assert receipts == [child.to_dict(), parent.to_dict()]
+    assert verify_receipt_chain(receipts) is True
+
+
+@pytest.mark.parametrize("composite", [False, True])
+def test_budget_rejection_does_not_seal_execution_receipt(composite) -> None:
+    calls = []
+
+    def leaf() -> dict:
+        calls.append(1)
+        return {}
+
+    class Exhausted:
+        def before_tool_call(self):
+            raise BudgetExceeded("tool_calls", 0, 0)
+
+    flow = build_composite_spec("flow", "流程", [{"tool": "leaf"}])
+    executor = _executor([build_spec(leaf), flow])
+    with pytest.raises(BudgetExceeded):
+        asyncio.run(executor.execute(
+            "flow" if composite else "leaf", {}, budget=Exhausted(), call_id="budget"
+        ))
+    assert calls == []
+    events, ok, _ = asyncio.run(executor.execute("leaf", {}, call_id="later"))
+    assert ok
+    assert _receipt(events)["prev_hash"] == ""
+    assert verify_receipt_chain([_receipt(events)]) is True
 
 
 def test_postcondition_only_applies_to_unknown() -> None:

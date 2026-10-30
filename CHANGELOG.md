@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **复审 8 类遗漏的批量加固**（均为离线复现后的修复，各带回归测试）：
+  组合工具中途预算熔断不再丢失已密封的子收据（熔断异常携带部分事件、
+  AgentLoop 熔断收尾补发，收据链不缺环）；后置条件验证与缓存重放撤权复核
+  统一改用"过闸后的有效参数"单一快照（调用方字典零改写）；外发 URL 来源
+  记录改在 JSON 序列化前按结构化结果进行（换行/引号转义不再污染规范形）；
+  IDNA 有损映射（如 ß→ss）不再合并信任，带 userinfo 的 URL 照常进入来源
+  记录；迭代上限收尾的伪协议文本 fail-closed（不再混入最终答案与历史）；
+  路由学习去掉工具计数启发式的成败否决，改用限尾收尾标记（一轮多工具的
+  成功任务不再被误判失败），benchmark 模拟轨迹同步补上限尾标记。
+
 ### Added
 
 - **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
@@ -20,13 +32,30 @@
 
 ### Changed
 
+- **决策过程可观测**：工具 schema 聚焦与回退通过既有 `MODEL_MESSAGE` 的 `schema_focus`
+  过程标记公开；迭代上限收尾附明确标记。过程消息不进入最终答案、学习成功判据或评测答案文本。
+  保持 21 类事件及原有模型调用次数；meta-tool 依赖改为真实类型和抽象契约。
+- **执行收尾合并**：普通、代码与组合工具的密封/挂载/缓存共用 `_finalize_execution`；
+  审批后预览复核共用检查入口，保留各调用方的收据归属与取消/预算语义。
 - **loop / executor 旁路拆分**：执行收据哈希链、postcondition 改判、`PERMISSION_DENIED`
   组装移到 `tools/execution_audit.py`；meta-tool（发现/代码工具/重规划）移到
-  `kernel/meta_tools.py`。主循环语义与事件顺序不变；radon：loop MI B(17.82)、
-  executor MI B(10.01)、`_execute_impl` CC 34（原 F 50）。
+  `kernel/meta_tools.py`。该次拆分不改主循环语义与事件顺序；拆分时 radon：loop MI B(17.82)、
+  executor MI B(10.01)、`_execute_impl` CC 34（原 F 50）；不是后续修订的实时度量。
 
 ### Fixed
 
+- **拒绝收据完整性**：gate、egress、policy、approval 等拒绝均保留本轮 `not_started`
+  收据；缓存依赖拒绝补 `replay_dependency` 事件，父收据不再有覆盖子收据的路径。
+- **外发声明校验**：清单导入和注册时验证 schema 路径；显式数组下标与自动下钻统一取值。
+  声明外发保护但无任务来源上下文时失败关闭，直接使用执行器的宿主须建立 `egress_scope`。
+- **外发 URL 等价变体**：规范化 IDNA、默认端口与百分号编码；拦截已知工具来源的
+  裸域名、query/fragment 变体和中文紧邻正文。可信授权仍匹配完整 URL，保留路径大小写。
+- **流式任务作用域**：外发上下文仅在推进、事件 emit 与内部流关闭期间生效，不跨越向宿主的
+  `yield`，避免消费者上下文泄漏及跨 Task 关闭时报 token 错误。
+- **敏感错误收据链**：错误在哈希密封前按声明脱敏；导出、幂等重放与后置条件改判
+  不再因密封后改写错误字段而破坏链校验。
+- **拒绝事件补齐**：幂等重放遇当前策略拒绝时发 `PERMISSION_DENIED` 及 `not_started`
+  收据；组合工具人工审批拒绝同样发 `PERMISSION_DENIED`，不执行子步骤。
 - **host_e 学习状态跨重启落盘竞态**：SSE 的 `done` 现在只在学习状态写盘之后下发，
   避免任务结束瞬间读到 `route_learning.json` 不存在；不改变学习算法。
 

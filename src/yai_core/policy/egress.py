@@ -9,8 +9,8 @@
   本次外发直接拒绝（``PERMISSION_DENIED``，source=``egress``）。
 
 不声明 ``egress_text`` 的工具完全不走这条规则——内核不按字段名猜。
-URL 只做轻量规范化（大小写、scheme、``www.`` 前缀、尾随标点），不解析
-整个 URL 语法，避免把普通文本误当链接。
+URL 按解析后的主机、端口和百分号编码规范化，保留路径大小写。
+可信来源仅匹配完整 URL；不可信来源匹配同主机路径，避免添加 query 绕过。
 """
 
 from __future__ import annotations
@@ -21,28 +21,115 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import unquote, urlsplit, urlunsplit
 
-from yai_core.types import ToolSpec
+from yai_core.paths import value_candidates
+from yai_core.types import ToolSpec, validate_egress_paths
 
-_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>'\"\[\]()（）]+", re.IGNORECASE)
+# 裸域名仅识别常见后缀；ASCII 边界允许中文正文紧邻，不匹配小数或文件名。
+_URL_RE = re.compile(
+    r"(?:https?://|www\.)[^\s<>'\"\[\]()（），。；！？、]+"
+    r"|(?<![a-z0-9_@./-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?:com|org|net|edu|gov|io|co|cn|example)(?![a-z0-9_-]|\.[a-z0-9])"
+    r"(?::[0-9]+)?(?:[/?#][^\s<>'\"\[\]()（），。；！？、]*)?",
+    re.IGNORECASE,
+)
 _TRAILING = ".,;:!?)]}，。；：！？、）】」』"
+_UNRESERVED = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
+
+
+def _percent(value: str) -> str:
+    def normalize(match: re.Match[str]) -> str:
+        encoded = match.group(0)
+        decoded = unquote(encoded, errors="strict")
+        return "".join(
+            char if char in _UNRESERVED or ord(char) > 127
+            else "".join(f"%{byte:02X}" for byte in char.encode("utf-8"))
+            for char in decoded
+        )
+
+    return re.sub(r"(?:%[0-9a-fA-F]{2})+", normalize, value)
+
+
+def _idna_host(host: str) -> str:
+    """主机名的 IDNA 映射；有损映射（如 ß→ss）返回原样而不是合并后的形状。
+
+    Python 内置 idna 编解码是 IDNA 2003 语义，会把 ``faß`` 映射成 ``fass``——
+    浏览器（IDNA 2008/UTS46）视二者为**不同域名**。若按映射结果归一，
+    用户授权 ``faß.example`` 后 ``fass.example`` 也会被放行（信任被扩大）。
+    判据：编码再解码能还原原样 → 无损，用映射结果；还原不回 → 有损，
+    保留原主机名作为独立信任身份（与其他形状互不匹配，宁窄勿宽）。
+    """
+    try:
+        ascii_form = host.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return host
+    try:
+        if ascii_form.encode("ascii").decode("idna").lower() == host.lower():
+            return ascii_form.lower()
+    except (UnicodeError, ValueError):
+        pass
+    return host
 
 
 def _canonical(url: str) -> str:
-    value = url.strip().rstrip(_TRAILING).lower()
-    value = re.sub(r"^https?://", "", value)
-    value = re.sub(r"^www\.", "", value)
-    return value.rstrip("/")
+    value = url.strip().rstrip(_TRAILING)
+    parsed = urlsplit(value if re.match(r"https?://", value, re.I) else "https://" + value)
+    # userinfo（reader@example.com 里的 reader@）不影响连接目标：按 hostname
+    # 归一即可。此前对带 userinfo 的 URL 整体返回空，导致这类 URL 既不被
+    # 记为不可信来源也无法匹配任务原文，外发检查直接漏过。
+    host = _idna_host(unquote(parsed.hostname or "", errors="strict"))
+    if not host:
+        return ""
+    # ASCII 形式的 xn-- 标签也必须能解码，后续来源比较才可安全还原中文。
+    host.encode("ascii").decode("idna")
+    port = parsed.port
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None and (parsed.scheme, port) not in {("http", 80), ("https", 443)}:
+        authority += f":{port}"
+    return urlunsplit((
+        parsed.scheme.lower(), authority, _percent(parsed.path or "/"),
+        _percent(parsed.query), _percent(parsed.fragment),
+    ))
 
 
 def find_urls(text: str) -> list[tuple[str, str]]:
-    """返回 ``(原文, 规范化)``；只认 http(s) 或 www. 开头。"""
+    """返回 ``(原文, 规范化)``；保留国际化主机与路径，不按非 ASCII 截断。"""
     found: list[tuple[str, str]] = []
     for match in _URL_RE.finditer(text or ""):
         original = match.group(0).rstrip(_TRAILING)
-        if original:
-            found.append((original, _canonical(original)))
+        try:
+            canonical = _canonical(original)
+        except (ValueError, UnicodeError):
+            continue
+        if canonical:
+            found.append((original, canonical))
     return found
+
+
+def _same_source(candidate: str, source: str) -> bool:
+    target, known = urlsplit(candidate), urlsplit(source)
+    target_host = (target.hostname or "").encode("ascii").decode("idna").removeprefix("www.")
+    known_host = (known.hostname or "").encode("ascii").decode("idna").removeprefix("www.")
+    if target.port != known.port:
+        return False
+    if target_host != known_host:
+        suffix = target_host.removeprefix(known_host)
+        if not (
+            target_host.startswith(known_host)
+            and suffix
+            and all("\u3400" <= char <= "\u9fff" for char in suffix)
+        ):
+            return False
+    if target.path == known.path:
+        return True
+    # 只在已知源路径后识别紧邻中文正文；绝不裁掉 ASCII 路径。
+    suffix = target.path.removeprefix(known.path)
+    return (
+        target.path.startswith(known.path)
+        and bool(suffix)
+        and all("\u3400" <= char <= "\u9fff" for char in suffix)
+    )
 
 
 @dataclass
@@ -57,9 +144,9 @@ _CURRENT: ContextVar[EgressContext | None] = ContextVar("yai_egress", default=No
 
 
 @contextmanager
-def egress_scope(task: str) -> Iterator[EgressContext]:
-    """任务级作用域：从任务原文建立可信 URL 集合。"""
-    context = EgressContext(
+def egress_scope(task: str | EgressContext) -> Iterator[EgressContext]:
+    """建立或重新进入任务上下文；token 必须在本次推进内复位。"""
+    context = task if isinstance(task, EgressContext) else EgressContext(
         task_urls={canonical for _, canonical in find_urls(task)}
     )
     token = _CURRENT.set(context)
@@ -69,46 +156,60 @@ def egress_scope(task: str) -> Iterator[EgressContext]:
         _CURRENT.reset(token)
 
 
-def record_tool_output(text: str) -> None:
-    """把工具输出里的 URL 记入不可信集合（在返回给模型之前调用）。"""
+def _iter_value_strings(value: Any) -> Iterator[str]:
+    """递归抽出结构化结果里的所有字符串（dict 值 / list 项 / 标量 str）。"""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_value_strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _iter_value_strings(item)
+
+
+def record_tool_output(result: Any) -> None:
+    """把工具输出里的 URL 记入不可信集合（在返回给模型之前调用）。
+
+    接受**结构化结果**（dict/list/str）：必须在 JSON 序列化之前记录——序列化会把
+    字符串里的换行/引号转义成 ``\n``、``\\"`` 等形状，find_urls 在转义文本上
+    记下的规范形与外发文本（真实字符）对不上，同一 URL 就会漏拦。
+    """
     context = _CURRENT.get()
-    if context is None or not text:
+    if context is None:
         return
-    context.untrusted_urls.update(
-        canonical for _, canonical in find_urls(text)
-    )
+    for text in _iter_value_strings(result):
+        context.untrusted_urls.update(
+            canonical for _, canonical in find_urls(text)
+        )
 
 
 def _strings_at_path(value: Any, path: str) -> Iterator[str]:
-    parts = [part for part in path.split(".") if part]
-
-    def walk(node: Any, index: int) -> Iterator[str]:
-        if index == len(parts):
-            if isinstance(node, str):
-                yield node
-            elif isinstance(node, dict):
-                for item in node.values():
-                    yield from walk(item, index)
-            elif isinstance(node, (list, tuple)):
-                for item in node:
-                    yield from walk(item, index)
-            return
-        key = parts[index]
-        if isinstance(node, dict):
-            if key in node:
-                yield from walk(node[key], index + 1)
+    def walk(node: Any) -> Iterator[str]:
+        if isinstance(node, str):
+            yield node
+        elif isinstance(node, dict):
+            for item in node.values():
+                yield from walk(item)
         elif isinstance(node, (list, tuple)):
             for item in node:
-                yield from walk(item, index)
+                yield from walk(item)
 
-    yield from walk(value, 0)
+    for candidate in value_candidates(value, path):
+        yield from walk(candidate)
 
 
 def check_egress(spec: ToolSpec, arguments: dict[str, Any]) -> str | None:
     """返回拒绝原因；``None`` 表示这次外发允许通过。"""
-    context = _CURRENT.get()
-    if context is None or not spec.governance.egress_text:
+    if not spec.governance.egress_text:
         return None
+    try:
+        validate_egress_paths(spec.name, spec.governance.egress_text, spec.input_schema)
+    except ValueError as exc:
+        return f"外发被拒绝：治理声明无效：{exc}"
+    context = _CURRENT.get()
+    if context is None:
+        return "外发被拒绝：缺少任务来源上下文，请通过 AgentCore 或宿主 egress_scope 执行"
 
     offending: list[str] = []
     seen: set[tuple[str, str]] = set()
@@ -117,7 +218,7 @@ def check_egress(spec: ToolSpec, arguments: dict[str, Any]) -> str | None:
             for original, canonical in find_urls(text):
                 if canonical in context.task_urls:
                     continue
-                if canonical not in context.untrusted_urls:
+                if not any(_same_source(canonical, source) for source in context.untrusted_urls):
                     continue
                 marker = (canonical, original)
                 if marker not in seen:

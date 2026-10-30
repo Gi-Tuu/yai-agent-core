@@ -75,6 +75,17 @@ def _golden(**kw) -> GoldenTask:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("final_text", ["", "已完成"])
+def test_schema_focus_is_not_model_answer(final_text) -> None:
+    original = [msg(final_text), done("react", final_text)]
+    process = AgentEvent(
+        EventType.MODEL_MESSAGE,
+        {"kind": "schema_focus", "text": "工具范围选择：已聚焦。"},
+    )
+    assert collect_trace([process, *original]) == collect_trace(original)
+    assert collect_trace([process]).model_texts == []
+
+
 def test_collect_trace_fields() -> None:
     events = [
         call("a", {"x": 1}),

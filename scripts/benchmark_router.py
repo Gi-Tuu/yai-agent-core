@@ -146,7 +146,11 @@ def simulate(gt: Strategy, chosen: Strategy) -> tuple[list[AgentEvent], int]:
         for _ in range(6):
             ev.extend(_tool_events(True))
         final = "已达到工具调用上限，多步骤任务未能全部完成。"
-        ev.append(AgentEvent(EventType.MODEL_MESSAGE, {"text": final}))
+        # 真实循环的限尾收尾必带 iteration_limit 标记（见 loop._finish_at_iteration_limit），
+        # 模拟轨迹保持同形，判定逻辑才能与线上事件一致。
+        ev.append(AgentEvent(EventType.MODEL_MESSAGE, {
+            "text": final, "iteration_limit": True, "reason": "iteration_limit",
+        }))
         ev.append(AgentEvent(EventType.DONE, {"strategy": chosen.value, "final_text": final}))
         return ev, 7
 

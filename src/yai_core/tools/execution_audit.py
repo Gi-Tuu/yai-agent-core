@@ -57,6 +57,9 @@ class ExecutionAudit:
         error: str = "",
         replayed: bool = False,
     ) -> ExecutionReceipt:
+        # 导出字段必须在密封前脱敏，否则导出副本将无法通过链校验。
+        if self.registry.has(tool):
+            error = event_error(self.registry.get(tool), error)
         receipt = ExecutionReceipt(
             call_id=call_id,
             tool=tool,
@@ -80,10 +83,12 @@ class ExecutionAudit:
             else None
         )
         data = receipt.to_dict()
-        if spec is not None:
-            data["error"] = event_error(spec, receipt.error)
         for event in reversed(events):
-            if event.type == EventType.TOOL_RESULT:
+            if (
+                event.type == EventType.TOOL_RESULT
+                and event.data.get("tool") == receipt.tool
+                and "receipt" not in event.data
+            ):
                 if spec is not None and "error" in event.data:
                     event.data["error"] = event_error(spec, event.data["error"])
                 event.data["receipt"] = data
@@ -114,8 +119,11 @@ class ExecutionAudit:
             {
                 "tool": name,
                 "source": source,
-                "reason": reason,
-                "arguments": redact_arguments(arguments, spec.governance.sensitive),
+                "reason": event_error(spec, reason),
+                "arguments": redact_arguments(
+                    arguments, spec.governance.sensitive,
+                    broad=spec.governance.audit_sensitive,
+                ),
             },
         )
 
@@ -123,7 +131,7 @@ class ExecutionAudit:
         self,
         events: list[AgentEvent],
         *,
-        spec: ToolSpec,
+        spec: ToolSpec | None,
         name: str,
         call_id: str,
         started: float,
