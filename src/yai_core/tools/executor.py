@@ -13,6 +13,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from yai_core.kernel.budget import BudgetExceeded
 from yai_core.policy.approval import (
     DECISION_APPROVAL_REQUIRED,
     DECISION_REJECT_INVALID_ARGUMENTS,
@@ -438,7 +439,7 @@ class ToolExecutor:
         self, dependencies: tuple[_PermissionDependency, ...], subject: Any
     ) -> str:
         """只复核当前准入，不审批、不生成预览、不解析步骤、更不执行工具。"""
-        for index, dependency in enumerate(dependencies):
+        for dependency in dependencies:
             name, spec = dependency.name, dependency.spec
             if (
                 not self.registry.has(name)
@@ -448,9 +449,10 @@ class ToolExecutor:
                 return f"缓存依赖工具 {name} 已注销或替换，拒绝重放"
             if dependency.arguments is None:
                 return f"缓存依赖工具 {name} 的参数快照不可用，拒绝重放"
-            # 外层工具已按本轮参数走过 gate、参数校验和 DENY 检查。
-            if index == 0:
-                continue
+            # 首个依赖（被重放的工具自己）也必须复核：外层准入用的是**原始形态**
+            # 参数，而 gate 回调可能原地规范化后再执行（如去空格）——撤权若按
+            # 规范化后的名字生效，只查原始形态就会漏掉，已撤权结果被照常交付。
+            # 依赖记录存的就是过闸后的有效形态，这里用同一形态复核。
             try:
                 # 每个回调得到独立副本，不能污染缓存或后续校验的权限依据。
                 gate = spec.governance.gate
@@ -491,6 +493,10 @@ class ToolExecutor:
         ``verified=True``；确认没发生或检查失败 → 保持 ``unknown``，只记录
         ``postcondition`` 的结果，绝不替宿主猜。
         """
+        # 单一权威快照：后续的 gate 原地规范化、通道回调改写、执行、后置条件
+        # 验证全部作用于同一份副本——调用方的字典从此不被改写，验证的也是
+        # "实际执行的那组参数"而不是调用方稍后可能改掉的对象。
+        arguments = snapshot_arguments(arguments)
         events, ok, text = await self._execute_impl(
             name,
             arguments,
@@ -502,7 +508,9 @@ class ToolExecutor:
         )
         if not ok:
             ok, text = await self._audit.apply_postcondition(name, arguments, events, ok, text)
-        record_tool_output(text)
+            # 失败文案（错误消息）里也可能带 URL；成功路径已在 _execute_impl
+            # 按结构化结果记录，不再用 JSON 转义后的文本重复记录。
+            record_tool_output(text)
         return events, ok, text
 
     def _check_admission(
@@ -839,8 +847,8 @@ class ToolExecutor:
             )
 
         spec = self.registry.get(name)
-        # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
-        arguments = snapshot_arguments(arguments)
+        # arguments 已是 execute() 的单一权威快照：审批-执行-审计共用同一份，
+        # 宿主/通道在 confirm 期间、gate 在准入期间的原地改写都只作用于这份副本。
         # 递归调用共用 trace，进入子调用时立即记录，取消/超时也不会丢失依赖。
         # 参数来自 resolve_args 的真值，不从脱敏事件或截断结果反推。
         trace = [] if _trace is None else _trace
@@ -958,6 +966,15 @@ class ToolExecutor:
                 events, spec=spec, name=name, call_id=call_id,
                 started=started, key=idempotency_key, message=reason,
             )
+        # 依赖记录刷新为"过闸后的有效形态"：gate / 通道回调可能原地规范化参数
+        # （如去空格），实际执行的就是这份；撤权复核与重放检查必须用同一形态，
+        # 否则已撤权的结果会因复核看到原始形态而被照常交付。
+        try:
+            trace[trace_start] = _PermissionDependency(
+                name, spec, deepcopy(arguments)
+            )
+        except Exception:  # noqa: BLE001 - 刷新失败退回准入前快照，不阻塞执行
+            pass
 
         denial = await self._recheck_approved_preview(
             spec,
@@ -976,7 +993,13 @@ class ToolExecutor:
 
         if spec.source == "code":
             if budget is not None:
-                budget.record_tool_call()
+                try:
+                    budget.record_tool_call()
+                except BudgetExceeded as exc:
+                    # 硬熔断仍要冒泡，但已密封的事件（含本步之前的子收据）
+                    # 挂到异常上随行，由 AgentLoop 补发，收据链不缺环。
+                    exc.partial_events = list(events)
+                    raise
             code_events, ok, text = await self._execute_code(spec, arguments, events)
             status = infer_status(code_events, ok=ok, text=text, source="code")
             return self._finalize_execution(
@@ -1007,7 +1030,12 @@ class ToolExecutor:
             )
             return events, False, message
         if budget is not None:
-            budget.record_tool_call()
+            try:
+                budget.record_tool_call()
+            except BudgetExceeded as exc:
+                # 同上：熔断冒泡前把已密封事件挂到异常上，避免收据链缺环。
+                exc.partial_events = list(events)
+                raise
         call_timeout = self._effective_timeout(spec)
         if _timeout is not None:
             call_timeout = (
@@ -1015,6 +1043,10 @@ class ToolExecutor:
             )
         try:
             result = await self._invoke_handler(handler, arguments, timeout=call_timeout)
+            # 不可信 URL 来源按"结构化结果里的真实字符串"记录：JSON 序列化会把
+            # 值内的换行/引号转义成别的形状，find_urls 在转义文本上记下的规范形
+            # 与外发文本（真实字符）对不上，同一 URL 就会漏拦。
+            record_tool_output(result)
             text = json.dumps(result, ensure_ascii=False, default=str)
         except ToolTimeoutError as exc:
             # 超时单独成支：给模型的话术要说明"这次没做成、且可能仍在后台跑完"，
@@ -1292,15 +1324,23 @@ class ToolExecutor:
                     )
                     return events, False, message
                 step_timeout = remaining
-            sub_events, ok, sub_text = await self.execute(
-                step.tool,
-                resolved,
-                subject=subject,
-                budget=budget,
-                call_id=step_call_id,
-                _trace=trace,
-                _timeout=step_timeout,
-            )
+            try:
+                sub_events, ok, sub_text = await self.execute(
+                    step.tool,
+                    resolved,
+                    subject=subject,
+                    budget=budget,
+                    call_id=step_call_id,
+                    _trace=trace,
+                    _timeout=step_timeout,
+                )
+            except BudgetExceeded as exc:
+                # 预算硬熔断要继续冒泡到 AgentLoop 统一收尾，但本组合已经密封的
+                # 子收据不能丢：把已积累的事件挂到异常上（组合自身的事件在前，
+                # 子步骤的部分事件在后），由 AgentLoop 在熔断收尾时补发，
+                # 否则导出的收据链会因缺环而校验失败。
+                exc.partial_events = events + list(exc.partial_events)
+                raise
             events.extend(sub_events)
             if not ok:
                 events.append(

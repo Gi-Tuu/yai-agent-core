@@ -122,7 +122,8 @@ def extract_route_outcome(
     判定口径：
         - ``aborted``：DONE 以 clarify 收尾。正常澄清成功后会递归，最终 DONE 是
           解析后的真实策略；只有澄清被放弃（空回答）才以 clarify 收尾。
-        - ``hit_max_iters``：工具调用数达到迭代预算（启发式，可能略高估，仅作成本信号）。
+        - ``hit_max_iters``：工具调用数达到迭代预算（启发式，可能高估；仅作成本
+          信号，不参与成败判定）。
         - ``unable_hint`` 只在 direct 下判失败——其他策略若真无能，通常已伴随
           工具失败/缺口事件，被 ``tool_failures`` 覆盖。
     """
@@ -160,11 +161,19 @@ def extract_route_outcome(
     final_empty = not final
     unable_hint = _hit_unable(final)
     aborted = done_strategy == Strategy.CLARIFY.value
+    # 限尾收尾标记：全部轮次都耗在工具调用上，最终答案来自"已达上限、请立即
+    # 收尾"的强制路径——任务没能自然完成，对路由学习是负信号。
+    # 工具计数启发式（tool_calls >= max_iters）不是这个信号：一轮可以合法调
+    # 多个工具，"第一轮调两个工具、第二轮正常回答"没有撞限，是成功任务。
+    limit_wrapped = any(
+        e.type == EventType.MODEL_MESSAGE and e.data.get("iteration_limit")
+        for e in events
+    )
     hit_max_iters = max_iters > 0 and tool_calls >= max_iters
 
     success = (
         not aborted
-        and not hit_max_iters
+        and not limit_wrapped
         and not final_empty
         and tool_failures == 0
         and errors == 0

@@ -521,6 +521,10 @@ class AgentLoop(MetaToolRuntime):
                 if ev.type == EventType.MODEL_MESSAGE and ev.data.get("kind") != "schema_focus":
                     final_text = ev.data.get("text", final_text)
         except BudgetExceeded as exc:
+            # 执行器在熔断前已密封、还没来得及外发的事件（组合工具的中途子收据）
+            # 挂在异常上随行到这里：先补发它们，收据链才不缺环。
+            for pending_ev in getattr(exc, "partial_events", None) or []:
+                yield pending_ev
             # 预算硬墙：规划/聚焦/执行/收尾任一处触发都在此统一熔断，
             # 不再发起新的模型或工具调用，用固定诚实文案收尾并发可审计事件。
             label = _BUDGET_SCOPE_LABELS.get(exc.scope, exc.scope)
@@ -1193,7 +1197,26 @@ class AgentLoop(MetaToolRuntime):
             # 没有模型答案就保持原有空收尾，不把合成文案写入历史。
             yield AgentEvent(EventType.MODEL_MESSAGE, {"text": "", **limit_data})
             raise
+        final_text = resp.content.strip()
+        if _looks_like_raw_tool_call(final_text):
+            # 限尾收尾与正常轮走同一道协议检查：模型把 <tool_call> 写进正文时，
+            # 既不能当最终答案展示（用户会看到一段假调用），也不能写进历史——
+            # 否则伪协议文本会绕过 _looks_like_raw_tool_call 的唯一防线。
+            yield AgentEvent(
+                EventType.ERROR,
+                {
+                    "stage": "model_protocol",
+                    "error": _RAW_TOOL_CALL_NOTICE,
+                    "raw_tool_markup": True,
+                },
+            )
+            ctx.add(ChatMessage(role="assistant", content=_RAW_TOOL_CALL_NOTICE))
+            yield AgentEvent(
+                EventType.MODEL_MESSAGE,
+                {"text": _RAW_TOOL_CALL_NOTICE, **limit_data},
+            )
+            return
         yield AgentEvent(
             EventType.MODEL_MESSAGE,
-            {"text": resp.content.strip(), **limit_data},
+            {"text": final_text, **limit_data},
         )

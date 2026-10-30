@@ -141,9 +141,24 @@ def test_hit_max_iters() -> None:
     events: list[AgentEvent] = []
     for _ in range(6):
         events += _ok_tool("search_notes")
-    events += _done(Strategy.REACT, "结果")
+    # 限尾收尾：最终答案来自"已达上限、请立即收尾"的强制路径（带标记）。
+    events += [
+        ev(EventType.MODEL_MESSAGE, text="结果", iteration_limit=True,
+           reason="iteration_limit"),
+        ev(EventType.DONE, strategy=Strategy.REACT.value, final_text="结果"),
+    ]
     out = extract_route_outcome(events, Strategy.REACT, max_iters=6)
     assert out.hit_max_iters is True and out.success is False
+
+
+def test_multi_tool_round_without_limit_marker_succeeds() -> None:
+    # 一轮内合法调多个工具、下一轮自然回答：没撞限，是成功任务（复审 P2-8）。
+    events: list[AgentEvent] = []
+    for _ in range(2):
+        events += _ok_tool("search_notes")
+    events += _done(Strategy.REACT, "结果")
+    out = extract_route_outcome(events, Strategy.REACT, max_iters=6)
+    assert out.success is True and out.hit_max_iters is False
 
 
 # ---------- 奖励区间 & 序列化 ----------

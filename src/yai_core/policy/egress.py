@@ -51,11 +51,35 @@ def _percent(value: str) -> str:
     return re.sub(r"(?:%[0-9a-fA-F]{2})+", normalize, value)
 
 
+def _idna_host(host: str) -> str:
+    """主机名的 IDNA 映射；有损映射（如 ß→ss）返回原样而不是合并后的形状。
+
+    Python 内置 idna 编解码是 IDNA 2003 语义，会把 ``faß`` 映射成 ``fass``——
+    浏览器（IDNA 2008/UTS46）视二者为**不同域名**。若按映射结果归一，
+    用户授权 ``faß.example`` 后 ``fass.example`` 也会被放行（信任被扩大）。
+    判据：编码再解码能还原原样 → 无损，用映射结果；还原不回 → 有损，
+    保留原主机名作为独立信任身份（与其他形状互不匹配，宁窄勿宽）。
+    """
+    try:
+        ascii_form = host.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return host
+    try:
+        if ascii_form.encode("ascii").decode("idna").lower() == host.lower():
+            return ascii_form.lower()
+    except (UnicodeError, ValueError):
+        pass
+    return host
+
+
 def _canonical(url: str) -> str:
     value = url.strip().rstrip(_TRAILING)
     parsed = urlsplit(value if re.match(r"https?://", value, re.I) else "https://" + value)
-    host = unquote(parsed.hostname or "", errors="strict").encode("idna").decode().lower()
-    if not host or parsed.username is not None or parsed.password is not None:
+    # userinfo（reader@example.com 里的 reader@）不影响连接目标：按 hostname
+    # 归一即可。此前对带 userinfo 的 URL 整体返回空，导致这类 URL 既不被
+    # 记为不可信来源也无法匹配任务原文，外发检查直接漏过。
+    host = _idna_host(unquote(parsed.hostname or "", errors="strict"))
+    if not host:
         return ""
     # ASCII 形式的 xn-- 标签也必须能解码，后续来源比较才可安全还原中文。
     host.encode("ascii").decode("idna")
@@ -132,14 +156,32 @@ def egress_scope(task: str | EgressContext) -> Iterator[EgressContext]:
         _CURRENT.reset(token)
 
 
-def record_tool_output(text: str) -> None:
-    """把工具输出里的 URL 记入不可信集合（在返回给模型之前调用）。"""
+def _iter_value_strings(value: Any) -> Iterator[str]:
+    """递归抽出结构化结果里的所有字符串（dict 值 / list 项 / 标量 str）。"""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_value_strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _iter_value_strings(item)
+
+
+def record_tool_output(result: Any) -> None:
+    """把工具输出里的 URL 记入不可信集合（在返回给模型之前调用）。
+
+    接受**结构化结果**（dict/list/str）：必须在 JSON 序列化之前记录——序列化会把
+    字符串里的换行/引号转义成 ``\n``、``\\"`` 等形状，find_urls 在转义文本上
+    记下的规范形与外发文本（真实字符）对不上，同一 URL 就会漏拦。
+    """
     context = _CURRENT.get()
-    if context is None or not text:
+    if context is None:
         return
-    context.untrusted_urls.update(
-        canonical for _, canonical in find_urls(text)
-    )
+    for text in _iter_value_strings(result):
+        context.untrusted_urls.update(
+            canonical for _, canonical in find_urls(text)
+        )
 
 
 def _strings_at_path(value: Any, path: str) -> Iterator[str]:

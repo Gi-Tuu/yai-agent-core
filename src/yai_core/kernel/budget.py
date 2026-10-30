@@ -45,6 +45,9 @@ class BudgetExceeded(Exception):
         self.scope = scope
         self.limit = limit
         self.used = used
+        # 熔断时执行器已密封、但还没来得及外发的事件（含执行收据）。
+        # 组合工具中途熔断时由 executor 挂载、AgentLoop 补发，保证收据链不缺环。
+        self.partial_events: list = []
         super().__init__(
             f"任务预算上限已触发：{scope} 已用 {used}、上限 {limit}，已熔断停止"
         )
