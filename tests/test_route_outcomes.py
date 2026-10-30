@@ -63,6 +63,17 @@ def test_empty_final_text_is_unsuccessful() -> None:
     assert out.success is False and out.final_empty is True
 
 
+@pytest.mark.parametrize("final_text", ["", "已完成"])
+def test_schema_focus_does_not_change_learning_outcome(final_text) -> None:
+    original = _done(Strategy.REACT, final_text)
+    process = ev(EventType.MODEL_MESSAGE, kind="schema_focus", text="工具范围选择：已聚焦。")
+    expected = extract_route_outcome(original, Strategy.REACT)
+    actual = extract_route_outcome([process, *original], Strategy.REACT)
+    assert actual == expected
+    assert actual.success is bool(final_text)
+    assert not extract_route_outcome([process], Strategy.REACT).success
+
+
 # ---------- direct 误判（无能话术） ----------
 
 @pytest.mark.parametrize(

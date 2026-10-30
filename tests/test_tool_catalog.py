@@ -8,8 +8,12 @@
 
 import asyncio
 
-from yai_core import AgentCore, ModelResponse, ToolCallRequest, ToolSpec
+import pytest
+
+from yai_core import AgentCore, Budget, ModelResponse, ToolCallRequest, ToolSpec
+from yai_core.learning import extract_route_outcome
 from yai_core.tools.registry import ToolRegistry
+from yai_core.types import EventType, TokenUsage
 
 
 def _stub_handler(**_kwargs: object) -> dict:
@@ -58,14 +62,17 @@ def test_unregister_removes_tool_and_reports_presence() -> None:
 # ---------- 系统提示使用轻量目录 ----------
 
 class _RecordingModel:
-    def __init__(self, responses: list[ModelResponse]) -> None:
+    def __init__(self, responses: list[ModelResponse | BaseException]) -> None:
         self._responses = responses
         self.calls: list[dict] = []
 
     async def achat(self, messages, tools=None, *, tier="standard"):
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append({"messages": messages, "tools": tools, "tier": tier})
         i = min(len(self.calls) - 1, len(self._responses) - 1)
-        return self._responses[i]
+        response = self._responses[i]
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 def test_system_prompt_uses_lightweight_catalog() -> None:
@@ -93,7 +100,8 @@ def test_system_prompt_uses_lightweight_catalog() -> None:
 
 # ---------- 预算内：全量 schema，不额外调用模型 ----------
 
-def test_within_budget_injects_all_schemas_without_focus_call() -> None:
+@pytest.mark.parametrize("tool_count", [3, 24])
+def test_within_budget_injects_all_schemas_without_focus_call(tool_count: int) -> None:
     model = _RecordingModel(
         [
             ModelResponse(
@@ -104,13 +112,18 @@ def test_within_budget_injects_all_schemas_without_focus_call() -> None:
         ]
     )
     core = AgentCore(model)  # 默认预算 24
-    _register(core, 3)
-    asyncio.run(core.run("查询工具零零"))
+    _register(core, tool_count)
+    result = asyncio.run(core.run("查询工具零零"))
 
     # 第一次模型调用就是 react 本身（tools 非空），没有额外的聚焦调用
     first = model.calls[0]
     assert first["tools"] is not None
-    assert len(first["tools"]) == 3
+    assert len(first["tools"]) == tool_count
+    assert len(model.calls) == result.events[-1].data["model_calls"] == 2
+    messages = [event for event in result.events if event.type == EventType.MODEL_MESSAGE]
+    assert len(messages) == 1
+    assert messages[0].data == {"text": "完成", "tier": "standard"}
+    assert not any(event.data.get("kind") == "schema_focus" for event in result.events)
 
 
 # ---------- 超预算：聚焦选择，只注入所选 schema ----------
@@ -202,3 +215,116 @@ def test_focus_invalid_output_falls_back_to_all_schemas() -> None:
     asyncio.run(core.run("查询工具零零"))
 
     assert len(model.calls[1]["tools"]) == 30
+
+
+@pytest.mark.parametrize(
+    ("response", "mode", "reason", "selected"),
+    [
+        (ModelResponse(content='["tool_01", "ghost", "tool_01"]'),
+         "focused", "selected", ["tool_01"]),
+        (ModelResponse(content="[]"), "fallback", "empty_selection", ["tool_00", "tool_01"]),
+        (ModelResponse(content='["ghost"]'),
+         "fallback", "empty_selection", ["tool_00", "tool_01"]),
+        (ModelResponse(content="[invalid]"),
+         "fallback", "empty_selection", ["tool_00", "tool_01"]),
+        (RuntimeError("private provider failure"),
+         "fallback", "error", ["tool_00", "tool_01"]),
+        (TimeoutError("private timeout details"),
+         "fallback", "error", ["tool_00", "tool_01"]),
+    ],
+)
+def test_focus_decision_event_matches_injected_schemas(
+    response: ModelResponse | BaseException, mode: str, reason: str, selected: list[str]
+) -> None:
+    model = _RecordingModel([response, ModelResponse(content="最终答案")])
+    core = AgentCore(model, full_schema_budget=1)
+    _register(core, 2)
+    result = asyncio.run(core.run("查询工具零零"))
+
+    focus_events = [event for event in result.events if event.data.get("kind") == "schema_focus"]
+    assert len(focus_events) == 1
+    event = focus_events[0]
+    assert event.type == EventType.MODEL_MESSAGE
+    assert event.data["text"].startswith("工具范围选择：")
+    assert event.data["schema_focus"] == {
+        "mode": mode,
+        "reason": reason,
+        "selected": selected,
+        "available_count": 2,
+    }
+    assert "private" not in str(event.data)
+    assert "ghost" not in str(event.data)
+    assert [schema["function"]["name"] for schema in model.calls[1]["tools"]] == selected
+    assert model.calls[0]["tools"] is None
+    assert len(model.calls) == result.events[-1].data["model_calls"] == 2
+    assert result.events[-1].data["standard_calls"] == 2
+    assert result.events[-1].data["strong_calls"] == 0
+    assert result.events[0].data["strategy"] == "react"
+    assert result.events.index(event) < next(
+        i for i, item in enumerate(result.events) if item.type == EventType.TIER_CHANGED
+    )
+    assert core.channel.events == result.events  # 唯一出口，无重复 emit
+    assert len(EventType) == 21
+
+    # 决策文本/选择响应均不加入上下文；记忆与 DONE 只保留真正答案。
+    assert [message["role"] for message in model.calls[1]["messages"]] == ["system", "user"]
+    assert model.calls[1]["messages"][-1]["content"] == "查询工具零零"
+    assert result.final_text == result.events[-1].data["final_text"] == "最终答案"
+    assert [message.content for message in core.memory.history()] == ["查询工具零零", "最终答案"]
+    without_focus = [item for item in result.events if item is not event]
+    assert extract_route_outcome(result.events, result.strategy) == extract_route_outcome(
+        without_focus, result.strategy
+    )
+
+
+@pytest.mark.parametrize("failure", ["model_budget", "token_budget", "cancel"])
+def test_focus_budget_and_cancellation_do_not_fall_back(failure: str) -> None:
+    model = _RecordingModel([
+        asyncio.CancelledError() if failure == "cancel" else ModelResponse(
+            content='["tool_00"]', usage=TokenUsage(total_tokens=1)
+        ),
+    ])
+    budget = (
+        Budget(max_model_calls=0) if failure == "model_budget"
+        else Budget(max_tokens=1) if failure == "token_budget"
+        else None
+    )
+    core = AgentCore(model, full_schema_budget=1, budget=budget)
+    _register(core, 2)
+    events = []
+
+    async def collect() -> None:
+        async for event in core.astream("查询工具零零"):
+            events.append(event)
+
+    if failure == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(collect())
+        assert not any(event.type == EventType.DONE for event in events)
+    else:
+        asyncio.run(collect())
+        assert any(event.type == EventType.BUDGET_EXCEEDED for event in events)
+        assert events[-1].data["reason"] == "budget_exceeded"
+    assert len(model.calls) == (0 if failure == "model_budget" else 1)
+    assert not any(event.data.get("kind") == "schema_focus" for event in events)
+    assert not any(event.type == EventType.ERROR for event in events)
+
+
+@pytest.mark.parametrize("answer", [ModelResponse(content=""), RuntimeError("react failed")])
+def test_focus_message_never_becomes_done_or_history_answer(
+    answer: ModelResponse | BaseException,
+) -> None:
+    model = _RecordingModel([ModelResponse(content='["tool_00"]'), answer])
+    core = AgentCore(model, full_schema_budget=1)
+    _register(core, 2)
+    result = asyncio.run(core.run("查询工具零零"))
+
+    assert result.final_text == result.events[-1].data["final_text"] == ""
+    assert core.memory.history()[-1].content == ""
+    assert len(model.calls) == 2
+    outcome = extract_route_outcome(result.events, result.strategy)
+    without_focus = [event for event in result.events if event.data.get("kind") != "schema_focus"]
+    baseline = extract_route_outcome(without_focus, result.strategy)
+    assert outcome == baseline
+    assert outcome.final_empty and not outcome.success
+    assert outcome.errors == int(isinstance(answer, BaseException))

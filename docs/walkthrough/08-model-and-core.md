@@ -128,6 +128,11 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
         yield event
 ```
 - 流式：转发 Loop 事件的**唯一出口**，并在这里统一 `channel.emit`。注意第 04 篇重构后，Executor 不再自己发事件，所有事件都从这条路径经过——**全项目事件流只有一条路径**，便于排查。
+- 上面展示转发关系；实际实现还持有实例锁、记录学习反馈并管理外发来源上下文。
+  同一运行保留一个 `EgressContext`，每次 `anext` / `emit` / 内部流 `aclose` 时进入作用域，
+  向宿主 `yield` 前先退出。不能用一个 `with egress_scope` 跨过外部 `yield`：暂停期间会
+  污染消费者上下文，换 Task 推进或关闭时还会因 token 属于另一 Context 而报错。
+  提前关闭时在同一运行上下文中显式关闭内部流，再释放实例锁；取消与异常继续传播。
 
 ```python
 async def run(self, task: str) -> RunResult:

@@ -523,12 +523,20 @@ class ToolExecutor:
             events.append(
                 self._audit.denied_event(spec, name, arguments, decision.reject, "gate")
             )
+            self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, message=decision.reject,
+            )
             return decision, decision.reject
 
         egress_reason = check_egress(spec, arguments)
         if egress_reason is not None:
             events.append(
                 self._audit.denied_event(spec, name, arguments, egress_reason, "egress")
+            )
+            self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, message=egress_reason,
             )
             return decision, egress_reason
 
@@ -634,13 +642,26 @@ class ToolExecutor:
             await policy_decision(self.policy, name, arguments, subject)
             == PermissionDecision.DENY
         ):
-            return _CacheLookup(
-                idempotency_key,
-                fingerprint,
-                (False, f"权限策略拒绝执行工具 {name}"),
+            message = f"权限策略拒绝执行工具 {name}"
+            events.append(
+                self._audit.denied_event(spec, name, arguments, message, "policy")
             )
+            self._audit.fail(
+                events,
+                spec=spec,
+                name=name,
+                call_id=call_id,
+                started=started,
+                key=idempotency_key,
+                message=message,
+                flags={"replay_denied": True},
+            )
+            return _CacheLookup(idempotency_key, fingerprint, (False, message))
         rejection = await self._replay_dependency_rejection(dependencies, subject)
         if rejection:
+            events.append(self._audit.denied_event(
+                spec, name, arguments, rejection, "replay_dependency"
+            ))
             self._audit.fail(
                 events,
                 spec=spec,
@@ -659,7 +680,7 @@ class ToolExecutor:
             status=cached_status,
             started=started,
             key=idempotency_key,
-            error=event_error(spec, cached_error),
+            error=cached_error,
             replayed=True,
         )
         payload: dict[str, Any] = {
@@ -723,39 +744,63 @@ class ToolExecutor:
             event.type == EventType.PERMISSION_ASKED for event in auth_events
         ):
             return None
+        message, flags = await self._approved_preview_failure(
+            spec, arguments, subject, preview
+        )
+        if message is not None:
+            self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, key=key, message=message, flags=flags,
+            )
+        return message
+
+    async def _approved_preview_failure(
+        self,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        subject: Any,
+        preview: ChangePreview,
+    ) -> tuple[str | None, dict[str, Any]]:
+        """只复核并返回原因和标记；事件与收据归调用方所有。"""
         try:
             current_preview = await self._generate_preview(spec, arguments, subject)
         except _PreviewError as exc:
-            message = str(exc)
-            self._audit.fail(
-                events,
-                spec=spec,
-                name=name,
-                call_id=call_id,
-                started=started,
-                key=key,
-                message=message,
-                flags={"preview_failed": True},
-            )
-            return message
+            return str(exc), {"preview_failed": True}
         assert current_preview is not None
         if current_preview.token != preview.token:
-            message = (
+            return (
                 "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
-                "本次未执行；请重新发起以查看最新预览并再次确认"
+                "本次未执行；请重新发起以查看最新预览并再次确认",
+                {"preview_stale": True},
             )
-            self._audit.fail(
-                events,
-                spec=spec,
-                name=name,
-                call_id=call_id,
-                started=started,
-                key=key,
-                message=message,
-                flags={"preview_stale": True},
+        return None, {}
+
+    def _finalize_execution(
+        self,
+        events: list[AgentEvent],
+        *,
+        name: str,
+        call_id: str,
+        started: float,
+        key: str,
+        fingerprint: str,
+        dependencies: list[_PermissionDependency],
+        ok: bool,
+        text: str,
+        status: ReceiptStatus,
+    ) -> tuple[list[AgentEvent], bool, str]:
+        """统一密封/挂载执行结果，缓存保留原始错误与独立依赖快照。"""
+        error = "" if ok else text
+        self._audit.attach(events, self._audit.receipt(
+            call_id=call_id, tool=name, status=status, started=started,
+            key=key, error=error,
+        ))
+        if status != "not_started":
+            self._cache_put(
+                name, key, fingerprint, dependencies=dependencies,
+                ok=ok, text=text, status=status, error=error,
             )
-            return message
-        return None
+        return events, ok, text
 
     async def _execute_impl(
         self,
@@ -788,7 +833,10 @@ class ToolExecutor:
         started = time.monotonic()
         events: list[AgentEvent] = []
         if not self.registry.has(name):
-            return events, False, f"工具 {name!r} 不存在"
+            return self._audit.fail(
+                events, spec=None, name=name, call_id=call_id,
+                started=started, message=f"工具 {name!r} 不存在",
+            )
 
         spec = self.registry.get(name)
         # 审批-执行-审计共用一份快照：宿主/通道在 confirm 期间改写参数不会生效
@@ -869,47 +917,18 @@ class ToolExecutor:
                             },
                         )
                     )
-                    receipt = self._audit.receipt(
-                        call_id=call_id,
-                        tool=spec.name,
-                        status="unknown",
-                        started=started,
-                        key=idempotency_key,
-                        error=message,
-                    )
-                    self._audit.attach(events, receipt)
-                    self._cache_put(
-                        spec.name,
-                        idempotency_key,
-                        fingerprint,
+                    return self._finalize_execution(
+                        events, name=name, call_id=call_id, started=started,
+                        key=idempotency_key, fingerprint=fingerprint,
                         dependencies=trace[trace_start:],
-                        ok=False,
-                        text=message,
-                        status="unknown",
-                        error=message,
+                        ok=False, text=message, status="unknown",
                     )
-                    return events, False, message
             status = infer_status(comp_events, ok=ok, text=text, source="composite")
-            receipt = self._audit.receipt(
-                call_id=call_id,
-                tool=spec.name,
-                status=status,
-                started=started,
-                key=idempotency_key,
-                error="" if ok else text,
+            return self._finalize_execution(
+                comp_events, name=name, call_id=call_id, started=started,
+                key=idempotency_key, fingerprint=fingerprint,
+                dependencies=trace[trace_start:], ok=ok, text=text, status=status,
             )
-            self._audit.attach(comp_events, receipt)
-            self._cache_put(
-                spec.name,
-                idempotency_key,
-                fingerprint,
-                dependencies=trace[trace_start:],
-                ok=ok,
-                text=text,
-                status=status,
-                error="" if ok else text,
-            )
-            return comp_events, ok, text
 
         auth_events, approved, reason = await authorize_tool_call(
             self.policy,
@@ -935,7 +954,10 @@ class ToolExecutor:
                 else "policy"
             )
             events.append(self._audit.denied_event(spec, name, arguments, reason, source))
-            return events, False, reason
+            return self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, key=idempotency_key, message=reason,
+            )
 
         denial = await self._recheck_approved_preview(
             spec,
@@ -957,26 +979,11 @@ class ToolExecutor:
                 budget.record_tool_call()
             code_events, ok, text = await self._execute_code(spec, arguments, events)
             status = infer_status(code_events, ok=ok, text=text, source="code")
-            receipt = self._audit.receipt(
-                call_id=call_id,
-                tool=name,
-                status=status,
-                started=started,
-                key=idempotency_key,
-                error="" if ok else text,
+            return self._finalize_execution(
+                code_events, name=name, call_id=call_id, started=started,
+                key=idempotency_key, fingerprint=fingerprint,
+                dependencies=trace[trace_start:], ok=ok, text=text, status=status,
             )
-            self._audit.attach(code_events, receipt)
-            self._cache_put(
-                name,
-                idempotency_key,
-                fingerprint,
-                dependencies=trace[trace_start:],
-                ok=ok,
-                text=text,
-                status=status,
-                error="" if ok else text,
-            )
-            return code_events, ok, text
 
         handler = spec.handler
         if handler is None:
@@ -1019,52 +1026,24 @@ class ToolExecutor:
                     {"tool": name, "ok": False, "error": message, "timed_out": True},
                 )
             )
-            receipt = self._audit.receipt(
-                call_id=call_id,
-                tool=name,
-                status="unknown",
-                started=started,
-                key=idempotency_key,
-                error=message,
-            )
-            self._audit.attach(events, receipt)
-            self._cache_put(
-                name,
-                idempotency_key,
-                fingerprint,
+            return self._finalize_execution(
+                events, name=name, call_id=call_id, started=started,
+                key=idempotency_key, fingerprint=fingerprint,
                 dependencies=trace[trace_start:],
-                ok=False,
-                text=message,
-                status="unknown",
-                error=message,
+                ok=False, text=message, status="unknown",
             )
-            return events, False, message
         except Exception as exc:  # noqa: BLE001 - 工具错误必须回灌给模型而不是崩溃
             message = f"工具 {name} 执行出错: {type(exc).__name__}: {exc}"
             events.append(
                 AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": False,
                                                    "error": message})
             )
-            receipt = self._audit.receipt(
-                call_id=call_id,
-                tool=name,
-                status="unknown",
-                started=started,
-                key=idempotency_key,
-                error=message,
-            )
-            self._audit.attach(events, receipt)
-            self._cache_put(
-                name,
-                idempotency_key,
-                fingerprint,
+            return self._finalize_execution(
+                events, name=name, call_id=call_id, started=started,
+                key=idempotency_key, fingerprint=fingerprint,
                 dependencies=trace[trace_start:],
-                ok=False,
-                text=message,
-                status="unknown",
-                error=message,
+                ok=False, text=message, status="unknown",
             )
-            return events, False, message
 
         text, truncated, result_chars = self._bound(text)
         events.append(
@@ -1079,24 +1058,11 @@ class ToolExecutor:
                 },
             )
         )
-        receipt = self._audit.receipt(
-            call_id=call_id,
-            tool=name,
-            status="succeeded",
-            started=started,
-            key=idempotency_key,
+        return self._finalize_execution(
+            events, name=name, call_id=call_id, started=started,
+            key=idempotency_key, fingerprint=fingerprint,
+            dependencies=trace[trace_start:], ok=True, text=text, status="succeeded",
         )
-        self._audit.attach(events, receipt)
-        self._cache_put(
-            name,
-            idempotency_key,
-            fingerprint,
-            dependencies=trace[trace_start:],
-            ok=True,
-            text=text,
-            status="succeeded",
-        )
-        return events, True, text
 
     async def _execute_code(
         self,
@@ -1267,43 +1233,23 @@ class ToolExecutor:
                 self.channel, spec.name, shown_for_channel, context
             )
             if not approved:
-                return events, False, f"用户/宿主拒绝执行工具 {spec.name}"
+                message = f"用户/宿主拒绝执行工具 {spec.name}"
+                events.append(
+                    self._audit.denied_event(
+                        spec, spec.name, arguments, message, "approval"
+                    )
+                )
+                return events, False, message
             if preview is not None:
-                try:
-                    current_preview = await self._generate_preview(
-                        spec, arguments, subject
-                    )
-                except _PreviewError as exc:
-                    events.append(
-                        AgentEvent(
-                            EventType.TOOL_RESULT,
-                            {
-                                "tool": spec.name,
-                                "ok": False,
-                                "error": str(exc),
-                                "preview_failed": True,
-                            },
-                        )
-                    )
-                    return events, False, str(exc)
-                assert current_preview is not None
-                if current_preview.token != preview.token:
-                    message = (
-                        "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
-                        "本次未执行；请重新发起以查看最新预览并再次确认"
-                    )
-                    events.append(
-                        AgentEvent(
-                            EventType.TOOL_RESULT,
-                            {
-                                "tool": spec.name,
-                                "ok": False,
-                                "error": message,
-                                "preview_stale": True,
-                            },
-                        )
-                    )
-                    return events, False, message
+                preview_failure, flags = await self._approved_preview_failure(
+                    spec, arguments, subject, preview
+                )
+                if preview_failure is not None:
+                    events.append(AgentEvent(
+                        EventType.TOOL_RESULT,
+                        {"tool": spec.name, "ok": False, "error": preview_failure, **flags},
+                    ))
+                    return events, False, preview_failure
         events.append(
             AgentEvent(
                 EventType.TOOL_COMPOSED,

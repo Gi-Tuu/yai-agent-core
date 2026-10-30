@@ -1,7 +1,7 @@
 # 能力与证据索引（IMPLEMENTATION_STATUS）
 
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
-> 口径：v0.22.1（2026-10-25 实测）。三档状态：
+> 口径：v0.24.0 + 当前工作树未发布项（标为 Unreleased）；各条验证范围以证据列为准。三档状态：
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
 >
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
@@ -46,7 +46,7 @@
 | 工具输出按不可信数据处理 | 已验证 | `tests/test_loop.py`（默认包裹 / 可关两例） | 只改 prompt 形态，不改事件与收据里的原值 |
 | 执行后验证（后置条件） | 已验证 | `tests/test_execution_receipts.py`（确认 / 否认 / 检查出错 / 异步 / 链完整 / 非 unknown 不跑 6 例） | 只作用于 `unknown`；检查自身失败也只记 `error`，不替宿主猜 |
 | 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
-| 外发 URL 来源闸 | 已验证 | `tests/test_egress_guard.py`（拦截 + 任务原文正例） | 只对声明 `egress_text` 的工具；只比较任务原文与工具输出，不做跨任务污点追踪 |
+| 外发 URL 来源闸（Unreleased） | 已验证 | `tests/test_egress_guard.py` | 声明路径按 schema 校验；声明保护但缺任务上下文则拒绝；未知 URL 不因此拒绝，不做跨任务污点追踪 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
 
 ## 四、记忆与上下文

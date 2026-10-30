@@ -1,11 +1,15 @@
 """端到端测试：用脚本化假模型离线验证 react 循环，不需要 API Key。"""
 
 import asyncio
+import inspect
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import get_type_hints
 
 import pytest
 
 from yai_core import (
     AgentCore,
+    AgentEvent,
     ChatMessage,
     ModelResponse,
     RouteDecision,
@@ -17,6 +21,8 @@ from yai_core import (
 from yai_core.channels.collect import CollectChannel
 from yai_core.kernel import AdaptiveRouter, AgentLoop, CompactionPolicy
 from yai_core.kernel.loop import wrap_tool_output
+from yai_core.kernel.meta_tools import MetaToolRuntime
+from yai_core.learning import extract_route_outcome
 from yai_core.memory import InMemoryStore
 from yai_core.policy import AllowlistPolicy
 from yai_core.tools import (
@@ -477,22 +483,83 @@ def test_react_model_raises_emits_error_and_stops() -> None:
     assert result.events[-1].type.value == "done"
 
 
-def test_iteration_limit_finishes_with_existing_observations() -> None:
+@pytest.mark.parametrize("max_iters", [1, 2, 6])
+def test_iteration_limit_finishes_with_existing_observations(max_iters: int) -> None:
     tool_resp = ModelResponse(
         content="",
         tool_calls=[ToolCallRequest(id="t", name="search_notes",
                                     arguments={"keyword": "周报"})],
     )
     model = ScriptedModel(
-        [tool_resp] * 6 + [ModelResponse(content="基于已有结果给出答案。")]
+        [tool_resp] * max_iters + [ModelResponse(content="基于已有结果给出答案。")]
     )
-    core = AgentCore(model, max_iters=6)
+    core = AgentCore(model, max_iters=max_iters)
     core.register_tools([build_spec(search_notes)])
 
     result = asyncio.run(core.run("搜索笔记里的周报"))
 
-    assert model.calls == 7  # 6 轮工具 + 1 轮上限收尾
-    assert result.final_text.startswith("基于已有结果")
+    assert model.calls == max_iters + 1  # 工具轮 + 1 轮上限收尾
+    assert result.events[-1].data["model_calls"] == model.calls
+    assert result.final_text == "基于已有结果给出答案。"
+    messages = [event for event in result.events if event.type.value == "model_message"]
+    assert len(messages) == 1
+    assert messages[0].data == {
+        "text": result.final_text,
+        "tier": "standard",
+        "iteration_limit": True,
+        "max_iters": max_iters,
+        "reason": "iteration_limit",
+    }
+    assert core.memory.history()[-1].content == result.final_text
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+def test_iteration_limit_failure_keeps_decision_markers(failure: str) -> None:
+    requests: list[dict] = []
+    cancelled: list[bool] = []
+
+    class FailingFinish(ScriptedModel):
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            requests.append({"messages": messages, "tools": tools})
+            if self.calls == 0:
+                return await super().achat(messages, tools, tier=tier)
+            self.calls += 1
+            if failure == "timeout":
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.append(True)
+            raise RuntimeError("private finalization failure")
+
+    model = FailingFinish([ModelResponse(tool_calls=[ToolCallRequest(
+        id="t", name="search_notes", arguments={"keyword": "周报"},
+    )])])
+    core = AgentCore(model, max_iters=1, model_timeout=0.05 if failure == "timeout" else None)
+    core.register_tools([build_spec(search_notes)])
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    assert model.calls == result.events[-1].data["model_calls"] == 2
+    assert requests[-1]["tools"] is None
+    assert requests[-1]["messages"][-1] == {
+        "role": "user", "content": "已达到工具调用上限，请基于已有结果直接给出最终答案。",
+    }
+    assert any(message["role"] == "tool" for message in requests[-1]["messages"])
+    messages = [event for event in result.events if event.type.value == "model_message"]
+    assert len(messages) == 1
+    assert messages[0].data == {
+        "text": "",  # 失败仍为空答案，不额外生成文案污染上下文/历史
+        "tier": "standard",
+        "iteration_limit": True,
+        "max_iters": 1,
+        "reason": "iteration_limit",
+    }
+    errors = [event for event in result.events if event.type.value == "error"]
+    assert len(errors) == 1
+    assert errors[0].data["stage"] == "model"
+    assert result.events[-1].type.value == "done"
+    assert result.final_text == core.memory.history()[-1].content == messages[0].data["text"]
+    assert not extract_route_outcome(result.events, result.strategy, max_iters=1).success
+    assert cancelled == ([True] if failure == "timeout" else [])
 
 
 def test_plan_with_unparseable_steps_falls_back_to_task() -> None:
@@ -648,7 +715,14 @@ def test_focus_returns_invalid_json_falls_back() -> None:
 
 
 def test_focused_schema_appends_newly_registered_tool() -> None:
-    model = ScriptedModel(
+    schemas: list[list[dict] | None] = []
+
+    class CaptureSchemas(ScriptedModel):
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            schemas.append(tools)
+            return await super().achat(messages, tools, tier=tier)
+
+    model = CaptureSchemas(
         [
             ModelResponse(content='["search_notes"]'),  # 聚焦
             ModelResponse(
@@ -672,6 +746,20 @@ def test_focused_schema_appends_newly_registered_tool() -> None:
     result = asyncio.run(core.run("搜索笔记里的周报"))
 
     assert "写作业" in result.final_text
+    assert model.calls == result.events[-1].data["model_calls"] == 4
+    focused = [event for event in result.events if event.data.get("kind") == "schema_focus"]
+    assert len(focused) == 1
+    assert focused[0].data["schema_focus"] == {
+        "mode": "focused", "reason": "selected",
+        "selected": ["search_notes", REQUEST_CAPABILITY], "available_count": 3,
+    }  # 发现新工具不能反向改写已发事件的 selected 快照
+    assert schemas[1] is not None and schemas[2] is not None
+    assert {schema["function"]["name"] for schema in schemas[1]} == {
+        "search_notes", REQUEST_CAPABILITY,
+    }
+    assert {schema["function"]["name"] for schema in schemas[2]} == {
+        "search_notes", REQUEST_CAPABILITY, "list_tasks",
+    }
 
 
 # ---------- meta-tool：request_capability 缺 need ----------
@@ -788,14 +876,27 @@ def test_unknown_meta_tool_defensive_reply() -> None:
     assert events[-1].type.value == "done"
 
 
-def test_discover_tools_none_returns_early() -> None:
-    loop = _bare_loop(ScriptedModel([]), register=[build_spec(search_notes)])
+def test_meta_runtime_contract_and_discovery_iterator_signature() -> None:
+    assert inspect.isabstract(MetaToolRuntime)
+    assert MetaToolRuntime.__abstractmethods__ == {
+        "_model_messages", "_model_chat", "_discover_tools",
+    }
+    assert not inspect.isabstract(AgentLoop)
+    assert inspect.iscoroutinefunction(MetaToolRuntime._model_messages)
+    assert inspect.iscoroutinefunction(MetaToolRuntime._model_chat)
+    assert not inspect.iscoroutinefunction(MetaToolRuntime._discover_tools)
+    assert inspect.isasyncgenfunction(AgentLoop._discover_tools)
+    assert get_type_hints(AgentLoop.astream)["return"] == AsyncGenerator[AgentEvent, None]
 
-    async def go() -> list:
-        out: list = []
-        async for ev in loop._discover_tools("天气", "查天气"):
-            out.append(ev)
-        return out
+
+def test_discover_tools_none_returns_early() -> None:
+    loop: AgentLoop = _bare_loop(ScriptedModel([]), register=[build_spec(search_notes)])
+
+    async def go() -> list[AgentEvent]:
+        iterator: AsyncIterator[AgentEvent] = loop._discover_tools("天气", "查天气")
+        assert isinstance(iterator, AsyncIterator)
+        assert not inspect.isawaitable(iterator)
+        return [event async for event in iterator]
 
     assert asyncio.run(go()) == []
 

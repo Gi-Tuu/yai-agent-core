@@ -41,5 +41,14 @@ def test_refuse_has_no_side_effect(tmp_path) -> None:
 
     types = _trace_types(tmp_path / "trace.jsonl")
     assert "permission_asked" in types
-    assert "tool_result" not in types
+    assert "permission_denied" in types
+    assert "tool_call" not in types
+    assert types.count("tool_result") == 1
+    records = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text(
+        encoding="utf-8"
+    ).splitlines()]
+    receipt = next(record["data"]["receipt"] for record in records
+                   if record["type"] == "tool_result")
+    assert receipt["status"] == "not_started"
+    assert receipt["receipt_hash"]
     assert types[-1] == "done"

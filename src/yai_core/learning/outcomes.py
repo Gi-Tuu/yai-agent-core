@@ -149,7 +149,7 @@ def extract_route_outcome(
         elif ev.type == EventType.ERROR:
             errors += 1
         elif ev.type == EventType.MODEL_MESSAGE:
-            if data.get("text"):
+            if data.get("kind") != "schema_focus" and data.get("text"):
                 final_text = data["text"]
         elif ev.type == EventType.DONE:
             done_strategy = data.get("strategy")

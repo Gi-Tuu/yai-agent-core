@@ -63,7 +63,8 @@ class GoldenTask:
 ## C. 还原现场：`collect_trace()`
 
 Agent 跑完只留下一堆事件。`scoring.py` 的 `collect_trace()` 把事件流还原成
-结构化的 `Trace`：
+结构化的 `Trace`。`MODEL_MESSAGE(kind="schema_focus")` 是内核的工具范围选择过程，
+不是模型答案，因此不进入 `model_texts`，也不能作为完成任务的证据：
 
 ```python
 @dataclass

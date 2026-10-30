@@ -230,8 +230,10 @@ def test_gate_approval_declined_runs_nothing() -> None:
     assert [e.type for e in events] == [
         EventType.PERMISSION_ASKED,
         EventType.PERMISSION_DENIED,
+        EventType.TOOL_RESULT,
     ]
-    assert events[-1].data["source"] == "approval"
+    assert events[1].data["source"] == "approval"
+    assert events[-1].data["receipt"]["status"] == "not_started"
 
 
 def test_policy_deny_beats_gate_approval() -> None:
@@ -254,7 +256,8 @@ def test_policy_deny_beats_gate_approval() -> None:
     )
     assert ok is False and "权限策略拒绝" in reason
     assert channel.confirms == []
-    assert [e.type for e in events] == [EventType.PERMISSION_DENIED]
+    assert [e.type for e in events] == [EventType.PERMISSION_DENIED, EventType.TOOL_RESULT]
+    assert events[-1].data["receipt"]["status"] == "not_started"
     assert events[0].data["source"] == "policy"
 
 
@@ -284,7 +287,8 @@ def test_gate_reject_happens_before_policy_and_handler() -> None:
     events, ok, reason = _run(_executor(spec, policy, channel), "refund", {"amount": 10})
     assert ok is False and "可信操作主体" in reason
     assert calls == [] and policy.seen == []
-    assert [e.type for e in events] == [EventType.PERMISSION_DENIED]
+    assert [e.type for e in events] == [EventType.PERMISSION_DENIED, EventType.TOOL_RESULT]
+    assert events[-1].data["receipt"]["status"] == "not_started"
     assert events[0].data["source"] == "gate"
 
 

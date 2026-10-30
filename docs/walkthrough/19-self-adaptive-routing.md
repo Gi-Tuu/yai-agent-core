@@ -215,6 +215,10 @@ def key(self) -> tuple:
 - `errors`：几个 `ERROR` 事件；
 - `final_text` / `done_strategy`：最终文案、最终收尾策略。
 
+`MODEL_MESSAGE(kind="schema_focus")` 是工具范围选择的过程消息，不参与最终答案提取。
+否则模型实际返回空答案时，非空的过程文案会掩盖 `final_empty`，让失败任务被奖励为成功。
+这条过滤不改变原有奖励公式或模型调用成本。
+
 ### 3.2 成败判定
 
 ```python

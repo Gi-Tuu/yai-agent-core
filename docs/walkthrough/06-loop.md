@@ -29,6 +29,11 @@ _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 - **完整参数结构不在这里**：系统提示只放轻量目录，完整 JSON Schema 在 function-calling 的
   `tools` 参数里按需注入（两层工具目录；源码里 `catalog_text()` 上方那两行注释就是这个意思）。
 
+`AgentLoop` 继承 `MetaToolRuntime` 承载发现、代码工具与重规划旁路；后者用真实依赖类型
+和抽象方法约束装配，不再靠 `Any` 绕过检查。`_discover_tools` 的抽象 `def` 返回
+`AsyncIterator` 是合法契约：含 `yield` 的 `async def` 调用后直接返回异步迭代器，
+不是需要先 `await` 的协程；不能把桩盲改成不含 `yield` 的 `async def`。
+
 ## 块 2 · 构造（`def __init__`）
 ```python
 class AgentLoop:
@@ -292,7 +297,7 @@ yield AgentEvent(EventType.PLAN_CREATED, {"steps": steps})
 ### 5.1 循环开头
 ```python
     if use_tools:
-        tools_schema, focused_names = await self._focus_tool_schemas(task, tier_counts)
+        tools_schema, focused_names, focus_decision = await self._focus_tool_schemas(task, tier_counts)
     else:
         tools_schema, focused_names = None, None
     ...
@@ -301,6 +306,11 @@ yield AgentEvent(EventType.PLAN_CREATED, {"steps": steps})
 - 工具 schema 不是一次性全量塞进去：`_focus_tool_schemas` 决定本轮注入哪份完整 schema——
   工具数不超过 `full_schema_budget`（默认 24）就一次给全量；超过就先让模型只看**轻量目录**
   挑出工具名，再只注入被选中那些的完整 schema（聚焦失败回退全量，宁多勿漏）。
+- 真正发起聚焦模型调用后，发一条 `MODEL_MESSAGE(kind="schema_focus")` 过程事件，
+  `schema_focus` 带 `mode`（focused/fallback）、`reason`（selected/empty_selection/error）、
+  `selected`（实际注入工具名快照，含保留 meta-tool）与 `available_count`。
+  预算内直接全量不多发事件；过程文本不回灌模型、不落答案历史、不参与学习或评测答案提取。
+  模型调用次数和路由策略不因这个标记改变；预算异常与取消继续传播。
 - `use_tools=False`（direct）时 `tools_schema` 为 None，模型本轮看不到任何工具。
 - `for iteration in range(self.max_iters)`：最多 n 轮；`iteration` 供成本感知选档用
   （执行到第 3 轮起仍未收尾就升 strong）。
@@ -400,6 +410,9 @@ yield AgentEvent(
 ```
 - 如果 6 轮都没结束，强制再问模型一次且**不给工具**（想调也没得调），逼它基于已有观察交答案。这保证 run 一定会终止。
 - 这一轮固定用标准档 `STANDARD`（源码里写死，不随成本感知升档），同样走 `_model_chat` 这一个出口。
+- 最终 `MODEL_MESSAGE` 附 `iteration_limit=True`、`max_iters`、`reason="iteration_limit"`。
+  收尾模型异常时先发带相同标记的空文本，再由 `astream` 统一报错；不伪造成功答案，
+  也不吞取消或预算熔断。上面的代码只展示原有调用顺序。
 
 ## 一张时序表（react 两轮的消息本变化）
 

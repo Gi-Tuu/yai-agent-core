@@ -427,6 +427,7 @@ class ToolGovernance:
     #: 即将对外发送的**文本参数路径**（dot-notation，如 ``body`` / ``message.text``）。
     #: 声明后内核在策略闸里做确定性比对：这些字段里的 URL 若只出现在不可信工具输出、
     #: 用户任务原文里没有，就拒绝本次外发（``PERMISSION_DENIED``，source=egress）。
+    #: 声明路径在导入/注册时按 schema 校验；直接执行必须由宿主建立 egress_scope。
     #: 这是数据，随能力清单走；不声明 = 不做这项保护（不按字段名猜）。
     egress_text: tuple[str, ...] = ()
 
@@ -445,6 +446,27 @@ _GOVERNANCE_KEYS = (
 
 _APPROVAL_KEYS = ("required", "prompt", "when")
 _APPROVAL_RULE_KEYS = ("param", "op", "value", "label")
+
+
+def validate_egress_paths(
+    name: str, paths: Any, input_schema: dict[str, Any] | None
+) -> None:
+    if not isinstance(paths, (list, tuple)):
+        raise ValueError(f"工具 {name!r} 的 governance.egress_text 必须是字符串数组")
+    for path in paths:
+        if (
+            not isinstance(path, str)
+            or not path
+            or any(not part or part != part.strip() for part in path.split("."))
+        ):
+            raise ValueError(f"工具 {name!r} 的 governance.egress_text 含非法路径: {path!r}")
+        target = schema_at_path(input_schema, path)
+        if target is None:
+            raise ValueError(
+                f"工具 {name!r} 的 egress_text 路径未在 input_schema 中声明: {path!r}"
+            )
+        if target.get("type") in ("integer", "number", "boolean", "null"):
+            raise ValueError(f"工具 {name!r} 的 egress_text 路径不包含文本: {path!r}")
 
 
 def _check_manifest_param_path(
@@ -664,6 +686,7 @@ def governance_from_manifest(
                 )
             paths.append(item.strip())
         egress_text = tuple(paths)
+    validate_egress_paths(name, egress_text, input_schema)
 
     audit_sensitive = raw.get("audit_sensitive", False)
     if not isinstance(audit_sensitive, bool):
