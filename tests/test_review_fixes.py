@@ -237,11 +237,17 @@ def test_url_with_newline_in_tool_output_is_recorded_and_denied() -> None:
 # ---------- P1-4：IDNA 有损映射不合并信任（faß.example ≠ fass.example） ----------
 
 def test_idna_lossy_mapping_does_not_expand_trust() -> None:
+    """任务原文授权的是 faß.example；工具输出与外发都是 fass.example。
+
+    Python 内置 IDNA 把 ß 映射成 ss：若按映射结果归一，faß 与 fass 的规范形
+    相同 → fass 被当成任务授权的 URL 放行（信任扩大到攻击者域名）。
+    修复后两者是独立身份：fass 只在不可信输出出现 → 外发拒绝。
+    """
     sent: list[str] = []
 
     def fetch_page(url: str) -> str:
         """Fetch a page."""
-        return "visit https://fass.example/article instead"
+        return "page mentions https://fass.example/x as a mirror"
 
     def send_direct_message(recipient: str, body: str) -> str:
         """Send a direct message."""
@@ -262,15 +268,15 @@ def test_idna_lossy_mapping_does_not_expand_trust() -> None:
                 content="",
                 tool_calls=[ToolCallRequest(id="s1", name="send_direct_message",
                                             arguments={"recipient": "A",
-                                                       "body": "go https://fass.example/article"})],
+                                                       "body": "mirror: https://fass.example/x"})],
             ),
             ModelResponse(content="完成"),
         ]
     )
     core = AgentCore(model, channel=CollectChannel())
     core.register_tools([fetch_spec, send_spec])
-    asyncio.run(core.run("读取 https://news.example/a 并转发给 A"))
-    assert sent == [], "IDNA 有损映射不能把 fass.example 并入 faß.example 的信任"
+    asyncio.run(core.run("读取 https://faß.example/x 的内容并转发给 A"))
+    assert sent == [], "IDNA 有损映射不能把 fass.example 并入 faß.example 的任务授权"
 
 
 # ---------- P2-5：带 userinfo 的 URL 照常进入来源记录 ----------

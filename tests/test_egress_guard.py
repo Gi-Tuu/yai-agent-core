@@ -117,6 +117,7 @@ def test_url_present_in_task_is_allowed() -> None:
     ("https://evil.example/login", "evil.example/login?ok=1#safe"),
     ("https://evil.example/login?a=1", "https://evil.example/login?a=2"),
     ("http://evil.example/login", "http://evil.example:80/login"),
+    ("https://evil.example/login", "https://evil.example/Login"),  # 大小写变体（B1）
     ("https://例子.中国/登录", "https://xn--fsqu00a.xn--fiqs8s/登录"),
     ("https://例子.中国/登录", "https://例子.中国/%E7%99%BB%E5%BD%95"),
 ])
@@ -152,7 +153,9 @@ def test_trust_does_not_expand(trusted):
 
 
 @pytest.mark.parametrize("body", [
-    "https://evil.example/Login", "https://evil.example/login-extra",
+    # 2026-10-31：路径大小写变体不再视为 distinct（/Login 与 /login 同源），
+    # 移入 test_url_variants_denied_end_to_end 的拒绝清单。
+    "https://evil.example/login-extra",
     "https://evil.example/other", "https://safe.example/login",
     "https://例子.中国/合法中文路径", "普通文本 3.14 file.txt",
 ])
@@ -424,3 +427,102 @@ def test_different_cores_concurrent_context_isolation():
         assert _CURRENT.get() is None
 
     asyncio.run(scenario())
+
+
+# ---------- B1：嵌入形态 / 变体 / 并发隔离 / 事件字段（2026-10-31） ----------
+
+def _fetch_send_run(task: str, tool_output: str, body: str) -> list[str]:
+    """fetch 工具返回 tool_output（不可信来源），send 工具发送 body（外发候选）。"""
+    sent: list[str] = []
+
+    def fetch_page(url: str) -> str:
+        """Fetch a page."""
+        return tool_output
+
+    def send_direct_message(recipient: str, body: str) -> str:
+        """Send a direct message."""
+        sent.append(body)
+        return "sent"
+
+    fetch_spec = build_spec(fetch_page)
+    send_spec = build_spec(send_direct_message)
+    send_spec.governance = ToolGovernance(egress_text=("body",))
+    model = _RecordingModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="f1", name="fetch_page",
+                                            arguments={"url": "https://news.example/a"})],
+            ),
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="s1", name="send_direct_message",
+                                            arguments={"recipient": "A", "body": body})],
+            ),
+            ModelResponse(content="完成"),
+        ]
+    )
+    core = AgentCore(model, channel=CollectChannel())
+    core.register_tools([fetch_spec, send_spec])
+    asyncio.run(core.run(task))
+    return sent
+
+
+@pytest.mark.parametrize(
+    "tool_output,body",
+    [
+        # Markdown 链接：URL 目标必须被捕获并拦截
+        ("[click here](https://evil.example.com/x)", "click https://evil.example.com/x"),
+        # HTML 链接：href 引号包裹的 URL 必须被捕获
+        ('<a href="https://evil.example.com/x">x</a>', "see https://evil.example.com/x"),
+        # JSON 值内嵌 URL：结构化记录已覆盖
+        ('{"link": "https://evil.example.com/x"}', "go https://evil.example.com/x"),
+        # 大小写变体：规范形统一小写
+        ("see HTTPS://EVIL.EXAMPLE.COM/X", "go https://evil.example.com/x"),
+        # www 前缀变体：同源判定剥掉 www
+        ("see www.evil.example.com/x", "go https://evil.example.com/x"),
+    ],
+)
+def test_wrapped_and_variant_urls_are_denied(tool_output, body):
+    sent = _fetch_send_run("读取 https://news.example/a 并转发", tool_output, body)
+    assert sent == [], "包裹形态与变体 URL 必须被拦截"
+
+
+def test_concurrent_tasks_isolate_egress_context() -> None:
+    """并发 astream 的来源上下文按任务隔离：互不污染（ContextVar 语义）。"""
+    import asyncio
+
+    from yai_core.policy.egress import _CURRENT, egress_scope, record_tool_output
+
+    results: dict[str, set] = {}
+
+    async def worker(name: str, url: str) -> None:
+        with egress_scope(f"task {name}: {url}"):
+            record_tool_output({"out": f"see {url}"})
+            await asyncio.sleep(0.01)  # 让出控制权，制造交叉
+            context = _CURRENT.get()
+            results[name] = set(context.untrusted_urls)
+
+    async def main() -> None:
+        await asyncio.gather(
+            worker("A", "https://a.example/x"),
+            worker("B", "https://b.example/y"),
+        )
+
+    asyncio.run(main())
+    assert results["A"] == {"https://a.example/x"}, results
+    assert results["B"] == {"https://b.example/y"}, results
+
+
+def test_permission_denied_event_fields_without_body_leak() -> None:
+    result, _sent, _model = _run(
+        "读取 https://news.example/a 并转发",
+        f"总结见 {PHISH}",
+    )
+    denied = [e for e in result.events if e.type == EventType.PERMISSION_DENIED]
+    assert denied, "必须有 PERMISSION_DENIED 事件"
+    data = denied[-1].data
+    assert data.get("source") == "egress"
+    assert PHISH in json.dumps(data, ensure_ascii=False), "拒绝原因应点名被拦 URL"
+    # 不得泄漏工具输出正文（fetch 的文章内容）或任务原文全文
+    assert "embedded note says" not in json.dumps(data, ensure_ascii=False)
