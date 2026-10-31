@@ -21,6 +21,14 @@
 
 ### Added
 
+- **生产安全默认值（D-1）**：`AgentCore` 默认配置（`auto_approve_tools=True` 且未显式
+  传入 `PermissionPolicy`）现在发 `ProductionSafetyWarning`，指路新增的
+  `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`。
+  行为零变化；v0.26 计划提供默认值翻转的弃用迁移路径（先 DeprecationWarning，
+  再翻转为 `auto_approve_tools=False`），是否执行待拍板。
+
+### Added
+
 - **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
   `docs/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，
   跑 `important_instructions` 攻击；报告给出 raw ASR / 结果达成 / 无警示三层口径、
