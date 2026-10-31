@@ -93,11 +93,33 @@ def _canonical(url: str) -> str:
     ))
 
 
+def _trim_glued_cjk(original: str) -> str:
+    """主机名区域里 ASCII 字母后紧粘的 CJK 视为主机名终止，截断匹配。
+
+    ``https://evil.example即可`` 这类"中文正文紧贴 URL"的写法，若让 CJK 进主机名，
+    IDNA 会把它编成另一个 xn-- 主机，与不可信来源记录对不上 → 漏拦。与裸域名
+    分支的语义一致（紧邻中文按正文后缀处理），这里把同样的规则用于 scheme 分支；
+    路径区域（/ 之后）的 CJK 是合法路径，不截断；纯 IDN 主机（例子.中国）不触发。
+    """
+    scheme_at = original.find("://")
+    start = scheme_at + 3 if scheme_at != -1 else 0
+    for i in range(start, len(original)):
+        ch = original[i]
+        if ch in "/?#":
+            break
+        prev = original[i - 1] if i > start else ""
+        if "\u3400" <= ch <= "\u9fff" and prev.isascii() and prev.isalnum():
+            return original[:i]
+    return original
+
+
 def find_urls(text: str) -> list[tuple[str, str]]:
     """返回 ``(原文, 规范化)``；保留国际化主机与路径，不按非 ASCII 截断。"""
     found: list[tuple[str, str]] = []
     for match in _URL_RE.finditer(text or ""):
-        original = match.group(0).rstrip(_TRAILING)
+        original = _trim_glued_cjk(match.group(0)).rstrip(_TRAILING)
+        if not original:
+            continue
         try:
             canonical = _canonical(original)
         except (ValueError, UnicodeError):
@@ -109,8 +131,11 @@ def find_urls(text: str) -> list[tuple[str, str]]:
 
 def _same_source(candidate: str, source: str) -> bool:
     target, known = urlsplit(candidate), urlsplit(source)
-    target_host = (target.hostname or "").encode("ascii").decode("idna").removeprefix("www.")
-    known_host = (known.hostname or "").encode("ascii").decode("idna").removeprefix("www.")
+    # 主机名统一经 _idna_host：ASCII 形取映射结果；有损映射（如 faß）保留原样
+    # 的非 ASCII 主机名也安全比较——不能直接 .encode("ascii")，否则外发检查
+    # 遇到这类 URL 会抛 UnicodeEncodeError（2026-10-31 B1 审计发现）。
+    target_host = _idna_host(target.hostname or "").removeprefix("www.")
+    known_host = _idna_host(known.hostname or "").removeprefix("www.")
     if target.port != known.port:
         return False
     if target_host != known_host:
@@ -121,12 +146,16 @@ def _same_source(candidate: str, source: str) -> bool:
             and all("\u3400" <= char <= "\u9fff" for char in suffix)
         ):
             return False
-    if target.path == known.path:
+    # 路径大小写不敏感：服务器路径虽区分大小写，但攻击者控制工具输出与外发
+    # 两侧，/X 与 /x 的差异是"简单格式变换"，不能成为绕过同源匹配的手段。
+    if target.path.lower() == known.path.lower():
         return True
     # 只在已知源路径后识别紧邻中文正文；绝不裁掉 ASCII 路径。
-    suffix = target.path.removeprefix(known.path)
+    known_lower = known.path.lower()
+    target_lower = target.path.lower()
+    suffix = target_lower.removeprefix(known_lower)
     return (
-        target.path.startswith(known.path)
+        target_lower.startswith(known_lower)
         and bool(suffix)
         and all("\u3400" <= char <= "\u9fff" for char in suffix)
     )
