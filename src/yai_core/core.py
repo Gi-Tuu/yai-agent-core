@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import warnings
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -61,6 +62,10 @@ from yai_core.types import AgentEvent, EventType, RunResult, Strategy, Subject, 
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
 FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
+
+
+class ProductionSafetyWarning(UserWarning):
+    """宿主未显式配置权限策略时的生产安全提示（不改变行为，只把风险说在明面上）。"""
 
 
 class AgentCore:
@@ -158,6 +163,18 @@ class AgentCore:
         self.memory = memory or InMemoryStore()
         self.discovery = discovery
         self.policy = policy or AllowlistPolicy(mode="allow_all" if auto_approve_tools else "auto")
+        # 生产安全提示（B2 / v0.25 审计 D-1）：allow_all 是开发形态的默认值，
+        # 对公网/多用户宿主是"所有工具免审批全放行"。宿主没有显式传入自己的
+        # PermissionPolicy 时提醒一次——不改变行为，只把风险说在明面上。
+        if policy is None and auto_approve_tools:
+            warnings.warn(
+                "AgentCore 正在使用 allow_all 默认权限策略（auto_approve_tools=True）："
+                "所有工具将免审批自动执行。生产 / 多用户环境请显式传入 "
+                "PermissionPolicy（见 docs/production-permissions.md），"
+                "或设置 auto_approve_tools=False。",
+                ProductionSafetyWarning,
+                stacklevel=2,
+            )
         # 路由模型注入：
         # - False（默认）：永不 LLM 分类，零额外模型调用、离线完全确定；
         # - True：总是 LLM 分类，失败回退规则；

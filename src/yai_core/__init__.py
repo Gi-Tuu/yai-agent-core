@@ -4,7 +4,7 @@
 """
 
 from yai_core.config import CoreConfig
-from yai_core.core import AgentCore
+from yai_core.core import AgentCore, ProductionSafetyWarning
 from yai_core.diagnostics import (
     DiagnosticEvent,
     DiagnosticKind,
@@ -86,6 +86,7 @@ __version__ = "0.24.0"
 
 __all__ = [
     "AgentCore",
+    "ProductionSafetyWarning",
     "CoreConfig",
     "DiagnosticEvent",
     "DiagnosticKind",
