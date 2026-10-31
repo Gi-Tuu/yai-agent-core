@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 
 import pytest
@@ -295,7 +296,14 @@ def test_otel_span_attributes_do_not_leak_sensitive_arguments() -> None:
     events, ok, _ = asyncio.run(
         executor.execute(
             "transfer_money",
-            {"amount": 100, "api_key": "offline-placeholder-key"},
+            {
+                "amount": 100,
+                # 凭据从环境注入（离线占位值）：值本身无关紧要，测试验证的是
+                # "声明了 sensitive 的参数不得以明文进入任何事件属性"
+                "api_key": os.environ.setdefault(
+                    "YAI_TEST_OTEL_REDACTION_KEY", "offline-placeholder-key"
+                ),
+            },
             call_id="c1",
         )
     )
