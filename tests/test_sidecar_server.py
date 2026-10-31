@@ -688,3 +688,44 @@ def test_module_entrypoint_runs_main(monkeypatch) -> None:
     with pytest.raises(SystemExit) as exit_info:
         runpy.run_module("yai_core.sidecar", run_name="__main__")
     assert exit_info.value.code == 0
+
+
+# ---------- B3：会话级 Subject 绑定（防请求参数伪造身份） ----------
+
+def test_session_subject_pinning_rejects_per_run_subject() -> None:
+    """initialize 绑定可信身份后，agent/run 参数里的 subject 必须被拒绝。"""
+    h = Harness()
+    asyncio.run(h.call("initialize", {
+        "subject": {"subject_id": "user-42", "display_name": "真身"},
+    }))
+
+    params = {
+        "task": "查一下",
+        "subject": {"subject_id": "attacker", "display_name": "伪造身份"},
+    }
+    response = asyncio.run(h.call("agent/run", params))
+    assert response["error"]["code"] == INVALID_PARAMS
+    assert "Subject" in response["error"]["message"]
+
+
+def test_session_subject_used_for_runs() -> None:
+    """绑定后运行使用会话身份（不抛错即通过；身份注入路径与宿主一致）。"""
+    h = Harness()
+    asyncio.run(h.call("initialize", {"subject": {"subject_id": "user-42"}}))
+    response = asyncio.run(h.call("agent/run", {"task": "跑一个任务"}))
+    assert "error" not in response
+    # 等待后台任务收尾，避免事件循环告警
+    run = h.server._active_run
+    if run is not None:
+        asyncio.run(asyncio.wait_for(asyncio.shield(run), timeout=5))
+
+
+def test_without_session_subject_params_still_accepted() -> None:
+    """未绑定时保持既有语义：可信父进程按参数注入身份（向后兼容）。"""
+    h = Harness()
+    asyncio.run(h.call("initialize", {}))
+    response = asyncio.run(h.call("agent/run", {
+        "task": "查一下",
+        "subject": {"subject_id": "user-7"},
+    }))
+    assert "error" not in response

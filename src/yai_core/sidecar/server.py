@@ -177,6 +177,10 @@ class SidecarServer:
         self._bridges: list[Any] = []
         self._channel: SidecarChannel | None = None
         self._initialized = False
+        # 会话级可信身份：initialize 时由宿主（可信父进程）绑定；绑定后
+        # per-run 参数里的 subject 一律拒绝——身份来自可信宿主配置，
+        # 不来自每次请求的可变参数（防多租户部署下的身份伪造）。
+        self._session_subject: Subject | None = None
         self._closed = False
         self._stopping = False
         self._active_run: asyncio.Task[None] | None = None
@@ -318,6 +322,11 @@ class SidecarServer:
         if self._closed:
             raise RpcError(SHUTTING_DOWN, "sidecar 已关闭")
 
+        session_subject = params.get("subject")
+        if session_subject is not None:
+            if not isinstance(session_subject, dict):
+                raise RpcError(INVALID_PARAMS, "subject 必须是 object")
+            self._session_subject = _build_subject(session_subject)
         model_config = params.get("model")
         if model_config is None:
             model_config = {}
@@ -434,7 +443,18 @@ class SidecarServer:
         task_text = params.get("task")
         if not isinstance(task_text, str) or not task_text.strip():
             raise RpcError(INVALID_PARAMS, "task 必须是非空字符串")
-        subject = _build_subject(params.get("subject"))
+        subject: Subject | None = self._session_subject
+        if subject is not None:
+            if params.get("subject") is not None:
+                raise RpcError(
+                    INVALID_PARAMS,
+                    "本会话已在 initialize 时绑定可信 Subject，"
+                    "请求参数里的 subject 会被拒绝（防身份伪造）",
+                )
+        else:
+            # 未绑定会话身份：保持既有语义（stdio 父进程是可信宿主，
+            # 由它负责把已认证用户映射成 Subject；见 docs/adr/0002）。
+            subject = _build_subject(params.get("subject"))
 
         run_id = uuid.uuid4().hex[:12]
         self._active_run_id = run_id
