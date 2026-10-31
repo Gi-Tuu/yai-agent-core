@@ -84,6 +84,7 @@ def test_separate_core_instances_run_in_parallel() -> None:
         core.register_tools([spec])
         return core
 
+    spec = build_spec(_make_slow_tool(intervals, delay=0.5))
     core_a, core_b = make_core(), make_core()
 
     async def main() -> float:
@@ -95,7 +96,9 @@ def test_separate_core_instances_run_in_parallel() -> None:
 
     assert len(intervals) == 2
     assert _overlap(intervals[0], intervals[1]), "独立 core 实例应当能并行"
-    assert elapsed < 0.32, f"并行应约 0.2s，实际 {elapsed:.3f}s"
+    # 判别窗口：并行 ≈0.5s、串行 ≈1.0s，阈值取 0.75——两侧都有余量，
+    # 容忍 CI Windows 跑分器的调度抖动（此前 0.2/0.4/0.32 在 0.326s 处假红）。
+    assert elapsed < 0.75, f"并行应约 0.5s，实际 {elapsed:.3f}s"
 
 
 def test_closing_astream_early_releases_lock() -> None:
