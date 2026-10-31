@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 import pytest
@@ -268,3 +269,38 @@ def test_load_otel_without_explicit_tracer_uses_global() -> None:
     trace_mod, tracer = _load_otel(None)
     assert tracer is not None
     assert hasattr(trace_mod, "StatusCode")
+
+
+def test_otel_span_attributes_do_not_leak_sensitive_arguments() -> None:
+    """B7 审计 B-4：OTel span 属性不得携带敏感工具参数明文。"""
+    from yai_core import build_spec
+    from yai_core.channels import CollectChannel
+    from yai_core.policy import AllowlistPolicy
+    from yai_core.tools import ToolExecutor, ToolRegistry
+    from yai_core.types import ToolGovernance
+
+    async def transfer_money(amount: int, api_key: str = "") -> str:
+        """转账。"""
+        return "ok"
+
+    spec = build_spec(transfer_money)
+    spec.governance = ToolGovernance(sensitive=("api_key",))
+    registry = ToolRegistry()
+    registry.register_many([spec])
+    executor = ToolExecutor(
+        registry,
+        AllowlistPolicy(("transfer_money",), mode="allow_all"),
+        CollectChannel(),
+    )
+    events, ok, _ = asyncio.run(
+        executor.execute(
+            "transfer_money",
+            {"amount": 100, "api_key": "offline-placeholder-key"},
+            call_id="c1",
+        )
+    )
+    assert ok
+    serialized = json.dumps([e.data for e in events], ensure_ascii=False, default=str)
+    assert "offline-placeholder-key" not in serialized, (
+        "敏感参数（已声明 sensitive）不得以明文进入任何事件属性"
+    )

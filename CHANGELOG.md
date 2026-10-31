@@ -5,7 +5,7 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.25.0] - 2026-10-31
 
 ### Fixed
 
@@ -28,6 +28,26 @@
   再翻转为 `auto_approve_tools=False`），是否执行待拍板。
 
 ### Added
+
+- **外发来源闸边界加固（B1）**：主机名区域 ASCII 后紧粘 CJK 视为主机名终止；
+  同源判定路径大小写不敏感；`_same_source` 经 `_idna_host` 兼容非 ASCII 主机
+  （修复有损映射引入的 UnicodeEncodeError）；Markdown/HTML/JSON 包裹、
+  大小写与 www 变体、并发任务隔离、PERMISSION_DENIED 事件字段均有回归测试。
+- **生产安全默认值（B2，D-1）**：`AgentCore` 默认配置发 `ProductionSafetyWarning`
+  指路 `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`；
+  默认值零变化，v0.26 弃用迁移路径草案已记。
+- **sidecar 会话级 Subject 绑定（B3）**：initialize 绑定可信身份后，agent/run
+  参数里的 subject 直接拒绝（防多租户身份伪造）；ADR 0002 明确三层边界归属。
+- **AgentDojo 完善（B4）**：`--runs N` 重复采样（mean±pstdev 聚合）、`--attacks`
+  多攻击循环、逐用例四分类指标、独立聚合模块（离线测试覆盖）。
+- **生产宿主集成示例（B6）**：`examples/host_production/`——Subject 注入与隔离、
+  白名单+外发治理、HostStateProvider、SSE 流式+权限拒绝、生命周期 aclose、
+  并发多实例，4 项端到端测试。
+- **执行审计持久化边界文档**（`docs/execution-audit-persistence.md`，B7）与
+  OTel span 属性防敏感参数泄漏回归测试。
+- **IMPLEMENTATION_STATUS 校准 + ADR 0003（ACC 边界）/ 0002（运行时认证边界）**。
+
+### Fixed
 
 - **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
   `docs/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，

@@ -246,7 +246,16 @@
 - **仓库内容整理**：部署手册迁到 `docs/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
   `/.well-known/yai-verification.json`。
 
-### v0.24.0 — 把"可信"做进三个层面（tag 2026-10-27，当前发布版本）
+### v0.25.0 — Production Readiness（tag 2026-10-31，当前发布版本）
+
+- 复审 8 类加固（收据链熔断载体 / 单一参数快照 / 外发结构化记录与 IDNA、userinfo / 限尾伪协议 / 路由学习限尾标记）
+- 外发来源闸边界（紧粘 CJK 截断、路径大小写不敏感、非 ASCII 主机崩溃修复、嵌入形态与并发隔离测试）
+- 生产安全默认值（ProductionSafetyWarning + 生产权限指南与可运行示例）
+- sidecar 会话级 Subject 绑定 + ADR 0002（运行时认证边界）
+- AgentDojo 重复采样 / 多攻击循环 / 四分类指标 + ADR 0003（ACC 边界）
+- 生产宿主集成示例（examples/host_production/）
+
+### v0.24.0 — 把"可信"做进三个层面（tag 2026-10-27）
 
 - **成本**：Anthropic 适配层启用提示缓存（`cache_control: ephemeral`），契约不变。
 - **注入**：工具输出按不可信数据处理（`tool_output_guard`，默认开）；新增离线注入回归集
