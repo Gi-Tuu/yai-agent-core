@@ -27,6 +27,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from aggregate import aggregate_runs
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -87,6 +89,13 @@ def main() -> int:
     parser.add_argument("--suites", default="banking")
     parser.add_argument("--mode", choices=("clean", "inject", "both"), default="both")
     parser.add_argument("--attack", default="important_instructions")
+    parser.add_argument(
+        "--attacks",
+        default="",
+        help="逗号分隔多攻击循环（优先于 --attack），"
+             "如 important_instructions,direct_prompt_injection",
+    )
+    parser.add_argument("--runs", type=int, default=1, help="重复采样次数（≥1），聚合均值±标准差")
     parser.add_argument("--no-guard", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--user-tasks", default="")
@@ -131,6 +140,8 @@ def main() -> int:
         "created_at": datetime.now(UTC).isoformat(),
         "benchmark_version": args.suite_version,
         "attack": args.attack if args.mode != "clean" else None,
+        "attacks": args.attacks or None,
+        "runs": max(1, args.runs),
         "tool_output_guard": not args.no_guard,
         "model": os.getenv("LLM_MODEL"),
         "base_url": os.getenv("OPENAI_BASE_URL"),
@@ -165,29 +176,49 @@ def main() -> int:
             )
 
         if args.mode in ("inject", "both"):
-            attack = load_attack(args.attack, suite, pipeline)
-            started = time.perf_counter()
-            with OutputLogger(str(run_root), live=None):
-                attacked = benchmark_suite_with_injections(
-                    pipeline,
-                    suite,
-                    attack,
-                    logdir=run_root,
-                    force_rerun=not args.force,
-                    user_tasks=user_tasks or None,
-                    injection_tasks=injection_tasks or None,
-                    benchmark_version=args.suite_version,
-                )
-            elapsed = time.perf_counter() - started
-            summary = _summarize(attacked)
-            summary["elapsed_seconds"] = round(elapsed, 1)
-            suite_payload["inject"] = summary
-            suite_payload["cases"] = _case_rows(attacked)
-            print(
-                f"[inject] utility={summary['utility']} asr={summary['asr']} "
-                f"n={summary['cases']} elapsed={elapsed:.0f}s",
-                flush=True,
+            attacks = (
+                [a.strip() for a in args.attacks.split(",") if a.strip()]
+                if args.attacks
+                else [args.attack]
             )
+            for attack_name in attacks:
+                runs_summaries: list[dict] = []
+                all_cases: list[dict] = []
+                for run_index in range(max(1, args.runs)):
+                    attack = load_attack(attack_name, suite, pipeline)
+                    started = time.perf_counter()
+                    with OutputLogger(str(run_root), live=None):
+                        attacked = benchmark_suite_with_injections(
+                            pipeline,
+                            suite,
+                            attack,
+                            logdir=run_root,
+                            force_rerun=not args.force and run_index == 0,
+                            user_tasks=user_tasks or None,
+                            injection_tasks=injection_tasks or None,
+                            benchmark_version=args.suite_version,
+                        )
+                    elapsed = time.perf_counter() - started
+                    summary = _summarize(attacked)
+                    summary["elapsed_seconds"] = round(elapsed, 1)
+                    summary["run_index"] = run_index
+                    runs_summaries.append(summary)
+                    cases = _case_rows(attacked)
+                    for row in cases:
+                        row["run_index"] = run_index
+                        row["attack"] = attack_name
+                    all_cases.extend(cases)
+                    print(
+                        f"[inject:{attack_name}#{run_index}] "
+                        f"utility={summary['utility']} asr={summary['asr']} "
+                        f"n={summary['cases']} elapsed={elapsed:.0f}s",
+                        flush=True,
+                    )
+                suite_payload[f"inject:{attack_name}"] = {
+                    "runs": runs_summaries,
+                    "aggregate": aggregate_runs(runs_summaries),
+                    "cases": all_cases,
+                }
 
         payload["suites"][suite_name] = suite_payload
         payload["pipeline_errors"] = pipeline.error_count

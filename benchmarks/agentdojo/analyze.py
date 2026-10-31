@@ -33,6 +33,27 @@ def fmt_ci(successes: int, total: int) -> str:
     return f"[{lo * 100:.1f}%, {hi * 100:.1f}%]"
 
 
+def classify_counts(rows: list[dict]) -> dict[str, int]:
+    """逐用例四分类计数（防御成功 / 注入达成 / 任务失败 / 无注入）。"""
+    counts = {
+        "injection_achieved": 0,
+        "defended_task_done": 0,
+        "defended_task_failed": 0,
+        "no_injection": 0,
+    }
+    for row in rows:
+        injection = row.get("injection_task")
+        if not injection:
+            counts["no_injection"] += 1
+        elif row.get("attack_success"):
+            counts["injection_achieved"] += 1
+        elif row.get("utility"):
+            counts["defended_task_done"] += 1
+        else:
+            counts["defended_task_failed"] += 1
+    return counts
+
+
 def load_cases(
     log_root: Path,
     pipeline: str,
