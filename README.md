@@ -212,9 +212,10 @@ uv sync --extra desktop --extra llm
 
 > 目录名保留历史编号（a/c/d/e/f/g/i/j/k/l），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
-## 在线 HTTP API
+## HTTP API（可选，自托管）
 
-线上实例：**https://yai-agent-core.onrender.com**（免费层冷启动约 30–90s）
+FastAPI Battery 提供以下端点；部署方式（Docker / Render Blueprint / VPS + Caddy）见
+[`docs/demo-deployment.md`](docs/demo-deployment.md)。
 
 ```bash
 GET  /health                  # {"status":"ok", ...}
@@ -247,7 +248,7 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成，当前发布版本）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **下个版本候选（未排序）**：跨实例分布式限流、生产级沙箱适配器递进（gVisor / 微 VM / 远程执行）、组合工具的可视化编排（宿主侧）、公网实例的暴露面收口、多模态资源引用的宿主侧解析器推广
+- **下个版本候选（未排序）**：跨实例分布式限流、生产级沙箱适配器递进（gVisor / 微 VM / 远程执行）、组合工具的可视化编排（宿主侧）、多模态资源引用的宿主侧解析器推广
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 
 ## 许可证

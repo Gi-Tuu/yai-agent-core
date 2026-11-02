@@ -4,9 +4,8 @@
 # 说明：
 # - PORT 由 Render 自动注入（默认 10000），Dockerfile 的 CMD 已兼容；
 # - RENDER_GIT_COMMIT 由 Render 自动注入为本次部署的 commit，/health 直接读取，无需手填；
-# - 免费实例 15 分钟无流量会休眠（冷启动实测约 50 秒，见 .github/workflows/keepwarm.yml
-#   的实际唤醒频率说明）。重要演示前先手动访问一次 /health；正式部署建议常驻 VPS
-#   （见 docs/demo-deployment.md）。
+# - 免费实例 15 分钟无流量会休眠（冷启动实测约 50 秒）。重要演示前先手动访问一次 /health；
+#   正式部署建议常驻 VPS（见 docs/demo-deployment.md）。
 services:
   - type: web
     name: yai-agent-core
