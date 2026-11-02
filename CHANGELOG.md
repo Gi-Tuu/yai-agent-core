@@ -5,6 +5,13 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Removed
+
+- **Render 公网演示实例**：删除线上的 `yai-agent-core` 服务，移除 `.github/workflows/keepwarm.yml`
+  保活任务与 README 中英的线上实例入口；`render.yaml` 保留为自托管部署模板。
+
 ## [v0.25.0] - 2026-10-31
 
 ### Fixed
@@ -18,37 +25,6 @@
   记录；迭代上限收尾的伪协议文本 fail-closed（不再混入最终答案与历史）；
   路由学习去掉工具计数启发式的成败否决，改用限尾收尾标记（一轮多工具的
   成功任务不再被误判失败），benchmark 模拟轨迹同步补上限尾标记。
-
-### Added
-
-- **生产安全默认值（D-1）**：`AgentCore` 默认配置（`auto_approve_tools=True` 且未显式
-  传入 `PermissionPolicy`）现在发 `ProductionSafetyWarning`，指路新增的
-  `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`。
-  行为零变化；v0.26 计划提供默认值翻转的弃用迁移路径（先 DeprecationWarning，
-  再翻转为 `auto_approve_tools=False`），是否执行待拍板。
-
-### Added
-
-- **外发来源闸边界加固（B1）**：主机名区域 ASCII 后紧粘 CJK 视为主机名终止；
-  同源判定路径大小写不敏感；`_same_source` 经 `_idna_host` 兼容非 ASCII 主机
-  （修复有损映射引入的 UnicodeEncodeError）；Markdown/HTML/JSON 包裹、
-  大小写与 www 变体、并发任务隔离、PERMISSION_DENIED 事件字段均有回归测试。
-- **生产安全默认值（B2，D-1）**：`AgentCore` 默认配置发 `ProductionSafetyWarning`
-  指路 `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`；
-  默认值零变化，v0.26 弃用迁移路径草案已记。
-- **sidecar 会话级 Subject 绑定（B3）**：initialize 绑定可信身份后，agent/run
-  参数里的 subject 直接拒绝（防多租户身份伪造）；ADR 0002 明确三层边界归属。
-- **AgentDojo 完善（B4）**：`--runs N` 重复采样（mean±pstdev 聚合）、`--attacks`
-  多攻击循环、逐用例四分类指标、独立聚合模块（离线测试覆盖）。
-- **生产宿主集成示例（B6）**：`examples/host_production/`——Subject 注入与隔离、
-  白名单+外发治理、HostStateProvider、SSE 流式+权限拒绝、生命周期 aclose、
-  并发多实例，4 项端到端测试。
-- **执行审计持久化边界文档**（`docs/execution-audit-persistence.md`，B7）与
-  OTel span 属性防敏感参数泄漏回归测试。
-- **IMPLEMENTATION_STATUS 校准 + ADR 0003（ACC 边界）/ 0002（运行时认证边界）**。
-
-### Fixed
-
 - **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
   `docs/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，
   跑 `important_instructions` 攻击；报告给出 raw ASR / 结果达成 / 无警示三层口径、
@@ -57,21 +33,6 @@
 - **外发 URL 来源闸**（`ToolGovernance.egress_text`）：声明要外发的文本参数路径后，
   内核在策略闸比对任务原文与工具输出；URL 只在不可信工具输出出现、任务原文没有时，
   直接拒绝并发出 `PERMISSION_DENIED`（`source=egress`），不依赖模型自己加警示。
-
-### Changed
-
-- **决策过程可观测**：工具 schema 聚焦与回退通过既有 `MODEL_MESSAGE` 的 `schema_focus`
-  过程标记公开；迭代上限收尾附明确标记。过程消息不进入最终答案、学习成功判据或评测答案文本。
-  保持 21 类事件及原有模型调用次数；meta-tool 依赖改为真实类型和抽象契约。
-- **执行收尾合并**：普通、代码与组合工具的密封/挂载/缓存共用 `_finalize_execution`；
-  审批后预览复核共用检查入口，保留各调用方的收据归属与取消/预算语义。
-- **loop / executor 旁路拆分**：执行收据哈希链、postcondition 改判、`PERMISSION_DENIED`
-  组装移到 `tools/execution_audit.py`；meta-tool（发现/代码工具/重规划）移到
-  `kernel/meta_tools.py`。该次拆分不改主循环语义与事件顺序；拆分时 radon：loop MI B(17.82)、
-  executor MI B(10.01)、`_execute_impl` CC 34（原 F 50）；不是后续修订的实时度量。
-
-### Fixed
-
 - **拒绝收据完整性**：gate、egress、policy、approval 等拒绝均保留本轮 `not_started`
   收据；缓存依赖拒绝补 `replay_dependency` 事件，父收据不再有覆盖子收据的路径。
 - **外发声明校验**：清单导入和注册时验证 schema 路径；显式数组下标与自动下钻统一取值。
@@ -86,6 +47,40 @@
   收据；组合工具人工审批拒绝同样发 `PERMISSION_DENIED`，不执行子步骤。
 - **host_e 学习状态跨重启落盘竞态**：SSE 的 `done` 现在只在学习状态写盘之后下发，
   避免任务结束瞬间读到 `route_learning.json` 不存在；不改变学习算法。
+
+### Added
+
+- **生产安全默认值（D-1）**：`AgentCore` 默认配置（`auto_approve_tools=True` 且未显式
+  传入 `PermissionPolicy`）现在发 `ProductionSafetyWarning`，指路新增的
+  `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`。
+  行为零变化；v0.26 计划提供默认值翻转的弃用迁移路径（先 DeprecationWarning，
+  再翻转为 `auto_approve_tools=False`），是否执行待拍板。
+- **外发来源闸边界加固（B1）**：主机名区域 ASCII 后紧粘 CJK 视为主机名终止；
+  同源判定路径大小写不敏感；`_same_source` 经 `_idna_host` 兼容非 ASCII 主机
+  （修复有损映射引入的 UnicodeEncodeError）；Markdown/HTML/JSON 包裹、
+  大小写与 www 变体、并发任务隔离、PERMISSION_DENIED 事件字段均有回归测试。
+- **sidecar 会话级 Subject 绑定（B3）**：initialize 绑定可信身份后，agent/run
+  参数里的 subject 直接拒绝（防多租户身份伪造）；ADR 0002 明确三层边界归属。
+- **AgentDojo 完善（B4）**：`--runs N` 重复采样（mean±pstdev 聚合）、`--attacks`
+  多攻击循环、逐用例四分类指标、独立聚合模块（离线测试覆盖）。
+- **生产宿主集成示例（B6）**：`examples/host_production/`——Subject 注入与隔离、
+  白名单+外发治理、HostStateProvider、SSE 流式+权限拒绝、生命周期 aclose、
+  并发多实例，4 项端到端测试。
+- **执行审计持久化边界文档**（`docs/execution-audit-persistence.md`，B7）与
+  OTel span 属性防敏感参数泄漏回归测试。
+- **IMPLEMENTATION_STATUS 校准 + ADR 0003（ACC 边界）/ 0002（运行时认证边界）**。
+
+### Changed
+
+- **决策过程可观测**：工具 schema 聚焦与回退通过既有 `MODEL_MESSAGE` 的 `schema_focus`
+  过程标记公开；迭代上限收尾附明确标记。过程消息不进入最终答案、学习成功判据或评测答案文本。
+  保持 21 类事件及原有模型调用次数；meta-tool 依赖改为真实类型和抽象契约。
+- **执行收尾合并**：普通、代码与组合工具的密封/挂载/缓存共用 `_finalize_execution`；
+  审批后预览复核共用检查入口，保留各调用方的收据归属与取消/预算语义。
+- **loop / executor 旁路拆分**：执行收据哈希链、postcondition 改判、`PERMISSION_DENIED`
+  组装移到 `tools/execution_audit.py`；meta-tool（发现/代码工具/重规划）移到
+  `kernel/meta_tools.py`。该次拆分不改主循环语义与事件顺序；拆分时 radon：loop MI B(17.82)、
+  executor MI B(10.01)、`_execute_impl` CC 34（原 F 50）；不是后续修订的实时度量。
 
 ## [v0.24.0] - 2026-10-27
 

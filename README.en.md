@@ -237,9 +237,10 @@ policy**; the kernel's default policy allows everything.</p>
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
 
-## Online HTTP API
+## HTTP API (optional, self-hosted)
 
-Live instance: **https://yai-agent-core.onrender.com** (free tier cold start ~30–90s)
+The FastAPI Battery exposes the endpoints below; deployment options (Docker / Render Blueprint /
+VPS + Caddy) are covered in [`docs/deployment-scaling.en.md`](docs/deployment-scaling.en.md).
 
 ```bash
 GET  /health                  # {"status":"ok", ...}
@@ -315,8 +316,7 @@ For optional environment variables (persistent memory, history trimming / TTL, r
 - **v0.25.0 (done, current release)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
 - **Next-version candidates (unordered)**: cross-instance distributed rate limiting; production-grade
   sandbox adapter tiers (gVisor / micro-VM / remote execution); visual composition authoring (host
-  side); closing the public instance's exposure surface; wider adoption of host-side resolvers for
-  multimodal resource references
+  side); wider adoption of host-side resolvers for multimodal resource references
 - **v1.0 (planned)**: flow back in as the agent kernel of the AI Companion project
   [AMBRACE](https://github.com/Gi-Tuu/AMBRACE)
 

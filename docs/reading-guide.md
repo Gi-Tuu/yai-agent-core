@@ -8,7 +8,7 @@
 ## 0. 先跑起来（10 分钟）
 
 ```powershell
-cd "D:\YAI Agent Core"
+cd "E:\Competition\YAI Agent Core"
 .\.venv\Scripts\python.exe scripts\smoke_test.py
 ```
 
@@ -101,7 +101,7 @@ spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.p
 
 ## 3. 动手实验环境
 
-- 推荐用 VS Code 打开 `D:\YAI Agent Core`，在 `loop.py` 行号左侧点一下设断点，F5 调试 `scripts/smoke_test.py`。
+- 推荐用 VS Code 打开 `E:\Competition\YAI Agent Core`，在 `loop.py` 行号左侧点一下设断点，F5 调试 `scripts/smoke_test.py`。
 - 常用命令：
   ```powershell
   .\.venv\Scripts\python.exe -m pytest            # 全部测试
