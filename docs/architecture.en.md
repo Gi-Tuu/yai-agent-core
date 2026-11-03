@@ -224,6 +224,39 @@ All of the following have shipped: zero hard kernel dependencies, and no change 
 - **Office document text extraction (v0.21):** `extract_text()` in `src/yai_core/batteries/office_text.py:50`: docx/xlsx/pptx go through the stdlib zipfile + ElementTree (zero dependency), PDF through the optional pypdf; the three safety gates (member allowlist, DOCTYPE/ENTITY rejection, size caps) are stated at the top of the file.
 - **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:214` (the timeout takes the stricter setting) and `tools/executor.py:584` (the rate gate runs before authorization).
 
+### 2.12 v0.26 execution adapters and verifiable outcomes (Unreleased)
+
+v0.26 adds "actually operate external systems and verify the result" as **optional adapters**, without
+changing the kernel's dependencies or public contracts:
+
+- **Browser Provider (`src/yai_core/integrations/browser/`)** depends only on a `BrowserBackend`
+  Protocol. Element refs are snapshot-versioned (`s<N>:<i>`) and expire when the page changes; eight
+  tools (observe / click / type / select / tabs / switch / wait / open) register into `ToolRegistry`
+  and go through `ToolExecutor` for validation, policy, approval, receipts and events. Actions report
+  `executed + changed / no_observable_change / unknown` and never claim task success. The real backend
+  (`playwright_backend.py`) is an optional `[browser]` extra (**not yet verified against a real browser**).
+- **Windows Desktop Provider (`src/yai_core/integrations/desktop/`)** follows the same pattern: UIA
+  semantic patterns first, geometry clicks off by default, snapshot-versioned control refs, high-risk
+  control names refused, process/title allowlists, foreground guard before physical input, and
+  `pause/resume` for user takeover; it never crosses UAC / the secure desktop. The `[windows]` extra
+  provides the pywinauto backend; `scripts/windows_uia_smoke.py` has passed one real-machine UIA smoke
+  run (self-created window → observe → Invoke → callback verification).
+- **Outcome Verification (`src/yai_core/verification.py` + `types.py`)** separates "tool call succeeded"
+  from "goal achieved" via `Evidence` / `VerificationResult` and an `OutcomeVerifier` contract.
+  `AgentCore(outcome_verifier=...)` collects receipts and explicit tool `evidence` before `DONE` and
+  attaches the verdict to the `DONE` event and `RunResult.verification`; without a verifier it stays
+  `None`, and a failing verifier degrades to `not_verifiable` with a diagnostic — never a retry.
+- **Browser extension host + Native Messaging Bridge (`extension/`, `sidecar/native_bridge.py`)**: the
+  extension is only a Host; a standalone Bridge converts length-prefixed frames ↔ NDJSON to the local
+  Sidecar without changing the Sidecar protocol. Extension origins are allowlisted (fail closed), ops
+  are whitelisted, credentials live only in local config, and a disconnect marks the result `unknown`
+  without replaying anything. **The extension has not been loaded in a real browser yet.**
+- **P0 memory and provider safety**: `MemoryVault` classifies load failures and offers
+  quarantine/read_only/raise handling (never silently overwriting the original file) plus owner binding;
+  `FallbackModelProvider` accepts host-declared provider allowlists / sensitivity levels / lock / no-fallback,
+  and unauthorized backends are filtered out before any request (zero calls). See
+  `docs/IMPLEMENTATION_STATUS.md` and ADRs 0004 / 0005.
+
 ## 3. SPI contracts
 
 | Contract | Methods | Default implementation | When a host replaces it |

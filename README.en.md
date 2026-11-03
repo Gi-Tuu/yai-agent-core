@@ -314,6 +314,13 @@ For optional environment variables (persistent memory, history trimming / TTL, r
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
 - **v0.23.0 (done)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **v0.25.0 (done, current release)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
+- **v0.26 (in development, unreleased)**: execution capabilities as optional adapters — Browser
+  Provider (snapshot refs / origin gate / unified governance), Windows Desktop Provider (UIA / focus
+  guard / user takeover / local real-machine smoke), the Outcome Verification contract (execution
+  receipts separated from task acceptance), a browser extension + Native Messaging Bridge (not yet
+  loaded in a real browser), and P0 memory-corruption safety plus provider routing governance. All are
+  independent optional modules; the kernel still has zero third-party hard dependencies. Per-item
+  evidence and unverified boundaries live in [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)
 - **Next-version candidates (unordered)**: cross-instance distributed rate limiting; production-grade
   sandbox adapter tiers (gVisor / micro-VM / remote execution); visual composition authoring (host
   side); wider adoption of host-side resolvers for multimodal resource references

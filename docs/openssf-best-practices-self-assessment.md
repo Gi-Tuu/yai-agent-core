@@ -39,7 +39,7 @@
 | floss_license | 成果以 FLOSS 发布（MUST） | ✅ | MIT（`pyproject.toml` PEP 639 SPDX） |
 | floss_license_osi | 许可证经 OSI 认可（SUGGESTED） | ✅ | MIT 为 OSI 认可许可证 |
 | license_location | 许可证在仓库标准位置（MUST，Met URL） | ✅ | 根目录 `LICENSE` |
-| documentation_basics | 提供基础文档（MUST，可 N/A） | ✅ | README + `docs/` + `docs/walkthrough/00–55`（55 篇逐行讲义 + 00-index） |
+| documentation_basics | 提供基础文档（MUST，可 N/A） | ✅ | README + `docs/` + `docs/walkthrough/00–56`（56 篇逐行讲义 + 00-index） |
 | documentation_interface | 描述外部接口的输入/输出（MUST，可 N/A） | ✅ | `docs/architecture.md`、SPI 契约、FastAPI 端点、walkthrough |
 | sites_https | 站点（网站/仓库/下载）支持 HTTPS/TLS（MUST） | ✅ | GitHub / Gitee / PyPI 均 HTTPS |
 | discussion | 可搜索、URL 可定位、新人可参与、无需专有软件的讨论机制（MUST） | ✅ | GitHub Issues / PR（Gitee 同步） |
@@ -143,7 +143,7 @@
 | 自评基线 | main v0.8.0 | main v0.24.0（代码同 `01904c2`，发版提交只改版本串） |
 | 测试规模 | ~1 584 项 | **1 935 项**（1 930 通过 + 5 跳过），exit 0 |
 | 行覆盖率 | 约 92.6% | **95.65%**（8 029 语句 / 349 未覆盖；CI 门禁 90） |
-| 讲义规模 | `docs/walkthrough/00–27` | `00–55`（55 篇逐行讲义 + 00-index） |
+| 讲义规模 | `docs/walkthrough/00–27` | `00–56`（56 篇逐行讲义 + 00-index） |
 | 发布 tag | v0.7.0、v0.8.0 | **20 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.24.0（含 v0.8.1） |
 | 动态分析（SUGGESTED） | ⚠ Unmet：未部署 fuzzer/DAST | ✅ Met：atheris fuzzing 4 个 target + CI `fuzz` job（Ubuntu/py3.12，每个 target 限时 45 秒）；已有 fuzz 撞出缺陷并修复的实例 |
 | 提交活跃度 | 建库 2026-09-09 | **414 次提交**，2026-10-25 仍有合并；GitHub 开放 issue/PR 计数 0 |

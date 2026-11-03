@@ -191,6 +191,34 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **Office 文档文本抽取（v0.21）**：`src/yai_core/batteries/office_text.py:50` 的 `extract_text()`：docx/xlsx/pptx 走标准库 zipfile + ElementTree（零依赖），PDF 走可选 pypdf；三条安全闸（成员白名单、拒 DOCTYPE/ENTITY、限量截断）写在文件头。
 - **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:214`（超时取更严一档）与 `tools/executor.py:584`（频率闸在授权之前判定）真的强制。
 
+### 2.12 v0.26 执行适配器与可验证结果（Unreleased）
+
+v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外部系统并验证结果"做成**可选适配器**：
+
+- **Browser Provider（`src/yai_core/integrations/browser/`）**：只依赖 `BrowserBackend` Protocol；
+  快照引用形如 `s<N>:<i>`，页面变化后旧引用作废；观察/点击/输入/下拉/标签页/等待/导航
+  共 8 个工具注册进 `ToolRegistry`，由 `ToolExecutor` 统一做参数校验、权限、审批、收据与事件。
+  动作只返回 `executed + changed / no_observable_change / unknown`，不宣称任务完成；
+  真实后端 `playwright_backend.py` 走可选 `[browser]` extra（**未真机验收**）。
+- **Windows Desktop Provider（`src/yai_core/integrations/desktop/`）**：同一模式；UIA 语义 Pattern
+  优先、坐标点击默认关闭；控件引用带快照版本；高风险控件名默认拒绝、进程/标题白名单、
+  物理输入前焦点保护、`pause/resume` 用户接管；不跨 UAC / 安全桌面。
+  `[windows]` extra 提供 pywinauto 后端；`scripts/windows_uia_smoke.py` 已在本机完成一次
+  真机 UIA 冒烟（自建窗口 → 观察 → Invoke → 回调验证）。
+- **Outcome Verification（`src/yai_core/verification.py` + `types.py`）**：`Evidence` /
+  `VerificationResult` 与 `OutcomeVerifier` 契约把"工具调用成功"与"目标达成"分开；
+  `AgentCore(outcome_verifier=...)` 在 `DONE` 前收集收据与工具显式 `evidence`，结论附在
+  `DONE` 事件与 `RunResult.verification`；未配置保持 `None`，验收器异常降级 `not_verifiable`
+  并记诊断，不触发重试。
+- **浏览器扩展宿主 + Native Messaging Bridge（`extension/`、`sidecar/native_bridge.py`）**：
+  扩展只是 Host，通过长度帧 ↔ NDJSON 的独立 Bridge 连本地 Sidecar；不改 Sidecar 公开协议，
+  扩展来源 allowlist（fail closed）、操作白名单、凭据只存在本地配置；断连后结果标 `unknown`
+  且不自动重放。**扩展未在真实浏览器加载验收**。
+- **P0 记忆与 Provider 安全**：`MemoryVault` 加载失败分类 + quarantine/read_only/raise 处置
+  （绝不静默覆盖原档）+ owner 绑定；`FallbackModelProvider` 支持宿主声明的 provider 授权集合 /
+  敏感等级 / 锁定 / 禁止降级，未授权后端在发请求前被筛掉（零调用）。详见
+  `docs/IMPLEMENTATION_STATUS.md` 与 ADR 0004 / 0005。
+
 ## 3. SPI 契约
 
 | 契约 | 方法 | 默认实现 | 宿主何时替换 |
