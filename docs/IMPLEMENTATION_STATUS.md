@@ -1,15 +1,16 @@
 # 能力与证据索引（IMPLEMENTATION_STATUS）
 
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
-> 口径：**v0.26.0 已发布（2026-11-03）；v0.25.0 为上一版本**（Batch 1–6：P0 安全、
-> Browser Provider、Outcome Verification）已在本文件内标注，其余以证据列为准。三档状态：
+> 口径：**v0.27.0 已发布（2026-11-03）；v0.26.0 为上一版本**。v0.26 / v0.27 各批次
+> （P0 安全、Browser Provider、Outcome Verification、执行适配器）已在本文件内标注，
+> 其余以证据列为准。三档状态：
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
 >
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
 > 一条命令看治理闭环：`python scripts/demo_governance_loop.py`
 >
-> **当前 HEAD（2026-11-03 审计整改 + follow-up 后）实测**：2 347 项收集、全量离线通过（5 项环境跳过）、
-> 内核行覆盖率 93.19%（门禁 90%）；审计整改项与验证边界见
+> **当前 HEAD（2026-11-03 审计整改 + v0.27.1 桌面进程身份收紧后）实测**：2 386 项收集、全量离线通过（5 项环境跳过）、
+> 内核行覆盖率 93.12%（门禁 90%）；审计整改项与验证边界见
 > [`docs/audit-remediation-2026-11.md`](audit-remediation-2026-11.md)。
 
 ## 一、内核与执行
@@ -85,9 +86,9 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
-| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 10/10）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数；真实应用验证见 `docs/windows-real-apps.md`（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
+| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 12/12）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用/进程映像解析）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 按**进程身份**（PID 精确匹配 / 映像名 / 完整路径）+ 标题附加过滤，被禁窗口只回计数；真实应用验证见 `docs/windows-real-apps.md`（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
 | 原子写共享重试（v0.27） | 已验证（单测） | `yai_core.fsutil.replace_with_retry`；Vault/Bridge 共用 | 仍可能因长期占用最终失败，失败会保留 dirty/诊断 |
-| 适配器安全默认值（v0.27 Batch 2） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；宽松默认发 Warning；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词不作为安全边界 |
+| 适配器安全默认值（v0.27 Batch 2 / v0.27.1 收紧） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_desktop_policy_identity.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；未传或宽松（无进程身份）均发 Warning；桌面进程身份三白名单（PID 精确 / 映像名 / 路径）；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词与窗口标题都不作为安全边界 |
 | 浏览器执行路径统一 ADR + 受控浏览器 E2E（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界）；受控端到端已验证 | `docs/adr/0006-browser-execution-unification.md`；`scripts/browser_provider_task_smoke.py`（真实 Chromium：open/observe/type/reobserve/click/observe，3 次审批，收据链完整，页面文本验证 verified_success）；`docs/browser-task-e2e.md`；面板只读/受控区分 | 受控浏览器 E2E 已过；当前标签页写操作以 opt-in `current_tab_action` 实现（默认关闭，协议级回归），但真实 Side Panel 用户手势 E2E 仍需人工验收；不得宣称当前标签页写操作已真机通过 |
 | Windows 安装/分发（v0.27 Batch 6） | 已验证（便携包 + 一键安装/卸载） | `packaging/windows/installer.py`、`build_bundle.py`、`README.md`；本机实际安装/卸载/重装通过；产物 `dist/yai-agent-core-windows-0.26.0.zip`（约 46.6MB） | 不是 MSI/商店分发；需目标机 Python 3.11+ 与 `yai-agent-core`；扩展仍需手动加载；无自动更新/回滚 |
 | 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | `docs/adr/0007-local-secret-storage.md`；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |

@@ -5,6 +5,39 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Changed
+
+- **桌面进程白名单收紧（breaking，行为）**：`DesktopPolicy.allowed_processes` 由 PID **前缀**匹配
+  改为**精确**匹配——`123` 不再放行 `1234` / `1230`，避免 PID 复用后误操作别的进程窗口；
+  新增 `allowed_process_names`（进程映像名，大小写不敏感）与 `allowed_process_paths`
+  （完整路径，大小写不敏感、`/` 与 `\` 等价）两种进程身份白名单。
+  `DesktopPolicy.secure(...)` 接受三者任一，**仅标题白名单会被拒绝**（标题可伪造/复用，
+  不是安全边界）；直接构造数据类仍可用标题做附加过滤。
+- **`WindowInfo` 携带进程身份**：新增 `process_name` / `process_path`，pywinauto 后端用
+  `QueryFullProcessImageNameW` 填充（取不到时降级为空串，不阻塞枚举）；`to_public()` 分别
+  截断到 120 / 300 字符；被禁窗口的进程信息同样不进入模型上下文。
+
+### Security
+
+- **宽松策略告警扩大**：`DesktopProvider` 现在对"显式传入但没有进程身份"的策略
+  （如只有 `allowed_window_titles`）也发 `DesktopSecurityWarning`；`is_permissive` 改为只看
+  进程身份。v0.27.0 只在未传 policy 时告警。
+- **回归测试**：新增 `tests/test_desktop_policy_identity.py`（精确 PID / 映像名 / 路径 /
+  三选一命中 / 标题叠加 / 宽松告警 / 元数据不泄漏 / 公开视图），并在
+  `test_adapter_security_defaults.py`、`test_pywinauto_backend_fake_sdk.py` 补齐对应断言。
+- **真机验证（2026-11-03）**：`list_windows()` 在真实桌面 6/6 可见窗口取到映像名与完整路径；
+  `scripts/windows_real_apps_smoke.py` 12/12 通过（含精确 PID 白名单）。
+
+### Fixed
+
+- **文档与代码同步**：`docs/production-permissions.md`（进程身份配置与告警条件）、
+  `docs/windows-real-apps.md`（PID 精确匹配 + 12 项检查）、`docs/IMPLEMENTATION_STATUS.md`、
+  `docs/architecture(.en).md`、`docs/walkthrough/56-v026-execution-adapters.md`、
+  `ROADMAP.md`（v0.26 发布状态）、`SECURITY(.zh-CN).md`（适配器安全默认值）；并修正
+  `IMPLEMENTATION_STATUS` 开头停在 v0.26.0 的发布版本漂移。
+
 ## [v0.27.0] - 2026-11-03
 
 ### Added

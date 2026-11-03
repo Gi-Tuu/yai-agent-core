@@ -69,16 +69,24 @@ from yai_core.integrations.desktop import DesktopPolicy, DesktopProvider
 browser_policy = BrowserPolicy.secure(["https://app.example.com"])
 browser = BrowserProvider(backend, policy=browser_policy)
 
-# 桌面：显式声明允许的进程 ID / 名称前缀（可再叠加窗口标题）；高风险控件、
-# 坐标点击默认关闭；invoke/set_value/click/focus 默认审批。
-desktop_policy = DesktopPolicy.secure(["1234"], allowed_window_titles=["记事本"])
+# 桌面：至少声明一种进程身份（PID / 映像名 / 完整路径，三者任一即可，也可叠加）；
+# 高风险控件、坐标点击默认关闭；invoke/set_value/select/click/focus 默认审批。
+desktop_policy = DesktopPolicy.secure(
+    allowed_process_names=["notepad.exe"],                    # 大小写不敏感
+    allowed_process_paths=[r"C:\Windows\System32\notepad.exe"],  # 完整路径，/ 与 \ 等价
+    allowed_window_titles=["记事本"],                          # 附加过滤，不是安全边界
+)
 desktop = DesktopProvider(backend, policy=desktop_policy)
 ```
 
 - 不传 `policy` 时二者仍按开发/测试宽松默认工作，但会发出
-  `BrowserSecurityWarning` / `DesktopSecurityWarning`；生产环境必须显式配置。
-- 控件名称关键词（删除/卸载/格式化等）**不能单独作为安全边界**：本地化、无名称
-  图标按钮都可能绕过；必须用进程/窗口白名单收窄可操作范围。
+  `BrowserSecurityWarning` / `DesktopSecurityWarning`；桌面侧**显式传入但没有进程身份**
+  （例如只有标题白名单）同样告警——标题可被伪造或复用，不构成安全边界。生产环境必须显式配置。
+- 进程身份白名单是"或"关系，且 **PID 精确匹配**（`123` 不放行 `1234`，避免 PID 复用后误操作）；
+  映像名与路径大小写不敏感、路径分隔符 `/` 与 `\` 等价；空值不会被当成通配。
+  PID 只在本次进程生命周期内有效，长期运行建议声明映像名或完整路径。
+- 控件名称关键词（删除/卸载/格式化等）与窗口标题**都不能单独作为安全边界**：本地化、无名称
+  图标按钮都可能绕过；必须用进程身份（必要时叠加标题）收窄可操作范围。
 - 浏览器导航在 Playwright 路由层对 `document/subdocument` 做来源守卫，
   未授权重定向在**加载前** abort，不会先加载再检查最终 URL。
 
@@ -87,6 +95,7 @@ desktop = DesktopProvider(backend, policy=desktop_policy)
 - [ ] `auto_approve_tools` 显式设置（默认值会触发 ProductionSafetyWarning）
 - [ ] 写操作 / 外发 / 资源类工具都有 `ToolGovernance` 声明
 - [ ] 白名单外工具的审批通道有人接（Channel.confirm 的宿主实现）
-- [ ] 浏览器/桌面适配器使用 `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`
+- [ ] 浏览器/桌面适配器使用 `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`；
+      桌面至少声明一种进程身份（PID / 映像名 / 路径），仅标题白名单不算安全边界
 - [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/deployment-scaling.md`）
 - [ ] 预算三道墙（模型 / 工具 / token）按需配置（`Budget`）

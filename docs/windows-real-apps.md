@@ -6,8 +6,10 @@
 
 ## 方法
 
-- 启动 `charmap.exe`，用 `PywinautoDesktopBackend.list_windows()` 读取 PID/窗口句柄；
+- 启动 `charmap.exe`，用 `PywinautoDesktopBackend.list_windows()` 读取 PID/窗口句柄/进程映像；
 - 用 `DesktopPolicy.secure([pid], allowed_window_titles=["字符映射表"])` 显式收窄范围；
+  PID 为**精确匹配**（`123` 不放行 `1234`）；PID 每次重启都会变，长期运行更稳的做法是
+  声明 `allowed_process_names` / `allowed_process_paths`；
 - 通过 `DesktopProvider`（而不是直接调 pywinauto）执行观察/输入/Invoke/聚焦/暂停；
 - 旧引用失效：关闭应用后再用旧 ref 调用，必须失败关闭；未允许窗口只返回拒绝。
 
@@ -57,6 +59,13 @@
 | 未允许窗口内容泄漏 | 0（`window_not_allowed`） |
 | 允许窗口之外的窗口 | 7 个仅回 `hidden_count`，标题/进程不返回 |
 
+## 进程身份字段实测（2026-11-03，同日）
+
+新增的 `WindowInfo.process_name` / `process_path` 在真实桌面验证：
+`PywinautoDesktopBackend.list_windows()` 枚举到 6 个可见窗口，**6/6** 都取到了进程映像名
+（explorer.exe / msedge.exe / …）与完整路径；取不到的窗口降级为空串，不阻塞枚举。
+这也意味着生产可以用 `allowed_process_names` / `allowed_process_paths` 替代易变的 PID。
+
 ## 诚实边界
 
 - 只验证了一个系统自带应用（字符映射表）；**不代表任意 Windows 应用兼容**。
@@ -65,8 +74,9 @@
   上验证过，其他应用/控件类型仍需抽样。
 - 未验证：第三方应用、UAC/安全桌面、多显示器、截图、复杂 UIA Pattern、本地化/
   无名称图标按钮、长时运行。
-- 控件名称关键词只作为附加拒绝信号，不是安全边界；本测试用进程/标题白名单收窄。
-- 真实任务成功率只来自本次 10 项检查，样本量 1，不能外推为生产指标。
+- 控件名称关键词与窗口标题都只作为附加过滤信号，不是安全边界；本测试靠进程 PID
+  （精确匹配）收窄，未允许窗口的标题/进程信息不返回。
+- 真实任务成功率只来自本次 12 项检查，样本量 1，不能外推为生产指标。
 
 ## 复现
 

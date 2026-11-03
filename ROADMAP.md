@@ -246,7 +246,7 @@
 - **仓库内容整理**：部署手册迁到 `docs/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
   `/.well-known/yai-verification.json`。
 
-### v0.26 — 执行能力与可验证结果（开发中，未发布）
+### v0.26.0 — 执行能力与可验证结果（tag 2026-11-03，已完成）
 
 - **P0 安全**：MemoryVault 损坏存储分类 + quarantine/read_only/raise（绝不静默覆盖原档）+
   owner 绑定；Provider 路由治理（宿主授权集合 / 敏感等级 / 锁定 / 禁止降级 / 未授权零调用 /
@@ -262,7 +262,7 @@
 - **记忆质量基准**：Recall@5 / MRR / 延迟 / 降级一致性；本机真实 bge-m3 实测
   Recall@5 1.000 / MRR 0.917 / P50 12.27 ms。
 
-### v0.25.0 — Production Readiness（tag 2026-10-31，当前发布版本）
+### v0.25.0 — Production Readiness（tag 2026-10-31，已完成）
 
 - 复审 8 类加固（收据链熔断载体 / 单一参数快照 / 外发结构化记录与 IDNA、userinfo / 限尾伪协议 / 路由学习限尾标记）
 - 外发来源闸边界（紧粘 CJK 截断、路径大小写不敏感、非 ASCII 主机崩溃修复、嵌入形态与并发隔离测试）
