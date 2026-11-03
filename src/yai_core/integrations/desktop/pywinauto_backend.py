@@ -112,10 +112,19 @@ class PywinautoDesktopBackend:
             except Exception:  # noqa: BLE001
                 name = str(getattr(control_info, "name", "") or "")
             value = ""
-            try:
-                value = str(control.get_value() or "")
-            except Exception:  # noqa: BLE001 - 不支持 ValuePattern 的控件没有值
-                value = ""
+            # Edit 用 ValuePattern；ComboBox 没有 get_value 时用 selected_text
+            # （只读展示当前选择，不改变控件）。
+            for getter_name in ("get_value", "selected_text"):
+                getter = getattr(control, getter_name, None)
+                if getter is None:
+                    continue
+                try:
+                    candidate = str(getter() or "")
+                except Exception:  # noqa: BLE001 - 该 Pattern 不适用
+                    continue
+                if candidate:
+                    value = candidate
+                    break
             sensitive = False
             try:
                 sensitive = bool(control.is_password())
@@ -226,6 +235,26 @@ class PywinautoDesktopBackend:
             raise DesktopBackendError(
                 f"控件不支持 ValuePattern 设置值：{type(exc).__name__}: {exc}"
             ) from exc
+
+    async def select_option(self, window_id: str, control_id: str, value: str) -> None:
+        await asyncio.to_thread(self._select_sync, window_id, control_id, value)
+
+    def _select_sync(self, window_id: str, control_id: str, value: str) -> None:
+        desktop = self._require_desktop()
+        window = desktop.window(handle=int(window_id))
+        control = self._find_control(window, control_id)
+        for method in ("select", "set_edit_text"):
+            action = getattr(control, method, None)
+            if action is None:
+                continue
+            try:
+                action(value)
+                return
+            except Exception:  # noqa: BLE001 - Pattern 不适用就换下一个
+                continue
+        raise DesktopBackendError(
+            "控件不支持下拉选择（无 ComboBox.select / ValuePattern）；已拒绝坐标猜测"
+        )
 
     async def click(self, window_id: str, control_id: str) -> None:
         await asyncio.to_thread(self._click_sync, window_id, control_id)

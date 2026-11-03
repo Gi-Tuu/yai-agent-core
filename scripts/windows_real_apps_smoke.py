@@ -31,6 +31,8 @@ async def _run() -> dict[str, Any]:
         "text_input_ok": False,
         "button_invoke_ok": False,
         "focus_ok": False,
+        "dropdown_select_ok": False,
+        "dropdown_value_verified": False,
         "takeover_blocked": False,
         "takeover_resumed": False,
         "stale_ref_blocked": False,
@@ -133,6 +135,37 @@ async def _run() -> dict[str, Any]:
         focus = await provider.focus(target.window_id)
         metrics["focus_ok"] = bool(focus.get("ok"))
 
+        # 4b) 下拉选择：字体 ComboBox（真实 UIA select / ValuePattern）
+        fresh = await provider.observe(target.window_id)
+        fresh_controls = fresh.get("controls", [])
+        combo = next(
+            (
+                c
+                for c in fresh_controls
+                if c.get("role") == "ComboBox" and "字体" in c.get("name", "")
+            ),
+            None,
+        )
+        if combo is not None:
+            selected = await provider.select_option(combo["ref"], "Arial")
+            metrics["dropdown_select_ok"] = bool(selected.get("ok"))
+            if not metrics["dropdown_select_ok"]:
+                metrics["errors"].append(f"select_option: {selected}")
+            combo_observation = await provider.observe(target.window_id)
+            combo_after = next(
+                (
+                    c
+                    for c in combo_observation.get("controls", [])
+                    if c.get("role") == "ComboBox"
+                ),
+                {},
+            )
+            metrics["dropdown_value"] = combo_after.get("value")
+            metrics["dropdown_value_verified"] = (
+                "Arial" in str(combo_after.get("value", ""))
+                or "Arial" in str(combo_after.get("name", ""))
+            )
+
         # 5) 用户接管：pause 后动作被拒，观察仍可用；resume 后恢复
         provider.pause("真实应用冒烟：模拟用户接管")
         paused = await provider.set_value(edit["ref"], "B")
@@ -190,6 +223,8 @@ def main() -> int:
         "text_value_verified",
         "button_invoke_ok",
         "focus_ok",
+        "dropdown_select_ok",
+        "dropdown_value_verified",
         "takeover_blocked",
         "takeover_resumed",
         "stale_ref_blocked",

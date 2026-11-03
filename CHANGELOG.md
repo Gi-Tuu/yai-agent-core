@@ -11,6 +11,13 @@
 
 ### Added
 
+- **v0.27 Batch 5：Desktop 下拉选择**：新增 `desktop_select` 工具与
+  `DesktopBackend.select_option`；UIA ComboBox 优先 `select`，其次 ValuePattern，
+  不支持时失败关闭、不猜坐标；secure preset 默认要求审批。字符映射表真实冒烟
+  扩展到 12/12（字体下拉选择并回读 `Arial`）。
+
+### Added
+
 - **v0.27 Batch 3：受控浏览器真实任务 E2E**：新增 `scripts/browser_provider_task_smoke.py`，
   在真实 Playwright Chromium + 本地 HTTP 页面上完成 open → observe → type →
   重新观察 → click → observe，3 次审批，执行收据链完整，基于页面真实文本给出

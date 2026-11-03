@@ -21,6 +21,9 @@
   "text_input_ok": true,
   "button_invoke_ok": true,
   "focus_ok": true,
+  "dropdown_select_ok": true,
+  "dropdown_value_verified": true,
+  "dropdown_value": "Arial",
   "takeover_blocked": true,
   "takeover_resumed": true,
   "stale_ref_blocked": true,
@@ -32,7 +35,8 @@
   "control_count": 26,
   "passed": [
     "window_found", "observe_ok", "text_input_ok", "text_value_verified",
-    "button_invoke_ok", "focus_ok", "takeover_blocked", "takeover_resumed",
+    "button_invoke_ok", "focus_ok", "dropdown_select_ok", "dropdown_value_verified",
+    "takeover_blocked", "takeover_resumed",
     "stale_ref_blocked", "disallowed_window_blocked"
   ],
   "failed": [],
@@ -47,6 +51,7 @@
 | 文本输入并回读验证 | 1/1（UIA 值 `A\r`） |
 | 按钮语义 Invoke | 1/1 |
 | 聚焦成功 | 1/1 |
+| 下拉选择 + 回读验证 | 1/1（字体 ComboBox → Arial） |
 | 用户接管期间动作拒绝 / 恢复 | 1/1 / 1/1 |
 | 旧控件引用误操作 | 0（被拒绝） |
 | 未允许窗口内容泄漏 | 0（`window_not_allowed`） |
@@ -55,9 +60,9 @@
 ## 诚实边界
 
 - 只验证了一个系统自带应用（字符映射表）；**不代表任意 Windows 应用兼容**。
-- **下拉选择未覆盖**：当前 Desktop Provider 只暴露 observe/invoke/set_value/focus
-  （click 默认关闭），没有 `select` 工具；pywinauto UIA ComboBox 的 `select`
-  行为依赖具体控件实现，需在后续补工具与测试。
+- 下拉选择已覆盖：新增 `desktop_select`，优先 ComboBox.select、其次
+  ValuePattern；不支持时失败关闭，不猜坐标。当前只在字符映射表字体 ComboBox
+  上验证过，其他应用/控件类型仍需抽样。
 - 未验证：第三方应用、UAC/安全桌面、多显示器、截图、复杂 UIA Pattern、本地化/
   无名称图标按钮、长时运行。
 - 控件名称关键词只作为附加拒绝信号，不是安全边界；本测试用进程/标题白名单收窄。

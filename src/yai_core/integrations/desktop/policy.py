@@ -80,7 +80,7 @@ class DesktopPolicy:
     allow_geometry_click: bool = False
     max_controls: int = 80
     action_timeout_ms: int = 15_000
-    require_approval_for: frozenset[str] = frozenset({"invoke", "set_value", "click"})
+    require_approval_for: frozenset[str] = frozenset({"invoke", "set_value", "select", "click"})
     rate_limit_per_minute: int | None = 120
 
     def __post_init__(self) -> None:
@@ -123,7 +123,7 @@ class DesktopPolicy:
             allowed_window_titles=titles,
             allow_high_risk_controls=False,
             allow_geometry_click=False,
-            require_approval_for=frozenset({"invoke", "set_value", "click", "focus"}),
+            require_approval_for=frozenset({"invoke", "set_value", "select", "click", "focus"}),
             rate_limit_per_minute=60,
         )
 
