@@ -90,7 +90,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/yai-sdist
           tar -xzf dist/*.tar.gz -C /tmp/yai-sdist
-          cd /tmp/yai-sdist/yai-agent-core-*
+          cd /tmp/yai-sdist/*/
           # 先确认关键资产真的进包了（白名单漏项在这里最快暴露）。
           test -d extension
           test -d benchmarks/memory

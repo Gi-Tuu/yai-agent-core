@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location(
@@ -93,6 +96,10 @@ def _fake_launcher(tmp_path: Path) -> tuple[Path, Path]:
     return launcher, python
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="register_native_host.py 的 dry-run 入口只支持 Windows（Linux 上 main 直接返回 2）",
+)
 def test_dry_run_masks_api_key(tmp_path: Path, capsys) -> None:
     """SCR-1：--dry-run 不得打印完整 api_key（只留 ***末4位）。"""
     launcher, python = _fake_launcher(tmp_path)
