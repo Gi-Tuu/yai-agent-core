@@ -5,6 +5,21 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Fixed
+
+- **v0.27 Batch 1：并发写入 fail-closed**：
+  - `MemoryVault` 拿不到写锁时**放弃本次磁盘写入**（不再无锁 read-modify-write）：
+    内存变更与 `dirty` 保留、发 `memory_lock_timeout` 诊断，由下一次写入或
+    `flush()` 在安全时机重试；新增 `last_write_persisted` / `flush()` 与
+    `status().storage.persisted`，工具结果回报 `persisted` / `dirty`。
+  - Bridge 配置锁改为跨进程 OS 级锁（Windows `msvcrt` / POSIX `fcntl`）：
+    锁忙时抛 `ConfigLockError` 并放弃读改写（`config_lock_busy`），不删除仍被持有
+    的锁；原子替换、`.bak` 与 Key 脱敏保持。
+  - 回归：双进程写入不丢、锁超时不写盘、锁释放后 flush 重试、锁文件不可用不绕过、
+    残留锁复用、配置双进程改不同字段不丢更新。
+
 ## [v0.26.0] - 2026-11-03
 
 ### Added

@@ -60,8 +60,8 @@
 | 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
 | 记忆落盘损坏安全（v0.26.0） | 已验证 | `tests/test_memory_vault_corruption.py`、`tests/test_storage_cipher.py` | 分类（不可读 / 损坏 / 解密失败 / 版本不兼容 / owner 不一致）；quarantine / read_only / raise 三种处置；解密失败与版本不兼容强制只读；绝不静默覆盖原档 |
 | 记忆 owner 绑定（v0.26.0，最小隔离） | 已验证 | `tests/test_memory_vault_corruption.py`（owner_mismatch / 同 owner / 旧文件兼容） | 完整多租户仍由宿主用独立实例 / 独立路径；本项只防止误读误覆盖 |
-| Vault 跨进程写锁（2026-11 follow-up） | 已验证 | `tests/test_memory_vault.py`（multiprocessing 双进程各写 5 条全保留、超时降级不阻塞、锁文件不含数据、残留锁无害） | advisory 锁：绕过 MemoryVault 直接写数据文件的进程不受约束；2s 超时后仍靠 mtime/size 合并兜底 |
-| 成本口径与验收证据上限（2026-11 follow-up） | 已验证 | `tests/test_budget.py`、`tests/test_loop_runtime_contract.py`、`tests/test_outcome_verification.py`；DONE 所有路径固定键、model_calls 按"尝试"计且与 budget 一致；证据 50 条/详情 4k/总量 64KB 截断并标注 | 宿主 verifier 自返回的 evidence 不套该上限；replan meta-tool 计数已收口到 `_model_chat` |
+| Vault 跨进程写锁（v0.27，fail-closed） | 已验证 | `tests/test_memory_vault.py`（双进程各写 5 条全保留、锁超时 **不写盘**/保留 dirty/诊断、flush 重试、锁文件不可用不绕过、残留锁无害） | 2s 拿不到锁 = 放弃本次磁盘写入，内存变更保留，由下一次写入或 `flush()` 重试；advisory 锁仍不约束绕过 MemoryVault 的写入 |
+| 成本口径与验收证据上限（2026-11 follow-up） | 已验证 | `tests/test_budget.py`、`tests/test_loop_runtime_contract.py`、`tests/test_outcome_verification.py`；DONE 所有路径固定键、model_calls 按"尝试"计且与 budget 一致；证据 50 条/详情 4k/总量 64KB 截断并标注 | 宿主 verifier 自返回的 evidence 不套该上限（v0.27 Batch 4 处理）；replan meta-tool 计数已收口到 `_model_chat` |
 | 外发 URL 来源闸（v0.25.0） | 已验证 | `tests/test_egress_guard.py` | 声明路径按 schema 校验；声明保护但缺任务上下文则拒绝；未知 URL 不因此拒绝，不做跨任务污点追踪 |
 | 外发来源闸边界加固（v0.25.0，B1） | 已验证 | `tests/test_egress_guard.py`（Markdown/HTML/JSON 包裹、大小写与 www 变体、并发隔离、事件字段） | 主机名区域 ASCII 后紧粘 CJK 视为主机名终止；路径比较大小写不敏感；IDNA 有损映射保留独立身份 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
@@ -89,6 +89,7 @@
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26.0） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
+| Bridge 配置锁（v0.27，fail-closed） | 已验证 | `tests/test_bridge_llm_config.py`（双进程改不同字段不丢、持锁超时拒绝读改写、残留锁复用不删除） | OS 级跨进程锁（msvcrt/fcntl）；锁忙返回 `config_lock_busy`，原子替换 + `.bak` 与 Key 脱敏不变 |
 | 浏览器扩展宿主（v0.26.0，MV3 Side Panel） | **已验证：加载/侧边栏/点击行为/真实任务 + 真机状态恢复** | `scripts/extension_smoke.py`（MV3 SW、sidepanel.html、`openPanelOnActionClick=true`）；`tests/test_extension_assets.py` 静态契约；真实 Edge 端到端任务「打开百度」经 Bridge→Sidecar→MCP 返回标题；**2026-11-03 真机验收：运行中关/开面板恢复"运行中"并可取消、强杀 Sidecar 后 SW 自动重连且新任务成功、关最后一个面板后 Bridge 重启并重读配置**（截图 `docs/exports/accept-reopen-cancel.png`、`accept-reopen-idle.png`，本地产物） | 真实鼠标点工具栏图标、安装包分发仍未自动化；真实站点的多标签/下载/上传/CAPTCHA 未验证 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |

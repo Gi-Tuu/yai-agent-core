@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import json
 import os
 import struct
@@ -93,6 +94,35 @@ class BridgeError(Exception):
 
 class BridgeOriginError(BridgeError):
     """扩展来源未授权（fail closed）。"""
+
+
+class ConfigLockError(OSError):
+    """配置写锁被占用/不可用：调用方必须放弃本次读改写，而不是无锁写入。"""
+
+
+def _try_lock_fd(fd: int) -> None:
+    """非阻塞获取 OS 文件锁；被占用时抛 ``OSError``。"""
+    os.lseek(fd, 0, os.SEEK_SET)
+    if os.name == "nt":  # pragma: no cover - Windows 专用分支
+        msvcrt = importlib.import_module("msvcrt")
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl = importlib.import_module("fcntl")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_fd(fd: int) -> None:
+    """释放 ``_try_lock_fd`` 取得的锁（尽力而为；关闭 fd 时 OS 也会兜底释放）。"""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        if os.name == "nt":  # pragma: no cover - Windows 专用分支
+            msvcrt = importlib.import_module("msvcrt")
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl = importlib.import_module("fcntl")
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:  # pragma: no cover - 解锁失败没有补救手段
+        pass
 
 
 # ---------------------------------------------------------------- 帧编解码
@@ -430,48 +460,54 @@ def config_lock_path(path: str | Path) -> Path:
 
 @contextmanager
 def bridge_config_lock(
-    path: str | Path, *, timeout: float = 1.5, stale_seconds: float = 60.0
+    path: str | Path, *, timeout: float = 1.5
 ) -> Iterator[None]:
-    """配置写锁（跨进程尽力而为）。
+    """配置写锁（跨进程 OS 级，**fail-closed**）。
 
-    用 ``<config>.lock`` 的 O_CREAT|O_EXCL 做互斥；拿不到锁时最多等 ``timeout``
-    秒，超时后记日志并继续（可用性优先，写入仍是原子的，不会产生半截文件）。
-    超过 ``stale_seconds`` 的锁视为崩溃残留，删除后重试。
+    在 ``<config>.lock`` 上取 OS 排它锁（Windows ``msvcrt.locking`` / POSIX
+    ``fcntl.flock``），不依赖"锁文件是否存在"或 mtime 猜测；进程崩溃时 OS 自动
+    释放，残留锁文件无害，也**绝不删除仍被有效进程持有的锁**。
+
+    等锁上限 ``timeout`` 秒；拿不到时抛 :class:`ConfigLockError`，调用方必须放弃
+    本次"读最新 → 合并 → 写回"（不能无锁 RMW，否则并发修改会丢更新）。写入仍是
+    原子替换 + ``.bak`` 备份。
     """
     lock_path = config_lock_path(path)
-    acquired = False
-    deadline = time.monotonic() + max(0.0, timeout)
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                age = time.time() - lock_path.stat().st_mtime
-            except OSError:
-                age = 0.0
-            if age > stale_seconds:
-                with contextlib.suppress(OSError):
-                    lock_path.unlink()
-                continue
-            if time.monotonic() >= deadline:
-                _log(f"config lock busy, proceeding without lock: {lock_path}")
-                break
-            time.sleep(0.05)
-        except OSError:
-            break
-        else:
-            acquired = True
-            try:
-                os.write(fd, str(os.getpid()).encode("ascii"))
-            finally:
-                os.close(fd)
-            break
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        yield
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        raise ConfigLockError(f"无法打开配置锁文件 {lock_path}: {exc}") from exc
+    try:
+        # Windows 字节范围锁需要一个真实字节；空锁文件上先补一个 0，不截断其它内容。
+        try:
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+        except OSError:
+            pass
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                _try_lock_fd(fd)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    _log(
+                        f"config lock busy, refusing read-modify-write: {lock_path}"
+                    )
+                    raise ConfigLockError(
+                        f"配置文件正在被其他进程修改（等待 {timeout:g}s 未取得锁）："
+                        f"{lock_path}"
+                    ) from None
+                time.sleep(0.05)
+        _log(f"config lock acquired: {lock_path}")
+        try:
+            yield
+        finally:
+            _unlock_fd(fd)
     finally:
-        if acquired:
-            with contextlib.suppress(OSError):
-                lock_path.unlink()
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:

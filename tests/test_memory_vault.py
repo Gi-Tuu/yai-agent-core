@@ -695,8 +695,8 @@ def test_two_processes_writing_same_vault_keep_all_notes(tmp_path, monkeypatch) 
     assert set(second) <= contents
 
 
-def test_lock_timeout_degrades_instead_of_blocking(monkeypatch, tmp_path) -> None:
-    """对端长时间持锁时不卡任务：等满上限 → 诊断 → 降级为无锁写入，数据照样落盘。"""
+def test_lock_timeout_fails_closed_and_retries_after_release(monkeypatch, tmp_path) -> None:
+    """拿不到锁时**不得**无锁写入：内存保留、dirty、诊断，锁释放后可 flush 重试。"""
     monkeypatch.setattr(vault_module, "LOCK_TIMEOUT_SECONDS", 0.05)
     path = tmp_path / "memory.json"
     events: list = []
@@ -709,11 +709,21 @@ def test_lock_timeout_degrades_instead_of_blocking(monkeypatch, tmp_path) -> Non
         note, _ = vault.remember("锁被占用期间写入的一条记忆")
         elapsed = time.monotonic() - started
 
-    assert elapsed >= 0.05  # 确实等过锁
-    assert elapsed < 2.0  # 但没有无限等
-    assert vault.contains(note.id)
+    assert 0.05 <= elapsed < 2.0  # 等过锁，但没有无限阻塞
+    assert vault.contains(note.id), "内存变更必须保留"
+    assert vault.dirty is True
+    assert vault.last_write_persisted is False
     assert any(event.kind == "memory_lock_timeout" for event in events)
-    assert "锁被占用期间写入的一条记忆" in path.read_text(encoding="utf-8")
+    # 关键：锁未取得时绝不允许 read-modify-write。
+    assert "锁被占用期间写入的一条记忆" not in path.read_text(encoding="utf-8")
+
+    # 锁释放后的安全时机显式重试：两条都在，dirty 清掉。
+    assert vault.flush() is True
+    disk = path.read_text(encoding="utf-8")
+    assert "先写一条占位" in disk
+    assert "锁被占用期间写入的一条记忆" in disk
+    assert vault.dirty is False
+    assert vault.last_write_persisted is True
 
 
 def test_lock_file_is_created_released_and_holds_no_data(tmp_path) -> None:
@@ -751,17 +761,19 @@ def test_stale_lock_file_does_not_block_writes(tmp_path) -> None:
     assert "崩溃残留的锁文件不影响写入" in path.read_text(encoding="utf-8")
 
 
-def test_unusable_lock_file_degrades_without_failing_save(tmp_path) -> None:
-    """锁文件位置被目录占住（os.open 失败）时：诊断 + 无锁写入，不把保存弄失败。"""
+def test_unusable_lock_file_fails_closed_without_writing(tmp_path) -> None:
+    """锁文件位置不可用（被目录占住）时：放弃落盘，不做无锁写入。"""
     path = tmp_path / "memory.json"
     path.with_name("memory.json.lock").mkdir()  # 锁文件位置不可用
     events: list = []
     vault = MemoryVault(storage_path=path, on_diagnostic=events.append)
 
-    vault.remember("锁文件不可用也要能写入")
+    vault.remember("锁文件不可用时不落盘")
 
-    assert vault.dirty is False
-    assert "锁文件不可用也要能写入" in path.read_text(encoding="utf-8")
+    assert vault.dirty is True
+    assert vault.last_write_persisted is False
+    assert not path.exists(), "未取得锁时不得写数据文件"
+    assert vault.flush() is False, "锁仍不可用，重试也不能绕过"
     assert any(event.kind == "memory_lock_timeout" for event in events)
 
 

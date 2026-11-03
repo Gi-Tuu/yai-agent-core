@@ -232,6 +232,7 @@ def test_status_exposes_storage_block(tmp_path: Path) -> None:
         "quarantined_to",
         "owner",
         "dirty",
+        "persisted",
         "disk_synced",
     }
     assert storage["status"] == LOAD_MISSING

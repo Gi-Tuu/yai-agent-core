@@ -108,6 +108,10 @@ Chrome / Edge Extension (MV3)
 > 不是你正在用的默认 Chrome 窗口；已有 Chrome 无法事后开启调试端口。若想接入已有窗口，
 > 需要以 `--remote-debugging-port` 启动它。
 
+> **并发保存（v0.27）**：Bridge 与 CLI 对 `bridge.json` 的读改写共用 OS 级
+> `<config>.lock`；锁忙时返回 `config_lock_busy` 并放弃本次写入（不会无锁覆盖），
+> 原文件、`.bak` 与原子替换保持不变。Key 回读始终脱敏。
+
 ## LLM 配置入口（面板 + 本地 CLI）
 
 侧边栏里有 **“LLM 设置（保存到本机配置）”** 折叠区：可填 Base URL / 模型 / 强模型 /

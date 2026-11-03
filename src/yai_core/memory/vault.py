@@ -380,12 +380,13 @@ class MemoryVault:
       ``forget`` / 容量淘汰生效），合并后原子写；外部文件已损坏则先 quarantine 再覆盖；
     - **原子写带上 durability**：临时文件 ``flush + fsync`` 后才 ``os.replace``，
       POSIX 上再 fsync 父目录——掉电后不会留下"半截/空文件"把整库记忆带走；
-    - **跨进程写锁**：``_save`` 的"重读 → 合并 → 原子写"整段在 ``<storage>.lock`` 的
-      OS 级文件锁内执行（Windows ``msvcrt.locking`` / POSIX ``fcntl.flock``，同进程内
-      再加一把 ``threading.Lock``）。等锁上限 :data:`LOCK_TIMEOUT_SECONDS`（2 秒），
-      超时只发 ``memory_lock_timeout`` 诊断并降级为无锁写入——记忆是增强，不能把任务
-      卡死。锁是 advisory 的：绕过 :class:`MemoryVault` 直接改数据文件的进程不受约束；
-      极端情况下（超时降级 + 粗粒度 mtime 文件系统）仍可能各写一版。
+    - **跨进程写锁 fail-closed**：``_save`` 的"重读 → 合并 → 原子写"整段在
+      ``<storage>.lock`` 的 OS 级文件锁内执行（Windows ``msvcrt.locking`` / POSIX
+      ``fcntl.flock``，同进程内再加一把 ``threading.Lock``）。等锁上限
+      :data:`LOCK_TIMEOUT_SECONDS`（2 秒）；超时**放弃本次磁盘写入**（绝不无锁
+      read-modify-write），保留内存变更与 ``dirty``、发 ``memory_lock_timeout``
+      诊断，由下一次写入或 :meth:`flush` 在安全时机重试。锁是 advisory 的：绕过
+      :class:`MemoryVault` 直接改数据文件的进程不受约束。
     - 已知边界：跨实例的 ``forget`` 只保证**本实例**不会把它写回去；另一个仍持有该条目的
       实例若随后写入，会按"本地优先"把它带回来。需要跨实例删除语义时，应由宿主保证
       同一文件同一时刻只有一个写入者（或改用共享数据库实现）。
@@ -446,6 +447,8 @@ class MemoryVault:
         self._forgotten_ids: set[str] = set()
         # 最近一次 remember 写入的条目是否当场被容量淘汰（工具侧据此回报 stored）。
         self.last_remember_evicted = False
+        # 最近一次写盘是否真的持久化成功（False = 只读/锁失败/写失败，内存变更仍保留）。
+        self.last_write_persisted = False
         self._load()
         # 宿主可能在运行一段时间后才调小上限：打开存量库时也收敛到容量内。
         # 只读降级时不做任何写操作（收敛结果留在内存里也不落盘）；收敛落盘失败
@@ -665,6 +668,7 @@ class MemoryVault:
                 "quarantined_to": self.load_state["quarantined_to"],
                 "owner": self._owner,
                 "dirty": self._dirty,
+                "persisted": self.last_write_persisted,
                 "disk_synced": self._disk_signature is not None,
             },
             "recent": recent,
@@ -1095,8 +1099,12 @@ class MemoryVault:
         在 ``<storage>.lock`` 的写锁内执行（进程内 ``threading.Lock`` + 跨进程
         ``msvcrt.locking`` / ``fcntl.flock``）。不加锁的话，两个进程可能同时读到同一份
         旧文件、各自合并出一版、再先后覆盖——后写者把前者的新增静默吃掉（TOCTOU）。
-        拿不到锁（对端长时间持有）时等满 :data:`LOCK_TIMEOUT_SECONDS` 后记一条
-        ``memory_lock_timeout`` 诊断并降级为无锁写入，绝不阻塞任务。
+
+        **锁获取失败 = 放弃本次磁盘写入**（v0.27 fail-closed）：等满
+        :data:`LOCK_TIMEOUT_SECONDS` 仍拿不到锁时，只发 ``memory_lock_timeout``
+        诊断、保留内存变更并置 ``dirty``，**绝不无锁执行 read-modify-write**。
+        原子替换只能保证这一次写完整，不能保证并发写之间不互相覆盖。后续任何一次
+        写入或显式 :meth:`flush` 都会重试。
 
         Raises:
             OSError: 磁盘满 / 只读 / 文件被占用等写失败（写路径要浮出来让宿主看见）。
@@ -1110,7 +1118,12 @@ class MemoryVault:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         with _file_lock(self.storage_path) as locked:
             if not locked:
+                # fail-closed：没拿到锁就绝不做 read-modify-write；内存变更保留
+                # （dirty），等下一次写入 / flush 在安全时机重试。
+                self._dirty = True
+                self.last_write_persisted = False
                 self._emit_lock_timeout()
+                return False
             if self._external_change_detected():
                 self._merge_external()
             payload = {
@@ -1127,31 +1140,42 @@ class MemoryVault:
             self._atomic_write(raw)
             # 落盘成功：脏标记清零、墓碑清零（已体现在磁盘上）、重新记录磁盘指纹。
             self._dirty = False
+            self.last_write_persisted = True
             self._forgotten_ids.clear()
             self._record_disk_signature()
         return True
 
-    def _emit_lock_timeout(self) -> None:
-        """未取得写锁、降级为无锁写入时的诊断（降级必须可观测，不许静默）。
+    def flush(self) -> bool:
+        """在安全时机重试落盘（fail-closed 后由宿主或下一次写入调用）。
 
-        两种可能：对端进程/线程长时间持有锁（等满上限），或锁文件本身建不出来
-        （只读目录 / 位置被占）。两种都退回"外部修改检测 + 合并"的旧口径。
+        Returns:
+            True = 本次真的把内存状态写到了磁盘；False = 只读降级、纯内存库、
+            或本次仍未取得锁（内存变更与 ``dirty`` 保留，等待下一次机会）。
         """
+        if self.storage_path is None or self._read_only:
+            return False
+        return self._save_safely(reason="flush")
+
+    def _emit_lock_timeout(self) -> None:
+        """未取得写锁、**放弃本次落盘**时的诊断（失败必须可观测，不许静默）。"""
         emit(
             self._on_diagnostic,
             DiagnosticEvent(
                 kind=DIAG_MEMORY_LOCK_TIMEOUT,
-                level=DiagnosticLevel.WARNING,
+                level=DiagnosticLevel.ERROR,
                 message=(
                     "未能取得长期记忆写锁（等待上限 "
-                    f"{LOCK_TIMEOUT_SECONDS:g} 秒或锁文件不可创建），已降级为无锁写入"
-                    f"（仍有 mtime/size 外部修改检测兜底）：{self.storage_path}"
+                    f"{LOCK_TIMEOUT_SECONDS:g} 秒或锁文件不可创建）；"
+                    "已放弃本次磁盘写入，内存变更保留（dirty），"
+                    f"稍后由下一次写入/flush 重试：{self.storage_path}"
                 ),
                 data={
                     "path": str(self.storage_path),
                     "lock_path": str(self.lock_path),
                     "timeout_seconds": LOCK_TIMEOUT_SECONDS,
                     "locked": False,
+                    "persisted": False,
+                    "dirty": True,
                 },
             ),
         )
@@ -1388,6 +1412,9 @@ def build_memory_tools(vault: MemoryVault) -> list[ToolSpec]:
             # 容量已满且新条目被当场淘汰时 stored=False：不能让模型以为"记住了"
             # （条目不在库里，重启后也不会回来）。
             "stored": not vault.last_remember_evicted,
+            # 是否真的持久化到磁盘：锁超时/写失败时内存里有、磁盘上没有。
+            "persisted": vault.last_write_persisted,
+            "dirty": vault.dirty,
             "kind": note.kind,
             "tags": note.tags,
             "importance": note.importance,
