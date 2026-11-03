@@ -94,7 +94,7 @@ jobs:
           # 先确认关键资产真的进包了（白名单漏项在这里最快暴露）。
           test -d extension
           test -d benchmarks/memory
-          uv sync --extra dev
+          uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel --extra office
           uv run pytest -q
 
   # 模糊测试：atheris 仅在 Linux x86_64 / CPython 3.12+ 提供 wheel，故单独一个 job。
