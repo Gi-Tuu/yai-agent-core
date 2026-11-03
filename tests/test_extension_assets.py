@@ -52,6 +52,10 @@ def test_sidepanel_page_and_assets_exist() -> None:
     assert 'id="run"' in html
     assert 'id="events"' in html
     assert 'id="conn-text"' in html
+    # ADR 0006：面板必须明确区分"当前标签页只读快照"与"受控浏览器"。
+    assert 'id="browser-mode"' in html
+    assert "只读快照" in html
+    assert "不操作当前页" in html
     assert 'src="sidepanel.js"' in html
     assert 'href="sidepanel.css"' in html
     # LLM 设置入口（用户反馈"没看到配置 LLM 的入口"，这里守住 DOM 与输入类型）。
@@ -82,6 +86,9 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
     assert "setRunning" in js
     assert "无最终文本" in js
     assert "浏览器内部页面" in js
+    # 受控浏览器状态必须可见；不得把"读取当前页"说成"能操作当前页"。
+    assert "受控浏览器" in js
+    assert "只读快照" in js
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。
     assert "connectNative" not in js
     assert "connectNative" in _read("service_worker.js")

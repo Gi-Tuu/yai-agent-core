@@ -19,6 +19,7 @@ const el = {
   pagePreview: document.getElementById("page-preview"),
   conn: document.getElementById("conn"),
   connText: document.getElementById("conn-text"),
+  browserMode: document.getElementById("browser-mode"),
   state: document.getElementById("state"),
   runId: document.getElementById("run-id"),
   events: document.getElementById("events"),
@@ -282,6 +283,10 @@ function renderStatus(status) {
   connected = state === "connected";
   el.conn.className = `conn ${state}`;
   el.connText.textContent = friendlyDetail(status.detail, state);
+  const servers = Array.isArray(status.mcpServers) ? status.mcpServers : [];
+  el.browserMode.textContent = servers.includes("browser")
+    ? "当前标签页：只读快照（不操作当前页）；受控浏览器：MCP browser（宿主配置的独立/CDP 会话）"
+    : "当前标签页：只读快照（不操作当前页）；受控浏览器：未接入";
   setRunning(Boolean(activeRunId));
   el.state.textContent =
     state === "connected" ? "就绪" : state === "unknown" ? "状态未知" : state;

@@ -41,6 +41,15 @@ body {
 .conn.connecting .dot { background: var(--warn); }
 .conn.unknown .dot, .conn.error .dot { background: var(--danger); }
 
+.browser-mode {
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .composer, .approval, .stream {
   border: 1px solid var(--line);
   border-radius: 10px;

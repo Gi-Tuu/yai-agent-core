@@ -281,6 +281,7 @@ function onBridgeMessage(message) {
       state: "connected",
       detail: `协议握手完成（bridge v${message.bridge_protocol_version}${model}${servers}）`,
       sidecarProtocol: message.sidecar_protocol_version,
+      mcpServers: message.mcp_servers || [],
     });
     return;
   }

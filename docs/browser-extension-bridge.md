@@ -32,6 +32,10 @@ Chrome / Edge Extension (MV3)
 | 大小限制 | 入站帧 ≤ 1 MiB；出站超限替换为 `truncated` 标记（避免 Chrome 杀 host 进程） |
 | 配置写盘 | Bridge 与本地 CLI 共用"文件锁 + 同目录 temp + fsync + os.replace"；旧版本轮为 `.bak`，不会留半截 JSON |
 | 读取页面 | 默认不注入脚本；用户点击"读取当前页面"才用 `activeTab` + `chrome.scripting` 一次性采集，页面内容按**不可信输入**附加到任务 |
+| 读取 ≠ 操作 | 只有只读快照；受控浏览器操作走 Browser Provider（受 `BrowserPolicy` 治理）或宿主显式配置的 Playwright MCP（独立/CDP 会话），**不控制当前标签页**。详见 [ADR 0006](adr/0006-browser-execution-unification.md) |
+
+> 面板顶部会显示"当前标签页：只读快照；受控浏览器：未接入 / MCP browser"，
+> 避免把读取当前页误认为能操作当前页。
 
 ## 安装（Windows / Chrome 或 Edge）
 
