@@ -896,7 +896,9 @@ def test_configure_llm_write_is_atomic_with_backup(tmp_path: Any) -> None:
     assert backup.is_file()
     assert json.loads(backup.read_text(encoding="utf-8")) == json.loads(original)
     assert list(tmp_path.glob("*.tmp-*")) == []
-    assert not (tmp_path / "bridge.json.lock").exists()
+    lock = tmp_path / "bridge.json.lock"
+    assert lock.is_file()
+    assert b"sk-" not in lock.read_bytes()
 
 
 # ---------- VER-2 followup：超帧截断保留终态标识 ----------

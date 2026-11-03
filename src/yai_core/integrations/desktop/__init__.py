@@ -18,6 +18,7 @@ from yai_core.integrations.desktop.policy import (
     DesktopError,
     DesktopPolicy,
     DesktopPolicyError,
+    DesktopSecurityWarning,
     StaleControlRefError,
 )
 from yai_core.integrations.desktop.provider import (
@@ -28,6 +29,7 @@ from yai_core.integrations.desktop.provider import (
     OBSERVE,
     PAUSE,
     RESUME,
+    SELECT,
     SET_VALUE,
     DesktopProvider,
     build_desktop_tools,
@@ -43,6 +45,7 @@ __all__ = [
     "PAUSE",
     "RESUME",
     "SET_VALUE",
+    "SELECT",
     "ControlInfo",
     "DesktopBackend",
     "DesktopBackendError",
@@ -50,6 +53,7 @@ __all__ = [
     "DesktopObservation",
     "DesktopPolicy",
     "DesktopPolicyError",
+    "DesktopSecurityWarning",
     "DesktopProvider",
     "DesktopSnapshot",
     "StaleControlRefError",

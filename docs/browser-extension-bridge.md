@@ -10,7 +10,7 @@
 ```text
 Chrome / Edge Extension (MV3)
   ├─ Service Worker：只做侧边栏 ↔ Bridge 的连接/转发，随时可被浏览器回收
-  ├─ Side Panel：任务输入、事件流、审批/澄清、取消、连接状态
+  ├─ Side Panel：任务输入、可折叠工作流、审批/澄清、取消、连接状态
   └─ chrome.scripting（activeTab）：用户点击"读取当前页面"才注入一次性采集函数
         ⇅ Native Messaging（4 字节小端长度 + UTF-8 JSON）
   yai_core.sidecar.native_bridge（本地 Bridge 进程）
@@ -26,12 +26,16 @@ Chrome / Edge Extension (MV3)
 | 项 | 做法 |
 |---|---|
 | 扩展身份 | Bridge 只认 Chrome 传入的 `chrome-extension://<id>/`，且必须在本地配置 `allowed_origins` 内；空配置 = 拒绝所有，fail closed |
-| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件。面板保存时 Key 只经一次内存、读回永远脱敏（`***末4位`） |
+| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件。面板保存时 Key 只经一次内存、读回永远脱敏（`***末4位`）。**注意：`bridge.json` 与 `.bak` 是明文敏感文件**（位置/ACL/轮换风险见 [ADR 0007](adr/0007-local-secret-storage.md)），当前不宣传为加密存储 |
 | 操作白名单 | 扩展只能发 `hello / run / cancel / host_response / ping / status / shutdown / get_config / configure_llm`；未知操作直接拒绝 |
 | 字段白名单 | `configure_llm` 只允许改 `initialize.model` 的 `base_url/model/strong_model/api_key`（改不了 `sidecar_command`/`allowed_origins`/其它 initialize 字段）；**改 base_url/provider 必须同时提供新 api_key**，旧 Key 不会被改道送到新端点；base_url 只接受 http/https。`host_response` 只允许回应 `srv-*` 反向请求 |
 | 大小限制 | 入站帧 ≤ 1 MiB；出站超限替换为 `truncated` 标记（避免 Chrome 杀 host 进程） |
 | 配置写盘 | Bridge 与本地 CLI 共用"文件锁 + 同目录 temp + fsync + os.replace"；旧版本轮为 `.bak`，不会留半截 JSON |
-| 读取页面 | 默认不注入脚本；用户点击"读取当前页面"才用 `activeTab` + `chrome.scripting` 一次性采集，页面内容按**不可信输入**附加到任务 |
+| 读取页面 | 默认不注入脚本；`tabs` 仅用于读取当前标签页 URL/title（不含页面内容）；用户点击"读取当前页面"时先对**当前 origin** 请求可选宿主权限（`optional_host_permissions`，每个站点一次），再用 `activeTab`/`scripting` 采集；页面内容按**不可信输入**附加到任务。拒绝授权则不读取 |
+| 读取 ≠ 操作 | 只有只读快照；受控浏览器操作走 Browser Provider（受 `BrowserPolicy` 治理）或宿主显式配置的 Playwright MCP（独立/CDP 会话），**不控制当前标签页**。详见 [ADR 0006](adr/0006-browser-execution-unification.md) |
+
+> 面板顶部会显示"当前标签页：只读快照；受控浏览器：未接入 / MCP browser"，
+> 避免把读取当前页误认为能操作当前页。
 
 ## 安装（Windows / Chrome 或 Edge）
 
@@ -81,7 +85,10 @@ Chrome / Edge Extension (MV3)
 
 ## CDP 模式：让工具操作你自己的 Chrome 窗口
 
-默认的 Playwright MCP 会新开一个受控浏览器；想操作用户自己的 Chrome 会话，用 CDP 连接：
+默认的 Playwright MCP 会新开一个受控浏览器；想操作用户自己的 Chrome 会话，用 CDP 连接。
+使用 `--cdp-endpoint` 注册时，配置会自动改用 `scripts/playwright_mcp_launcher.py`：
+端点未监听时先自动拉起 `scripts/chrome_cdp.py start` 的独立调试 Chrome；仍失败则
+**回退到 MCP 自管浏览器**，保证每次 initialize 不会因 9222 未启动而全部 browser_* 不可用。
 
 ```powershell
 # 1) 启动一个带远程调试端口的 Chrome（独立 profile；Chrome 不允许对默认 profile 开调试端口）
@@ -107,6 +114,10 @@ Chrome / Edge Extension (MV3)
 > 说明：CDP 连接的是 `scripts/chrome_cdp.py` 启动的那个 Chrome（独立 profile），
 > 不是你正在用的默认 Chrome 窗口；已有 Chrome 无法事后开启调试端口。若想接入已有窗口，
 > 需要以 `--remote-debugging-port` 启动它。
+
+> **并发保存（v0.27）**：Bridge 与 CLI 对 `bridge.json` 的读改写共用 OS 级
+> `<config>.lock`；锁忙时返回 `config_lock_busy` 并放弃本次写入（不会无锁覆盖），
+> 原文件、`.bak` 与原子替换保持不变。Key 回读始终脱敏。
 
 ## LLM 配置入口（面板 + 本地 CLI）
 

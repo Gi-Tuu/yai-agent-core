@@ -28,6 +28,11 @@ from yai_core import (
     verify_run,
 )
 from yai_core.types import EVIDENCE_SUMMARY_MAX
+from yai_core.verification import (
+    EVIDENCE_MAX_ITEMS,
+    EVIDENCE_TOTAL_MAX_CHARS,
+    limit_verification_result,
+)
 
 
 def _run(coro):
@@ -451,3 +456,52 @@ def test_done_verification_payload_stays_bounded_on_huge_evidence() -> None:
     assert captured and captured[-1].kind == "truncated"
     payload = json.dumps(result.to_dict(), ensure_ascii=False)
     assert len(payload) <= EVIDENCE_TOTAL_MAX_CHARS + 2_000
+
+
+def test_host_verifier_oversized_evidence_is_capped_without_changing_status() -> None:
+    """宿主 verifier 自返回的超大 evidence 也要在最终载荷前收紧，状态不被改写。"""
+    big = tuple(
+        Evidence(
+            kind="host",
+            summary=f"evidence-{index}",
+            ok=True,
+            detail={"index": index, "blob": "x" * 200},
+        )
+        for index in range(EVIDENCE_MAX_ITEMS * 3)
+    )
+
+    class _HugeVerifier:
+        async def verify(self, goal, *, evidence=(), metadata=None):
+            return VerificationResult(
+                status="verified_success",
+                goal=goal,
+                confidence=0.9,
+                reason="original",
+                evidence=big,
+            )
+
+    result = _run(verify_run(_HugeVerifier(), "g", []))
+    assert result is not None
+    assert result.status == "verified_success"
+    assert result.confidence == 0.9
+    assert len(result.evidence) <= EVIDENCE_MAX_ITEMS + 1
+    assert result.evidence[-1].kind == "truncated"
+    assert result.reason == "original"
+    assert len(str(result.to_dict())) <= EVIDENCE_TOTAL_MAX_CHARS + 2_000
+
+
+def test_limit_verification_result_handles_non_json_detail() -> None:
+    result = VerificationResult(
+        status="not_verifiable",
+        goal="g",
+        evidence=(
+            Evidence(
+                kind="host",
+                summary="non-json",
+                detail={"object": object(), "nested": {"x": 1}},
+            ),
+        ),
+    )
+    limited = limit_verification_result(result)
+    assert limited.status == "not_verifiable"
+    assert limited.evidence[0].kind == "host"

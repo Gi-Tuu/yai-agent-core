@@ -3,14 +3,16 @@
     "Bridge 本地可信配置示例。复制到仓库外（例如 %LOCALAPPDATA%\\YAI\\bridge.json）再改。",
     "这个文件只被本地 Bridge 进程读取；浏览器扩展消息无法修改其中任何字段。",
     "模型凭据不要写在这里：Sidecar 默认模型工厂读取 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL 环境变量。",
-    "allowed_origins 必须精确匹配扩展的 chrome-extension://<id>；空数组 = 拒绝所有连接（fail closed）。"
+    "allowed_origins 必须精确匹配扩展的 chrome-extension://<id>；空数组 = 拒绝所有连接（fail closed）。",
+    "current_tab_tool=true 才会注册当前标签页受限写操作；默认关闭，需人工授权 activeTab 并逐次审批。"
   ],
   "allowed_origins": ["chrome-extension://REPLACE_WITH_EXTENSION_ID/"],
   "initialize": {
     "policy": { "mode": "auto" },
     "interaction_timeout": 300,
     "llm_router": "auto",
-    "max_iters": 6
+    "max_iters": 6,
+    "current_tab_tool": false
   },
   "max_task_chars": 4000
 }

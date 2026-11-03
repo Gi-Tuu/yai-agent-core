@@ -649,3 +649,91 @@ async def test_shutdown_closes_attached_bridges() -> None:
     assert reply["result"] == {"stopped": True}
     assert closed == [True]
     assert harness.server._closed is True
+
+
+@async_test
+async def test_current_tab_tool_is_opt_in_and_roundtrips() -> None:
+    def make_harness() -> Harness:
+        return Harness(
+            model_factory=lambda cfg: ScriptedModel(  # noqa: ARG005
+                [
+                    ModelResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCallRequest(
+                                id="c1",
+                                name="current_tab_action",
+                                arguments={
+                                    "action": "type",
+                                    "selector": "#name",
+                                    "value": "YAI",
+                                },
+                            )
+                        ],
+                    ),
+                    ModelResponse(content="已填写"),
+                ]
+            )
+        )
+
+    plain = make_harness()
+    try:
+        initialized = await plain.call("initialize", {"model": {}})
+        names = [tool["name"] for tool in initialized["result"]["tools"]]
+        assert "current_tab_action" not in names
+    finally:
+        await plain.close()
+
+    harness = make_harness()
+    try:
+        initialized = await harness.call(
+            "initialize", {"model": {}, "current_tab_tool": True}
+        )
+        names = [tool["name"] for tool in initialized["result"]["tools"]]
+        assert "current_tab_action" in names
+
+        await harness.call("agent/run", {"task": "填写当前页"})
+        approval = await harness.wait_for(
+            lambda m: m.get("method") == "approval/request"
+        )
+        assert approval["params"]["tool"] == "current_tab_action"
+        await harness.respond(approval, {"approved": True})
+        tab_request = await harness.wait_for(
+            lambda m: m.get("method") == "tab_action/request"
+        )
+        assert tab_request["params"] == {
+            "action": "type",
+            "selector": "#name",
+            "value": "YAI",
+        }
+        await harness.respond(
+            tab_request, {"ok": True, "result": {"after": "完成：YAI"}}
+        )
+        done = await _wait_done(harness)
+        assert done["params"]["data"]["final_text"] == "已填写"
+        assert any(
+            event["params"]["type"] == "tool_result"
+            and event["params"]["data"].get("ok") is True
+            for event in _events(harness)
+        )
+    finally:
+        await harness.close()
+
+
+@async_test
+async def test_sidecar_channel_current_tab_action_roundtrip() -> None:
+    calls: list[tuple[str, dict]] = []
+
+    async def request(method, params):  # noqa: ANN001
+        calls.append((method, params))
+        return {"ok": True, "result": {"after": "完成"}}
+
+    channel = SidecarChannel(request)
+    result = await channel.current_tab_action("type", "#name", "YAI")
+    assert result["ok"] is True
+    assert calls == [
+        (
+            "tab_action/request",
+            {"action": "type", "selector": "#name", "value": "YAI"},
+        )
+    ]

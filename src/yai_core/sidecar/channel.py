@@ -59,6 +59,33 @@ class SidecarChannel:
             return bool(result.get("approved"))
         return False
 
+    async def current_tab_action(
+        self,
+        action: str,
+        selector: str,
+        value: str = "",
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """请扩展在当前已授权标签页执行一次受限操作（click/type）。
+
+        只接受 action/selector/value；扩展只操作 activeTab，不能注入任意 JS。
+        超时/无扩展按失败返回，不假装成功。
+        """
+        payload = {"action": action, "selector": selector, "value": value}
+        try:
+            async with asyncio.timeout(min(self.timeout, timeout)):
+                result = await self._request_host("tab_action/request", payload)
+        except TimeoutError:
+            return {
+                "ok": False,
+                "error": "tab_action_timeout",
+                "hint": "扩展未响应（是否已授权当前页？）",
+            }
+        if not isinstance(result, dict):
+            return {"ok": False, "error": "tab_action_invalid_host_result"}
+        return result
+
     async def ask(self, question: str) -> str:
         try:
             async with asyncio.timeout(self.timeout):

@@ -58,10 +58,35 @@ def subject_provider() -> Subject:
 - 多用户隔离：不同用户使用不同 AgentCore 实例，或在宿主侧按会话注入 Subject；
 - 实例级任务串行（同一 Core 内任务不交错）；并发请多实例。
 
-## 四、上线前自查清单
+## 四、浏览器 / 桌面适配器：生产用 secure preset
+
+```python
+from yai_core.integrations.browser import BrowserPolicy, BrowserProvider
+from yai_core.integrations.desktop import DesktopPolicy, DesktopProvider
+
+# 浏览器：显式列出来源；click/type/select/open/switch_tab 默认审批；
+# file:/javascript:/data:/about: 默认拒绝；密码框/下载默认关闭。
+browser_policy = BrowserPolicy.secure(["https://app.example.com"])
+browser = BrowserProvider(backend, policy=browser_policy)
+
+# 桌面：显式声明允许的进程 ID / 名称前缀（可再叠加窗口标题）；高风险控件、
+# 坐标点击默认关闭；invoke/set_value/click/focus 默认审批。
+desktop_policy = DesktopPolicy.secure(["1234"], allowed_window_titles=["记事本"])
+desktop = DesktopProvider(backend, policy=desktop_policy)
+```
+
+- 不传 `policy` 时二者仍按开发/测试宽松默认工作，但会发出
+  `BrowserSecurityWarning` / `DesktopSecurityWarning`；生产环境必须显式配置。
+- 控件名称关键词（删除/卸载/格式化等）**不能单独作为安全边界**：本地化、无名称
+  图标按钮都可能绕过；必须用进程/窗口白名单收窄可操作范围。
+- 浏览器导航在 Playwright 路由层对 `document/subdocument` 做来源守卫，
+  未授权重定向在**加载前** abort，不会先加载再检查最终 URL。
+
+## 五、上线前自查清单
 
 - [ ] `auto_approve_tools` 显式设置（默认值会触发 ProductionSafetyWarning）
 - [ ] 写操作 / 外发 / 资源类工具都有 `ToolGovernance` 声明
 - [ ] 白名单外工具的审批通道有人接（Channel.confirm 的宿主实现）
+- [ ] 浏览器/桌面适配器使用 `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`
 - [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/deployment-scaling.md`）
 - [ ] 预算三道墙（模型 / 工具 / token）按需配置（`Budget`）

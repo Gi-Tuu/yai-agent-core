@@ -60,8 +60,8 @@
 | 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
 | 记忆落盘损坏安全（v0.26.0） | 已验证 | `tests/test_memory_vault_corruption.py`、`tests/test_storage_cipher.py` | 分类（不可读 / 损坏 / 解密失败 / 版本不兼容 / owner 不一致）；quarantine / read_only / raise 三种处置；解密失败与版本不兼容强制只读；绝不静默覆盖原档 |
 | 记忆 owner 绑定（v0.26.0，最小隔离） | 已验证 | `tests/test_memory_vault_corruption.py`（owner_mismatch / 同 owner / 旧文件兼容） | 完整多租户仍由宿主用独立实例 / 独立路径；本项只防止误读误覆盖 |
-| Vault 跨进程写锁（2026-11 follow-up） | 已验证 | `tests/test_memory_vault.py`（multiprocessing 双进程各写 5 条全保留、超时降级不阻塞、锁文件不含数据、残留锁无害） | advisory 锁：绕过 MemoryVault 直接写数据文件的进程不受约束；2s 超时后仍靠 mtime/size 合并兜底 |
-| 成本口径与验收证据上限（2026-11 follow-up） | 已验证 | `tests/test_budget.py`、`tests/test_loop_runtime_contract.py`、`tests/test_outcome_verification.py`；DONE 所有路径固定键、model_calls 按"尝试"计且与 budget 一致；证据 50 条/详情 4k/总量 64KB 截断并标注 | 宿主 verifier 自返回的 evidence 不套该上限；replan meta-tool 计数已收口到 `_model_chat` |
+| Vault 跨进程写锁（v0.27，fail-closed） | 已验证 | `tests/test_memory_vault.py`（双进程各写 5 条全保留、锁超时 **不写盘**/保留 dirty/诊断、flush 重试、锁文件不可用不绕过、残留锁无害） | 2s 拿不到锁 = 放弃本次磁盘写入，内存变更保留，由下一次写入或 `flush()` 重试；advisory 锁仍不约束绕过 MemoryVault 的写入 |
+| 成本口径与验收证据上限（2026-11 follow-up） | 已验证 | `tests/test_budget.py`、`tests/test_loop_runtime_contract.py`、`tests/test_outcome_verification.py`；DONE 所有路径固定键、model_calls 按"尝试"计且与 budget 一致；证据 50 条/详情 4k/总量 64KB 截断并标注 | 宿主 verifier 自返回的 evidence 不套该上限（v0.27 Batch 4 处理）；replan meta-tool 计数已收口到 `_model_chat` |
 | 外发 URL 来源闸（v0.25.0） | 已验证 | `tests/test_egress_guard.py` | 声明路径按 schema 校验；声明保护但缺任务上下文则拒绝；未知 URL 不因此拒绝，不做跨任务污点追踪 |
 | 外发来源闸边界加固（v0.25.0，B1） | 已验证 | `tests/test_egress_guard.py`（Markdown/HTML/JSON 包裹、大小写与 www 变体、并发隔离、事件字段） | 主机名区域 ASCII 后紧粘 CJK 视为主机名终止；路径比较大小写不敏感；IDNA 有损映射保留独立身份 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
@@ -78,17 +78,23 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
-| 记忆质量基准（v0.26.0） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`tests/test_memory_metrics.py`；本机真实 bge-m3 实测 Recall@5 1.000 / MRR@5 0.917 / P50 12.27ms（18 条 / 12 query） | 语料小、标注非穷尽；真实 BGE 数字不随仓库分发、不进 CI；假嵌入器分数不代表真实语义效果 |
+| 记忆质量基准（v0.27 扩量） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query；真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms（CPU）；假嵌入器 Recall@5 0.971 / P50 1.5ms | 假嵌入器不代表真实语义；1000 条构建 79.8s（O(n²)），10,000 条未跑通，当前实现不适合 10k 规模；详见 `docs/memory-evaluation.md` |
 
 ## 五、宿主与协议
 
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
-| Windows Desktop Provider（v0.26.0，可选适配器） | **已验证（假 SDK 离线回归 + 本机真机 UIA 冒烟）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数 |
+| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 10/10）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数；真实应用验证见 `docs/windows-real-apps.md`（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
+| 原子写共享重试（v0.27） | 已验证（单测） | `yai_core.fsutil.replace_with_retry`；Vault/Bridge 共用 | 仍可能因长期占用最终失败，失败会保留 dirty/诊断 |
+| 适配器安全默认值（v0.27 Batch 2） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；宽松默认发 Warning；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词不作为安全边界 |
+| 浏览器执行路径统一 ADR + 受控浏览器 E2E（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界）；受控端到端已验证 | `docs/adr/0006-browser-execution-unification.md`；`scripts/browser_provider_task_smoke.py`（真实 Chromium：open/observe/type/reobserve/click/observe，3 次审批，收据链完整，页面文本验证 verified_success）；`docs/browser-task-e2e.md`；面板只读/受控区分 | 受控浏览器 E2E 已过；当前标签页写操作以 opt-in `current_tab_action` 实现（默认关闭，协议级回归），但真实 Side Panel 用户手势 E2E 仍需人工验收；不得宣称当前标签页写操作已真机通过 |
+| Windows 安装/分发（v0.27 Batch 6） | 已验证（便携包 + 一键安装/卸载） | `packaging/windows/installer.py`、`build_bundle.py`、`README.md`；本机实际安装/卸载/重装通过；产物 `dist/yai-agent-core-windows-0.26.0.zip`（约 46.6MB） | 不是 MSI/商店分发；需目标机 Python 3.11+ 与 `yai-agent-core`；扩展仍需手动加载；无自动更新/回滚 |
+| 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | `docs/adr/0007-local-secret-storage.md`；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26.0） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
+| Bridge 配置锁（v0.27，fail-closed） | 已验证 | `tests/test_bridge_llm_config.py`（双进程改不同字段不丢、持锁超时拒绝读改写、残留锁复用不删除） | OS 级跨进程锁（msvcrt/fcntl）；锁忙返回 `config_lock_busy`，原子替换 + `.bak` 与 Key 脱敏不变 |
 | 浏览器扩展宿主（v0.26.0，MV3 Side Panel） | **已验证：加载/侧边栏/点击行为/真实任务 + 真机状态恢复** | `scripts/extension_smoke.py`（MV3 SW、sidepanel.html、`openPanelOnActionClick=true`）；`tests/test_extension_assets.py` 静态契约；真实 Edge 端到端任务「打开百度」经 Bridge→Sidecar→MCP 返回标题；**2026-11-03 真机验收：运行中关/开面板恢复"运行中"并可取消、强杀 Sidecar 后 SW 自动重连且新任务成功、关最后一个面板后 Bridge 重启并重读配置**（截图 `docs/exports/accept-reopen-cancel.png`、`accept-reopen-idle.png`，本地产物） | 真实鼠标点工具栏图标、安装包分发仍未自动化；真实站点的多标签/下载/上传/CAPTCHA 未验证 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |

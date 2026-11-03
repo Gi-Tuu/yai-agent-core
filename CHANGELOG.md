@@ -5,6 +5,141 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Changed
+
+- **原子写共享重试统一**：新增 `yai_core.fsutil.replace_with_retry`，MemoryVault 与
+  Bridge 配置写盘共用；仅对 Windows 瞬态 `PermissionError` 做有界退避，其他错误
+  立即上抛。新增 `tests/test_fsutil.py`（前两次失败第三次成功 / 持续失败不改旧文件）。
+
+### Fixed
+
+- **MCP CDP 服务缺失**：新增 `scripts/playwright_mcp_launcher.py`。使用
+  `--cdp-endpoint` 注册/配置时自动改用启动器：先检测 9222，未监听则调用
+  `chrome_cdp.py start` 拉起独立调试 Chrome；仍失败则去掉 CDP 参数回退到 MCP
+  自管浏览器，避免 sidecar 初始化直接 ECONNREFUSED、所有 `browser_*` 不可用。
+  `register_native_host.py --cdp-endpoint` 新安装也走启动器。
+
+### Fixed
+
+### Fixed
+
+- **扩展读取页面 URL**：`chrome.tabs.query` 未授予 `tabs` 时 `tab.url` 为空，读取会报
+  “当前标签页 URL 无效”。manifest 增加 `tabs`（仅用于 URL/title，不授予页面内容），
+  并补充 URL 缺失的明确提示。
+
+- **扩展读取页面权限**：真实 Side Panel 中 activeTab 不保证在“读取当前页面”时仍有
+  授予，导致 `Cannot access contents of the page`。manifest 增加
+  `optional_host_permissions`（http/https），读取前按当前 origin 显式请求一次；
+  用户拒绝则不读取。当前标签页写操作同样要求该 origin 授权仍然有效。
+
+### Changed
+
+- **侧边栏工作流折叠与固定布局**：每轮 run 生成 `<details>` 工作流块，新 run
+  自动折叠历史；`.stream`/`#events` 在 `100vh` 面板内独立滚动，审批区固定在工作流
+  上方，不再随事件增长把页面拉长。新增“折叠历史”按钮，保留“清空”。
+
+### Added
+
+- **v0.27 Batch 3：当前标签页受限写操作（opt-in）**：`initialize.current_tab_tool=true`
+  时 Sidecar 注册 `current_tab_action`（仅 click/type + CSS selector + 审批）；
+  扩展只对用户授权并绑定的 `authorizedTabId` 执行 `chrome.scripting`，不执行任意 JS；
+  Bridge 新增 `tab_action/request` 反向请求。协议级全链路回归已过；真实 Side Panel
+  的用户手势 activeTab E2E 仍需人工验收（自动化无法模拟）。
+
+### Added
+
+- **v0.27 Batch 5：Desktop 下拉选择**：新增 `desktop_select` 工具与
+  `DesktopBackend.select_option`；UIA ComboBox 优先 `select`，其次 ValuePattern，
+  不支持时失败关闭、不猜坐标；secure preset 默认要求审批。字符映射表真实冒烟
+  扩展到 12/12（字体下拉选择并回读 `Arial`）。
+
+### Added
+
+- **v0.27 Batch 3：受控浏览器真实任务 E2E**：新增 `scripts/browser_provider_task_smoke.py`，
+  在真实 Playwright Chromium + 本地 HTTP 页面上完成 open → observe → type →
+  重新观察 → click → observe，3 次审批，执行收据链完整，基于页面真实文本给出
+  `verified_success`。报告 `docs/browser-task-e2e.md`；明确该 E2E 是受控浏览器，
+  不是扩展当前标签页写操作（当前标签页仍只读，方案 A/B 未实施）。
+
+### Added
+
+- **v0.27 Batch 6：Windows 便携安装包与一键安装/卸载**：
+  - `packaging/windows/installer.py`：复制冻结 Bridge 到稳定目录、调用注册脚本写
+    bridge.json/manifest、注册 Chrome/Edge HKCU；`uninstall` 可注销并删除 Bridge，
+    默认保留配置（`--purge-config` 才删 Key）。
+  - `build_bundle.py`：构建 `dist/windows-bundle/` 与约 46.6MB 的
+    `yai-agent-core-windows-0.26.0.zip`（Bridge + 扩展 + 安装器 + 文档）。
+  - 本机实测安装→侧边栏握手→卸载（注册表/文件清理、配置保留）→重装通过。
+  - 边界：不是 MSI/商店分发；需要 Python 3.11+ 与 `yai-agent-core`；扩展需手动加载；
+    无自动更新/回滚。
+
+### Added
+
+- **v0.27 Batch 6：记忆评测扩量与统计口径修正**：
+  - 数据集扩到 **114 条记忆 / 60 query**（中英、同义、词法零重叠、冲突/更新/删除/
+    标签/多用户语义），标注相关性；
+  - `run_bench.py` 改为 warmup + 每个 query 5 次重复，P50/P95 用全部热启动样本，
+    冷启动单独计时，记录 fake/real 与 device；真实 BGE-M3 本机 CPU 结果
+    Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms。
+  - 新增 `scale_bench.py`：100/1,000 条实测；**10,000 条未跑通**（remember 去重
+    O(n²) + 全量 JSON 重写），明确当前实现的大规模边界，不引入向量数据库。
+  - 报告：`docs/memory-evaluation.md`；回归：`tests/test_memory_metrics.py`、
+    `tests/test_memory_scale.py`。
+
+### Added
+
+- **v0.27 Batch 5：Windows 真实应用验证**：新增 `scripts/windows_real_apps_smoke.py`，
+  用系统自带 `charmap.exe` 在真实 UIA 上验证窗口枚举/白名单、观察、文本输入+回读、
+  按钮 Invoke、聚焦、用户接管（pause/resume）、旧引用失效、未允许窗口拒绝；
+  10/10 通过。`docs/windows-real-apps.md` 记录指标与诚实边界（下拉选择、第三方应用、
+  UAC、多显示器未覆盖）。
+
+### Security
+
+- **v0.27 Batch 4：验收证据最终上限与 Key 存储边界**：
+  - `verify_run` 对宿主 verifier 自返回的 evidence 套用与内核收集相同的
+    条数/单条/总量上限，只截断证据载荷、保留 status/confidence/reason，
+    并追加 `truncated` 标注；非法/非 JSON 证据安全退化。
+  - 新增 ADR 0007：明确 `bridge.json`/`.bak` 当前为明文敏感文件、不宣传加密；
+    记录跨平台 SecretStore SPI 草案与 Windows DPAPI/Credential Manager 迁移路径。
+  - 文档：browser-extension-bridge 凭据行、IMPLEMENTATION_STATUS 同步风险边界。
+
+### Changed
+
+- **v0.27 Batch 3：浏览器执行路径边界（ADR 0006）**：
+  - 明确扩展只提供“当前标签页只读快照”，受控操作走 Browser Provider（受
+    `BrowserPolicy` 治理）或宿主显式配置的 Playwright MCP；两者不共享工具名、
+    不互相回退，不宣称已统一。
+  - 侧边栏顶部新增浏览器模式提示（只读快照 / 受控浏览器未接入 / MCP browser），
+    复选框文案改为“只读快照附加到任务（不操作当前页）”。
+  - ADR 记录 A/B/C 方案取舍与后续门槛：A/B 落地前必须有权限一致性测试与真实
+    标签页 E2E。
+
+### Security
+
+- **v0.27 Batch 2：浏览器/桌面安全默认值**：
+  - 新增 `BrowserPolicy.secure(...)` / `development()` / `is_permissive`；生产 preset
+    必须显式列出来源（拒绝空/`*`），click/type/select/open/switch_tab 默认审批；
+    `file:/javascript:/data:/about:` 默认拒绝（`allow_special_schemes=False`）。
+  - `BrowserProvider`/`DesktopProvider` 未显式传 policy 时发出
+    `BrowserSecurityWarning`/`DesktopSecurityWarning`；新增 `DesktopPolicy.secure(...)`，
+    必须显式声明进程/窗口范围，高风险控件与坐标点击保持关闭。
+  - Playwright 后端在路由层拦截 `document/subdocument`：未授权重定向在加载前
+    abort，不再只检查最终 URL；新增真实本地 HTTP 服务器 + 真实 Playwright 回归。
+  - 文档：`docs/production-permissions.md` 增加生产 secure preset 与上线自查项。
+- **v0.27 Batch 1：并发写入 fail-closed**：
+  - `MemoryVault` 拿不到写锁时**放弃本次磁盘写入**（不再无锁 read-modify-write）：
+    内存变更与 `dirty` 保留、发 `memory_lock_timeout` 诊断，由下一次写入或
+    `flush()` 在安全时机重试；新增 `last_write_persisted` / `flush()` 与
+    `status().storage.persisted`，工具结果回报 `persisted` / `dirty`。
+  - Bridge 配置锁改为跨进程 OS 级锁（Windows `msvcrt` / POSIX `fcntl`）：
+    锁忙时抛 `ConfigLockError` 并放弃读改写（`config_lock_busy`），不删除仍被持有
+    的锁；原子替换、`.bak` 与 Key 脱敏保持。
+  - 回归：双进程写入不丢、锁超时不写盘、锁释放后 flush 重试、锁文件不可用不绕过、
+    残留锁复用、配置双进程改不同字段不丢更新。
+
 ## [v0.26.0] - 2026-11-03
 
 ### Added

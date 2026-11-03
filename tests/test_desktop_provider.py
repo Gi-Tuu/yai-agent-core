@@ -54,12 +54,20 @@ class FakeBackend:
                 sensitive=True,
             ),
             ControlInfo(control_id="1.4", role="Button", name="删除全部记录"),
+            ControlInfo(
+                control_id="1.5",
+                role="ComboBox",
+                name="字体",
+                automation_id="font",
+                value="Arial",
+            ),
         )
         self.fingerprint = "fp1"
         self.invoked: list[str] = []
         self.set_values: list[tuple[str, str]] = []
         self.clicked: list[str] = []
         self.focused: list[str] = []
+        self.selected: list[tuple[str, str]] = []
         self.foreground = True
         self.observe_fail = False
         self.change_on_action = True
@@ -93,6 +101,11 @@ class FakeBackend:
 
     async def set_value(self, window_id: str, control_id: str, value: str) -> None:
         self.set_values.append((control_id, value))
+        if self.change_on_action:
+            self.fingerprint = "fp2"
+
+    async def select_option(self, window_id: str, control_id: str, value: str) -> None:
+        self.selected.append((control_id, value))
         if self.change_on_action:
             self.fingerprint = "fp2"
 
@@ -133,7 +146,13 @@ def test_observe_builds_versioned_refs() -> None:
 
     assert result["status"] == "observed"
     assert result["snapshot_id"] == "d1"
-    assert [item["ref"] for item in result["controls"]] == ["d1:0", "d1:1", "d1:2", "d1:3"]
+    assert [item["ref"] for item in result["controls"]] == [
+        "d1:0",
+        "d1:1",
+        "d1:2",
+        "d1:3",
+        "d1:4",
+    ]
     assert result["evidence"][0]["kind"] == "desktop"
 
 
@@ -309,6 +328,21 @@ def test_set_value_declares_sensitive_value() -> None:
     provider = _provider(FakeBackend())
     tools = {spec.name: spec for spec in build_desktop_tools(provider)}
     assert tools["desktop_set_value"].governance.sensitive == ("value",)
+    assert tools["desktop_select"].governance.sensitive == ("value",)
+
+
+def test_select_option_uses_real_backend_and_declares_approval() -> None:
+    backend = FakeBackend()
+    provider = _provider(backend)
+    observed = _run(provider.observe("1001"))
+    combo = next(
+        c for c in observed["controls"] if c.get("role") == "ComboBox"
+    )
+    result = _run(provider.select_option(combo["ref"], "Arial"))
+    assert result["ok"] is True
+    assert backend.selected == [("1.5", "Arial")]
+    tools = {spec.name: spec for spec in build_desktop_tools(provider)}
+    assert tools["desktop_select"].governance.approval is not None
 
 
 @pytest.mark.parametrize("bad", [{"max_controls": 0}, {"action_timeout_ms": -1}])

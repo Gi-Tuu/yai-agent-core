@@ -19,6 +19,10 @@ from typing import Any
 
 from yai_core.types import ApprovalPolicy, RateLimitHint
 
+
+class DesktopSecurityWarning(UserWarning):
+    """使用了宽松默认策略（开发/测试模式）时的显式告警。"""
+
 #: 默认视为高风险的控件名称关键词（中文 + 英文，保守匹配）。
 HIGH_RISK_KEYWORDS = (
     "删除",
@@ -76,7 +80,7 @@ class DesktopPolicy:
     allow_geometry_click: bool = False
     max_controls: int = 80
     action_timeout_ms: int = 15_000
-    require_approval_for: frozenset[str] = frozenset({"invoke", "set_value", "click"})
+    require_approval_for: frozenset[str] = frozenset({"invoke", "set_value", "select", "click"})
     rate_limit_per_minute: int | None = 120
 
     def __post_init__(self) -> None:
@@ -92,6 +96,46 @@ class DesktopPolicy:
             or self.rate_limit_per_minute <= 0
         ):
             raise ValueError("DesktopPolicy.rate_limit_per_minute 必须是正整数或 None")
+
+    @classmethod
+    def secure(
+        cls,
+        allowed_processes: Any,
+        *,
+        allowed_window_titles: Any = (),
+    ) -> DesktopPolicy:
+        """生产安全预设：必须显式声明允许的进程（可再叠加窗口标题子串）。
+
+        高风险控件、坐标点击保持关闭；invoke/set_value/click 默认要审批。
+        控件名称关键词不是安全边界（本地化/无名称/图标按钮可绕过），宿主必须
+        用进程/标题白名单把可操作范围收窄。
+        """
+        if isinstance(allowed_processes, str):
+            allowed_processes = [allowed_processes]
+        processes = frozenset(str(item).strip().lower() for item in allowed_processes)
+        if not processes:
+            raise ValueError("DesktopPolicy.secure 必须显式提供至少一个允许进程")
+        if isinstance(allowed_window_titles, str):
+            allowed_window_titles = [allowed_window_titles]
+        titles = frozenset(str(item) for item in allowed_window_titles if str(item))
+        return cls(
+            allowed_processes=processes,
+            allowed_window_titles=titles,
+            allow_high_risk_controls=False,
+            allow_geometry_click=False,
+            require_approval_for=frozenset({"invoke", "set_value", "select", "click", "focus"}),
+            rate_limit_per_minute=60,
+        )
+
+    @classmethod
+    def development(cls) -> DesktopPolicy:
+        """显式的开发/测试宽松预设；生产请用 :meth:`secure`。"""
+        return cls()
+
+    @property
+    def is_permissive(self) -> bool:
+        """是否处于“进程/标题都不限制”的宽松模式。"""
+        return not self.allowed_processes and not self.allowed_window_titles
 
     def allows_window(self, window_id: str, title: str, process_id: str) -> bool:
         if self.allowed_processes and not any(

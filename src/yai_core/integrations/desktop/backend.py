@@ -39,6 +39,10 @@ class DesktopBackend(Protocol):
         """坐标点击兜底（仅当宿主显式允许 geometry click 时由 Provider 调用）。"""
         ...
 
+    async def select_option(self, window_id: str, control_id: str, value: str) -> None:
+        """下拉/列表选择：优先 ComboBox.select，其次 ValuePattern；不支持时失败关闭。"""
+        ...
+
     async def screenshot(self, window_id: str) -> bytes | None:
         """可选截图；不支持时返回 None（不假装支持）。"""
         ...

@@ -14,6 +14,10 @@
       </div>
     </header>
 
+    <div id="browser-mode" class="browser-mode">
+      当前标签页：只读快照（不会操作当前标签页）
+    </div>
+
     <section class="composer">
       <label class="field-label" for="task">任务</label>
       <textarea id="task" rows="4" placeholder="描述你要在这台电脑 / 浏览器上完成的事…"></textarea>
@@ -25,7 +29,7 @@
         <button id="observe" class="ghost">读取当前页面</button>
         <label class="check">
           <input type="checkbox" id="attach-page" checked />
-          把页面内容附加到任务
+          只读快照附加到任务（不操作当前页）
         </label>
       </div>
       <p class="hint">
@@ -79,8 +83,11 @@
 
     <section class="stream">
       <div class="stream-head">
-        <span>事件流</span>
-        <button id="clear" class="link">清空</button>
+        <span>工作流</span>
+        <span class="stream-actions">
+          <button id="collapse" class="link">折叠历史</button>
+          <button id="clear" class="link">清空</button>
+        </span>
       </div>
       <ol id="events"></ol>
     </section>

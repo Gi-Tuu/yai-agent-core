@@ -179,6 +179,18 @@ def _browser_mcp(
         args = ["-y", f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}", "--browser", "chrome"]
         if headless:
             args.append("--headless")
+    if cdp_endpoint:
+        # 由 launcher 负责“端点不通时自动拉起 Chrome；仍失败则回退 MCP 自管浏览器”，
+        # 避免 sidecar 初始化直接 ECONNREFUSED 导致所有 browser_* 不可用。
+        launcher = Path(__file__).resolve().parent / "playwright_mcp_launcher.py"
+        return [
+            {
+                "alias": "browser",
+                "command": sys.executable,
+                "args": [str(launcher), *args],
+                "prefix": "browser_",
+            }
+        ]
     return [
         {
             "alias": "browser",

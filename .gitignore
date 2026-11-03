@@ -71,3 +71,6 @@ inbox/
 
 # Playwright MCP 本地运行产物（页面快照 / console 记录）
 .playwright-mcp/
+
+# 固定扩展 ID 私钥（绝不提交；自行离线保管）
+packaging/extension/extension-key.pem

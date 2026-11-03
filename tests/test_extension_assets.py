@@ -23,8 +23,15 @@ def test_manifest_is_mv3_with_side_panel() -> None:
     assert manifest["manifest_version"] == 3
     assert manifest["side_panel"]["default_path"] == "sidepanel.html"
     permissions = set(manifest.get("permissions", []))
-    # 最小权限：只保留实际用到的四项（storage 未使用，已移除）。
-    assert permissions == {"sidePanel", "nativeMessaging", "activeTab", "scripting"}
+    # 最小权限：只保留实际用到的五项（storage 未使用，已移除）。
+    # tabs 仅用于读取当前标签页 URL/title，不含页面内容。
+    assert permissions == {
+        "sidePanel",
+        "nativeMessaging",
+        "activeTab",
+        "scripting",
+        "tabs",
+    }
     assert "storage" not in permissions
     assert manifest["background"]["service_worker"] == "service_worker.js"
     # 侧边栏依赖用户手势打开，不能声明 action popup（会抢走点击）。
@@ -51,7 +58,12 @@ def test_sidepanel_page_and_assets_exist() -> None:
     html = _read("sidepanel.html")
     assert 'id="run"' in html
     assert 'id="events"' in html
+    assert 'id="collapse"' in html
     assert 'id="conn-text"' in html
+    # ADR 0006：面板必须明确区分"当前标签页只读快照"与"受控浏览器"。
+    assert 'id="browser-mode"' in html
+    assert "只读快照" in html
+    assert "不操作当前页" in html
     assert 'src="sidepanel.js"' in html
     assert 'href="sidepanel.css"' in html
     # LLM 设置入口（用户反馈"没看到配置 LLM 的入口"，这里守住 DOM 与输入类型）。
@@ -82,6 +94,22 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
     assert "setRunning" in js
     assert "无最终文本" in js
     assert "浏览器内部页面" in js
+    # 受控浏览器状态必须可见；不得把"读取当前页"说成"能操作当前页"。
+    assert "受控浏览器" in js
+    assert "只读快照" in js
+    # v0.27：当前标签页写操作（opt-in）只走受限 click/type + authorizedTabId。
+    assert "tab_action/request" in js
+    assert "authorizedTabId" in js
+    assert "selector_not_found" in js
+    # activeTab 不保证每次入口都授予：读取前按 origin 请求可选宿主权限。
+    assert "permissions.request" in js
+    assert "ensureOriginPermission" in js
+    # 工作流折叠：新 run 自动收起历史，事件列表在固定面板内滚动。
+    assert "startRunSection" in js
+    assert "run-section" in js
+    assert 'id="collapse"' in _read("sidepanel.html")
+    manifest = _read("manifest.json")
+    assert "optional_host_permissions" in manifest
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。
     assert "connectNative" not in js
     assert "connectNative" in _read("service_worker.js")

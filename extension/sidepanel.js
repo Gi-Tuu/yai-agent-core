@@ -19,10 +19,12 @@ const el = {
   pagePreview: document.getElementById("page-preview"),
   conn: document.getElementById("conn"),
   connText: document.getElementById("conn-text"),
+  browserMode: document.getElementById("browser-mode"),
   state: document.getElementById("state"),
   runId: document.getElementById("run-id"),
   events: document.getElementById("events"),
   clear: document.getElementById("clear"),
+  collapse: document.getElementById("collapse"),
   approval: document.getElementById("approval"),
   approvalTool: document.getElementById("approval-tool"),
   approvalPayload: document.getElementById("approval-payload"),
@@ -45,6 +47,11 @@ let port = null;
 let activeRunId = null;
 let pendingRequestId = null;
 let pageSnapshot = null;
+//: 用户点击“读取当前页面”时授权的标签页；当前页操作只认这个 tab，不随后续焦点漂移。
+let authorizedTabId = null;
+//: 当前运行的折叠工作流；新 run 开始时自动折叠上一轮，避免会话无限拉长。
+let currentRunSection = null;
+let currentRunList = null;
 let connected = false;
 //: 已结束的 run_id：忽略迟到的 run_started（短任务终态先到的竞态，NB-1）。
 const finishedRunIds = new Set();
@@ -112,6 +119,7 @@ function onBridgeMessage(message) {
       setRunning(true);
       el.runId.textContent = activeRunId ? `run ${activeRunId}` : "";
       el.state.textContent = "运行中";
+      startRunSection(activeRunId);
       appendEvent("event", `run 已开始：${activeRunId}`);
       return;
     case "status":
@@ -226,10 +234,83 @@ function handleHostRequest(message) {
     el.clarifyQuestion.textContent = params.question || "请补充信息";
     el.clarifyAnswer.value = "";
     el.clarifyAnswer.focus();
+    return;
+  }
+  if (message.method === "tab_action/request") {
+    void runTabAction(message.request_id, params);
   }
 }
 
+/** 受限的当前标签页操作：只 click/type 指定 selector，不执行任意 JS。 */
+async function runTabAction(requestId, params) {
+  let result;
+  try {
+    const action = String(params.action || "");
+    const selector = String(params.selector || "");
+    const value = String(params.value || "");
+    if (!requestId) throw new Error("缺少 request_id");
+    if (action !== "click" && action !== "type") throw new Error("不支持的动作");
+    if (!selector) throw new Error("缺少 selector");
+    if (authorizedTabId === null) {
+      throw new Error("请先点击“读取当前页面”授权当前标签页");
+    }
+    const tab = await chrome.tabs.get(authorizedTabId);
+    if (!tab || tab.id === undefined) throw new Error("授权标签页已关闭");
+    const originPattern = await ensureOriginPermission(tab.url || "");
+    const has = await chrome.permissions.contains({ origins: [originPattern] });
+    if (!has) throw new Error("授权已被撤销；请重新点击“读取当前页面”");
+    const execution = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: tabActionFunc,
+      args: [action, selector, value],
+    });
+    result = { ok: true, result: execution?.[0]?.result || null };
+  } catch (error) {
+    result = { ok: false, error: String(error && error.message ? error.message : error) };
+  }
+  port.postMessage({ op: "host_response", request_id: requestId, result });
+}
+
+/** 在页面内执行；必须保持可序列化，不能引用闭包变量。 */
+function tabActionFunc(action, selector, value) {
+  return new Promise((resolve) => {
+    const element = document.querySelector(selector);
+    if (!element) {
+      resolve({ ok: false, error: "selector_not_found" });
+      return;
+    }
+    const before = document.body ? String(document.body.innerText || "") : "";
+    if (action === "click") {
+      element.click();
+    } else if (action === "type") {
+      element.focus();
+      const proto =
+        element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(element, value);
+      else element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      resolve({ ok: false, error: "unsupported_action" });
+      return;
+    }
+    setTimeout(() => {
+      resolve({
+        ok: true,
+        before: before.slice(0, 1000),
+        after: document.body ? String(document.body.innerText || "").slice(0, 2000) : "",
+        title: document.title,
+        url: location.href,
+      });
+    }, 60);
+  });
+}
+
 function finishRun(label) {
+  markCurrentRunSection(label);
   activeRunId = null;
   pendingRequestId = null;
   hideApproval();
@@ -282,6 +363,10 @@ function renderStatus(status) {
   connected = state === "connected";
   el.conn.className = `conn ${state}`;
   el.connText.textContent = friendlyDetail(status.detail, state);
+  const servers = Array.isArray(status.mcpServers) ? status.mcpServers : [];
+  el.browserMode.textContent = servers.includes("browser")
+    ? "当前标签页：只读快照（不操作当前页）；受控浏览器：MCP browser（宿主配置的独立/CDP 会话）"
+    : "当前标签页：只读快照（不操作当前页）；受控浏览器：未接入";
   setRunning(Boolean(activeRunId));
   el.state.textContent =
     state === "connected" ? "就绪" : state === "unknown" ? "状态未知" : state;
@@ -298,11 +383,40 @@ function friendlyDetail(detail, state) {
   return text;
 }
 
+function startRunSection(runId) {
+  // 历史工作流自动折叠，只保留当前运行展开。
+  for (const section of el.events.querySelectorAll("details.run-section")) {
+    section.open = false;
+  }
+  const details = document.createElement("details");
+  details.className = "run-section";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = `工作流${runId ? ` · ${runId}` : ""}`;
+  const list = document.createElement("ol");
+  list.className = "run-events";
+  details.append(summary, list);
+  el.events.appendChild(details);
+  currentRunSection = details;
+  currentRunList = list;
+  el.events.scrollTop = el.events.scrollHeight;
+}
+
+function markCurrentRunSection(label) {
+  if (!currentRunSection) return;
+  const summary = currentRunSection.querySelector("summary");
+  if (summary && !summary.textContent.includes(label)) {
+    summary.textContent = `${summary.textContent} · ${label}`;
+  }
+}
+
 function appendEvent(kind, text) {
   const item = document.createElement("li");
   item.className = kind;
   item.textContent = text;
-  el.events.appendChild(item);
+  const list = currentRunList || el.events;
+  list.appendChild(item);
+  if (currentRunSection) currentRunSection.open = true;
   el.events.scrollTop = el.events.scrollHeight;
 }
 
@@ -330,7 +444,17 @@ el.cancel.addEventListener("click", () => {
   send({ op: "cancel", run_id: activeRunId });
 });
 
-el.clear.addEventListener("click", () => el.events.replaceChildren());
+el.clear.addEventListener("click", () => {
+  el.events.replaceChildren();
+  currentRunSection = null;
+  currentRunList = null;
+});
+
+el.collapse.addEventListener("click", () => {
+  for (const section of el.events.querySelectorAll("details.run-section")) {
+    section.open = false;
+  }
+});
 
 el.approve.addEventListener("click", () => {
   if (!pendingRequestId) return;
@@ -401,16 +525,44 @@ el.cfgSave.addEventListener("click", () => {
   }
 });
 
+
+/** activeTab 只在部分入口授予；读取前按当前 origin 请求一次性站点权限。 */
+async function ensureOriginPermission(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("当前标签页 URL 无效");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`不支持读取 ${url.protocol}// 页面`);
+  }
+  const originPattern = `${url.protocol}//${url.host}/*`;
+  const has = await chrome.permissions.contains({ origins: [originPattern] });
+  if (has) return originPattern;
+  const granted = await chrome.permissions.request({ origins: [originPattern] });
+  if (!granted) {
+    throw new Error("你拒绝了该站点的读取权限；页面未被读取");
+  }
+  return originPattern;
+}
+
 el.observe.addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id === undefined) throw new Error("没有活动标签页");
-    const url = String(tab.url || "");
+    const url = String(tab.url || tab.pendingUrl || "");
+    if (!url) {
+      throw new Error(
+        "无法获取当前标签页 URL；请在普通网页上通过工具栏图标重新打开侧边栏（需要 tabs 权限）"
+      );
+    }
     if (/^(chrome|edge|about|devtools|chrome-extension):/i.test(url)) {
       throw new Error(
         `当前是浏览器内部页面（${url.split("/")[0]}://），不能读取；请切换到普通网页后再试`
       );
     }
+    await ensureOriginPermission(url);
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: collectPageSnapshot,
@@ -419,6 +571,7 @@ el.observe.addEventListener("click", async () => {
     const snapshot = results?.[0]?.result;
     if (!snapshot || !snapshot.text) throw new Error("页面没有可读文本");
     pageSnapshot = snapshot.text;
+    authorizedTabId = tab.id;
     el.pagePreview.classList.remove("hidden");
     el.pagePreview.textContent =
       `${snapshot.title}\n${snapshot.url}\n\n${snapshot.text.slice(0, 1500)}`;

@@ -82,13 +82,21 @@ def test_benchmark_runs_offline_and_reports() -> None:
         [sys.executable, "benchmarks/memory/run_bench.py", "--json"],
         cwd=ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=180,
     )
     assert completed.returncode == 0, completed.stderr
     report = json.loads(completed.stdout)
-    assert report["dataset"]["notes"] >= 10
-    assert report["dataset"]["queries"] >= 8
+    assert report["dataset"]["notes"] >= 100
+    assert report["dataset"]["queries"] >= 50
+    assert report["dataset"]["warmup"] >= 1
+    assert report["dataset"]["repeats"] >= 3
+    assert report["lexical"]["latency_samples"] >= (
+        report["dataset"]["queries"] * report["dataset"]["repeats"]
+    )
+    assert "latency_p95_ms" in report["lexical"]
+    assert "cold_lexical_ms" in report["latency"]
     assert "lexical" in report and "semantic" in report
     # 语义双通道不应比纯词法差；假嵌入器下还应当更强。
     assert report["semantic"]["recall@5"] >= report["lexical"]["recall@5"]

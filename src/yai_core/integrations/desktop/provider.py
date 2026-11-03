@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from yai_core.diagnostics import DiagnosticSink
@@ -24,6 +25,7 @@ from yai_core.integrations.desktop.models import (
 from yai_core.integrations.desktop.policy import (
     DesktopError,
     DesktopPolicy,
+    DesktopSecurityWarning,
     StaleControlRefError,
 )
 from yai_core.types import ToolGovernance, ToolSpec
@@ -32,6 +34,7 @@ LIST_WINDOWS = "desktop_list_windows"
 OBSERVE = "desktop_observe"
 INVOKE = "desktop_invoke"
 SET_VALUE = "desktop_set_value"
+SELECT = "desktop_select"
 FOCUS = "desktop_focus"
 CLICK = "desktop_click"
 PAUSE = "desktop_pause"
@@ -50,8 +53,16 @@ class DesktopProvider:
     ) -> None:
         if policy is not None and not isinstance(policy, DesktopPolicy):
             raise ValueError("policy 必须是 DesktopPolicy 实例或 None")
+        if policy is None:
+            warnings.warn(
+                "DesktopProvider 未显式传入 DesktopPolicy，使用开发/测试宽松默认"
+                "（不限制进程/窗口）；生产请用 DesktopPolicy.secure([...]) 声明可操作范围。",
+                DesktopSecurityWarning,
+                stacklevel=2,
+            )
+            policy = DesktopPolicy.development()
         self.backend = backend
-        self.policy = policy or DesktopPolicy()
+        self.policy = policy
         self.on_diagnostic = on_diagnostic
         self._version = 0
         self._snapshot: DesktopSnapshot | None = None
@@ -152,6 +163,15 @@ class DesktopProvider:
             "set_value",
             ref,
             lambda window, control: self._set(window, control, value),
+        )
+
+    async def select_option(self, ref: str, value: str) -> dict[str, Any]:
+        return await self._act(
+            "select",
+            ref,
+            lambda window_id, control: self.backend.select_option(
+                window_id, control.control_id, value
+            ),
         )
 
     async def click(self, ref: str) -> dict[str, Any]:
@@ -420,6 +440,23 @@ def build_desktop_tools(provider: DesktopProvider) -> list[ToolSpec]:
             },
             handler=provider.focus,
             governance=_governance(policy, "focus"),
+        ),
+        ToolSpec(
+            name=SELECT,
+            description=(
+                "下拉/列表选择（ComboBox 等），引用来自最新快照；"
+                "不支持 select/ValuePattern 时失败关闭，不猜坐标。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["ref", "value"],
+            },
+            handler=provider.select_option,
+            governance=_governance(policy, "select", sensitive=("value",)),
         ),
         ToolSpec(
             name=CLICK,

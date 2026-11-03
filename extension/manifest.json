@@ -8,7 +8,12 @@
     "sidePanel",
     "nativeMessaging",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "service_worker.js",
