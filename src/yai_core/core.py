@@ -694,8 +694,13 @@ class AgentCore:
             AgentEvent(
                 EventType.DONE,
                 {
+                    # 与内核正常/澄清中止 DONE 保持同一套 schema 键（审计 F12）：
+                    # 救援路径不可能有新调用，成本字段按 0 报，绝不臆造用量。
                     "strategy": resolved.value,
                     "final_text": "",
+                    "standard_calls": 0,
+                    "strong_calls": 0,
+                    "model_calls": 0,
                     "status": "error",
                     "error": message,
                 },
