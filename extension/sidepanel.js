@@ -174,11 +174,22 @@ function renderStatus(status) {
   const state = status.state || "unknown";
   connected = state === "connected";
   el.conn.className = `conn ${state}`;
-  el.connText.textContent = status.detail || state;
+  el.connText.textContent = friendlyDetail(status.detail, state);
   el.run.disabled = !connected;
   if (!connected && !activeRunId) el.cancel.disabled = true;
   el.state.textContent =
     state === "connected" ? "就绪" : state === "unknown" ? "状态未知" : state;
+}
+
+function friendlyDetail(detail, state) {
+  const text = String(detail || state || "");
+  if (/native messaging host not found|not registered|not found/i.test(text)) {
+    return "未注册本地 Bridge：按 docs/browser-extension-bridge.md 安装 Native Host";
+  }
+  if (/forbidden|access to the specified native messaging host is forbidden/i.test(text)) {
+    return "扩展来源未被 Native Host 允许：检查 allowed_origins 是否为本扩展 ID";
+  }
+  return text;
 }
 
 function appendEvent(kind, text) {

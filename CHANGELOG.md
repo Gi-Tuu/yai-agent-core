@@ -26,9 +26,16 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  状态：Bridge 已与**真实 Sidecar 进程**端到端验证；扩展已在**真实 Chrome / Edge**
-  加载出 MV3 service worker（`scripts/extension_smoke.py`）。侧边栏点击流、Native
-  Messaging 注册与安装包分发仍需人工验收。
+  - **侧边栏入口修复（用户反馈"没有侧边栏"）**：service worker 顶层与
+  onInstalled/onStartup 都设置 `openPanelOnActionClick`；新增 `chrome.action.onClicked`
+  兜底（`sidePanel.open` 失败时把 `sidepanel.html` 开成普通标签页）；面板页把
+  "native messaging host not found" 翻成可操作的中文提示；新增
+  `tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 兜底 / 资源引用）。
+状态：Bridge 已与**真实 Sidecar 进程**端到端验证；扩展已在 Playwright Chromium /
+  **真实 Edge** 加载出 MV3 service worker，且侧边栏页可渲染、`openPanelOnActionClick`
+  已开启（`scripts/extension_smoke.py`）。**看不到侧边栏的兜底**：service worker 顶层与
+  onInstalled/onStartup 都设置点击行为；点击图标若 sidePanel.open 失败会自动开成普通
+  标签页。真实鼠标点击、Native Messaging 注册与安装包分发仍需人工验收。
 - **记忆质量基准（v0.26 Batch 6）**：`benchmarks/memory/` 提供小型离线评测集与
   `run_bench.py`，测量 Recall@5 / MRR@5 / 无关召回率 / P50·P95 延迟、词法与语义
   互补收益、嵌入器故障降级一致性、更新删除后的索引一致性；假嵌入器与真实

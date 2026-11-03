@@ -102,6 +102,27 @@ Chrome / Edge Extension (MV3)
 授权来源握手/状态/关闭全通过。注意 **未加载 unpacked 扩展的 ID 由路径决定**，正式注册
 native host 时要用固定安装路径下的稳定 ID。
 
+## 看不到侧边栏？按这个顺序排查
+
+1. **要点扩展图标，不是浏览器自带的"侧边栏"按钮**：`chrome://extensions` 打开开发者模式 →
+   加载已解压的扩展程序 → 选 `extension/`；然后在工具栏把 YAI 图标**固定**，点击它 →
+   浏览器右侧出现 Side Panel。扩展不会在加载后自动弹出侧边栏。
+2. **改过代码要重新加载**：在 `chrome://extensions` 的 YAI 卡片上点"重新加载"（或移除后
+   重新加载），否则浏览器里跑的还是旧版 service worker。
+3. **仍无反应时**：打开 `chrome://extensions` → YAI 卡片 → 点 "Service Worker" 链接查看
+   console 错误；也可以直接在新标签页打开
+   `chrome-extension://<你的扩展 ID>/sidepanel.html`——这是同一套 UI 的标签页版本，
+   用来确认面板本身能渲染、错误原因是什么。
+4. **状态显示"未注册本地 Bridge"是正常的**：侧边栏已打开，只是还没按第 3 节注册
+   Native Messaging Host；注册前点"运行"会得到明确错误，而不是静默失败。
+5. **新版 Chrome 对命令行 `--load-extension` 有限制**：这不影响你在 UI 里手动加载；
+   自动化验收脚本用 Playwright 自带 Chromium / Edge 覆盖加载、侧边栏页面渲染与
+   `openPanelOnActionClick` 行为。
+
+> 扩展已内置兜底：service worker 顶层与 onInstalled/onStartup 都会设置
+> `openPanelOnActionClick`；点击图标时若 `chrome.sidePanel.open` 不可用或失败，
+> 会自动把 `sidepanel.html` 开成普通标签页，避免"点了没反应"。
+
 ## 验证清单（需要浏览器环境）
 
 1. `chrome://extensions` 加载无错误；点图标打开侧边栏。

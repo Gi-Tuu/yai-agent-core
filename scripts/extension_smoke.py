@@ -44,6 +44,9 @@ _BROWSERS = {
         Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
         Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
     ],
+    # Playwright 自带的 Chromium：不依赖系统浏览器，CI/无品牌浏览器环境也能跑
+    # （新版 Chrome 的 --load-extension 受策略限制，UI 手动加载不受影响）。
+    "chromium": [],
 }
 
 _EXTENSIONS_JS = """() => {
@@ -106,7 +109,7 @@ def _pack(executable: Path, extension_dir: Path) -> dict[str, Any]:
 
 
 async def _load_and_probe(
-    executable: Path, extension_dir: Path, *, channel: str | None
+    executable: Path | None, extension_dir: Path, *, channel: str | None
 ) -> dict[str, Any]:
     from playwright.async_api import async_playwright
 
@@ -121,7 +124,9 @@ async def _load_and_probe(
         "--disable-features=DisableLoadExtensionCommandLineSwitch",
     ]
     evidence: dict[str, Any] = {}
-    scheme = "edge" if "msedge" in executable.name.lower() else "chrome"
+    scheme = (
+        "edge" if executable is not None and "msedge" in executable.name.lower() else "chrome"
+    )
     async with async_playwright() as playwright:
         kwargs: dict[str, Any] = {
             "user_data_dir": str(profile),
@@ -176,6 +181,38 @@ async def _load_and_probe(
             except Exception as exc:  # noqa: BLE001 - 页面结构差异不掩盖 CDP 证据
                 evidence["extensions_page"] = {"error": f"{type(exc).__name__}: {exc}"}
             evidence["extension_loaded"] = bool(evidence.get("extension_id"))
+
+            # 关键回归：侧边栏页面本身能渲染，且 action 点击行为已开启。
+            # （"扩展加载成功"不等于"用户点图标能看到侧边栏"，这一步专门盯住它。）
+            extension_id = evidence.get("extension_id")
+            if extension_id:
+                panel = await context.new_page()
+                panel_errors: list[str] = []
+                panel.on("pageerror", lambda err: panel_errors.append(str(err)))
+                await panel.goto(f"chrome-extension://{extension_id}/sidepanel.html")
+                await asyncio.sleep(1.5)
+                panel_info = await panel.evaluate(
+                    """async () => {
+                      const out = {
+                        hasUi: !!document.getElementById('run') &&
+                               !!document.getElementById('events'),
+                        connText: document.getElementById('conn-text')?.textContent || '',
+                        stateText: document.getElementById('state')?.textContent || '',
+                      };
+                      try {
+                        out.behavior = await chrome.sidePanel.getPanelBehavior();
+                      } catch (error) {
+                        out.behaviorError = String(error);
+                      }
+                      return out;
+                    }"""
+                )
+                evidence["sidepanel_page"] = panel_info
+                evidence["sidepanel_page_ok"] = bool(panel_info.get("hasUi"))
+                evidence["open_on_action_click"] = bool(
+                    (panel_info.get("behavior") or {}).get("openPanelOnActionClick")
+                )
+                evidence["sidepanel_errors"] = panel_errors[:5]
         finally:
             await context.close()
     return evidence
@@ -183,12 +220,17 @@ async def _load_and_probe(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="浏览器扩展真机验收")
-    parser.add_argument("--browser", choices=sorted(_BROWSERS), default="chrome")
+    parser.add_argument(
+        "--browser",
+        choices=sorted(_BROWSERS),
+        default="chrome",
+        help="chrome / msedge 用系统浏览器；chromium 用 Playwright 自带 Chromium",
+    )
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     args = parser.parse_args()
 
-    executable = _find_browser(args.browser)
-    if executable is None:
+    executable = None if args.browser == "chromium" else _find_browser(args.browser)
+    if args.browser != "chromium" and executable is None:
         payload = {"ok": False, "skipped": f"{args.browser}-not-found"}
         if args.json:
             print(json.dumps(payload))
@@ -206,35 +248,50 @@ def main() -> int:
     workdir = tmpdir / "extension"
     try:
         shutil.copytree(EXT_SRC, workdir)
-        evidence: dict[str, Any] = {
-            "browser": args.browser,
-            "executable": str(executable),
-            "executable_version": _version(executable),
-        }
-        evidence["pack"] = _pack(executable, workdir)
+        evidence: dict[str, Any] = {"browser": args.browser}
+        if executable is not None:
+            evidence["executable"] = str(executable)
+            evidence["executable_version"] = _version(executable)
+            evidence["pack"] = _pack(executable, workdir)
+        else:
+            # Playwright 自带 Chromium：没有 CLI 可 pack，至少校验 manifest JSON 可解析。
+            manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+            evidence["pack"] = {
+                "skipped": "bundled-chromium",
+                "manifest_version": manifest.get("manifest_version"),
+            }
         try:
             evidence.update(
                 asyncio.run(
                     _load_and_probe(
                         executable,
                         workdir,
-                        channel=None if args.browser == "chrome" else "msedge",
+                        channel=(
+                            None
+                            if args.browser == "chromium"
+                            else ("chrome" if args.browser == "chrome" else "msedge")
+                        ),
                     )
                 )
             )
         except Exception as exc:  # noqa: BLE001 - 环境/版本差异要如实记录
             evidence["load_error"] = f"{type(exc).__name__}: {exc}"
 
+        pack_ok = evidence["pack"].get("skipped") == "bundled-chromium" or (
+            evidence["pack"].get("exit_code") == 0
+            and evidence["pack"].get("crx_created")
+        )
         ok = bool(
-            evidence["pack"]["exit_code"] == 0
-            and evidence["pack"]["crx_created"]
+            pack_ok
             and evidence.get("extension_loaded")
             and evidence.get("extension_id")
+            and evidence.get("sidepanel_page_ok")
+            and evidence.get("open_on_action_click")
         )
         detail = (
-            "扩展被浏览器接受、真实加载并出现在扩展列表（ID 已记录）"
+            "扩展被浏览器接受、真实加载，侧边栏页面可渲染且 action 点击行为已开启"
             if ok
-            else "扩展未在真实浏览器加载成功（见 evidence）"
+            else "扩展加载/侧边栏检查未通过（见 evidence）"
         )
         payload = {"ok": ok, "detail": detail, **evidence}
     finally:

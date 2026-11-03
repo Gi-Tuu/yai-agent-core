@@ -21,12 +21,45 @@ const panels = new Set();
 let reconnectTimer = null;
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  enableSidePanelOnActionClick();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  enableSidePanelOnActionClick();
 });
+
+// 顶层也调一次：卸载重载（unpacked reload）时 onInstalled 不一定再触发，
+// 但用户点击图标时仍应能打开侧边栏。
+enableSidePanelOnActionClick();
+
+// 兜底入口：即使 setPanelBehavior 没生效（旧版浏览器 / 企业策略 / 行为被重置），
+// 点击工具栏图标时也主动尝试打开侧边栏；仍打不开就把面板页开成普通标签页，
+// 至少让用户能看见 UI 与错误原因，而不是"点了没反应"。
+chrome.action.onClicked.addListener(async (tab) => {
+  const windowId = tab && typeof tab.windowId === "number" ? tab.windowId : undefined;
+  try {
+    if (chrome.sidePanel && chrome.sidePanel.open && windowId !== undefined) {
+      await chrome.sidePanel.open({ windowId });
+      return;
+    }
+  } catch (error) {
+    console.warn("[yai] sidePanel.open 失败，回退为标签页打开：", String(error));
+  }
+  openPanelAsTab();
+});
+
+function enableSidePanelOnActionClick() {
+  if (!chrome.sidePanel || !chrome.sidePanel.setPanelBehavior) return;
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.warn("[yai] setPanelBehavior 失败：", String(error)));
+}
+
+function openPanelAsTab() {
+  chrome.tabs.create({ url: chrome.runtime.getURL("sidepanel.html") }).catch((error) => {
+    console.warn("[yai] 无法打开面板标签页：", String(error));
+  });
+}
 
 chrome.runtime.onConnect.addListener((panelPort) => {
   if (panelPort.name !== "yai-sidepanel") return;

@@ -81,7 +81,7 @@
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26，Unreleased） | **已验证（真实进程 + 真实 Sidecar）** | `scripts/bridge_smoke.py`（未授权来源退出码 2；hello / status / shutdown 全部通过）；`tests/test_native_bridge.py`（帧与协议边界） | 只验证握手/状态/关闭，未跑真实任务；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
-| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证加载（真实 Chrome + Edge）** | `scripts/extension_smoke.py`（Chrome 156 / Edge 156：--pack-extension 通过、MV3 service worker 出现在 CDP targets） | 侧边栏点击流、Native Messaging 注册、安装包分发与 Service Worker 回收仍未真机验收；需按文档人工补 |
+| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证加载 + 侧边栏页 + 点击行为（Playwright Chromium / 真实 Edge）** | `scripts/extension_smoke.py`：MV3 service worker 出现、`sidepanel.html` 渲染无页错误、`sidePanel.getPanelBehavior().openPanelOnActionClick=true`；`tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 标签页兜底）；系统 Chrome 的 CLI `--load-extension` 受策略限制，UI 手动加载路径需人工确认 | 真实鼠标点击工具栏图标→侧边栏出现、Native Messaging 注册、安装包分发与 Service Worker 回收仍未自动化验收 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |
 
