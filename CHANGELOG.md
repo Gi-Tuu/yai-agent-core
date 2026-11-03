@@ -9,6 +9,16 @@
 
 ### Fixed
 
+### Security
+
+- **v0.27 Batch 4：验收证据最终上限与 Key 存储边界**：
+  - `verify_run` 对宿主 verifier 自返回的 evidence 套用与内核收集相同的
+    条数/单条/总量上限，只截断证据载荷、保留 status/confidence/reason，
+    并追加 `truncated` 标注；非法/非 JSON 证据安全退化。
+  - 新增 ADR 0007：明确 `bridge.json`/`.bak` 当前为明文敏感文件、不宣传加密；
+    记录跨平台 SecretStore SPI 草案与 Windows DPAPI/Credential Manager 迁移路径。
+  - 文档：browser-extension-bridge 凭据行、IMPLEMENTATION_STATUS 同步风险边界。
+
 ### Changed
 
 - **v0.27 Batch 3：浏览器执行路径边界（ADR 0006）**：

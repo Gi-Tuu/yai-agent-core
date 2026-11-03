@@ -26,7 +26,7 @@ Chrome / Edge Extension (MV3)
 | 项 | 做法 |
 |---|---|
 | 扩展身份 | Bridge 只认 Chrome 传入的 `chrome-extension://<id>/`，且必须在本地配置 `allowed_origins` 内；空配置 = 拒绝所有，fail closed |
-| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件。面板保存时 Key 只经一次内存、读回永远脱敏（`***末4位`） |
+| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件。面板保存时 Key 只经一次内存、读回永远脱敏（`***末4位`）。**注意：`bridge.json` 与 `.bak` 是明文敏感文件**（位置/ACL/轮换风险见 [ADR 0007](adr/0007-local-secret-storage.md)），当前不宣传为加密存储 |
 | 操作白名单 | 扩展只能发 `hello / run / cancel / host_response / ping / status / shutdown / get_config / configure_llm`；未知操作直接拒绝 |
 | 字段白名单 | `configure_llm` 只允许改 `initialize.model` 的 `base_url/model/strong_model/api_key`（改不了 `sidecar_command`/`allowed_origins`/其它 initialize 字段）；**改 base_url/provider 必须同时提供新 api_key**，旧 Key 不会被改道送到新端点；base_url 只接受 http/https。`host_response` 只允许回应 `srv-*` 反向请求 |
 | 大小限制 | 入站帧 ≤ 1 MiB；出站超限替换为 `truncated` 标记（避免 Chrome 杀 host 进程） |

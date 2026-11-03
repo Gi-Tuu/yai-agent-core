@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any, Protocol, runtime_checkable
 
 from yai_core.diagnostics import (
@@ -380,4 +381,56 @@ async def verify_run(
             goal=goal,
             reason=f"验收器返回了 {type(result).__name__}，不是 VerificationResult",
         )
-    return result
+    return limit_verification_result(result)
+
+
+def limit_verification_result(
+    result: VerificationResult,
+    *,
+    max_items: int = EVIDENCE_MAX_ITEMS,
+    max_detail_chars: int = EVIDENCE_DETAIL_MAX_CHARS,
+    max_total_chars: int = EVIDENCE_TOTAL_MAX_CHARS,
+) -> VerificationResult:
+    """对**宿主 verifier 返回的**证据做同一套最终载荷限制。
+
+    只截断/摘要 evidence 载荷，不改变 status / confidence / reason 的真实判定；
+    发生截断时追加 ``kind="truncated"`` 标注，并保留原始条数/大小。用于堵住
+    “内核收集证据有上限、但宿主 verifier 自返回证据无上限”的缺口。
+    """
+    if not result.evidence:
+        return result
+    kept: list[Evidence] = []
+    used = 0
+    clipped_any = False
+    for index, item in enumerate(result.evidence):
+        bounded, clipped = _bounded_evidence(item)
+        clipped_any = clipped_any or clipped
+        size = _serialized_size(bounded.to_dict())
+        if len(kept) >= max_items or used + size > max_total_chars - _EVIDENCE_MARKER_RESERVE:
+            dropped = len(result.evidence) - index
+            break
+        kept.append(bounded)
+        used += size
+    else:
+        dropped = 0
+    if not dropped and not clipped_any:
+        return result
+    marker = Evidence(
+        kind="truncated",
+        summary=(
+            f"宿主验收证据超限已截断：保留 {len(kept)} 条 / "
+            f"共 {len(result.evidence)} 条（条数≤{max_items}，单条 detail≤"
+            f"{max_detail_chars}，总量≤{max_total_chars} 字符）"
+        ),
+        detail={
+            "kept": len(kept),
+            "candidates": len(result.evidence),
+            "dropped": dropped,
+            "detail_truncated": clipped_any,
+            "max_items": max_items,
+            "max_detail_chars": max_detail_chars,
+            "max_total_chars": max_total_chars,
+        },
+    )
+    bounded_result = replace(result, evidence=tuple(kept) + (marker,))
+    return bounded_result
