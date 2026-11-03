@@ -68,3 +68,6 @@ inbox/
 
 # 赛事过程材料（报名 / 邮件 / 录制 / 脚本，可能含私密信息，不入库）
 /docs/competitions/
+
+# Playwright MCP 本地运行产物（页面快照 / console 记录）
+.playwright-mcp/
