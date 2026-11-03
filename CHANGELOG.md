@@ -11,6 +11,18 @@
 
 ### Added
 
+- **v0.27 Batch 6：Windows 便携安装包与一键安装/卸载**：
+  - `packaging/windows/installer.py`：复制冻结 Bridge 到稳定目录、调用注册脚本写
+    bridge.json/manifest、注册 Chrome/Edge HKCU；`uninstall` 可注销并删除 Bridge，
+    默认保留配置（`--purge-config` 才删 Key）。
+  - `build_bundle.py`：构建 `dist/windows-bundle/` 与约 46.6MB 的
+    `yai-agent-core-windows-0.26.0.zip`（Bridge + 扩展 + 安装器 + 文档）。
+  - 本机实测安装→侧边栏握手→卸载（注册表/文件清理、配置保留）→重装通过。
+  - 边界：不是 MSI/商店分发；需要 Python 3.11+ 与 `yai-agent-core`；扩展需手动加载；
+    无自动更新/回滚。
+
+### Added
+
 - **v0.27 Batch 6：记忆评测扩量与统计口径修正**：
   - 数据集扩到 **114 条记忆 / 60 query**（中英、同义、词法零重叠、冲突/更新/删除/
     标签/多用户语义），标注相关性；
