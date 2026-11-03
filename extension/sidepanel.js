@@ -46,6 +46,9 @@ let activeRunId = null;
 let pendingRequestId = null;
 let pageSnapshot = null;
 let connected = false;
+//: 已结束的 run_id：忽略迟到的 run_started（短任务终态先到的竞态，NB-1）。
+const finishedRunIds = new Set();
+const FINISHED_RUN_CACHE = 32;
 
 connect();
 renderStatus({ state: "connecting", detail: "正在连接 Service Worker…" });
@@ -61,9 +64,13 @@ function connect() {
   port.onDisconnect.addListener(() => {
     connected = false;
     port = null;
+    activeRunId = null;
+    setRunning(false);
     renderStatus({ state: "unknown", detail: "与本地 Bridge 的连接已断开；不会自动重试任务" });
     setTimeout(connect, 1500);
   });
+  // 面板随时可能被关闭/重开：主动向 Bridge 同步运行态，重开后仍能取消（EXT-1）。
+  send({ op: "status" });
 }
 
 function send(message) {
@@ -88,23 +95,37 @@ function onBridgeMessage(message) {
     case "error":
       appendEvent("error", `${message.code || "error"}：${message.message || ""}`);
       if (message.code === "run_busy") {
-        // 上一次运行还没结束：保持"运行中"状态，避免用户再次点击。
+        // 上一次运行还没结束：向 Bridge 同步真实运行态，避免"点了没反应"。
+        send({ op: "status" });
         setRunning(Boolean(activeRunId));
+      }
+      if (message.code === "api_key_required" || message.code === "invalid_base_url") {
+        el.cfgStatus.textContent = message.message || "保存失败";
       }
       return;
     case "run_started":
+      if (message.run_id && finishedRunIds.has(message.run_id)) {
+        // 该 run 已经结束（终态先到）：忽略迟到的 run_started，别把 UI 拉回"运行中"。
+        return;
+      }
       activeRunId = message.run_id || null;
       setRunning(true);
       el.runId.textContent = activeRunId ? `run ${activeRunId}` : "";
       el.state.textContent = "运行中";
       appendEvent("event", `run 已开始：${activeRunId}`);
       return;
+    case "status":
+      applyStatus(message);
+      return;
     case "run_cancel_requested":
       appendEvent("event", message.cancelled ? "已请求取消" : "取消请求未被接受");
       return;
     case "sidecar_exit":
       appendEvent("error", `Sidecar 已退出：${message.reason || "未知原因"}`);
+      connected = false;
       finishRun("状态未知");
+      el.run.disabled = true;
+      el.cancel.disabled = true;
       return;
     case "host_request":
       handleHostRequest(message);
@@ -115,7 +136,7 @@ function onBridgeMessage(message) {
     case "config_saved":
       applyLlmConfig(message.model);
       el.cfgStatus.textContent = message.note || "已保存";
-      appendEvent("event", "LLM 配置已保存到本机（重开侧边栏生效）");
+      appendEvent("event", "LLM 配置已保存到本机（重启浏览器或重新打开侧边栏后生效）");
       return;
     case "notification":
       handleNotification(message);
@@ -129,11 +150,13 @@ function handleNotification(message) {
   const params = message.params || {};
   const eventType = params.type || message.method || "event";
   if (message.method === "agent/cancelled") {
+    rememberFinishedRun(params.run_id || activeRunId);
     appendEvent("event", "任务已取消");
     finishRun("已取消");
     return;
   }
   if (message.method === "agent/error") {
+    rememberFinishedRun(params.run_id || activeRunId);
     appendEvent("error", `任务失败：${params.error || ""}`);
     finishRun("失败");
     return;
@@ -161,6 +184,7 @@ function handleNotification(message) {
     }
     case "done": {
       const finalText = String(params.data?.final_text || "").trim();
+      rememberFinishedRun(params.run_id || activeRunId);
       appendEvent(
         "done",
         finalText || "（无最终文本：检查模型凭据 / 上面的 error 事件）"
@@ -194,9 +218,44 @@ function handleHostRequest(message) {
 
 function finishRun(label) {
   activeRunId = null;
+  pendingRequestId = null;
+  hideApproval();
+  el.clarify.classList.add("hidden");
   setRunning(false);
   el.runId.textContent = "";
   el.state.textContent = label;
+}
+
+/** 处理 Bridge 的 status 回包：重开面板后恢复真实运行态（EXT-1）。 */
+function applyStatus(message) {
+  const runId = message.active_run_id || null;
+  if (runId && !finishedRunIds.has(runId)) {
+    activeRunId = runId;
+    setRunning(true);
+    el.runId.textContent = `run ${runId}`;
+    el.state.textContent = "运行中";
+    return;
+  }
+  if (!runId && activeRunId) {
+    finishRun("已同步");
+  }
+  if (message.sidecar_alive === false) {
+    connected = false;
+    setRunning(false);
+    el.state.textContent = "Sidecar 未运行";
+    appendEvent("error", "Sidecar 未运行，正在等待重连");
+  }
+}
+
+/** 记录已结束的 run_id：忽略迟到的 run_started（NB-1）。 */
+function rememberFinishedRun(runId) {
+  if (typeof runId !== "string" || !runId) return;
+  finishedRunIds.add(runId);
+  while (finishedRunIds.size > FINISHED_RUN_CACHE) {
+    const oldest = finishedRunIds.values().next().value;
+    if (oldest === undefined) break;
+    finishedRunIds.delete(oldest);
+  }
 }
 
 function setRunning(running) {

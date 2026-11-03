@@ -26,10 +26,11 @@ Chrome / Edge Extension (MV3)
 | 项 | 做法 |
 |---|---|
 | 扩展身份 | Bridge 只认 Chrome 传入的 `chrome-extension://<id>/`，且必须在本地配置 `allowed_origins` 内；空配置 = 拒绝所有，fail closed |
-| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件 |
-| 操作白名单 | 扩展只能发 `hello / run / cancel / host_response / ping / status / shutdown`；未知操作直接拒绝 |
-| 字段白名单 | 扩展消息里没有"传模型配置""传 API Key"的入口；`host_response` 只允许回应 `srv-*` 反向请求 |
+| 凭据 | **浏览器端不保管任何高权限凭据**；模型 / 策略等 `initialize` 参数只来自本地 Bridge 配置文件。面板保存时 Key 只经一次内存、读回永远脱敏（`***末4位`） |
+| 操作白名单 | 扩展只能发 `hello / run / cancel / host_response / ping / status / shutdown / get_config / configure_llm`；未知操作直接拒绝 |
+| 字段白名单 | `configure_llm` 只允许改 `initialize.model` 的 `base_url/model/strong_model/api_key`（改不了 `sidecar_command`/`allowed_origins`/其它 initialize 字段）；**改 base_url/provider 必须同时提供新 api_key**，旧 Key 不会被改道送到新端点；base_url 只接受 http/https。`host_response` 只允许回应 `srv-*` 反向请求 |
 | 大小限制 | 入站帧 ≤ 1 MiB；出站超限替换为 `truncated` 标记（避免 Chrome 杀 host 进程） |
+| 配置写盘 | Bridge 与本地 CLI 共用"文件锁 + 同目录 temp + fsync + os.replace"；旧版本轮为 `.bak`，不会留半截 JSON |
 | 读取页面 | 默认不注入脚本；用户点击"读取当前页面"才用 `activeTab` + `chrome.scripting` 一次性采集，页面内容按**不可信输入**附加到任务 |
 
 ## 安装（Windows / Chrome 或 Edge）
@@ -43,12 +44,13 @@ Chrome / Edge Extension (MV3)
      --distpath dist --workpath build\pyinstaller --specpath build\pyinstaller `
      --paths src extension\native\bridge_host.py
    ```
-4. 注册（一条命令写配置 + manifest + Chrome/Edge 的 HKCU 注册表，不需要管理员权限；`--dry-run` 可先预览）：
+4. 注册（一条命令写配置 + manifest + Chrome/Edge 的 HKCU 注册表，不需要管理员权限；`--dry-run` 可先预览——**预览中的 api_key 只显示 `***末4位`**）：
    ```powershell
    .\.venv\Scripts\python.exe scripts\register_native_host.py `
      --extension-id <你的扩展ID> --launcher dist\yai-bridge.exe --python .\.venv\Scripts\python.exe
    ```
-   它会写 `%LOCALAPPDATA%\YAI\bridge.json`（`allowed_origins` + `sidecar_command`，**不含模型凭据**）
+   它会写 `%LOCALAPPDATA%\YAI\bridge.json`（`allowed_origins` + `sidecar_command`；默认**不含模型凭据**，
+   只有显式传 `--env-file .env` 才写入 `initialize.model`）
    与 `%LOCALAPPDATA%\YAI\com.yai.agentcore.json`，并注册
    `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.yai.agentcore` 与
    `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.yai.agentcore`。
@@ -68,8 +70,8 @@ Chrome / Edge Extension (MV3)
   `initialize.model`（**只在本机配置文件里，不进入扩展、不发给浏览器**；打印结果时不会回显 Key）。
   不想落盘的话，也可以改用用户级环境变量 + 重启浏览器。
 - **浏览器能力（可选）**：`--browser-mcp playwright` 会在 `initialize.mcp` 里加一个
-  Playwright MCP server（`npx -y @playwright/mcp@latest --browser chrome`，默认有头、用户能看到
-  被操作的 Chrome；`--mcp-headless` 可无头）。这是**可选扩展**：MCP 走既有 `[mcp]` extra
+  Playwright MCP server（`npx -y @playwright/mcp@0.0.84 --browser chrome`，**固定版本**、默认有头、
+  用户能看到被操作的 Chrome；`--mcp-headless` 可无头）。这是**可选扩展**：MCP 走既有 `[mcp]` extra
   与懒加载集成，内核 `dependencies` 仍为空（AST 守门测试照常通过）。
 - **审批**：默认 `policy.mode=auto`，白名单外工具会在侧边栏弹确认卡；`allow_all` 仅建议本机演示。
 
@@ -87,13 +89,12 @@ Chrome / Edge Extension (MV3)
 .\.venv\Scripts\python.exe scripts\chrome_cdp.py status
 
 # 2) 把 MCP 配置改成 CDP 端点（会写进本地 bridge.json）
-.\.venv\Scripts\python.exe scripts
-egister_native_host.py `
+.\.venv\Scripts\python.exe scripts\register_native_host.py `
   --extension-id <扩展ID> --launcher dist\yai-bridge-v2.exe --python .\.venv\Scripts\python.exe `
   --env-file .env --browser-mcp playwright --cdp-endpoint http://127.0.0.1:9222
 
-# 3) 关闭再打开侧边栏让 Bridge 重新加载配置
-# 4) 用完停止调试用 Chrome（不影响你平时用的 Chrome）
+# 3) 关闭最后一个侧边栏面板再打开（会重启 Bridge 并重新读取配置）
+# 4) 用完停止调试用 Chrome（不影响你平时用的 Chrome；只停止 pid 记录校验通过的进程）
 .\.venv\Scripts\python.exe scripts\chrome_cdp.py stop
 ```
 
@@ -113,12 +114,18 @@ egister_native_host.py `
 API Key（密码框）。行为：
 
 - “读取当前配置”会回填模型/Base URL，Key 只显示 `***末4位`（Bridge 永远不回传明文）；
-- “保存到本机”把配置写进 `%LOCALAPPDATA%\YAI\bridge.json`（先备份 `.bak`），
-  **关闭再打开侧边栏生效**（Bridge 重新读取配置）；
+- “保存到本机”把配置写进 `%LOCALAPPDATA%\YAI\bridge.json`（原子写：同目录 temp + fsync +
+  `os.replace`，旧版本轮为 `.bak`）；**重启浏览器，或关闭最后一个侧边栏面板后重新打开
+  （面板关闭会让 Bridge/Sidecar 结束，重开时重新读取配置）后生效**。仅关闭再打开面板
+  不一定触发重连，以状态栏是否重新握手为准；
+- **换 Base URL / provider 必须同时填新的 API Key**，否则 Bridge 拒绝（`api_key_required`）：
+  旧 Key 绝不会被改道发送到新端点；Base URL 只接受 `http/https`（`invalid_base_url`）；
 - Key 只在点击保存时经一次内存传输，写入本机配置文件；**不存上次/不写 localStorage**，
-  输入框保存后清空；面板不提供“读回明文 Key”。
+  输入框保存后清空；面板不提供“读回明文 Key”；
+- 保存失败会在设置区显示错误原因（`api_key_required` / `invalid_base_url`），不会静默失败。
 - 本机实测：读取后输入框回填 `https://api.suanli.cn/v1` / `deepseek/...`，
-  Key 显示 `已配置（***QRhb）`；保存返回“已保存到本机配置；关闭再打开侧边栏后生效”。
+  Key 显示 `已配置（***QRhb）`；保存返回“已保存到本机配置；重启浏览器或重新打开侧边栏
+  （最后一个面板关闭会重启 Bridge）后生效”。
   截图：`docs/exports/extension-llm-settings.png`（gitignore）。
 
 仍保留等价 CLI（适合脚本/CI）：
@@ -139,26 +146,41 @@ Get-Content .env | .\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --
 Get-Content .env | .\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --api-key-stdin  # Key 不落命令历史
 ```
 
-修改后关闭/重开侧边栏生效；脚本输出永远对 Key 脱敏。MCP 与这些配置都是宿主侧可选能力，
-内核 `dependencies = []` 不变。
+修改后重启浏览器或重新打开侧边栏（会重启 Bridge）生效；脚本输出永远对 Key 脱敏。
+CLI 与 Bridge 共用同一把配置写锁与原子写入口，不会把面板刚保存的改动覆盖回旧值。
+MCP 与这些配置都是宿主侧可选能力，内核 `dependencies = []` 不变。
 
 ## 协议映射
 
 | 浏览器消息 | Sidecar（JSON-RPC） | 说明 |
 |---|---|---|
 | `hello {protocol:1}` | — | 版本协商；不匹配回 `hello_rejected` |
-| `run {task}` | 请求 `agent/run` | 回 `run_started {run_id}`；同一时刻只允许一个 run |
+| `run {task}` | 请求 `agent/run` | 回 `run_started {run_id}`；同一时刻只允许一个 run。短任务若终态先于响应到达，Bridge 只转发终态、不再补发 `run_started` |
 | `cancel {run_id}` | 请求 `agent/cancel` | 回 `run_cancel_requested` |
+| `status` | — | 回 `{type:"status", active_run_id, sidecar_alive, initialized, hello_done}`；面板重开靠它恢复运行态 |
 | `host_response {request_id,result}` | 对 `srv-*` 的响应 | 仅接受反向请求 ID；其余拒绝 |
-| `ping` / `status` / `shutdown` | `ping` / — / `shutdown` | 状态与收尾 |
+| `ping` / `shutdown` | `ping` / `shutdown` | 健康检查与收尾 |
 | — | 通知 `agent/event` 等 | 转成 `{type:"notification", method, params}` |
 | — | 请求 `approval/request` / `clarify/request` | 转成 `{type:"host_request"}`，由侧边栏弹确认/追问 |
+| — | Sidecar 退出 / 传输异常 | 转成 `{type:"sidecar_exit", reason}`；扩展随后主动断开并重连 |
+| — | — | 错误统一 `{type:"error", code, message}`：`run_busy` / `sidecar_not_running` / `sidecar_timeout` / `sidecar_start_failed` / `api_key_required` / `invalid_base_url` 等 |
 
 ## 生命周期与已知限制（诚实声明）
 
 - Bridge 是**与一次扩展连接绑定的短期进程**：连接断开 → Sidecar 结束，**不提供跨进程任务恢复**。
+- **面板关闭 = Bridge 重启**：最后一个侧边栏面板关闭时 Service Worker 会主动断开 native port
+  （若还有运行中任务，等它终态再断开，避免无声中止）；重新打开面板会拉起新 Bridge 并
+  重新读取 `bridge.json`，因此改完模型配置后"关掉面板再打开"即可生效。面板重开后会
+  主动 `status` 同步运行态，运行中任务仍可取消。
+- **Sidecar 崩溃不会留下僵尸 Bridge**：Bridge 发 `sidecar_exit` 后，Service Worker 主动断开
+  并 3s 后重连（新 Bridge 拉起新 Sidecar）；已中断任务标记为 unknown，**不会自动重试**。
 - 断连 / Service Worker 被回收后，侧边栏把结果标为 **unknown**，**不会自动重做**可能已有副作用的操作；
   用户需要重新描述任务或先确认外部状态。
+- Bridge 的 RPC 有超时（initialize 60s / run 10s 等），超时回 `sidecar_timeout`，不会卡死整个
+  串行消息循环；迟到响应按孤儿响应丢弃，不会被伪装成事件通知。
+- `scripts/chrome_cdp.py stop` 只终止"pid 文件记录与镜像/命令行/`--remote-debugging-port`/
+  `--user-data-dir` 全部匹配"的 Chrome；任何不匹配（PID 复用、文件被改写）都拒绝 `taskkill`
+  并返回非零。
 - 当前只支持 Chrome / Edge（Chromium 116+ Side Panel）；Firefox 等未适配。
 - **已真机验证**：扩展在 Chrome 156 / Edge 156 中能被 `--load-extension` 加载并注册
   MV3 service worker（`scripts/extension_smoke.py`，以 CDP target 为证据）；Bridge 与
@@ -170,8 +192,10 @@ Get-Content .env | .\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --
   先看 `%LOCALAPPDATA%\YAI\bridge.log`。实测 Chrome/Edge 会额外传
   `--parent-window=0`（已处理，不再被当成配置路径）；也检查 manifest 的
   `allowed_origins` 是否与扩展 ID 完全一致。
-- **仍未真机验证**：侧边栏点击流（工具栏图标 + 用户手势）、Native Messaging 注册
-  （需要写注册表）、安装包分发、Service Worker 回收后的重连，以及跨浏览器差异。
+- **仍未真机验证（v0.26 Batch 3 新增行为，需下一轮真机验收）**：侧边栏点击流（工具栏图标 +
+  用户手势）、Native Messaging 注册（需要写注册表）、安装包分发、Service Worker 回收后的重连、
+  面板重开后撤销运行中任务、强杀 Sidecar 后的自动重连、改 base_url 需新 Key 的面板提示，
+  以及跨浏览器差异。这些已由离线测试覆盖静态契约与假对象行为，但不能替代真机验收。
 
 ## 本机验收命令（2026-11-03）
 
@@ -225,3 +249,10 @@ native host 时要用固定安装路径下的稳定 ID。
 5. 运行中点"取消"，Sidecar 发 `agent/cancelled`。
 6. 关闭浏览器（或强杀 Bridge）后重开：状态为 unknown，不自动重发任务。
 7. 未授权扩展 ID 的 Bridge 直接拒绝启动（退出码 2）。
+8. **运行中关闭再打开侧边栏**：新面板应显示"运行中"并可以取消（status 同步；
+   若最后面板关闭时任务已结束，Bridge 会重启，任务状态按 unknown 处理）。
+9. **强杀 Sidecar 进程**：面板显示 Sidecar 已退出/正在重连；约 3s 后状态恢复，且不自动
+   重放旧任务；再次运行可正常拉起新 Sidecar。
+10. **LLM 设置只改 Base URL、不填新 Key**：应被拒绝并在设置区显示错误；填新 Key 后保存成功。
+11. **最后面板关闭后改 `bridge.json` 再打开面板**：`hello_ok`/设置区应反映新配置
+    （证明 Bridge 已重启并重新读配置）。

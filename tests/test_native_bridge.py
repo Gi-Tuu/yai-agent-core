@@ -274,8 +274,11 @@ def test_load_config_validates(tmp_path) -> None:
 class FakeTransport:
     """假 Sidecar：记录请求，按方法自动回响，可注入通知 / 反向请求。"""
 
-    def __init__(self, *, protocol_version: int = 1) -> None:
+    def __init__(
+        self, *, protocol_version: int = 1, auto_done_on_run: bool = False
+    ) -> None:
         self.protocol_version = protocol_version
+        self.auto_done_on_run = auto_done_on_run
         self.started = False
         self.closed = False
         self.sent: list[dict[str, Any]] = []
@@ -301,13 +304,28 @@ class FakeTransport:
             )
         elif method == "agent/run":
             self.run_counter += 1
+            run_id = f"r{self.run_counter}"
             self.inbox.put_nowait(
                 {
                     "jsonrpc": "2.0",
                     "id": message["id"],
-                    "result": {"run_id": f"r{self.run_counter}"},
+                    "result": {"run_id": run_id},
                 }
             )
+            if self.auto_done_on_run:
+                # 同一 burst 里紧跟终态：模拟"短任务 done 早于 run_started"。
+                self.inbox.put_nowait(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "agent/event",
+                        "params": {
+                            "run_id": run_id,
+                            "seq": 0,
+                            "type": "done",
+                            "data": {"final_text": "已完成"},
+                        },
+                    }
+                )
         elif method == "agent/cancel":
             self.inbox.put_nowait(
                 {
@@ -339,7 +357,14 @@ class FakeTransport:
 class Harness:
     """浏览器侧：脚本化入站消息 + 记录出站消息。"""
 
-    def __init__(self, config: BridgeConfig | None = None, **transport_kw: Any) -> None:
+    def __init__(
+        self,
+        config: BridgeConfig | None = None,
+        *,
+        yielding_writer: bool = False,
+        **transport_kw: Any,
+    ) -> None:
+        self.yielding_writer = yielding_writer
         self.transport = FakeTransport(**transport_kw)
         self.config = config or BridgeConfig(
             allowed_origins=frozenset({"chrome-extension://abcdef"}),
@@ -359,6 +384,9 @@ class Harness:
 
     async def _write(self, message: dict[str, Any]) -> None:
         self.outbox.append(message)
+        if self.yielding_writer:
+            # 生产写路径是 asyncio.to_thread（必然让出），这里显式模拟。
+            await asyncio.sleep(0)
 
     def send(self, message: dict[str, Any] | None) -> None:
         self.inbox.put_nowait(message)
@@ -606,7 +634,8 @@ def test_sidecar_exit_is_visible_and_stops_runs() -> None:
 
     harness = _run(scenario())
     assert harness.of_type("sidecar_exit")
-    assert any(item["code"] == "bridge_error" for item in harness.of_type("error"))
+    # Sidecar 退出后 run 必须报"未运行"，而不是拿残留 _run_id 误报 run_busy。
+    assert any(item["code"] == "sidecar_not_running" for item in harness.of_type("error"))
 
 
 def test_sidecar_protocol_mismatch_fails_start() -> None:
@@ -646,3 +675,223 @@ def test_oversized_outbound_frame_is_truncated() -> None:
 
     harness = _run(scenario())
     assert harness.of_type("notification")
+
+
+# ---------- v0.26 修复回归：顺序 / 崩溃 / 超时 / 配置安全 ----------
+
+
+@pytest.mark.parametrize("yielding_writer", [False, True])
+def test_short_run_finished_before_run_started_is_not_restarted(
+    yielding_writer: bool,
+) -> None:
+    """NB-1：终态先于 run_started 到达时，桥不补发 run_started、运行位保持空闲。
+
+    ``yielding_writer=True`` 复刻生产写路径（asyncio.to_thread 必然让出），
+    确保竞态修复不依赖测试用的"同步写"。
+    """
+
+    async def scenario() -> Harness:
+        harness = Harness(
+            auto_done_on_run=True, yielding_writer=yielding_writer
+        )
+        task = asyncio.create_task(harness.bridge.run())
+        await _wait_for(harness, "bridge_ready")
+        harness.send(_hello())
+        await _wait_for(harness, "hello_ok")
+        harness.send({"op": "run", "task": "短任务"})
+        await asyncio.sleep(0.05)
+        harness.send({"op": "status"})
+        await _wait_for(harness, "status")
+        harness.send({"op": "run", "task": "第二个任务"})
+        await asyncio.sleep(0.05)
+        harness.send(None)
+        await task
+        return harness
+
+    harness = _run(scenario())
+    notifications = harness.of_type("notification")
+    assert notifications and notifications[0]["params"]["type"] == "done"
+    # 迟到的 run_started 不应再发给扩展（否则面板会卡回"运行中"）。
+    assert harness.of_type("run_started") == []
+    assert harness.of_type("status")[-1]["active_run_id"] is None
+    assert not any(item["code"] == "run_busy" for item in harness.of_type("error"))
+    runs = [item for item in harness.transport.sent if item.get("method") == "agent/run"]
+    assert len(runs) == 2  # 第二个 run 没被残留运行位挡住
+
+
+def test_sidecar_exit_during_run_clears_slot_and_reports_not_running() -> None:
+    """NB-2：运行中 Sidecar 退出后，运行位必须清空，后续 run 报 not_running。"""
+
+    async def scenario() -> Harness:
+        harness = Harness()
+        task = asyncio.create_task(harness.bridge.run())
+        await _wait_for(harness, "bridge_ready")
+        harness.send(_hello())
+        await _wait_for(harness, "hello_ok")
+        harness.send({"op": "run", "task": "长任务"})
+        await _wait_for(harness, "run_started")
+        harness.transport.inbox.put_nowait(None)  # Sidecar 崩溃
+        await _wait_for(harness, "sidecar_exit")
+        harness.send({"op": "status"})
+        await _wait_for(harness, "status")
+        harness.send({"op": "run", "task": "第二个任务"})
+        await _wait_for(harness, "error")
+        harness.send(None)
+        await task
+        return harness
+
+    harness = _run(scenario())
+    status = harness.of_type("status")[-1]
+    assert status["sidecar_alive"] is False
+    assert status["active_run_id"] is None  # 不再残留 r1
+    assert harness.of_type("error")[-1]["code"] == "sidecar_not_running"
+
+
+def test_rpc_timeout_raises_and_orphan_response_is_dropped() -> None:
+    """NB-3：RPC 超时转 BridgeError；迟到响应按孤儿丢弃，不冒充 notification。"""
+
+    async def scenario() -> Harness:
+        harness = Harness()
+        task = asyncio.create_task(harness.bridge.run())
+        await _wait_for(harness, "bridge_ready")
+        harness.send(_hello())
+        await _wait_for(harness, "hello_ok")
+        with pytest.raises(BridgeError) as excinfo:
+            await harness.bridge._rpc("ping", {}, timeout=0.01)  # noqa: SLF001
+        assert excinfo.value.code == "sidecar_timeout"
+        request_id = harness.transport.sent[-1]["id"]
+        harness.transport.inbox.put_nowait(
+            {"jsonrpc": "2.0", "id": request_id, "result": {"pong": True}}
+        )
+        await asyncio.sleep(0.02)
+        harness.send(None)
+        await task
+        return harness
+
+    harness = _run(scenario())
+    orphans = [
+        item
+        for item in harness.outbox
+        if item.get("type") == "notification" and item.get("method") is None
+    ]
+    assert orphans == []
+
+
+def test_start_oserror_becomes_visible_error_frame() -> None:
+    """启动失败（解释器不存在 / 无权限）必须回错误帧，而不是裸异常退出。"""
+
+    class _BadStartTransport(FakeTransport):
+        async def start(self) -> None:  # type: ignore[override]
+            raise FileNotFoundError("sidecar_command 指向不存在的解释器")
+
+    async def scenario() -> Harness:
+        harness = Harness()
+        harness.bridge.transport = _BadStartTransport()
+        harness.send(None)
+        await harness.bridge.run()
+        return harness
+
+    harness = _run(scenario())
+    errors = harness.of_type("error")
+    assert errors and errors[0]["code"] == "sidecar_start_failed"
+    assert "无法启动 Sidecar" in errors[0]["message"]
+
+
+def _bridge_with_config(
+    tmp_path: Any, model: dict[str, Any]
+) -> tuple[NativeBridge, list[dict[str, Any]]]:
+    config_path = tmp_path / "bridge.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "allowed_origins": ["chrome-extension://abcdef/"],
+                "initialize": {"model": model},
+            }
+        ),
+        encoding="utf-8",
+    )
+    written: list[dict[str, Any]] = []
+
+    async def writer(message: dict[str, Any]) -> None:
+        written.append(message)
+
+    async def reader() -> dict[str, Any] | None:
+        return None
+
+    bridge = NativeBridge(
+        FakeTransport(),
+        config=load_bridge_config(str(config_path)),
+        read_message=reader,
+        write_message=writer,
+        config_path=str(config_path),
+    )
+    bridge._hello_done = True  # noqa: SLF001
+    return bridge, written
+
+
+def test_configure_llm_base_url_change_requires_new_api_key(tmp_path: Any) -> None:
+    """CFG-1：改 base_url 必须带新 Key；只允许 http/https；旧 Key 不得被改道。"""
+    bridge, written = _bridge_with_config(
+        tmp_path,
+        {
+            "provider": "openai-compatible",
+            "api_key": "sk-OLD-KEY-1111",
+            "base_url": "https://api.trusted/v1",
+        },
+    )
+    config_path = tmp_path / "bridge.json"
+
+    _run(bridge._handle_browser_message({"op": "configure_llm", "base_url": "https://attacker.example/v1"}))  # noqa: SLF001
+    assert written[-1]["type"] == "error"
+    assert written[-1]["code"] == "api_key_required"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["initialize"]["model"]["base_url"] == "https://api.trusted/v1"
+    assert saved["initialize"]["model"]["api_key"] == "sk-OLD-KEY-1111"
+
+    _run(
+        bridge._handle_browser_message(  # noqa: SLF001
+            {
+                "op": "configure_llm",
+                "base_url": "file:///C:/secrets.json",
+                "api_key": "sk-NEW-2222",
+            }
+        )
+    )
+    assert written[-1]["code"] == "invalid_base_url"
+
+    _run(
+        bridge._handle_browser_message(  # noqa: SLF001
+            {
+                "op": "configure_llm",
+                "base_url": "https://api.new/v1",
+                "api_key": "sk-NEW-2222",
+            }
+        )
+    )
+    assert written[-1]["type"] == "config_saved"
+    assert written[-1]["model"]["api_key"] == "***2222"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["initialize"]["model"]["base_url"] == "https://api.new/v1"
+    assert saved["initialize"]["model"]["api_key"] == "sk-NEW-2222"
+    assert "sk-NEW-2222" not in json.dumps(written, ensure_ascii=False)
+
+
+def test_configure_llm_write_is_atomic_with_backup(tmp_path: Any) -> None:
+    """CFG-3：原子写 + 旧版本轮为 .bak + 不残留 temp/lock 文件。"""
+    bridge, _written = _bridge_with_config(
+        tmp_path,
+        {"provider": "openai-compatible", "api_key": "sk-OLD", "model": "old"},
+    )
+    config_path = tmp_path / "bridge.json"
+    original = config_path.read_text(encoding="utf-8")
+
+    _run(bridge._handle_browser_message({"op": "configure_llm", "model": "new-model"}))  # noqa: SLF001
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["initialize"]["model"]["model"] == "new-model"
+    assert saved["initialize"]["model"]["api_key"] == "sk-OLD"
+    backup = tmp_path / "bridge.json.bak"
+    assert backup.is_file()
+    assert json.loads(backup.read_text(encoding="utf-8")) == json.loads(original)
+    assert list(tmp_path.glob("*.tmp-*")) == []
+    assert not (tmp_path / "bridge.json.lock").exists()

@@ -28,12 +28,14 @@ import argparse
 import json
 import os
 import re
-import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 HOST_NAME = "com.yai.agentcore"
+#: Playwright MCP 固定版本（供应链：不用 @latest，避免每次拉起都拿新代码）。
+PLAYWRIGHT_MCP_VERSION = "0.0.84"
 _EXTENSION_ID_RE = re.compile(r"^[a-p]{32}$")
 _REGISTRY_ROOTS = {
     "chrome": r"Software\Google\Chrome\NativeMessagingHosts",
@@ -47,15 +49,54 @@ def _fail(message: str) -> int:
     return 2
 
 
-def _write_json(path: Path, payload: dict[str, Any], *, dry_run: bool) -> None:
-    text = json.dumps(payload, ensure_ascii=False, indent=2)
-    if dry_run:
-        print(f"[dry-run] would write {path}:\n{text}")
+def _masked_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    """dry-run 预览副本：``api_key`` 只留 ``***末4位``，绝不打印明文 Key。"""
+    preview = json.loads(json.dumps(payload, ensure_ascii=False))
+    initialize = preview.get("initialize")
+    model = initialize.get("model") if isinstance(initialize, dict) else None
+    if isinstance(model, dict) and model.get("api_key"):
+        key = str(model["api_key"])
+        model["api_key"] = ("***" + key[-4:]) if key else ""
+    return preview
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """与 Bridge 共用原子写（同目录 temp+fsync+os.replace，旧版轮为 ``.bak``）。"""
+    try:
+        from yai_core.sidecar.native_bridge import atomic_write_json as _atomic
+    except Exception:  # noqa: BLE001 - 独立运行时（无 yai_core）退化实现
+        _atomic = None  # type: ignore[assignment]
+    if _atomic is not None:
+        _atomic(path, payload)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        shutil.copyfile(path, path.with_suffix(path.suffix + ".bak"))
-    path.write_text(text + "\n", encoding="utf-8")
+    if path.is_file():
+        path.with_name(path.name + ".bak").write_bytes(path.read_bytes())
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _write_json(path: Path, payload: dict[str, Any], *, dry_run: bool) -> None:
+    if dry_run:
+        # 预览必须脱敏：注册脚本可能在 CI / 截图里被看到。
+        preview = _masked_preview(payload)
+        print(
+            f"[dry-run] would write {path}:\n"
+            f"{json.dumps(preview, ensure_ascii=False, indent=2)}"
+        )
+        return
+    _atomic_write_json(path, payload)
 
 
 def _register_windows(key_path: str, manifest_path: Path, *, dry_run: bool) -> bool:
@@ -128,9 +169,14 @@ def _browser_mcp(
         raise ValueError(f"未知 MCP 浏览器服务器：{server}")
     if cdp_endpoint:
         # 连接一个已经在跑的 Chrome（用户当前会话），工具操作的是这个浏览器。
-        args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", cdp_endpoint]
+        args = [
+            "-y",
+            f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}",
+            "--cdp-endpoint",
+            cdp_endpoint,
+        ]
     else:
-        args = ["-y", "@playwright/mcp@latest", "--browser", "chrome"]
+        args = ["-y", f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}", "--browser", "chrome"]
         if headless:
             args.append("--headless")
     return [

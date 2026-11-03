@@ -12,10 +12,14 @@
 - **浏览器端不保管任何高权限凭据**：模型 / 策略等 initialize 参数默认来自 Bridge
   自己的本地配置文件或环境变量；扩展只能在用户显式点击"保存"时经 `configure_llm`
   写本地配置（Key 只走一次内存、不落浏览器存储，且读回时永远脱敏）。
+  **换 base_url / provider 必须同时提供新的 api_key**——旧 Key 绝不会被改道送到
+  新端点；base_url 只接受 http/https。
 - 扩展只能发白名单内的操作（hello / run / cancel / host_response / ping /
   status / shutdown），每个入站消息都有大小与字段校验。
 - 出站事件超过 Native Messaging 单帧上限时替换为截断标记，避免整帧被浏览器
   丢弃或杀死 host 进程。
+- 配置写盘是**原子**的（同目录 temp + fsync + os.replace，旧版本轮为 `.bak`），
+  Bridge 与本地 CLI 共用同一把文件锁与同一写入口，避免半截 JSON / 丢更新。
 
 生命周期诚实声明：Bridge 是与一次扩展连接绑定的短期进程；连接断开时 Sidecar
 随之结束，**不提供跨进程任务恢复**。扩展重连后必须把结果视为 ``unknown``，
@@ -25,10 +29,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import struct
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -36,6 +45,16 @@ from urllib.parse import urlsplit
 
 #: Bridge 自身的协议版本（与 Sidecar 的 PROTOCOL_VERSION 分开演进）。
 BRIDGE_PROTOCOL_VERSION = 1
+
+#: Bridge → Sidecar 的 RPC 超时（秒）；initialize 可能拉 MCP / OpenAPI，单独放宽。
+#: 超时转成可见的 ``sidecar_timeout`` 错误，不能让串行主循环无限等待。
+RPC_TIMEOUT_DEFAULT = 10.0
+RPC_TIMEOUTS: dict[str, float] = {
+    "initialize": 60.0,
+    "agent/run": 10.0,
+    "agent/cancel": 10.0,
+    "shutdown": 5.0,
+}
 
 #: Native Messaging 单帧上限：Chrome 对 host→browser 的消息有 1 MiB 限制。
 MAX_MESSAGE_BYTES = 1_048_576
@@ -264,14 +283,122 @@ def _normalize_origin(origin: str | None) -> str:
     return f"chrome-extension://{parts.netloc}"
 
 
+def mask_api_key(value: Any) -> str:
+    """把 Key 脱敏成 ``***末4位``（空值 → 空串）。脚本与 Bridge 共用。"""
+    key = str(value or "")
+    return ("***" + key[-4:]) if key else ""
+
+
 def masked_model(model: Any) -> dict[str, Any]:
     """返回可安全发给浏览器的模型配置视图：Key 只保留末 4 位。"""
     if not isinstance(model, dict):
         return {}
     view = dict(model)
-    key = str(view.pop("api_key", "") or "")
-    view["api_key"] = ("***" + key[-4:]) if key else ""
+    view["api_key"] = mask_api_key(view.pop("api_key", ""))
     return view
+
+
+# ---------------------------------------------------------------- 配置写盘
+#
+# Bridge（面板保存）与本地 CLI（configure_bridge_llm.py / register_native_host.py）
+# 会写同一个 bridge.json；这里统一"锁 + 读-合并-写 + 原子替换"，避免：
+# - 两个进程同时 RMW 造成丢更新；
+# - write_text 截断后崩溃留下半截 JSON（下次 Bridge 启动 fail closed）；
+# - .bak 还没写完就被下一次写入覆盖，失去回滚点。
+
+
+def config_backup_path(path: str | Path) -> Path:
+    """配置文件备份路径（``<name>.bak``，与历史行为一致）。"""
+    path = Path(path)
+    return path.with_name(path.name + ".bak")
+
+
+def config_lock_path(path: str | Path) -> Path:
+    path = Path(path)
+    return path.with_name(path.name + ".lock")
+
+
+@contextmanager
+def bridge_config_lock(
+    path: str | Path, *, timeout: float = 1.5, stale_seconds: float = 60.0
+) -> Iterator[None]:
+    """配置写锁（跨进程尽力而为）。
+
+    用 ``<config>.lock`` 的 O_CREAT|O_EXCL 做互斥；拿不到锁时最多等 ``timeout``
+    秒，超时后记日志并继续（可用性优先，写入仍是原子的，不会产生半截文件）。
+    超过 ``stale_seconds`` 的锁视为崩溃残留，删除后重试。
+    """
+    lock_path = config_lock_path(path)
+    acquired = False
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+            except OSError:
+                age = 0.0
+            if age > stale_seconds:
+                with contextlib.suppress(OSError):
+                    lock_path.unlink()
+                continue
+            if time.monotonic() >= deadline:
+                _log(f"config lock busy, proceeding without lock: {lock_path}")
+                break
+            time.sleep(0.05)
+        except OSError:
+            break
+        else:
+            acquired = True
+            try:
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            finally:
+                os.close(fd)
+            break
+    try:
+        yield
+    finally:
+        if acquired:
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """同目录 temp + fsync + os.replace；失败清理 temp，绝不留下半截目标文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def atomic_write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
+    """原子写 JSON 配置；已有文件先原子备份到 ``<name>.bak``。
+
+    调用方应持有 :func:`bridge_config_lock`（本函数不自己加锁，便于一次锁内
+    完成"读最新 → 合并 → 写回"）。
+    """
+    target = Path(path)
+    data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file():
+        try:
+            _atomic_write_bytes(config_backup_path(target), target.read_bytes())
+        except OSError as exc:
+            raise BridgeError(f"写入配置备份失败：{exc}") from exc
+    try:
+        _atomic_write_bytes(target, data)
+    except OSError as exc:
+        raise BridgeError(f"写入本地配置失败：{exc}") from exc
 
 
 # ---------------------------------------------------------------- Bridge
@@ -306,6 +433,9 @@ class NativeBridge:
         self._stopping = False
         self._sidecar_alive = False
         self._run_id: str | None = None
+        #: 终态通知先于 run_started 到达的 run_id（短任务竞态）；_op_run 拿到
+        #: 响应后会据此跳过迟到的 run_started，并保持运行位空闲。
+        self._early_finished: set[str] = set()
         self._hello_done = False
         self._sidecar_protocol: int | None = None
 
@@ -333,7 +463,13 @@ class NativeBridge:
 
     async def start(self) -> None:
         """启动 Sidecar、完成 initialize，并启动事件泵。"""
-        await self.transport.start()
+        try:
+            await self.transport.start()
+        except OSError as exc:
+            # sidecar_command 不存在 / 无执行权限：转成可见错误帧，而不是裸异常退出。
+            raise BridgeError(
+                f"无法启动 Sidecar：{exc}", code="sidecar_start_failed"
+            ) from exc
         self._sidecar_alive = True
         self._pump_task = asyncio.create_task(self._pump_sidecar())
         result = await self._rpc("initialize", dict(self.config.initialize_params))
@@ -349,7 +485,7 @@ class NativeBridge:
         self._stopping = True
         if self._initialized and self._sidecar_alive:
             try:
-                await asyncio.wait_for(self._rpc("shutdown", {}), timeout=5)
+                await self._rpc("shutdown", {}, timeout=5.0)
             except (BridgeError, TimeoutError):
                 pass
         await self.transport.close()
@@ -394,13 +530,16 @@ class NativeBridge:
 
     # ---------- Sidecar RPC ----------
 
-    async def _rpc(self, method: str, params: dict[str, Any]) -> Any:
+    async def _rpc(
+        self, method: str, params: dict[str, Any], *, timeout: float | None = None
+    ) -> Any:
         if not self._sidecar_alive:
-            raise BridgeError("Sidecar 未运行")
+            raise BridgeError("Sidecar 未运行", code="sidecar_not_running")
         self._seq += 1
         request_id = f"b-{self._seq}"
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        budget = RPC_TIMEOUTS.get(method, RPC_TIMEOUT_DEFAULT) if timeout is None else timeout
         try:
             await self.transport.send(
                 {
@@ -410,7 +549,14 @@ class NativeBridge:
                     "params": params,
                 }
             )
-            return await future
+            try:
+                return await asyncio.wait_for(future, budget)
+            except TimeoutError as exc:
+                # 迟到响应会在 _pump_sidecar 里按"孤儿响应"丢弃，不会污染 UI。
+                raise BridgeError(
+                    f"Sidecar 响应超时：{method}（>{budget:g}s）",
+                    code="sidecar_timeout",
+                ) from exc
         finally:
             self._pending.pop(request_id, None)
 
@@ -444,8 +590,16 @@ class NativeBridge:
                     else:
                         future.set_result(message.get("result"))
                     continue
-                # 其余为通知（agent/event、agent/cancelled、agent/error 等）
+                if request_id is not None:
+                    # 孤儿响应（RPC 超时 / 取消后才到）：绝不当作通知转发给浏览器。
+                    _log(f"drop orphan sidecar response id={request_id!r}")
+                    continue
+                # 其余为通知（agent/event、agent/cancelled、agent/error 等）。
                 params = message.get("params") or {}
+                if isinstance(params, dict):
+                    # 先结算运行位再 await 转发：否则短任务里 _op_run 可能在
+                    # 我们 await 写浏览器期间才设置 _run_id（NB-1 竞态）。
+                    self._maybe_finish_run(method, params)
                 await self._send(
                     {
                         "type": "notification",
@@ -453,21 +607,40 @@ class NativeBridge:
                         "params": params,
                     }
                 )
-                if method in ("agent/cancelled", "agent/error") or (
-                    method == "agent/event"
-                    and isinstance(params, dict)
-                    and params.get("type") == "done"
-                ):
-                    self._run_id = None
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except Exception as exc:  # noqa: BLE001 - 传输异常转成可见状态
             await self._send({"type": "sidecar_exit", "reason": type(exc).__name__})
         finally:
             self._sidecar_alive = False
+            # Sidecar 已退出：运行位与"提前完成"记录都必须作废，否则下一次 run
+            # 会被误判成 run_busy（见 NB-2）。
+            self._run_id = None
+            self._early_finished.clear()
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(BridgeError("Sidecar 已退出"))
+
+    def _maybe_finish_run(self, method: Any, params: dict[str, Any]) -> None:
+        """收到终态通知时结算运行位；终态早于 run_started 时记入 ``_early_finished``。"""
+        terminal = method in ("agent/cancelled", "agent/error") or (
+            method == "agent/event" and params.get("type") == "done"
+        )
+        if not terminal:
+            return
+        finished_id = params.get("run_id")
+        if not isinstance(finished_id, str) or not finished_id:
+            # 旧 Sidecar / 畸形通知：保守清空，避免运行位永久占住。
+            self._run_id = None
+            return
+        if self._run_id is None:
+            # 该 run 的响应还没回来（或 run_started 还没发）：记下提前完成。
+            self._early_finished.add(finished_id)
+            if len(self._early_finished) > 32:  # 有界，防御异常对端刷屏
+                self._early_finished.pop()
+            return
+        if finished_id == self._run_id:
+            self._run_id = None
 
     async def _handle_sidecar_request(
         self, message: dict[str, Any], method: str
@@ -556,6 +729,11 @@ class NativeBridge:
 
     async def _op_run(self, message: dict[str, Any]) -> None:
         self._require_hello()
+        # Sidecar 已退出时优先报"未运行"，不要拿残留的 _run_id 误报 run_busy。
+        if not self._sidecar_alive:
+            raise BridgeError(
+                "Sidecar 未运行，请重新打开侧边栏重连", code="sidecar_not_running"
+            )
         task = message.get("task")
         if not isinstance(task, str) or not task.strip():
             raise BridgeError("run.task 必须是非空字符串")
@@ -569,6 +747,12 @@ class NativeBridge:
         run_id = str((result or {}).get("run_id", ""))
         if not run_id:
             raise BridgeError("Sidecar 未返回 run_id")
+        if run_id in self._early_finished:
+            # 终态通知先于 run_started 到达（短任务竞态）：该 run 已结束，
+            # 运行位保持空闲，也不再补发会误导 UI 的 run_started。
+            self._early_finished.discard(run_id)
+            _log(f"run {run_id} finished before run_started; skip late run_started")
+            return
         self._run_id = run_id
         await self._send({"type": "run_started", "run_id": run_id})
 
@@ -652,59 +836,107 @@ class NativeBridge:
             raise BridgeError("Bridge 未从配置文件启动，无法保存 LLM 配置")
         path = Path(self._config_path)
         try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(current, dict):
-                raise ValueError("顶层不是 object")
-        except FileNotFoundError:
-            current = {
-                "allowed_origins": sorted(self.config.allowed_origins),
-                "initialize": dict(self.config.initialize_params),
-                "max_task_chars": self.config.max_task_chars,
-            }
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise BridgeError(f"读取本地配置失败：{exc}") from exc
-
-        initialize = current.setdefault("initialize", {})
-        if not isinstance(initialize, dict):
-            raise BridgeError("本地配置 initialize 不是 object")
-        model = dict(initialize.get("model") or {})
-        model.setdefault("provider", "openai-compatible")
-        for name in ("base_url", "model", "strong_model"):
-            value = message.get(name)
-            if value is None:
-                continue
-            if not isinstance(value, str):
-                raise BridgeError(f"configure_llm.{name} 必须是字符串")
-            if value.strip():
-                model[name] = value.strip()
-        api_key = message.get("api_key")
-        if api_key is not None:
-            if not isinstance(api_key, str):
-                raise BridgeError("configure_llm.api_key 必须是字符串")
-            if api_key.strip():
-                model["api_key"] = api_key.strip()
-        initialize["model"] = model
-
-        backup = path.with_suffix(path.suffix + ".bak")
-        try:
-            if path.is_file():
-                backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(current, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            model = await asyncio.to_thread(self._apply_llm_config, path, message)
+        except BridgeError:
+            raise
         except OSError as exc:
             raise BridgeError(f"写入本地配置失败：{exc}") from exc
-        # 同一次连接里更新内存视图，下次 hello/status 显示新模型（运行中的 Sidecar 不变）。
+        # 同一次连接里更新内存视图，下次 hello/get_config 显示新模型（运行中的 Sidecar 不变）。
         self.config.initialize_params["model"] = model
         await self._send(
             {
                 "type": "config_saved",
                 "model": masked_model(model),
-                "note": "已保存到本机配置；关闭再打开侧边栏后生效（Bridge 重新读取配置）",
+                "note": (
+                    "已保存到本机配置；重启浏览器或重新打开侧边栏"
+                    "（最后一个面板关闭会重启 Bridge）后生效"
+                ),
             }
         )
+
+    @staticmethod
+    def _string_field(message: dict[str, Any], name: str) -> str:
+        value = message.get(name)
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise BridgeError(f"configure_llm.{name} 必须是字符串")
+        return value.strip()
+
+    @staticmethod
+    def _check_base_url(value: str) -> None:
+        """base_url 只允许 http/https；拒绝 file:/javascript: 等 scheme 与内嵌凭据。"""
+        try:
+            parts = urlsplit(value)
+        except ValueError as exc:
+            raise BridgeError(
+                f"base_url 不是合法 URL：{exc}", code="invalid_base_url"
+            ) from exc
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise BridgeError(
+                "base_url 只允许 http/https 且必须包含主机名",
+                code="invalid_base_url",
+            )
+        if "@" in parts.netloc:
+            raise BridgeError(
+                "base_url 不能包含用户名/密码（凭据只放在 api_key 字段）",
+                code="invalid_base_url",
+            )
+
+    def _apply_llm_config(self, path: Path, message: dict[str, Any]) -> dict[str, Any]:
+        """锁内"读最新 → 校验 → 合并 → 原子写"；返回合并后的 model（仅留内存）。"""
+        with bridge_config_lock(path):
+            try:
+                current = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(current, dict):
+                    raise ValueError("顶层不是 object")
+            except FileNotFoundError:
+                current = {
+                    "allowed_origins": sorted(self.config.allowed_origins),
+                    "initialize": dict(self.config.initialize_params),
+                    "max_task_chars": self.config.max_task_chars,
+                }
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise BridgeError(f"读取本地配置失败：{exc}") from exc
+
+            initialize = current.setdefault("initialize", {})
+            if not isinstance(initialize, dict):
+                raise BridgeError("本地配置 initialize 不是 object")
+            model = dict(initialize.get("model") or {})
+            model.setdefault("provider", "openai-compatible")
+
+            api_key = message.get("api_key")
+            if api_key is not None and not isinstance(api_key, str):
+                raise BridgeError("configure_llm.api_key 必须是字符串")
+            new_key = api_key.strip() if isinstance(api_key, str) else ""
+
+            new_base = self._string_field(message, "base_url")
+            new_provider = self._string_field(message, "provider")
+            old_base = str(model.get("base_url") or "").strip()
+            old_provider = str(model.get("provider") or "openai-compatible").strip()
+            redirect = bool(new_base and new_base != old_base) or bool(
+                new_provider and new_provider != old_provider
+            )
+            if redirect and not new_key:
+                # 防凭据改道：旧 Key 绝不能被送到新端点，换端点必须同时出示新 Key。
+                raise BridgeError(
+                    "修改 base_url/provider 必须同时提供新的 api_key"
+                    "（旧 Key 不会被发送到新端点）",
+                    code="api_key_required",
+                )
+            if new_base:
+                self._check_base_url(new_base)
+            if new_provider:
+                model["provider"] = new_provider
+            for name in ("base_url", "model", "strong_model"):
+                value = self._string_field(message, name)
+                if value:
+                    model[name] = value
+            if new_key:
+                model["api_key"] = new_key
+            initialize["model"] = model
+            atomic_write_json(path, current)
+        return model
 
     def _require_hello(self) -> None:
         if not self._hello_done:

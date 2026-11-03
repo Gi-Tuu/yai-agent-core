@@ -16,17 +16,80 @@ Key 不会出现在命令历史（--api-key-stdin 从 stdin 读，或交互式 g
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import getpass
 import json
 import os
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 _DEFAULT_CONFIG = (
     Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "YAI" / "bridge.json"
 )
+
+
+def _shared_writer():
+    """优先复用 Bridge 的锁 + 原子写（CFG-3）；独立运行时返回 None 走本地退化实现。"""
+    try:
+        from yai_core.sidecar.native_bridge import (
+            atomic_write_json,
+            bridge_config_lock,
+        )
+
+        return atomic_write_json, bridge_config_lock
+    except Exception:  # noqa: BLE001 - 脚本可独立运行（未安装包）
+        return None
+
+
+@contextlib.contextmanager
+def _fallback_lock(_path: Path) -> Iterator[None]:
+    yield
+
+
+def _fallback_write(path: Path, config: dict[str, Any]) -> None:
+    """没有 yai_core 时的最小安全写：temp + fsync + os.replace + .bak。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        path.with_name(path.name + ".bak").write_bytes(path.read_bytes())
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def apply_update(path: Path, **changes: Any) -> tuple[dict[str, Any], bool]:
+    """锁内 读最新 → 合并 → 原子写；返回 (最终配置, 是否有变化)。
+
+    锁内重读可以避免把 Bridge 面板刚保存的改动覆盖回旧值。
+    """
+    writer = _shared_writer()
+    if writer is not None:
+        atomic_write_json, lock = writer
+        with lock(path):
+            original = json.loads(path.read_text(encoding="utf-8"))
+            updated = update_model(original, **changes)
+            if updated == original:
+                return original, False
+            atomic_write_json(path, updated)
+            return updated, True
+    with _fallback_lock(path):
+        original = json.loads(path.read_text(encoding="utf-8"))
+        updated = update_model(original, **changes)
+        if updated == original:
+            return original, False
+        _fallback_write(path, updated)
+        return updated, True
 
 
 def masked(config: dict[str, Any]) -> dict[str, Any]:
@@ -120,26 +183,31 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 1
-    original = json.loads(path.read_text(encoding="utf-8"))
-    updated = update_model(
-        original,
-        provider=args.provider,
-        base_url=args.base_url,
-        model=args.model,
-        strong_model=args.strong_model,
-        api_key=api_key,
-    )
-    if updated == original:
+    try:
+        updated, changed = apply_update(
+            path,
+            provider=args.provider,
+            base_url=args.base_url,
+            model=args.model,
+            strong_model=args.strong_model,
+            api_key=api_key,
+        )
+    except (OSError, ValueError) as exc:
         print(
             json.dumps(
-                {"ok": True, "changed": False, "model": masked(original)},
+                {"ok": False, "error": f"写入配置失败：{exc}"},
+                ensure_ascii=False,
+            )
+        )
+        return 1
+    if not changed:
+        print(
+            json.dumps(
+                {"ok": True, "changed": False, "model": masked(updated)},
                 ensure_ascii=False,
             )
         )
         return 0
-    backup = path.with_suffix(path.suffix + ".bak")
-    backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-    path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         json.dumps(
             {
@@ -147,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
                 "changed": True,
                 "config": str(path),
                 "model": masked(updated),
-                "note": "关闭再打开侧边栏（或重启浏览器）让 Bridge 重新加载配置",
+                "note": "重启浏览器或重新打开侧边栏（会重启 Bridge）后生效",
             },
             ensure_ascii=False,
             indent=2,

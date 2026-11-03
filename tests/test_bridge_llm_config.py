@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,3 +61,47 @@ def test_update_model_without_key_keeps_existing_key() -> None:
     model = updated["initialize"]["model"]
     assert model["api_key"] == "sk-secret-1234"
     assert model["model"] == "only-name"
+
+
+# ---------- v0.26 修复回归：CLI 与 Bridge 共用的原子配置写（CFG-3） ----------
+
+
+def _write_config(tmp_path: Path) -> tuple[Path, dict]:
+    path = tmp_path / "bridge.json"
+    path.write_text(json.dumps(_config()), encoding="utf-8")
+    return path, _config()
+
+
+def test_apply_update_is_atomic_with_backup(tmp_path: Path) -> None:
+    path, original = _write_config(tmp_path)
+    updated, changed = _module.apply_update(path, api_key="sk-new-9999")
+    assert changed is True
+    assert updated["initialize"]["model"]["api_key"] == "sk-new-9999"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved == updated
+    backup = path.with_name("bridge.json.bak")
+    assert backup.is_file()
+    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    # 原子写不留 temp / lock 残留。
+    assert list(tmp_path.glob("*.tmp-*")) == []
+    assert not (tmp_path / "bridge.json.lock").exists()
+
+
+def test_apply_update_merges_into_latest_file(tmp_path: Path) -> None:
+    path, _original = _write_config(tmp_path)
+    _module.apply_update(path, base_url="https://api.new/v1", api_key="sk-new")
+    _module.apply_update(path, model="new-model")
+    model = json.loads(path.read_text(encoding="utf-8"))["initialize"]["model"]
+    assert model["base_url"] == "https://api.new/v1"
+    assert model["api_key"] == "sk-new"
+    assert model["model"] == "new-model"
+
+
+def test_apply_update_noop_does_not_rewrite(tmp_path: Path) -> None:
+    path, _original = _write_config(tmp_path)
+    before = path.read_text(encoding="utf-8")
+    updated, changed = _module.apply_update(path)
+    assert changed is False
+    assert path.read_text(encoding="utf-8") == before
+    assert not path.with_name("bridge.json.bak").exists()
+    assert updated == _config()

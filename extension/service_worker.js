@@ -9,6 +9,8 @@
 const HOST_NAME = "com.yai.agentcore";
 const BRIDGE_PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 3000;
+//: 已完成 run 的缓存上限：用于忽略迟到的 run_started（短任务竞态，NB-1）。
+const FINISHED_RUN_CACHE = 32;
 
 /** @type {chrome.runtime.Port | null} */
 let port = null;
@@ -19,6 +21,10 @@ let activeRunId = null;
 /** @type {Set<chrome.runtime.Port>} */
 const panels = new Set();
 let reconnectTimer = null;
+/** @type {Set<string>} */
+const finishedRunIds = new Set();
+/** 最后一个面板关闭时若还有运行中任务，延迟到终态再重启 Bridge（CFG-2）。 */
+let pendingBridgeReload = false;
 
 chrome.runtime.onInstalled.addListener(() => {
   enableSidePanelOnActionClick();
@@ -65,7 +71,12 @@ chrome.runtime.onConnect.addListener((panelPort) => {
   if (panelPort.name !== "yai-sidepanel") return;
   panels.add(panelPort);
   panelPort.onMessage.addListener((message) => handlePanelMessage(panelPort, message));
-  panelPort.onDisconnect.addListener(() => panels.delete(panelPort));
+  panelPort.onDisconnect.addListener(() => {
+    panels.delete(panelPort);
+    // 最后一个面板关闭 = 本地 Bridge 也随之关闭，下次打开会重新读取 bridge.json
+    // （模型配置保存后靠这个生效，CFG-2）。运行中的任务不静默中止，等终态再重启。
+    if (panels.size === 0) maybeCloseBridgeForReload();
+  });
   sendToPanel(panelPort, { type: "bridge_status", status });
   ensureConnected();
 });
@@ -74,7 +85,8 @@ function handlePanelMessage(panelPort, message) {
   if (!message || typeof message !== "object") return;
   switch (message.op) {
     case "run": {
-      activeRunId = null;
+      // 不要在这里清 activeRunId：run_started 才代表新 run 开始；若 Bridge 回
+      // run_busy，仍要能取消旧的运行（EXT-1）。
       postToBridge({ op: "run", task: String(message.task || "") });
       break;
     }
@@ -92,7 +104,12 @@ function handlePanelMessage(panelPort, message) {
       break;
     }
     case "status": {
-      postToBridge({ op: "status" });
+      // 未连接时直接回当前状态，不要给面板抛 not_connected 噪音错误。
+      if (port) {
+        postToBridge({ op: "status" });
+      } else {
+        sendToPanel(panelPort, { type: "bridge_status", status });
+      }
       break;
     }
     case "get_config": {
@@ -130,15 +147,18 @@ async function ensureConnected() {
 
 function connectBridge() {
   if (port) return;
+  let current;
   try {
-    port = chrome.runtime.connectNative(HOST_NAME);
+    current = chrome.runtime.connectNative(HOST_NAME);
   } catch (error) {
     setStatus({ state: "disconnected", detail: String(error) });
     scheduleReconnect();
     return;
   }
-  port.onMessage.addListener(onBridgeMessage);
-  port.onDisconnect.addListener(() => {
+  port = current;
+  current.onMessage.addListener(onBridgeMessage);
+  current.onDisconnect.addListener(() => {
+    if (port !== current) return; // 旧端口的迟到事件：不影响新连接。
     const detail = chrome.runtime.lastError?.message || "Bridge 已断开";
     port = null;
     // 断开时绝不自动重放任务：把状态明确标为 unknown，由用户决定是否重试。
@@ -160,6 +180,64 @@ function scheduleReconnect() {
     reconnectTimer = null;
     if (panels.size > 0) connectBridge();
   }, RECONNECT_DELAY_MS);
+}
+
+/** 忽略迟到的 run_started（短任务里终态通知可能先到，NB-1）。 */
+function rememberFinishedRun(runId) {
+  if (typeof runId !== "string" || !runId) return;
+  finishedRunIds.add(runId);
+  while (finishedRunIds.size > FINISHED_RUN_CACHE) {
+    const oldest = finishedRunIds.values().next().value;
+    if (oldest === undefined) break;
+    finishedRunIds.delete(oldest);
+  }
+}
+
+/** 最后一个面板关闭：重置 Bridge 让下次连接重新读取 bridge.json（CFG-2）。 */
+function maybeCloseBridgeForReload() {
+  if (panels.size > 0) return;
+  if (activeRunId) {
+    // 有运行中任务：等它终态再重启，避免无声中止可能已有副作用的操作。
+    pendingBridgeReload = true;
+    return;
+  }
+  closeBridgeForReload();
+}
+
+function closeBridgeForReload() {
+  pendingBridgeReload = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  const current = port;
+  port = null;
+  if (current) {
+    try {
+      current.disconnect();
+    } catch (error) {
+      console.warn("[yai] 主动关闭 Bridge 失败：", String(error));
+    }
+  }
+  activeRunId = null;
+  finishedRunIds.clear();
+  // 没有面板在听，但保证下次打开面板时先看到"未连接"，再由 connect 覆盖。
+  setStatus({ state: "disconnected", detail: "本地 Bridge 已随侧边栏关闭" });
+}
+
+/** Sidecar 已退出：主动断开并重连，让扩展拿到新的 Bridge/Sidecar（NB-2）。 */
+function dropBridgeAndReconnect() {
+  const current = port;
+  port = null;
+  if (current) {
+    try {
+      current.disconnect();
+    } catch (error) {
+      console.warn("[yai] 断开已退出的 Bridge 失败：", String(error));
+    }
+  }
+  pendingBridgeReload = false;
+  scheduleReconnect();
 }
 
 function postToBridge(message) {
@@ -206,19 +284,46 @@ function onBridgeMessage(message) {
     return;
   }
   if (message.type === "sidecar_exit") {
+    rememberFinishedRun(activeRunId);
     activeRunId = null;
-    setStatus({ state: "unknown", detail: `Sidecar 已退出（${message.reason}）` });
+    setStatus({
+      state: "unknown",
+      detail: `Sidecar 已退出（${message.reason || "未知原因"}），正在重连…`,
+    });
+    // 先让面板重置运行态，再主动断开并重连（新 Bridge 会拉起新 Sidecar）。
+    broadcast(message);
+    dropBridgeAndReconnect();
     return;
   }
   if (message.type === "run_started") {
+    if (message.run_id && finishedRunIds.has(message.run_id)) {
+      // 该 run 已结束（终态通知先到）：忽略迟到的 run_started，避免 UI 卡"运行中"。
+      return;
+    }
     activeRunId = message.run_id || null;
+    broadcast(message);
+    return;
   }
   if (message.type === "notification") {
     const params = message.params || {};
     if (params.type === "done" || message.method === "agent/cancelled" ||
         message.method === "agent/error") {
+      rememberFinishedRun(params.run_id || activeRunId);
+      activeRunId = null;
+      if (pendingBridgeReload) maybeCloseBridgeForReload();
+    }
+    broadcast(message);
+    return;
+  }
+  if (message.type === "status") {
+    const runId = message.active_run_id || null;
+    if (runId && !finishedRunIds.has(runId)) {
+      activeRunId = runId;
+    } else if (!runId) {
       activeRunId = null;
     }
+    broadcast(message);
+    return;
   }
   broadcast(message);
 }

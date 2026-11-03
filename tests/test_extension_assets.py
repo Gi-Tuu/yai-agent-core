@@ -23,7 +23,9 @@ def test_manifest_is_mv3_with_side_panel() -> None:
     assert manifest["manifest_version"] == 3
     assert manifest["side_panel"]["default_path"] == "sidepanel.html"
     permissions = set(manifest.get("permissions", []))
-    assert {"sidePanel", "nativeMessaging", "activeTab", "scripting"}.issubset(permissions)
+    # 最小权限：只保留实际用到的四项（storage 未使用，已移除）。
+    assert permissions == {"sidePanel", "nativeMessaging", "activeTab", "scripting"}
+    assert "storage" not in permissions
     assert manifest["background"]["service_worker"] == "service_worker.js"
     # 侧边栏依赖用户手势打开，不能声明 action popup（会抢走点击）。
     assert "default_popup" not in manifest.get("action", {})
@@ -91,3 +93,50 @@ def test_native_host_manifest_template_is_valid() -> None:
     assert data["type"] == "stdio"
     assert isinstance(data["allowed_origins"], list) and data["allowed_origins"]
     assert data["path"] == "REPLACE_WITH_ABSOLUTE_PATH_TO_PYTHON"
+
+
+# ---------- v0.26 修复回归：运行态同步 / 竞态去重 / Bridge 生命周期 ----------
+
+
+def test_panel_syncs_run_state_on_connect() -> None:
+    """EXT-1：面板连接后主动查 status，并能按 active_run_id 恢复运行态。"""
+    js = _read("sidepanel.js")
+    assert "send({ op: \"status\" })" in js
+    assert 'case "status"' in js
+    assert "active_run_id" in js
+    assert "applyStatus" in js
+
+
+def test_panel_ignores_late_run_started_for_finished_run() -> None:
+    """NB-1：已完成 run 的迟到 run_started 必须被忽略，避免 UI 卡回运行中。"""
+    panel = _read("sidepanel.js")
+    worker = _read("service_worker.js")
+    assert "finishedRunIds" in panel
+    assert "finishedRunIds" in worker
+    assert "rememberFinishedRun" in panel
+    assert "rememberFinishedRun" in worker
+    # 终态统一清 pending 审批卡，避免 run 结束后还能点"允许"。
+    assert "pendingRequestId = null" in panel
+
+
+def test_panel_shows_config_save_errors() -> None:
+    """CFG-1：api_key_required / invalid_base_url 要在面板可见。"""
+    js = _read("sidepanel.js")
+    assert "api_key_required" in js
+    assert "invalid_base_url" in js
+    assert "重启浏览器或重新打开侧边栏" in js
+
+
+def test_service_worker_restarts_bridge_and_sidecar() -> None:
+    """NB-2/CFG-2：sidecar 退出后主动断开重连；最后面板关闭时重启 Bridge。"""
+    worker = _read("service_worker.js")
+    assert "dropBridgeAndReconnect" in worker
+    assert "maybeCloseBridgeForReload" in worker
+    assert "closeBridgeForReload" in worker
+    assert "sidecar_exit" in worker
+    assert "panels.size === 0" in worker
+    # run 前不能再清 activeRunId（否则 run_busy 时失去取消能力）。
+    run_case = worker.split('case "run":', 1)[1].split("break;", 1)[0]
+    assert "activeRunId = null" not in run_case
+    # 旧端口回调不能把新端口置空。
+    assert "if (port !== current) return;" in worker
