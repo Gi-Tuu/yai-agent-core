@@ -10,6 +10,29 @@
 | `install.cmd` / `uninstall.cmd` | 双击/命令行包装（优先使用仓库 `.venv` 的 Python） |
 | `build_bundle.py` | 构建 `dist/windows-bundle/` 与 `dist/yai-agent-core-windows-<version>.zip`（Bridge + 扩展 + 脚本 + 本说明） |
 
+## 升级 / 回滚
+
+```powershell
+# 安装（覆盖旧版本前自动快照当前 bridge.exe / config / manifest / install.json）
+install.cmd --extension-id <id> --with-browser-mcp --cdp-endpoint http://127.0.0.1:9222
+
+# 查看当前版本与快照
+python installer.py --action status
+
+# 回滚到最近一次升级前快照（会停止占用旧 bridge 的进程）
+python installer.py --action rollback
+```
+
+- 快照在 `%LOCALAPPDATA%\YAI\rollback\<时间戳>`，默认保留最近 3 份；**快照包含
+  bridge.json，可能含 Key**，按敏感文件保护；
+- 回滚后重启浏览器/侧边栏生效；卸载默认不删快照，需要时手动删除。
+
+## 固定扩展 ID
+
+见 `packaging/extension/README.md`：用 `keygen.py` + `build_extension.py` 生成固定
+ID 的扩展副本，再把 `dist/extension-id.txt` 传给 `installer.py`。从旧路径 ID 迁移
+时扩展 ID 会变，需重新加载/注册，但 Key 配置保留。
+
 ## 使用
 
 ```powershell

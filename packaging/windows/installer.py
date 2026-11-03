@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -52,6 +53,66 @@ def find_bridge(repo: Path) -> Path:
     if candidates:
         return candidates[0]
     raise SystemExit("找不到 Native Bridge（先构建 dist\\yai-bridge.exe）")
+
+
+def _rollback_root(local: Path) -> Path:
+    return local / "rollback"
+
+
+def _snapshots(local: Path) -> list[Path]:
+    root = _rollback_root(local)
+    if not root.is_dir():
+        return []
+    return sorted((p for p in root.iterdir() if p.is_dir()), reverse=True)
+
+
+def _snapshot(local: Path, *, keep: int = 3) -> Path | None:
+    existing = [
+        path
+        for path in (
+            local / "bin" / "yai-bridge.exe",
+            local / "bridge.json",
+            local / "com.yai.agentcore.json",
+            local / "install.json",
+        )
+        if path.is_file()
+    ]
+    if not existing:
+        return None
+    target = _rollback_root(local) / time.strftime("%Y%m%d-%H%M%S")
+    target.mkdir(parents=True, exist_ok=True)
+    for path in existing:
+        shutil.copy2(path, target / path.name)
+    for old in _snapshots(local)[keep:]:
+        shutil.rmtree(old, ignore_errors=True)
+    return target
+
+
+def _rollback(local: Path) -> int:
+    snapshots = _snapshots(local)
+    if not snapshots:
+        raise SystemExit("没有可用的升级快照")
+    latest = snapshots[0]
+    target_exe = local / "bin" / "yai-bridge.exe"
+    for pid in process_ids(target_exe):
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
+            capture_output=True,
+            timeout=15,
+        )
+    target_exe.parent.mkdir(parents=True, exist_ok=True)
+    for name, destination in (
+        ("yai-bridge.exe", target_exe),
+        ("bridge.json", local / "bridge.json"),
+        ("com.yai.agentcore.json", local / "com.yai.agentcore.json"),
+        ("install.json", local / "install.json"),
+    ):
+        source = latest / name
+        if source.is_file():
+            shutil.copy2(source, destination)
+    print(f"已回滚到快照：{latest}")
+    print("请重启浏览器/侧边栏，让 Native Host 使用回滚后的文件。")
+    return 0
 
 
 def process_ids(exe: Path) -> list[str]:
@@ -100,6 +161,8 @@ def install(args: argparse.Namespace) -> int:
         print("  [dry-run] 不复制、不写注册表")
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file():
+            print(f"升级前快照：{_snapshot(local)}")
         running = process_ids(target)
         if running:
             print(f"  ⚠ Bridge 正在运行（{','.join(running)}）；装完请重启浏览器")
@@ -196,7 +259,9 @@ def uninstall(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="YAI Native Host 安装/卸载（Windows）")
-    parser.add_argument("--action", choices=("install", "uninstall"), default="install")
+    parser.add_argument(
+        "--action", choices=("install", "uninstall", "rollback", "status"), default="install"
+    )
     parser.add_argument("--extension-id", default="")
     parser.add_argument("--bridge-exe", default="")
     parser.add_argument("--python", default="")
@@ -209,6 +274,17 @@ def main() -> int:
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("该安装器只支持 Windows")
+    if args.action == "status":
+        local = Path(os.environ["LOCALAPPDATA"]) / "YAI"
+        info = local / "install.json"
+        print(json.dumps({
+            "installed": json.loads(info.read_text(encoding="utf-8")) if info.is_file() else None,
+            "bridge_exists": (local / "bin" / "yai-bridge.exe").is_file(),
+            "snapshots": [str(p) for p in _snapshots(local)],
+        }, ensure_ascii=False, indent=2))
+        return 0
+    if args.action == "rollback":
+        return _rollback(Path(os.environ["LOCALAPPDATA"]) / "YAI")
     if args.action == "install":
         if not args.extension_id:
             raise SystemExit("install 需要 --extension-id")

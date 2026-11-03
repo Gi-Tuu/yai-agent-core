@@ -147,6 +147,7 @@ include = [
     "/docs/memory-evaluation.md",
     "/docs/browser-task-e2e.md",
     "/docs/windows-real-apps.md",
+    "/docs/sidepanel-manual-acceptance.md",
     # 2026-11 审计整改记录（IMPLEMENTATION_STATUS 链接到它）。
     "/docs/audit-remediation-2026-11.md",
     "/docs/walkthrough",
