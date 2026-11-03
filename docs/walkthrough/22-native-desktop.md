@@ -140,7 +140,8 @@ warnTint / badTint / knob`），避免其他 QML 文件因缺 token 编译失败
 3. **`break` 之后要关流**。`async for` 中途 break 会留下没 awaited 的异步生成器，
    `finally: await stream.aclose()` 才不留 RuntimeWarning。
 
-对应测试在 `tests/test_desktop_runtime.py`：事件投递、授权/澄清挂起兑现、忙拒绝、
+对应测试在 `tests/test_desktop_workbench.py` / `test_desktop_specialist.py` /
+`test_desktop_pending_summary.py`（原 `test_desktop_runtime.py` 已拆分）：事件投递、授权/澄清挂起兑现、忙拒绝、
 取消产生 `cancelled`、非法挡位被拒。全部离线、不需要显示器；未装 `[desktop]` 时
 `pytest.importorskip("PySide6.QtCore")` 整体跳过，CI 四矩阵不受影响。
 

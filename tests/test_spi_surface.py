@@ -111,6 +111,34 @@ def test_spi_modules_exist_one_per_contract() -> None:
     )
 
 
+#: 21 类事件的冻结集合。增删事件必须同时改这里、`EventType`、文档与 walkthrough。
+EXPECTED_EVENT_TYPES = frozenset(
+    {
+        "STRATEGY_SELECTED",
+        "PLAN_CREATED",
+        "MODEL_MESSAGE",
+        "TOOL_CALL",
+        "TOOL_RESULT",
+        "PERMISSION_ASKED",
+        "PERMISSION_DENIED",
+        "CLARIFY_REQUESTED",
+        "CAPABILITY_MISSING",
+        "TOOL_DISCOVERED",
+        "TOOL_COMPOSED",
+        "CODE_TOOL_CREATED",
+        "CODE_TOOL_RETIRED",
+        "CONTEXT_COMPACTED",
+        "MEMORIES_RECALLED",
+        "HOST_STATE",
+        "PLAN_REVISED",
+        "TIER_CHANGED",
+        "BUDGET_EXCEEDED",
+        "ERROR",
+        "DONE",
+    }
+)
+
+
 def _event_type_members() -> list[str]:
     tree = ast.parse((KERNEL / "types.py").read_text(encoding="utf-8"))
     for node in tree.body:
@@ -124,33 +152,54 @@ def _event_type_members() -> list[str]:
     raise AssertionError("types.py 里找不到 EventType")
 
 
-def test_no_dead_event_types() -> None:
-    """每个事件类型都必须在 ``src/`` 里有真实发出点，不允许"定义了但从不发"。
+def _event_emitters() -> dict[str, list[str]]:
+    """扫描真实发出点：``AgentEvent(EventType.X, ...)`` 构造调用所在文件:行号。
 
-    判据：成员名（``EventType.X``）或其事件字符串值，至少在 ``src/`` 的**任意一个**文件里
-    出现过（``types.py`` 自身不计）。
+    不用文本匹配——注释/docstring/比较表达式里出现成员名不算发出。
     """
+    emitted: dict[str, list[str]] = {}
+    for path in sorted(KERNEL.rglob("*.py")):
+        if path.name == "types.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else (func.attr if isinstance(func, ast.Attribute) else "")
+            )
+            if name != "AgentEvent" or not node.args:
+                continue
+            first = node.args[0]
+            if (
+                isinstance(first, ast.Attribute)
+                and isinstance(first.value, ast.Name)
+                and first.value.id == "EventType"
+            ):
+                rel = path.relative_to(KERNEL).as_posix()
+                emitted.setdefault(first.attr, []).append(f"{rel}:{node.lineno}")
+    return emitted
+
+
+def test_no_dead_event_types() -> None:
+    """每个事件类型都必须有真实的 ``AgentEvent(EventType.X, ...)`` 发出点。"""
     members = _event_type_members()
     assert members, "EventType 没有任何成员"
-    corpus = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted(KERNEL.rglob("*.py"))
-        if path.name != "types.py"
-    )
-    dead = [
-        member
-        for member in members
-        if f"EventType.{member}" not in corpus
-        and f'"{member.lower()}"' not in corpus
-        and f"'{member.lower()}'" not in corpus
-    ]
+    emitters = _event_emitters()
+    dead = [member for member in members if not emitters.get(member)]
     assert not dead, (
-        "以下事件类型定义了却从不发出（死事件）："
+        "以下事件类型定义了却没有 AgentEvent 构造发出点（死事件）："
         f"{dead} —— 要么补上发出点，要么把类型/文档/示例里的它删掉"
     )
 
 
 def test_event_type_members_are_stable() -> None:
-    """事件类型数量钉住——增删事件必须同步改这个断言与文档。"""
-    members = _event_type_members()
-    assert len(members) == 21, f"事件类型数变为 {len(members)}（原 21），请同步文档与本断言"
+    """事件类型集合冻结（不只是数量）——增删事件必须同步文档与快照。"""
+    members = frozenset(_event_type_members())
+    assert members == EXPECTED_EVENT_TYPES, (
+        f"EventType 集合发生变化：新增 {members - EXPECTED_EVENT_TYPES}，"
+        f"删除 {EXPECTED_EVENT_TYPES - members}；请同步文档、walkthrough 与本快照"
+    )

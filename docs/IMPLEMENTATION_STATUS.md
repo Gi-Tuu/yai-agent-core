@@ -7,6 +7,10 @@
 >
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
 > 一条命令看治理闭环：`python scripts/demo_governance_loop.py`
+>
+> **当前 HEAD（2026-11-03 审计整改后）实测**：2 319 项收集、全量离线通过（7 项环境跳过）、
+> 内核行覆盖率 91.19%（门禁 90%）；审计整改项与验证边界见
+> [`docs/audit-remediation-2026-11.md`](audit-remediation-2026-11.md)。
 
 ## 一、内核与执行
 
@@ -36,7 +40,7 @@
 | 参数严格校验 | 已验证 | `tests/test_openai_compat.py`、`test_anthropic_provider.py` | 历史上下文里的坏参数只做渲染，不转发 |
 | ACC 声明与 OpenAPI 绑定 | 已验证 | `tests/test_acc_*.py`（4 个模块） | **可选 translator**：内核原生治理为主，ACC 不是依赖 |
 | Office 文本抽取（docx/xlsx/pptx 零依赖，PDF 走 `[office]` extra pypdf） | 已验证 | `tests/test_office_text.py`、`tests/test_agentdojo_aggregate.py` | 文本级抽取：版面/样式/公式/数字单元格不进文本层；zip 炸弹与实体攻击有闸 |
-| Browser Provider（v0.26，Unreleased，可选适配器） | **已验证（真实 Chromium + 系统 Chrome）** | `scripts/browser_smoke.py`（2026-11-03 通过：来源闸 / 输入 / 下拉 / 点击 / 等待 / 再观察 / 旧引用过期，11 条收据）；`tests/test_browser_provider.py`（假后端边界） | 只验证了一条本地任务；嵌套 frame、下载/上传、CAPTCHA、真实站点多样性与视觉定位未验证 |
+| Browser Provider（v0.26，Unreleased，可选适配器） | **已实现·本机冒烟（真实 Chromium / 系统 Chrome 各 1 次；无 CI 回归）** | `scripts/browser_smoke.py`（2026-11-03 通过：来源闸 / 输入 / 下拉 / 点击 / 等待 / 再观察 / 旧引用过期，11 条收据）；`tests/test_browser_provider.py`（假后端边界） | 真后端 `playwright_backend.py` 未进 CI（覆盖率 24%）；嵌套 frame、下载/上传、CAPTCHA、真实站点多样性与视觉定位未验证 |
 
 ## 三、治理与安全
 
@@ -102,7 +106,7 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 版本串一致（pyproject / `__version__` / lock / 双 README） | 已验证 | `tests/test_version_consistency.py` | 发版必跑 |
-| sdist 链接完整 + 包内可跑测试 | 已验证 | `tests/test_sdist_link_integrity.py`（19 例）；实测包内全量 exit 0 | 仅带已跟踪的公开内容 |
+| sdist 链接完整 + 包内可跑测试 | 已验证 | `tests/test_sdist_link_integrity.py`（19 例）；CI `sdist` job 构建→解包→包内 pytest；本机 2026-11-03 复验 `uv build --sdist` → 解包 → 包内全量 pytest exit 0 | 仅带已跟踪的公开内容 |
 | SLSA provenance + cosign 签名 | 已验证 | v0.25.0 Release 15 个资产，含 `slsa-provenance.intoto.jsonl` | 第三方扫描识别有延迟 |
 | OpenSSF 徽章 / Scorecard | 外部评分 | CII Passing（#15360）；Scorecard 7.7/10（2026-10-28 复扫，Signed-Releases 9/10） | 以第三方复扫为准 |
 

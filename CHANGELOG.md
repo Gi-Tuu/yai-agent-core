@@ -97,6 +97,36 @@
   owner 并在加载时校验，不一致即 `owner_mismatch` + 只读，**不读入、不覆盖**
   别的租户档案；旧文件无 owner 保持兼容。
 
+### Fixed
+
+- **2026-11 全仓审计整改（P1/P2 批量修复，均带回归测试）**：
+  - **数据完整性**：SQLite 迁移改为"列对账 + SAVEPOINT 单事务"，半迁移库、丢
+    `user_version` 的老库、标 v3 却缺列的库均可自愈；坏 `tool_calls` JSON 降级不再
+    让每个任务崩；0 字节库先备份再初始化；KV 过期行清理、构造失败关连接。
+  - **长期记忆**：`recall/arecall` 的 touch 落盘失败不再让读取失败；owner 双向
+    fail-closed 且保存绝不把已有 owner 写 null；写前检测外部修改并按 id 合并，多实例
+    不再静默丢更新；原子写补 `fsync`、quarantine 保留上限、未知 kind 不再 KeyError、
+    容量淘汰可观测。
+  - **终态契约**：内核/宿主 SPI 在 DONE 前失败时补发 `ERROR + DONE(status="error")`；
+    `RunResult` 新增 `status/error`；空最终文本不再写空 assistant；学习/反馈回调
+    best-effort；`DONE` 带 `status/error` 与成本字段。
+  - **执行治理**：gate/审批/策略回调异常按本次工具失败关闭（不再中断任务）；
+    handler 异常明确告知"副作用可能已发生"；rate-limit 改为授权通过后才扣配额，
+    未授权调用不能耗尽额度；收据链按 run 重置，单次任务收据可独立校验。
+  - **扩展/Bridge**：短任务 DONE 先于 run_started 不再卡死面板；sidecar 崩溃后
+    Bridge 清运行位并由 SW 主动重连；面板重开可恢复/取消运行中任务；关最后一个
+    面板会重启 Bridge 使配置生效；`configure_llm` 改 base_url 必须同时给新 Key；
+    配置原子写 + `.bak`；`--dry-run` 脱敏；CDP stop 校验 pid 镜像/命令行；
+    Playwright MCP 固定 `@playwright/mcp@0.0.84`；manifest 移除未用 `storage`。
+  - **验收**：CompositeVerifier 不再把抛异常/非法分支当成功；仅全部分支成功才
+    `verified_success`，异常分支计入 `not_verifiable` 并写入理由。
+  - **发布/守卫**：sdist 补 `/extension`、`/benchmarks` 与缺失文档；CI 新增 sdist
+    包内测试 job；publish 前增加 lock/ruff/mypy/pytest 门禁；零依赖守门改为模块
+    作用域 AST（可抓 `try: import httpx`，batteries 精确白名单）；事件守门改为
+    真实 `AgentEvent(EventType.X)` 构造点 + 21 类冻结集合。
+  - **文档**：修正"解密失败=冷启动空库"的过期描述（实际只读降级、绝不覆盖）、
+    Browser Provider 验证口径、白皮书数字标注 v0.25.0 快照、失效测试文件引用。
+
 ### Removed
 
 - **Render 公网演示实例**：删除线上的 `yai-agent-core` 服务，移除 `.github/workflows/keepwarm.yml`
@@ -910,7 +940,7 @@
 - **三态交互形态机**：待命是**圆球**（56×56，中央动态波形，执行中起伏），指针驻留 110ms **向右展开成胶囊**（340×52，状态文本 + 呼吸点），点击**向下展开成面板**（420×620）；指针离开窗口回到球，但**有授权/澄清挂起时拒绝收回**（离开判定留 320ms 宽限，避免跨子项抖动）。左上角锚定，整岛移动交给 `Window.startSystemMove()`（位移超 4px 判拖动，否则算点击），不再手算 DPI/多屏位移。
 - **面板改为"对话优先"**：主体只有"你说"与"它答"两种气泡，思考链与调用链折叠成一条 `› 过程 · N 步`，点击才展开明细；壳层改为不透明（半透明在开着其他软件的桌面上会让对话看起来是空的）。列表数据按专员各存一份 ListModel，切走再切回历史不丢。
 - **离线演示的授权卡改为真挂起**：`shell/demo_script.py` 走到 `permission_asked` / `clarify_requested` 时不再伪造事件，而是真的 `await channel.confirm/ask` 等待界面点击——无 Key 演示里的允许/拒绝走完整权限链路，拒绝会按"用户拒绝，未执行"收尾；并补齐仓库 / 笔记 / 陪伴三段主题脚本。
-- **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py` 8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
+- **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py`（现已拆分为 `tests/test_desktop_workbench.py` / `test_desktop_specialist.py` / `test_desktop_pending_summary.py` 等）8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
 - **语言中立能力清单（manifest）序列化**：`ToolSpec.to_manifest_dict()` / `from_manifest_dict()` 与 `tools/manifest.py`（批量打包 + JSON 文件读写）。composite 工作流（steps）与 code 工具（code，需宿主沙箱）作为"数据即能力"可跨进程 / 跨语言完整移植并执行；native/openapi/mcp 的 handler 不可移植，只导出能力声明。内核不另造调用通道（避免做成简化版 MCP），跨语言实际调用统一走 MCP / OpenAPI。新增 `tests/test_manifest.py`（含移植后组合工具端到端执行验证）与讲义第 21 篇。
 - **工程文档**：`docs/deployment-scaling.md`（部署 / 水平扩展 / 多租户）、`docs/multilang-interop.md`（多语言接入设计与 conformance 愿景）。
 - **PyPI 发布就绪**：补全 classifiers / project URLs、PEP 561 `py.typed` 标记，sdist 改为显式白名单（只含库源码、测试与核心文档，排除 inbox 与过程稿）；新增 OIDC Trusted Publishing 工作流 `publish.yml`（推 `v*` tag 触发、免 API token）。

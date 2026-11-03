@@ -30,8 +30,9 @@ class StorageCipher(Protocol):
     - ``encrypt(plaintext) -> ciphertext`` 与 ``decrypt(ciphertext) -> plaintext``
       互为逆运算，对同一密钥满足 ``decrypt(encrypt(b)) == b``；
     - 密钥由实现方持有，内核不接触密钥来源；
-    - 解密遇到篡改 / 密钥不符 / 数据损坏时抛异常，调用方按"文件损坏、冷启动容忍"
-      处理（vault 会退化为空库并在下次保存时覆盖，不会崩溃）。
+    - 解密遇到篡改 / 密钥不符 / 数据损坏时抛异常；vault 会把加载状态标为
+      ``decrypt_failed`` 并**只读降级、绝不覆盖原档**（损坏档先 quarantine），
+      由宿主换回密钥或显式迁移，不会崩溃也不会静默丢数据。
     """
 
     def encrypt(self, plaintext: bytes) -> bytes:

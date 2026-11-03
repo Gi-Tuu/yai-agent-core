@@ -27,22 +27,53 @@ KERNEL = ROOT / "src" / "yai_core"
 #: 允许在模块顶层出现的包前缀：标准库 + 内核自身 + 两个 typing 垫片。
 ALLOWED_TOP_LEVEL = {"yai_core", "typing_extensions", "typing_inspect"}
 
+#: **显式白名单**：这些文件在模块作用域 try/except 里 import 可选依赖属于
+#: 合法用法（FastAPI 是可选 server 门面，不在内核 import 链上）。白名单必须
+#: 精确到「文件 + 包」，绝不允许按包名整体放行。
+MODULE_LEVEL_ALLOWLIST: dict[str, set[str]] = {
+    "src/yai_core/batteries/fastapi_server/app.py": {"fastapi", "pydantic"},
+}
+
 
 def _stdlib_names() -> set[str]:
     return set(sys.stdlib_module_names)
 
 
+class _ModuleScopeImportVisitor(ast.NodeVisitor):
+    """收集**模块作用域**的 import：含模块顶层的 try/if/with/class 体。
+
+    只跳过函数/异步函数体（那才是合法的懒加载）；`try: import fastapi`
+    这种常见 optional-import 写法在模块加载时同样会执行，必须算作模块级。
+    """
+
+    def __init__(self) -> None:
+        self.found: list[tuple[str, int]] = []
+
+    def _record(self, name: str, lineno: int) -> None:
+        self.found.append((name.split(".")[0], lineno))
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self._record(alias.name, node.lineno)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.level == 0 and node.module:
+            self._record(node.module, node.lineno)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # 懒加载允许：不进入函数体。
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+
 def _module_level_imports(tree: ast.Module) -> list[tuple[str, int]]:
-    """返回模块**顶层**（非函数体内）的 import 顶层包名与行号。"""
-    found: list[tuple[str, int]] = []
-    for node in tree.body:  # 只看模块顶层语句，不递归进函数/类体
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                found.append((alias.name.split(".")[0], node.lineno))
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and node.module:
-                found.append((node.module.split(".")[0], node.lineno))
-    return found
+    """返回模块作用域（非函数体内）的 import 顶层包名与行号。"""
+    visitor = _ModuleScopeImportVisitor()
+    for node in tree.body:
+        visitor.visit(node)
+    return visitor.found
 
 
 def _kernel_files() -> list[pathlib.Path]:
@@ -56,16 +87,17 @@ def test_kernel_directory_exists() -> None:
 
 
 def test_no_module_level_third_party_import_in_kernel() -> None:
-    """内核本体不得在模块顶层 import 任何第三方包。"""
+    """内核本体不得在模块作用域 import 任何第三方包（含 try/if 包裹）。"""
     stdlib = _stdlib_names()
     violations: list[str] = []
     for path in _kernel_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = path.relative_to(ROOT).as_posix()
+        allowed = MODULE_LEVEL_ALLOWLIST.get(rel, set())
         for name, lineno in _module_level_imports(tree):
-            if name in stdlib or name in ALLOWED_TOP_LEVEL:
+            if name in stdlib or name in ALLOWED_TOP_LEVEL or name in allowed:
                 continue
-            rel = path.relative_to(ROOT).as_posix()
-            violations.append(f"{rel}:{lineno} 顶层 import {name}")
+            violations.append(f"{rel}:{lineno} 模块级 import {name}")
     assert not violations, "内核本体出现模块级第三方依赖（破坏零硬依赖红线）：\n" + "\n".join(
         violations
     )
@@ -97,10 +129,18 @@ def test_lazy_third_party_imports_are_allowed() -> None:
 
 
 def test_guard_detects_injected_third_party_import() -> None:
-    """守卫自身必须有效：构造一个含顶层第三方 import 的模块，扫描器要能抓到它。"""
+    """守卫自身必须有效：构造含顶层/try 包裹第三方 import 的模块，扫描器要抓到。"""
     injected = ast.parse("import httpx\nfrom openai import OpenAI\n")
     names = [n for n, _ in _module_level_imports(injected)]
     assert "httpx" in names and "openai" in names
+    # 最常见的 optional-import 写法不能被漏掉（旧实现只看 tree.body 直接语句）。
+    wrapped = ast.parse(
+        "try:\n    import httpx\nexcept ImportError:\n    httpx = None\n"
+    )
+    assert "httpx" in [n for n, _ in _module_level_imports(wrapped)]
+    # 函数体内的懒加载仍然不算模块级。
+    lazy = ast.parse("def f():\n    import httpx\n")
+    assert [n for n, _ in _module_level_imports(lazy)] == []
     # 标准库与内核自身不得被误报
     ok = ast.parse("import asyncio\nimport json\nfrom yai_core.types import AgentEvent\n")
     for name, _ in _module_level_imports(ok):
@@ -136,9 +176,11 @@ def test_optional_extras_are_not_imported_at_kernel_top_level() -> None:
     violations: list[str] = []
     for path in _kernel_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = path.relative_to(ROOT).as_posix()
+        allowed = MODULE_LEVEL_ALLOWLIST.get(rel, set())
         for name, lineno in _module_level_imports(tree):
-            if name in banned and name not in stdlib:
-                violations.append(f"{path.relative_to(ROOT).as_posix()}:{lineno} import {name}")
+            if name in banned and name not in stdlib and name not in allowed:
+                violations.append(f"{rel}:{lineno} import {name}")
     assert not violations, "可选依赖出现在内核顶层：\n" + "\n".join(violations)
 
 
