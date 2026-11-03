@@ -164,12 +164,19 @@ def test_persistence_roundtrip_across_instances(tmp_path: Path) -> None:
     assert results[0]["kind"] == "fact"
 
 
-def test_corrupt_storage_cold_starts_tolerated(tmp_path: Path) -> None:
+def test_corrupt_storage_is_quarantined_before_overwrite(tmp_path: Path) -> None:
     path = tmp_path / "memory.json"
-    path.write_text("{这不是合法 JSON", encoding="utf-8")
+    original = "{这不是合法 JSON".encode()
+    path.write_bytes(original)
     vault = MemoryVault(storage_path=path)
     assert vault.status()["total"] == 0
-    # 冷启动后可正常写入并覆盖坏文件。
+    storage = vault.status()["storage"]
+    assert storage["status"] == "corrupt"
+    assert storage["read_only"] is False
+    quarantined = Path(storage["quarantined_to"])
+    # 原始字节先备份成同目录 archive，再允许空库写入。
+    assert quarantined.name.startswith("memory.json.corrupt-")
+    assert quarantined.read_bytes() == original
     vault.remember("恢复后的内容")
     assert MemoryVault(storage_path=path).status()["total"] == 1
 

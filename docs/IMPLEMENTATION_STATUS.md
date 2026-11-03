@@ -1,7 +1,8 @@
 # 能力与证据索引（IMPLEMENTATION_STATUS）
 
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
-> 口径：v0.25.0（2026-10-31 发布）；各条验证范围以证据列为准。三档状态：
+> 口径：**v0.25.0 已发布（2026-10-31）；v0.26 Unreleased 增量**（Batch 1–3：P0 安全、
+> Browser Provider、Outcome Verification）已在本文件内标注，其余以证据列为准。三档状态：
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
 >
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
@@ -19,6 +20,8 @@
 | 组合工具（只编排已注册工具） | 已验证 | `tests/test_composite.py`、`test_composite_discovery.py` | 不生成代码、不做可视化编排 |
 | 幂等重放 + 权限依赖复核 | 已验证 | `tests/test_execution_receipts.py` | 只对声明幂等的调用生效 |
 | 任务内重规划 | 已验证 | `tests/test_replan.py` | 只带已完成的工具配对 |
+| 任务结果验收契约（v0.26，Unreleased） | 已验证（契约 / 组合器 / 事件接入） | `tests/test_outcome_verification.py` | 验收器由宿主提供；未配置时 `verification=None`；验收失败降级 `not_verifiable`，不重试、不改最终文本 |
+| Provider 路由治理（v0.26，Unreleased） | 已验证（离线假后端） | `tests/test_provider_routing.py`、`test_fallback_model.py` | 授权声明来自宿主；未授权后端零调用；无授权目标明确抛错；子任务只能收窄 |
 | 提示缓存（Anthropic 适配层） | 已验证 | `tests/test_anthropic_provider.py`（默认 / 关闭 / 断点位置 3 例） | 厂商专有扩展，只在适配器里；兼容代理可 `prompt_cache=False` |
 
 ## 二、工具接入与发现
@@ -31,6 +34,7 @@
 | 参数严格校验 | 已验证 | `tests/test_openai_compat.py`、`test_anthropic_provider.py` | 历史上下文里的坏参数只做渲染，不转发 |
 | ACC 声明与 OpenAPI 绑定 | 已验证 | `tests/test_acc_*.py`（4 个模块） | **可选 translator**：内核原生治理为主，ACC 不是依赖 |
 | Office 文本抽取（docx/xlsx/pptx 零依赖，PDF 走 `[office]` extra pypdf） | 已验证 | `tests/test_office_text.py`、`tests/test_agentdojo_aggregate.py` | 文本级抽取：版面/样式/公式/数字单元格不进文本层；zip 炸弹与实体攻击有闸 |
+| Browser Provider（v0.26，Unreleased，可选适配器） | 已验证（假后端）/ **已实现·未真机验证**（Playwright） | `tests/test_browser_provider.py`（快照引用、过期、来源闸、敏感字段、执行器收据） | 只支持顶层 frame；不处理下载/上传/CAPTCHA/反自动化绕过；真实浏览器需 `[browser]` extra，需要在真机另做验收 |
 
 ## 三、治理与安全
 
@@ -48,6 +52,8 @@
 | 工具输出按不可信数据处理 | 已验证 | `tests/test_loop.py`（默认包裹 / 可关两例） | 只改 prompt 形态，不改事件与收据里的原值 |
 | 执行后验证（后置条件） | 已验证 | `tests/test_execution_receipts.py`（确认 / 否认 / 检查出错 / 异步 / 链完整 / 非 unknown 不跑 6 例） | 只作用于 `unknown`；检查自身失败也只记 `error`，不替宿主猜 |
 | 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
+| 记忆落盘损坏安全（v0.26，Unreleased） | 已验证 | `tests/test_memory_vault_corruption.py`、`tests/test_storage_cipher.py` | 分类（不可读 / 损坏 / 解密失败 / 版本不兼容 / owner 不一致）；quarantine / read_only / raise 三种处置；解密失败与版本不兼容强制只读；绝不静默覆盖原档 |
+| 记忆 owner 绑定（v0.26，Unreleased，最小隔离） | 已验证 | `tests/test_memory_vault_corruption.py`（owner_mismatch / 同 owner / 旧文件兼容） | 完整多租户仍由宿主用独立实例 / 独立路径；本项只防止误读误覆盖 |
 | 外发 URL 来源闸（Unreleased） | 已验证 | `tests/test_egress_guard.py` | 声明路径按 schema 校验；声明保护但缺任务上下文则拒绝；未知 URL 不因此拒绝，不做跨任务污点追踪 |
 | 外发来源闸边界加固（Unreleased，B1） | 已验证 | `tests/test_egress_guard.py`（Markdown/HTML/JSON 包裹、大小写与 www 变体、并发隔离、事件字段） | 主机名区域 ASCII 后紧粘 CJK 视为主机名终止；路径比较大小写不敏感；IDNA 有损映射保留独立身份 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
@@ -103,6 +109,10 @@ MCP Server · Multi-Agent 编排 · 内置向量数据库 · 内置 UI（桌面�
 ## 九、已知边界（没验证的，不假装验证过）
 
 - **真实模型只做抽样验证**：CI 全部用脚本模型，不依赖网络与 API Key。
+- **Playwright 浏览器后端尚未真机验收**：假后端覆盖 Provider 语义（快照引用、来源闸、
+  收据、证据），真实 Chromium 上的元素定位 / 等待 / 跨标签页行为需要在有浏览器的
+  环境另行验证并补证据，不能以离线测试冒充真机通过。
+- **Windows Desktop Provider 尚未实现**（v0.26 Batch 5 计划内）。
 - **公网演示实例已停用**：Render 上的 `yai-agent-core` 服务已于 2026-11-02 删除；今后任何公网部署都应显式配置 `YAI_API_KEY`（见 ADR 0002 D3）。
 - **Windows 符号链接竞态**只能收窄、不能根除（POSIX 有 `O_NOFOLLOW`）；对应测试在 Windows 跳过。
 - **桌面壳只在 Windows 真机验证**；60fps 数据仅来自 2560×1600 / dpr 1.5 一次采样。

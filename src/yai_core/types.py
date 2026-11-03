@@ -1151,3 +1151,122 @@ class RunResult:
     strategy: Strategy
     events: list[AgentEvent]
     final_text: str
+    #: 任务级验收结果（v0.26 Outcome Verification）；未配置 verifier 时为 None。
+    #: 注意它回答的是"目标是否达成"，不是"工具是否调用成功"——后者看收据。
+    verification: VerificationResult | None = None
+
+
+#: 任务级验收状态（与执行收据的 ReceiptStatus 刻意分开）：
+#: - ``verified_success``：有确定性证据表明目标已达成；
+#: - ``verified_failure``：有确定性证据表明目标未达成（或明确失败）；
+#: - ``partial``：部分子目标达成、部分未达成 / 无法确认；
+#: - ``unknown``：动作可能已发生，但当前无法确认结果（不得盲目重试）；
+#: - ``not_verifiable``：宿主没有提供可判定证据（不代表成功，也不代表失败）。
+VERIFICATION_STATUSES = (
+    "verified_success",
+    "verified_failure",
+    "partial",
+    "unknown",
+    "not_verifiable",
+)
+
+#: 证据摘要的字符上限：证据会进事件与宿主日志，不允许无限长。
+EVIDENCE_SUMMARY_MAX = 500
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """一条验收证据。
+
+    ``kind`` 由宿主 / 适配器定义（如 ``receipt``、``file``、``api_state``、
+    ``page``、``navigation``），内核只负责透传、截断与序列化，不解释语义。
+
+    - ``ok``：``True`` 证明达成 / ``False`` 证明未达成 / ``None`` 仅作信息；
+    - ``summary``：给人看的一句话（上限 :data:`EVIDENCE_SUMMARY_MAX`）；
+    - ``detail``：结构化上下文（只允许 JSON 可序列化的浅层值）。
+    """
+
+    kind: str
+    summary: str
+    ok: bool | None = None
+    detail: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not str(self.kind).strip():
+            raise ValueError("Evidence.kind 必须是非空字符串")
+        if not isinstance(self.ok, (bool, type(None))):
+            raise ValueError("Evidence.ok 必须是 True / False / None")
+        if len(self.summary) > EVIDENCE_SUMMARY_MAX:
+            object.__setattr__(self, "summary", self.summary[:EVIDENCE_SUMMARY_MAX])
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"kind": self.kind, "summary": self.summary}
+        if self.ok is not None:
+            out["ok"] = self.ok
+        if self.detail:
+            out["detail"] = dict(self.detail)
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Evidence:
+        return cls(
+            kind=str(data.get("kind", "")),
+            summary=str(data.get("summary", "")),
+            ok=data.get("ok"),
+            detail=dict(data.get("detail") or {}),
+        )
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """任务级验收结论：状态 + 置信度 + 证据。
+
+    与 :class:`ExecutionReceipt` 的分工：收据记录"每个工具调用发生了什么"，
+    验收结果记录"用户目标是否达成"。二者可以不一致——例如所有工具都成功，
+    但页面仍显示"支付失败"（工具调用成功 ≠ 任务成功）。
+    """
+
+    status: str
+    goal: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+    evidence: tuple[Evidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status not in VERIFICATION_STATUSES:
+            raise ValueError(
+                f"VerificationResult.status 必须是 {VERIFICATION_STATUSES} 之一，"
+                f"收到 {self.status!r}"
+            )
+        confidence = float(self.confidence)
+        if confidence != confidence:  # NaN
+            raise ValueError("VerificationResult.confidence 不能是 NaN")
+        object.__setattr__(self, "confidence", max(0.0, min(1.0, confidence)))
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == "verified_success"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "goal": self.goal,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "evidence": [item.to_dict() for item in self.evidence],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> VerificationResult:
+        evidence = tuple(
+            Evidence.from_dict(item)
+            for item in (data.get("evidence") or [])
+            if isinstance(item, Mapping)
+        )
+        return cls(
+            status=str(data.get("status", "")),
+            goal=str(data.get("goal", "")),
+            confidence=float(data.get("confidence", 0.0)),
+            reason=str(data.get("reason", "")),
+            evidence=evidence,
+        )

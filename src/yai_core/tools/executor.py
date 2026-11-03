@@ -1078,18 +1078,23 @@ class ToolExecutor:
             )
 
         text, truncated, result_chars = self._bound(text)
-        events.append(
-            AgentEvent(
-                EventType.TOOL_RESULT,
-                {
-                    "tool": name,
-                    "ok": True,
-                    "preview": event_preview(spec, result, text),
-                    "truncated": truncated,
-                    "result_chars": result_chars,
-                },
-            )
-        )
+        payload: dict[str, Any] = {
+            "tool": name,
+            "ok": True,
+            "preview": event_preview(spec, result, text),
+            "truncated": truncated,
+            "result_chars": result_chars,
+        }
+        # 工具可显式上报验收证据（如浏览器动作的页面状态）：随事件流交给
+        # Outcome Verification，避免验收器只能重新猜。声明了 audit_sensitive
+        # 的工具不进证据（审计口径优先，证据可由宿主自己的 verifier 另行检查）。
+        if isinstance(result, dict) and not spec.governance.audit_sensitive:
+            evidence = result.get("evidence")
+            if isinstance(evidence, list) and evidence:
+                payload["evidence"] = [
+                    item for item in evidence[:20] if isinstance(item, dict)
+                ]
+        events.append(AgentEvent(EventType.TOOL_RESULT, payload))
         return self._finalize_execution(
             events, name=name, call_id=call_id, started=started,
             key=idempotency_key, fingerprint=fingerprint,

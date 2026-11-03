@@ -7,6 +7,39 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Browser Provider（可选执行适配器，v0.26 Batch 2）**：`yai_core.integrations.browser`
+  把"观察 → 引用 → 动作 → 再观察"做成受治理工具——页面快照 + 带版本的元素引用
+  （`s<N>:<index>`，旧快照引用一律判过期并要求重新观察）、点击 / 输入 / 下拉 /
+  标签页切换 / 条件等待 / 导航；所有工具仍走 `ToolRegistry` 与 `ToolExecutor`
+  的参数校验、权限策略、审批、收据与事件，**不另起 Tool Bus**。动作只报告
+  `executed + changed / no_observable_change / unknown`，不把"函数返回"当业务成功。
+  来源白名单、密码框默认拒填、导航前置 gate 与页面证据随事件流交给验收。
+  真实执行走可选 `[browser]` extra（Playwright，未安装不影响内核），离线测试用
+  假后端覆盖。真实浏览器验证状态：**已实现·未真机验证**。
+- **任务结果验收契约（Outcome Verification，v0.26 Batch 3）**：新增
+  `Evidence` / `VerificationResult` 与 `OutcomeVerifier` 契约、`CompositeVerifier`
+  组合规则（失败优先 / 全成功 / 部分 / 未确认 / 不可判定）；`AgentCore` 在 `DONE`
+  前收集执行收据与工具显式 `evidence`，把验收结论附到 `DONE` 事件与
+  `RunResult.verification`。验收器缺失保持 `None`（旧行为），抛错降级
+  `not_verifiable` 并发 `verification_failed` 诊断，**不触发任何重试或重复副作用**。
+- **Provider 路由治理（v0.26 P0）**：`FallbackModelProvider` 支持宿主声明的
+  `ProviderRoutingPolicy`——允许使用的 provider 集合、单 provider 敏感等级、
+  启用 / 凭据声明、锁定目标与"禁止降级"；未授权的后端在**发起请求之前**被筛掉
+  （零调用），无授权目标时抛 `NoAuthorizedProviderError` 明确停止；按任务的
+  `routing_context` 只能收紧（白名单取交、敏感等级取高、锁定不可解除、禁用降级
+  不可重开），模型输出无法修改授权。
+- **记忆落盘损坏安全（v0.26 P0）**：`MemoryVault` 加载失败不再静默清零——区分
+  不可读 / JSON 损坏 / 解密失败 / 版本不兼容 / owner 不匹配，分别按
+  `quarantine`（原始字节先备份成 `<name>.corrupt-<时间戳>` 再空库启动）、
+  `read_only`（写接口抛 `MemoryVaultReadOnlyError`）、`raise`（构造器抛
+  `MemoryVaultLoadError`）处置；解密失败与版本不兼容即使选 quarantine 也只读；
+  备份失败自动降级只读；全程发 `memory_load_failed` 诊断。
+- **记忆 owner 绑定（v0.26 P0 最小隔离方案）**：`MemoryVault(owner=...)` 写入
+  owner 并在加载时校验，不一致即 `owner_mismatch` + 只读，**不读入、不覆盖**
+  别的租户档案；旧文件无 owner 保持兼容。
+
 ### Removed
 
 - **Render 公网演示实例**：删除线上的 `yai-agent-core` 服务，移除 `.github/workflows/keepwarm.yml`

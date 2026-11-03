@@ -58,7 +58,16 @@ from yai_core.tools import (
 )
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
-from yai_core.types import AgentEvent, EventType, RunResult, Strategy, Subject, ToolSpec
+from yai_core.types import (
+    AgentEvent,
+    EventType,
+    RunResult,
+    Strategy,
+    Subject,
+    ToolSpec,
+    VerificationResult,
+)
+from yai_core.verification import OutcomeVerifier, verify_run
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
 FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
@@ -96,6 +105,9 @@ class AgentCore:
         memory_storage: Path | str | None = None,
         memory_cipher: StorageCipher | None = None,
         memory_embedder: EmbeddingProvider | None = None,
+        memory_corruption_policy: str = "quarantine",
+        memory_owner: str | None = None,
+        outcome_verifier: OutcomeVerifier | None = None,
         auto_memory_recall: bool = False,
         auto_recall_k: int = 3,
         max_iters: int = 6,
@@ -136,6 +148,9 @@ class AgentCore:
             memory_storage=memory_storage,
             memory_cipher=memory_cipher,
             memory_embedder=memory_embedder,
+            memory_corruption_policy=memory_corruption_policy,
+            memory_owner=memory_owner,
+            outcome_verifier=outcome_verifier,
             auto_memory_recall=auto_memory_recall,
             auto_recall_k=auto_recall_k,
             max_iters=max_iters,
@@ -151,6 +166,10 @@ class AgentCore:
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
         self.model = model
+        # 诊断回调转发给验收旁路（验收失败只发诊断，不影响任务结果）。
+        self.on_diagnostic = on_diagnostic
+        # 任务验收器（可选）：run 结束时收集证据并判定目标是否达成。
+        self.outcome_verifier = outcome_verifier
         self.registry = ToolRegistry()
         # 自校准路由学习器（RouteSelector 契约）：默认 None，行为与不接入学习完全一致。
         self.learning = learning
@@ -198,6 +217,9 @@ class AgentCore:
                 storage_path=memory_storage,
                 cipher=memory_cipher,
                 embedder=memory_embedder,
+                on_corruption=memory_corruption_policy,
+                on_diagnostic=on_diagnostic,
+                owner=memory_owner,
             )
         self.executor = ToolExecutor(
             self.registry,
@@ -531,9 +553,6 @@ class AgentCore:
                                 event = await anext(stream)
                             except StopAsyncIteration:
                                 break
-                            await self.channel.emit(event)
-                            events.append(event)
-                            self._metrics_event(event)
                             data = event.data or {}
                             if "strategy" in data:
                                 strategy = Strategy(data["strategy"])
@@ -542,6 +561,28 @@ class AgentCore:
                                     and event.type == EventType.STRATEGY_SELECTED
                                 ):
                                     decision_strategy = strategy
+                            if (
+                                event.type == EventType.DONE
+                                and self.outcome_verifier is not None
+                                and "verification" not in data
+                            ):
+                                # 任务级验收是 DONE 之前的旁路：证据来自本次 run 的收据与
+                                # 工具显式 evidence；验收失败只降级 not_verifiable，不改文本。
+                                verification = await verify_run(
+                                    self.outcome_verifier,
+                                    task,
+                                    events + [event],
+                                    metadata={
+                                        "strategy": str(data.get("strategy", "")),
+                                        "event_count": len(events) + 1,
+                                    },
+                                    on_diagnostic=self.on_diagnostic,
+                                )
+                                if verification is not None:
+                                    event.data["verification"] = verification.to_dict()
+                            await self.channel.emit(event)
+                            events.append(event)
+                            self._metrics_event(event)
                         # 不把生产者的 ContextVar 暴露给暂停期间的消费者。
                         yield event
                 finally:
@@ -569,6 +610,7 @@ class AgentCore:
         events: list[AgentEvent] = []
         final_text = ""
         strategy: Strategy | None = None
+        verification: VerificationResult | None = None
         async for event in self.astream(task, subject=subject):
             events.append(event)
             data = event.data
@@ -576,12 +618,19 @@ class AgentCore:
                 strategy = Strategy(data["strategy"])
             if event.type.value == "done":
                 final_text = data.get("final_text", "")
+                raw_verification = data.get("verification")
+                if isinstance(raw_verification, dict):
+                    try:
+                        verification = VerificationResult.from_dict(raw_verification)
+                    except (TypeError, ValueError):
+                        verification = None
         chosen = strategy or self.router.classify(task, self.registry)
         # 反馈回灌已在 astream() 正常收尾时完成，这里不再重复记录。
         return RunResult(
             strategy=chosen,
             events=events,
             final_text=final_text,
+            verification=verification,
         )
 
     def _record_feedback(self, task: str, chosen: Strategy, events: list[AgentEvent]) -> None:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from collections.abc import Sequence
@@ -27,6 +28,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticKind,
+    DiagnosticLevel,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.discovery.scoring import (
     DEFAULT_SYNONYM_GROUPS,
     canonicalize,
@@ -66,6 +74,55 @@ SEMANTIC_RECALL_THRESHOLD = 0.45
 
 #: 重复记忆判定阈值：新增与既有记忆相关度达到该值视为同一条，走合并而非新增。
 DEDUP_SIMILARITY = 0.92
+
+#: 加载失败的分类（``MemoryVault.status()["storage"]["status"]`` 的取值）。
+LOAD_OK = "ok"
+LOAD_MISSING = "missing"
+LOAD_UNREADABLE = "unreadable"
+LOAD_CORRUPT = "corrupt"
+LOAD_DECRYPT_FAILED = "decrypt_failed"
+LOAD_VERSION_INCOMPATIBLE = "version_incompatible"
+#: 宿主声明的 owner 与文件内记录的 owner 不一致：拒绝读取，避免跨租户泄漏。
+LOAD_OWNER_MISMATCH = "owner_mismatch"
+
+#: 加载失败时的处置策略：
+#: - ``quarantine``（默认）：把原始字节复制成同目录 ``<name>.corrupt-<时间戳>``
+#:   备份后按空库继续（写入可用）；复制失败则自动降级只读，绝不覆盖原文件。
+#: - ``read_only``：读接口可用（返回空库），写入接口抛
+#:   :class:`MemoryVaultReadOnlyError`，原文件分毫不动，等宿主修复。
+#: - ``raise``：构造器直接抛 :class:`MemoryVaultLoadError`，由宿主决定恢复方式。
+CORRUPTION_POLICIES = ("quarantine", "read_only", "raise")
+
+
+class MemoryVaultError(RuntimeError):
+    """长期记忆存储层错误基类。"""
+
+
+class MemoryVaultLoadError(MemoryVaultError):
+    """落盘记忆加载失败（损坏 / 解密失败 / 版本不兼容 / 不可读）。
+
+    仅在宿主显式选择 ``on_corruption="raise"`` 时由构造器抛出；异常携带分类
+    状态与路径，宿主可据此决定恢复方式（换密钥、迁移、人工修复或丢弃）。
+    """
+
+    def __init__(self, status: str, path: Path, detail: str = "") -> None:
+        self.status = status
+        self.path = path
+        self.detail = detail
+        super().__init__(f"长期记忆加载失败（{status}）：{path}（{detail}）")
+
+
+class MemoryVaultReadOnlyError(MemoryVaultError):
+    """记忆库处于只读降级：读接口可用，写入被拒绝。
+
+    用于"原始档案尚未恢复"的场景，避免空库启动后一次 ``remember`` 把损坏或
+    无法解密的原始文件直接覆盖掉。
+    """
+
+
+def _empty_load_state() -> dict[str, Any]:
+    return {"status": LOAD_OK, "detail": "", "quarantined_to": None, "read_only": False}
+
 
 
 class MemoryNote:
@@ -154,6 +211,17 @@ class MemoryVault:
             记忆。配置后若条数超限，按"重要度低 → 最久未用 → 最旧"淘汰到上限，
             给长期运行的数字员工一个有界存储安全阀。importance=5 只是最后才被
             淘汰、不设硬豁免，以保证容量一定能收敛。
+        on_corruption: 加载失败时的处置策略，取值见 :data:`CORRUPTION_POLICIES`。
+            默认 ``quarantine``：原始字节先备份成 ``<name>.corrupt-<时间戳>``，
+            再按空库启动；备份失败自动转只读。``read_only`` 只允许读、写入抛错；
+            ``raise`` 让构造器直接抛 :class:`MemoryVaultLoadError`。
+        on_diagnostic: 可选本地诊断回调；加载失败时发一条
+            ``memory_load_failed``（ERROR），带分类、路径与处置结果。
+        owner: 可选的租户 / 所有者标识（v0.26 P0 记忆隔离的最小方案）。声明后
+            落盘会记录 owner；下次加载时若文件里的 owner 与声明不一致，直接拒绝
+            读取并只读降级（``owner_mismatch``），绝不把别的租户的记忆读进来，
+            也绝不会覆盖它。旧文件没有 owner 字段时保持兼容（视为未声明）。
+            更完整的多租户模型仍由宿主用独立实例 / 独立路径实现。
     """
 
     def __init__(
@@ -164,17 +232,33 @@ class MemoryVault:
         embedder: EmbeddingProvider | None = None,
         clock: Any = _default_clock,
         max_notes: int | None = None,
+        on_corruption: str = "quarantine",
+        on_diagnostic: DiagnosticSink | None = None,
+        owner: str | None = None,
     ) -> None:
         if max_notes is not None and (
             isinstance(max_notes, bool) or not isinstance(max_notes, int) or max_notes <= 0
         ):
             raise ValueError("max_notes 必须是正整数，或为 None（不限制）")
+        if on_corruption not in CORRUPTION_POLICIES:
+            raise ValueError(
+                f"on_corruption 必须是 {CORRUPTION_POLICIES} 之一，收到 {on_corruption!r}"
+            )
         self.storage_path = Path(storage_path) if storage_path is not None else None
         self._cipher = cipher
         self._embedder = embedder
         self._clock = clock
         self._max_notes = max_notes
+        self._on_corruption = on_corruption
+        self._on_diagnostic = on_diagnostic
+        self._owner = str(owner) if owner is not None else None
+        if self._owner is not None and not self._owner.strip():
+            raise ValueError("owner 必须是非空字符串或 None")
         self._notes: list[MemoryNote] = []
+        # 加载状态（分类 / 详情 / 隔离备份路径 / 是否只读），供宿主运维与测试观测。
+        self.load_state: dict[str, Any] = _empty_load_state()
+        # 只读降级：读可用、写被拒绝，避免覆盖尚未恢复的原始档案。
+        self._read_only = False
         # note_id -> 向量的懒缓存：新增 / 合并后该 id 缺失，下次 arecall 批量补算。
         self._vectors: dict[str, Sequence[float]] = {}
         # 词法倒排索引（token -> note_id 集合），懒构建：任何写入后置 None，
@@ -186,8 +270,18 @@ class MemoryVault:
         self.semantic_last_error: str | None = None
         self._load()
         # 宿主可能在运行一段时间后才调小上限：打开存量库时也收敛到容量内。
-        if self._max_notes is not None and self._enforce_cap() > 0:
+        # 只读降级时不做任何写操作（收敛结果留在内存里也不落盘）。
+        if (
+            not self._read_only
+            and self._max_notes is not None
+            and self._enforce_cap() > 0
+        ):
             self._save()
+
+    @property
+    def read_only(self) -> bool:
+        """记忆库是否处于只读降级（加载失败后禁止写入）。"""
+        return self._read_only
 
     # ---------- 写入 ----------
 
@@ -206,6 +300,7 @@ class MemoryVault:
         text = (content or "").strip()
         if not text:
             raise ValueError("记忆内容不能为空")
+        self._ensure_writable()
         norm_kind = kind if kind in VALID_KINDS else "note"
         norm_tags = self._normalize_tags(tags)
         norm_importance = self._normalize_importance(importance)
@@ -242,6 +337,7 @@ class MemoryVault:
 
     def forget(self, note_id: str) -> bool:
         """删除一条记忆；不存在返回 False。"""
+        self._ensure_writable()
         for index, note in enumerate(self._notes):
             if note.id == note_id:
                 del self._notes[index]
@@ -351,6 +447,13 @@ class MemoryVault:
             "capacity": {
                 "max_notes": self._max_notes,
                 "evicted": self._evicted_count,
+            },
+            "storage": {
+                "status": self.load_state["status"],
+                "detail": self.load_state["detail"],
+                "read_only": self._read_only,
+                "quarantined_to": self.load_state["quarantined_to"],
+                "owner": self._owner,
             },
             "recent": recent,
         }
@@ -532,24 +635,167 @@ class MemoryVault:
     # ---------- 内部：持久化（原子写 + 可选透明加密） ----------
 
     def _load(self) -> None:
-        if self.storage_path is None or not self.storage_path.exists():
+        """读取落盘记忆；失败时按 ``on_corruption`` 处置，绝不静默丢档。
+
+        分类与处置：
+        - 文件不存在：全新库（``missing``），可写；
+        - 读取失败：``unreadable``；
+        - 解密失败：``decrypt_failed``（换对密钥后原文件仍可读，默认隔离备份）；
+        - JSON / 结构损坏：``corrupt``；
+        - 存储版本高于当前支持：``version_incompatible``（不猜测新格式）。
+        三种失败都先发 ``memory_load_failed`` 诊断，再按策略处理；``quarantine``
+        先把原始字节复制到 ``<name>.corrupt-<时间戳>`` 备份，再允许空库写入；
+        备份动作失败则自动降级只读，原文件分毫不动。解密失败与版本不兼容即便
+        选了 ``quarantine`` 也只读——原始档案可能仍然有效，覆盖它等于丢数据。
+        """
+        self._notes = []
+        self.load_state = _empty_load_state()
+        if self.storage_path is None:
             return
+        if not self.storage_path.exists():
+            self.load_state["status"] = LOAD_MISSING
+            return
+
         try:
             raw = self.storage_path.read_bytes()
-            if self._cipher is not None:
+        except OSError as exc:
+            self._handle_load_problem(LOAD_UNREADABLE, f"{type(exc).__name__}: {exc}")
+            return
+
+        if self._cipher is not None:
+            try:
                 raw = self._cipher.decrypt(raw)
+            except Exception as exc:  # noqa: BLE001 - 解密失败要分类而非吞掉
+                self._handle_load_problem(
+                    LOAD_DECRYPT_FAILED, f"{type(exc).__name__}: {exc}"
+                )
+                return
+
+        try:
             payload = json.loads(raw.decode("utf-8"))
-            notes = payload.get("notes", []) if isinstance(payload, dict) else []
-            self._notes = [MemoryNote.from_dict(item) for item in notes]
-        except Exception:
-            # 损坏 / 解密失败 / 旧格式：冷启动为空，避免一次坏文件导致永久不可用。
-            self._notes = []
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self._handle_load_problem(LOAD_CORRUPT, f"JSON 解析失败: {exc}")
+            return
+        if not isinstance(payload, dict):
+            self._handle_load_problem(LOAD_CORRUPT, "顶层不是 JSON 对象")
+            return
+
+        version = payload.get("version", STORAGE_VERSION)
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version > STORAGE_VERSION
+        ):
+            self._handle_load_problem(
+                LOAD_VERSION_INCOMPATIBLE,
+                f"存储版本 {version!r} 高于当前支持的 {STORAGE_VERSION}",
+            )
+            return
+
+        # 租户归属校验必须发生在解析笔记之前：不匹配时连一条记忆都不能读进来。
+        stored_owner = payload.get("owner")
+        if self._owner is not None and stored_owner not in (None, self._owner):
+            self._handle_load_problem(
+                LOAD_OWNER_MISMATCH,
+                f"文件 owner={stored_owner!r} 与声明的 {self._owner!r} 不一致",
+            )
+            return
+
+        notes = payload.get("notes", [])
+        if not isinstance(notes, list):
+            self._handle_load_problem(LOAD_CORRUPT, "notes 不是数组")
+            return
+        try:
+            parsed = [MemoryNote.from_dict(item) for item in notes]
+        except (AttributeError, TypeError, ValueError, KeyError) as exc:
+            self._handle_load_problem(
+                LOAD_CORRUPT, f"单条记忆结构非法: {type(exc).__name__}: {exc}"
+            )
+            return
+        self._notes = parsed
+        self.load_state["status"] = LOAD_OK
+
+    def _handle_load_problem(self, status: str, detail: str) -> None:
+        """按 ``on_corruption`` 处置加载失败，并发出可观测诊断。"""
+        assert self.storage_path is not None
+        emit(
+            self._on_diagnostic,
+            DiagnosticEvent(
+                kind=str(DiagnosticKind.MEMORY_LOAD_FAILED),
+                level=DiagnosticLevel.ERROR,
+                message=(
+                    f"长期记忆加载失败（{status}）：{self.storage_path}；"
+                    f"策略={self._on_corruption}"
+                ),
+                data={
+                    "path": str(self.storage_path),
+                    "status": status,
+                    "detail": detail,
+                    "policy": self._on_corruption,
+                },
+            ),
+        )
+        self.load_state.update({"status": status, "detail": detail})
+        if self._on_corruption == "raise":
+            raise MemoryVaultLoadError(status, self.storage_path, detail)
+        # 解密失败通常是密钥配错、版本不兼容通常是降级运行：这两种的原始档案
+        # 本身可能完全有效，覆盖它等于丢数据，所以即便选了 quarantine 也只读。
+        if self._on_corruption == "read_only" or status in (
+            LOAD_DECRYPT_FAILED,
+            LOAD_VERSION_INCOMPATIBLE,
+            LOAD_OWNER_MISMATCH,
+        ):
+            self._set_read_only()
+            return
+        # 内容损坏 / 不可读：先留原始字节，再允许空库写入；备份失败即转只读。
+        quarantined = self._quarantine_original()
+        if quarantined is None:
+            self._set_read_only()
+            return
+        self.load_state["quarantined_to"] = quarantined
+
+    def _set_read_only(self) -> None:
+        self._read_only = True
+        self.load_state["read_only"] = True
+
+    def _quarantine_original(self) -> str | None:
+        """把原始文件按字节复制成同目录备份，返回备份路径；失败返回 None。
+
+        用复制而不是改名：原路径保持存在，后续空库写入会原子替换它，而备份
+        里的原始字节（可能是密文 / 旧版本结构）完整保留供人工恢复。时间戳带
+        微秒，备份名冲突时追加序号，绝不覆盖已有备份。
+        """
+        assert self.storage_path is not None
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        base = f"{self.storage_path.name}.corrupt-{stamp}"
+        target = self.storage_path.with_name(base)
+        counter = 1
+        while target.exists():
+            target = self.storage_path.with_name(f"{base}-{counter}")
+            counter += 1
+        try:
+            shutil.copyfile(self.storage_path, target)
+        except OSError:
+            return None
+        return str(target)
+
+    def _ensure_writable(self) -> None:
+        if self._read_only:
+            raise MemoryVaultReadOnlyError(
+                "长期记忆处于只读降级（加载状态："
+                f"{self.load_state['status']}），拒绝写入以避免覆盖未恢复的原始档案："
+                f"{self.storage_path}。修复原始文件后重新创建 MemoryVault 即可恢复写入。"
+            )
 
     def _save(self) -> None:
         if self.storage_path is None:
             return
+        if self._read_only:
+            # 只读降级：读路径（如 recall 的 touch）不得落盘改写原文件。
+            return
         payload = {
             "version": STORAGE_VERSION,
+            "owner": self._owner,
             "saved_at": self._clock().isoformat(),
             "notes": [note.to_dict() for note in self._notes],
         }
