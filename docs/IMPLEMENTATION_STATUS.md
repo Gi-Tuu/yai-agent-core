@@ -85,7 +85,7 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
-| Windows Desktop Provider（v0.26.0，可选适配器） | **已验证（假 SDK 离线回归 + 本机真机 UIA 冒烟）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数 |
+| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 10/10）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数；真实应用验证见 `docs/windows-real-apps.md`（字符映射表 10/10；下拉选择/第三方应用/UAC 未覆盖） |
 | 适配器安全默认值（v0.27 Batch 2） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；宽松默认发 Warning；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词不作为安全边界 |
 | 浏览器执行路径统一 ADR（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界） | `docs/adr/0006-browser-execution-unification.md`；面板区分“当前标签页只读快照 / 受控浏览器”；`tests/test_extension_assets.py` 静态守卫 | 扩展直接操作当前标签页（方案 A）与 MCP 策略适配（方案 B）未实施；两条路径不得宣称已统一 |
 | 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | `docs/adr/0007-local-secret-storage.md`；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |

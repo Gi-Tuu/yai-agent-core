@@ -9,6 +9,14 @@
 
 ### Fixed
 
+### Added
+
+- **v0.27 Batch 5：Windows 真实应用验证**：新增 `scripts/windows_real_apps_smoke.py`，
+  用系统自带 `charmap.exe` 在真实 UIA 上验证窗口枚举/白名单、观察、文本输入+回读、
+  按钮 Invoke、聚焦、用户接管（pause/resume）、旧引用失效、未允许窗口拒绝；
+  10/10 通过。`docs/windows-real-apps.md` 记录指标与诚实边界（下拉选择、第三方应用、
+  UAC、多显示器未覆盖）。
+
 ### Security
 
 - **v0.27 Batch 4：验收证据最终上限与 Key 存储边界**：
