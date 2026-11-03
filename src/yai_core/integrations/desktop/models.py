@@ -18,12 +18,17 @@ class WindowInfo:
     class_name: str = ""
     enabled: bool = True
     visible: bool = True
+    #: 真实进程映像名（如 ``notepad.exe``）与完整路径；后端尽力提供，取不到为空。
+    process_name: str = ""
+    process_path: str = ""
 
     def to_public(self) -> dict[str, Any]:
         return {
             "window_id": self.window_id,
             "title": self.title[:200],
             "process_id": self.process_id,
+            "process_name": self.process_name[:120],
+            "process_path": self.process_path[:300],
             "class_name": self.class_name[:100],
             "enabled": self.enabled,
             "visible": self.visible,

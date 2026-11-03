@@ -64,8 +64,10 @@ class DesktopPolicy:
     """宿主的桌面能力约束声明。
 
     Args:
-        allowed_processes: 允许操作的进程名 / 进程 ID 前缀集合；空 = 不额外限制。
-        allowed_window_titles: 允许操作的窗口标题子串集合；空 = 不额外限制。
+        allowed_processes: 允许操作的**精确 PID** 集合（不做前缀匹配）。
+        allowed_process_names: 允许的进程映像名（如 ``notepad.exe``，大小写不敏感）。
+        allowed_process_paths: 允许的进程完整路径（大小写不敏感）。
+        allowed_window_titles: 允许操作的窗口标题子串集合；仅标题约束不构成完整进程身份。
         allow_high_risk_controls: 是否允许操作名称命中风险关键词的控件（默认 False）。
         allow_geometry_click: 是否允许坐标兜底点击（默认 False，只允许语义 UIA 操作）。
         max_controls: 一次观察回传的控件上限。
@@ -75,6 +77,8 @@ class DesktopPolicy:
     """
 
     allowed_processes: frozenset[str] = frozenset()
+    allowed_process_names: frozenset[str] = frozenset()
+    allowed_process_paths: frozenset[str] = frozenset()
     allowed_window_titles: frozenset[str] = frozenset()
     allow_high_risk_controls: bool = False
     allow_geometry_click: bool = False
@@ -100,8 +104,10 @@ class DesktopPolicy:
     @classmethod
     def secure(
         cls,
-        allowed_processes: Any,
+        allowed_processes: Any = (),
         *,
+        allowed_process_names: Any = (),
+        allowed_process_paths: Any = (),
         allowed_window_titles: Any = (),
     ) -> DesktopPolicy:
         """生产安全预设：必须显式声明允许的进程（可再叠加窗口标题子串）。
@@ -110,16 +116,25 @@ class DesktopPolicy:
         控件名称关键词不是安全边界（本地化/无名称/图标按钮可绕过），宿主必须
         用进程/标题白名单把可操作范围收窄。
         """
-        if isinstance(allowed_processes, str):
-            allowed_processes = [allowed_processes]
-        processes = frozenset(str(item).strip().lower() for item in allowed_processes)
-        if not processes:
-            raise ValueError("DesktopPolicy.secure 必须显式提供至少一个允许进程")
-        if isinstance(allowed_window_titles, str):
-            allowed_window_titles = [allowed_window_titles]
-        titles = frozenset(str(item) for item in allowed_window_titles if str(item))
+        def _set(value: Any) -> frozenset[str]:
+            if isinstance(value, str):
+                value = [value]
+            return frozenset(str(item).strip() for item in value if str(item).strip())
+
+        processes = _set(allowed_processes)
+        names = frozenset(item.casefold() for item in _set(allowed_process_names))
+        paths = frozenset(
+            item.replace("/", "\\").casefold() for item in _set(allowed_process_paths)
+        )
+        if not (processes or names or paths):
+            raise ValueError(
+                "DesktopPolicy.secure 必须提供至少一个进程身份（PID / 映像名 / 路径）"
+            )
+        titles = _set(allowed_window_titles)
         return cls(
             allowed_processes=processes,
+            allowed_process_names=names,
+            allowed_process_paths=paths,
             allowed_window_titles=titles,
             allow_high_risk_controls=False,
             allow_geometry_click=False,
@@ -134,14 +149,33 @@ class DesktopPolicy:
 
     @property
     def is_permissive(self) -> bool:
-        """是否处于“进程/标题都不限制”的宽松模式。"""
-        return not self.allowed_processes and not self.allowed_window_titles
+        """没有进程身份约束即视为宽松（仅标题白名单不构成安全边界）。"""
+        return not (
+            self.allowed_processes
+            or self.allowed_process_names
+            or self.allowed_process_paths
+        )
 
-    def allows_window(self, window_id: str, title: str, process_id: str) -> bool:
-        if self.allowed_processes and not any(
-            process_id.startswith(prefix) for prefix in self.allowed_processes
-        ):
-            return False
+    def allows_window(
+        self,
+        window_id: str,
+        title: str,
+        process_id: str,
+        process_name: str = "",
+        process_path: str = "",
+    ) -> bool:
+        # PID 只做精确匹配；禁止前缀匹配，避免 123 放行 1234 / PID 复用被误认。
+        if not self.is_permissive:
+            pid_ok = process_id in self.allowed_processes
+            name_ok = bool(process_name) and (
+                process_name.casefold() in self.allowed_process_names
+            )
+            normalized_path = process_path.replace("/", "\\").casefold()
+            path_ok = bool(normalized_path) and (
+                normalized_path in self.allowed_process_paths
+            )
+            if not (pid_ok or name_ok or path_ok):
+                return False
         if self.allowed_window_titles and not any(
             hint in title for hint in self.allowed_window_titles
         ):
@@ -168,6 +202,8 @@ class DesktopPolicy:
     def to_public(self) -> dict[str, Any]:
         return {
             "allowed_processes": sorted(self.allowed_processes),
+            "allowed_process_names": sorted(self.allowed_process_names),
+            "allowed_process_paths": sorted(self.allowed_process_paths),
             "allowed_window_titles": sorted(self.allowed_window_titles),
             "allow_high_risk_controls": self.allow_high_risk_controls,
             "allow_geometry_click": self.allow_geometry_click,
