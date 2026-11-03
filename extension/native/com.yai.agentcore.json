@@ -1,0 +1,7 @@
+{
+  "name": "com.yai.agentcore",
+  "description": "YAI Agent Core Native Messaging Bridge",
+  "path": "REPLACE_WITH_ABSOLUTE_PATH_TO_PYTHON",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://REPLACE_WITH_EXTENSION_ID/"]
+}

@@ -18,6 +18,29 @@
   来源白名单、密码框默认拒填、导航前置 gate 与页面证据随事件流交给验收。
   真实执行走可选 `[browser]` extra（Playwright，未安装不影响内核），离线测试用
   假后端覆盖。真实浏览器验证状态：**已实现·未真机验证**。
+- **浏览器扩展宿主 + Native Messaging Bridge（v0.26 Batch 4）**：`extension/`
+  提供 Manifest V3 Side Panel（任务输入、事件流、审批 / 澄清、取消、连接状态，
+  `activeTab` + `chrome.scripting` 按需读取当前页面）；`yai_core.sidecar.native_bridge`
+  把 Native Messaging 的 4 字节长度帧与 Sidecar 的 NDJSON JSON-RPC 互转，
+  **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
+  操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
+  浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
+  状态：Bridge 协议与转换已离线测试；扩展本身**未真机加载验收**。
+- **记忆质量基准（v0.26 Batch 6）**：`benchmarks/memory/` 提供小型离线评测集与
+  `run_bench.py`，测量 Recall@5 / MRR@5 / 无关召回率 / P50·P95 延迟、词法与语义
+  互补收益、嵌入器故障降级一致性、更新删除后的索引一致性；假嵌入器与真实
+  bge-m3 明确区分（真实模型需本地 `models/bge-m3` + `[local-embed]`，不进 CI）。
+  本机真实 bge-m3 实测（18 条 / 12 query / k=5）：Recall@5 **1.000**、MRR@5 **0.917**、
+  P50 **12.27 ms**；纯词法 0.750。回归测试 `tests/test_memory_metrics.py`。
+- **Windows Desktop Provider（v0.26 Batch 5，可选适配器）**：`yai_core.integrations.desktop`
+  通过 UIA 观察窗口 / 控件树，语义操作（Invoke / Toggle / Select、ValuePattern）
+  优先，坐标点击默认关闭；控件引用带快照版本、过期即作废；高风险控件名（删除 /
+  卸载 / 格式化 / 关机…）默认拒绝；进程 / 标题白名单；物理输入前焦点保护；
+  `desktop_pause` / `desktop_resume` 支持用户接管；不越过 UAC / 安全桌面。
+  工具仍经 `ToolRegistry` + `ToolExecutor` 统一治理。真实后端
+  `PywinautoDesktopBackend` 走可选 `[windows]` extra；**本机真机 UIA 冒烟已通过**
+  （`scripts/windows_uia_smoke.py`：自建 WinForms 窗口 → UIA 观察 → Invoke →
+  按钮回调验证），其它真实应用与截图路径仍未验收。
 - **任务结果验收契约（Outcome Verification，v0.26 Batch 3）**：新增
   `Evidence` / `VerificationResult` 与 `OutcomeVerifier` 契约、`CompositeVerifier`
   组合规则（失败优先 / 全成功 / 部分 / 未确认 / 不可判定）；`AgentCore` 在 `DONE`

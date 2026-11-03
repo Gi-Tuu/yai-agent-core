@@ -79,6 +79,9 @@ desktop = ["PySide6>=6.6"]
 # 浏览器执行适配器（v0.26 Browser Provider）：Playwright 驱动 Chromium 页面观察与操作。
 # 仅 integrations.browser 需要；不装不影响内核，也不装不注册任何浏览器工具。
 browser = ["playwright>=1.40"]
+# Windows 桌面执行适配器（v0.26 Desktop Provider）：pywinauto 走 UIA。
+# 仅 integrations.desktop 与 scripts/windows_uia_smoke.py 需要；非 Windows 安装不受影响。
+windows = ["pywinauto>=0.6.8"]
 
 [build-system]
 requires = ["hatchling"]

@@ -70,14 +70,18 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
+| 记忆质量基准（v0.26，Unreleased） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`tests/test_memory_metrics.py`；本机真实 bge-m3 实测 Recall@5 1.000 / MRR@5 0.917 / P50 12.27ms（18 条 / 12 query） | 语料小、标注非穷尽；真实 BGE 数字不随仓库分发、不进 CI；假嵌入器分数不代表真实语义效果 |
 
 ## 五、宿主与协议
 
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 10 个示例宿主 + 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证 |
+| Windows Desktop Provider（v0.26，Unreleased，可选适配器） | 已验证（假后端 + **本机真机 UIA 冒烟**） | `tests/test_desktop_provider.py`；`scripts/windows_uia_smoke.py`（2026-11-03 通过：自建 WinForms 窗口观察 → Invoke → 按钮回调验证） | 仅本机一次冒烟；其它真实应用、截图、UAC 提权窗口未验收；坐标点击默认关闭；非 Windows 构造即报错 |
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
+| Native Messaging Bridge（v0.26，Unreleased） | 已验证（内存帧 / 假传输） | `tests/test_native_bridge.py`（帧编解码、来源 fail closed、hello 协商、run/cancel、反向审批、截断、sidecar 退出） | 只做封装转换，不改 Sidecar 协议；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
+| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已实现·未真机验证** | `extension/`、`docs/browser-extension-bridge.md` | Chrome / Edge 116+；需本地 desktop 环境加载扩展并注册 native host；真机验收清单见文档 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |
 
@@ -112,7 +116,13 @@ MCP Server · Multi-Agent 编排 · 内置向量数据库 · 内置 UI（桌面�
 - **Playwright 浏览器后端尚未真机验收**：假后端覆盖 Provider 语义（快照引用、来源闸、
   收据、证据），真实 Chromium 上的元素定位 / 等待 / 跨标签页行为需要在有浏览器的
   环境另行验证并补证据，不能以离线测试冒充真机通过。
-- **Windows Desktop Provider 尚未实现**（v0.26 Batch 5 计划内）。
+- **浏览器扩展未真机加载**：`extension/` 的 MV3 侧边栏与 Native Messaging 安装流程
+  需要真实 Chrome / Edge 验收；Bridge 协议转换已离线测试，扩展生命周期（Service
+  Worker 回收、断连重连）尚无真机证据。验收清单见 `docs/browser-extension-bridge.md`。
+- **Windows Desktop Provider**：本机只完成一次自建 WinForms 窗口的 UIA 冒烟
+  （观察 / 语义 Invoke / 回调验证）；对第三方真实应用、复杂控件 Pattern、截图、
+  多显示器与 UAC 提权窗口**没有**验证，不能据此宣称"通用桌面自动化已验证"。
+  Playwright 浏览器后端同理保持「已实现·未真机验证」。
 - **公网演示实例已停用**：Render 上的 `yai-agent-core` 服务已于 2026-11-02 删除；今后任何公网部署都应显式配置 `YAI_API_KEY`（见 ADR 0002 D3）。
 - **Windows 符号链接竞态**只能收窄、不能根除（POSIX 有 `O_NOFOLLOW`）；对应测试在 Windows 跳过。
 - **桌面壳只在 Windows 真机验证**；60fps 数据仅来自 2560×1600 / dpr 1.5 一次采样。
