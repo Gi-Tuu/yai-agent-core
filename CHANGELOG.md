@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- **扩展读取页面 URL**：`chrome.tabs.query` 未授予 `tabs` 时 `tab.url` 为空，读取会报
+  “当前标签页 URL 无效”。manifest 增加 `tabs`（仅用于 URL/title，不授予页面内容），
+  并补充 URL 缺失的明确提示。
+
 - **扩展读取页面权限**：真实 Side Panel 中 activeTab 不保证在“读取当前页面”时仍有
   授予，导致 `Cannot access contents of the page`。manifest 增加
   `optional_host_permissions`（http/https），读取前按当前 origin 显式请求一次；

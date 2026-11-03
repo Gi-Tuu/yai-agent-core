@@ -506,7 +506,12 @@ el.observe.addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id === undefined) throw new Error("没有活动标签页");
-    const url = String(tab.url || "");
+    const url = String(tab.url || tab.pendingUrl || "");
+    if (!url) {
+      throw new Error(
+        "无法获取当前标签页 URL；请在普通网页上通过工具栏图标重新打开侧边栏（需要 tabs 权限）"
+      );
+    }
     if (/^(chrome|edge|about|devtools|chrome-extension):/i.test(url)) {
       throw new Error(
         `当前是浏览器内部页面（${url.split("/")[0]}://），不能读取；请切换到普通网页后再试`
