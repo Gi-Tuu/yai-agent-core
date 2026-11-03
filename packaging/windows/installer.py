@@ -165,7 +165,15 @@ def install(args: argparse.Namespace) -> int:
             print(f"升级前快照：{_snapshot(local)}")
         running = process_ids(target)
         if running:
-            print(f"  ⚠ Bridge 正在运行（{','.join(running)}）；装完请重启浏览器")
+            # 升级必须先停掉指向稳定路径的旧 Bridge；只终止该精确路径，避免误杀。
+            print(f"停止运行中的 Bridge：{','.join(running)}")
+            for pid in running:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
+                    capture_output=True,
+                    timeout=15,
+                )
+            time.sleep(0.3)
         shutil.copy2(bridge, target)
         print(f"已复制 Bridge → {target}")
 
