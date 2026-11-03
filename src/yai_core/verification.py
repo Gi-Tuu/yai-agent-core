@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
@@ -33,6 +34,16 @@ from yai_core.types import (
     Evidence,
     VerificationResult,
 )
+
+#: 证据条数上限：一次 run 最多收集这么多条（执行收据 + 工具显式证据合计）。
+EVIDENCE_MAX_ITEMS = 50
+#: 单条证据 ``detail`` 的序列化字符上限：超过则折叠成预览（原始长度另存）。
+EVIDENCE_DETAIL_MAX_CHARS = 4_000
+#: 全部证据序列化后的总字符上限：保证 ``DONE.verification`` 不被 Bridge/事件
+#: 通道的载荷上限截断（截断证据比丢整条 DONE 验收结果好）。
+EVIDENCE_TOTAL_MAX_CHARS = 64_000
+#: 截断标记自身的摘要上限之外预留的字符：确保加标记后仍不越总量硬上限。
+_EVIDENCE_MARKER_RESERVE = 512
 
 
 @runtime_checkable
@@ -183,15 +194,68 @@ def _dedupe_evidence(items: Sequence[Evidence]) -> tuple[Evidence, ...]:
     return tuple(out)
 
 
+def _serialized_size(value: Any) -> int:
+    """一个可 JSON 化值的序列化字符数；序列化失败时退化为 ``str`` 长度。"""
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except Exception:  # noqa: BLE001 - 证据形状异常也不能打断收集
+        return len(str(value))
+
+
+def _bounded_detail(detail: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+    """把 ``detail`` 收敛到单条上限内；超限只留可读预览 + 原始长度。
+
+    永不把整块原文塞进事件：``DONE.verification`` 是随事件流分发的载荷，
+    几百 KB 的 detail 会在 Bridge/UI 侧被整条截断（连验收结论一起丢）。
+    """
+    raw = dict(detail)
+    size = _serialized_size(raw)
+    if size <= EVIDENCE_DETAIL_MAX_CHARS:
+        return raw, False
+    try:
+        preview = json.dumps(raw, ensure_ascii=False, default=str)[
+            :EVIDENCE_DETAIL_MAX_CHARS
+        ]
+    except Exception:  # noqa: BLE001 - 退化文本预览
+        preview = str(raw)[:EVIDENCE_DETAIL_MAX_CHARS]
+    return {"truncated": True, "original_chars": size, "preview": preview}, True
+
+
+def _bounded_evidence(item: Evidence) -> tuple[Evidence, bool]:
+    """按单条上限收敛证据；返回 ``(证据, 是否发生了 detail 截断)``。"""
+    detail, clipped = _bounded_detail(item.detail)
+    if not clipped:
+        return item, False
+    return (
+        Evidence(kind=item.kind, summary=item.summary, ok=item.ok, detail=detail),
+        True,
+    )
+
+
 def evidence_from_events(events: Sequence[AgentEvent]) -> list[Evidence]:
-    """从一次 run 的事件流里收集验收证据。
+    """从一次 run 的事件流里收集验收证据（带条数/单条 detail/总量硬上限）。
 
     两种来源：
     1. 每个 ``TOOL_RESULT`` 的执行收据 → ``kind="receipt"``（成功 / 失败 / unknown）；
     2. 工具结果里显式携带的 ``evidence`` 列表（如浏览器动作上报的页面状态），
        逐条转成 :class:`Evidence`；形状不合法就跳过，不让脏数据打断验收。
+
+    上限（VER-2，防止超大证据把 ``DONE.verification`` 撑爆被 Bridge 截断）：
+    条数 ≤ :data:`EVIDENCE_MAX_ITEMS`、单条 ``detail`` 序列化 ≤
+    :data:`EVIDENCE_DETAIL_MAX_CHARS`、全部证据序列化 ≤
+    :data:`EVIDENCE_TOTAL_MAX_CHARS`。发生任何截断时追加一条
+    ``kind="truncated"`` 的标注证据，说明保留/丢弃了多少、按什么口径截断
+    （标注本身不参与上限计算，但已预留字符空间）。
     """
-    out: list[Evidence] = []
+    candidates: list[Evidence] = []
+    detail_clipped = False
+
+    def _append_evidence(item: Evidence) -> None:
+        nonlocal detail_clipped
+        bounded, clipped = _bounded_evidence(item)
+        detail_clipped = detail_clipped or clipped
+        candidates.append(bounded)
+
     for event in events:
         if event.type != EventType.TOOL_RESULT:
             continue
@@ -207,7 +271,7 @@ def evidence_from_events(events: Sequence[AgentEvent]) -> list[Evidence]:
                 ok = False
             else:
                 ok = None
-            out.append(
+            _append_evidence(
                 Evidence(
                     kind="receipt",
                     summary=f"{tool}: {status}",
@@ -226,10 +290,46 @@ def evidence_from_events(events: Sequence[AgentEvent]) -> list[Evidence]:
                 if not isinstance(item, Mapping):
                     continue
                 try:
-                    out.append(Evidence.from_dict(item))
+                    _append_evidence(Evidence.from_dict(item))
                 except (TypeError, ValueError):
                     continue
-    return out
+
+    kept: list[Evidence] = []
+    used = 0
+    dropped = 0
+    for index, item in enumerate(candidates):
+        if len(kept) >= EVIDENCE_MAX_ITEMS:
+            dropped = len(candidates) - index
+            break
+        size = _serialized_size(item.to_dict())
+        if used + size > EVIDENCE_TOTAL_MAX_CHARS - _EVIDENCE_MARKER_RESERVE:
+            dropped = len(candidates) - index
+            break
+        kept.append(item)
+        used += size
+    if not dropped and not detail_clipped:
+        return kept
+    kept.append(
+        Evidence(
+            kind="truncated",
+            summary=(
+                f"证据超限已截断：保留 {len(kept)} 条 / 共 {len(candidates)} 条"
+                f"（条数≤{EVIDENCE_MAX_ITEMS}，单条 detail≤"
+                f"{EVIDENCE_DETAIL_MAX_CHARS} 字符，总量≤"
+                f"{EVIDENCE_TOTAL_MAX_CHARS} 字符）"
+            ),
+            detail={
+                "kept": len(kept),
+                "candidates": len(candidates),
+                "dropped": dropped,
+                "detail_truncated": detail_clipped,
+                "max_items": EVIDENCE_MAX_ITEMS,
+                "max_detail_chars": EVIDENCE_DETAIL_MAX_CHARS,
+                "max_total_chars": EVIDENCE_TOTAL_MAX_CHARS,
+            },
+        )
+    )
+    return kept
 
 
 async def verify_run(

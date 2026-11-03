@@ -193,6 +193,14 @@ function rememberFinishedRun(runId) {
   }
 }
 
+/** 终态通知判定：兼容 Bridge 超帧截断后的精简帧（params.type / event_type）。 */
+function isTerminalNotification(message) {
+  const params = message.params || {};
+  const eventType = message.event_type || params.type;
+  if (eventType === "done") return true;
+  return message.method === "agent/cancelled" || message.method === "agent/error";
+}
+
 /** 最后一个面板关闭：重置 Bridge 让下次连接重新读取 bridge.json（CFG-2）。 */
 function maybeCloseBridgeForReload() {
   if (panels.size > 0) return;
@@ -306,9 +314,9 @@ function onBridgeMessage(message) {
   }
   if (message.type === "notification") {
     const params = message.params || {};
-    if (params.type === "done" || message.method === "agent/cancelled" ||
-        message.method === "agent/error") {
-      rememberFinishedRun(params.run_id || activeRunId);
+    if (isTerminalNotification(message)) {
+      // 截断帧也带 run_id（params.run_id / 顶层 run_id），保证终态一定能清理运行位。
+      rememberFinishedRun(params.run_id || message.run_id || activeRunId);
       activeRunId = null;
       if (pendingBridgeReload) maybeCloseBridgeForReload();
     }

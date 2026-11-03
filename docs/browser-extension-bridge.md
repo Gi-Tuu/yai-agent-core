@@ -240,6 +240,20 @@ native host 时要用固定安装路径下的稳定 ID。
 > `openPanelOnActionClick`；点击图标时若 `chrome.sidePanel.open` 不可用或失败，
 > 会自动把 `sidepanel.html` 开成普通标签页，避免"点了没反应"。
 
+## 真机验收记录（2026-11-03，真实 Edge）
+
+以下三项在真实 Edge + 真实 Native Bridge（冻结 exe）+ 真实 Sidecar 上执行，均为通过：
+
+1. **运行中关闭/重开面板可恢复并取消**：运行中关闭侧边栏 → 重开新面板 → 状态恢复"运行中"、
+   运行按钮禁用、取消可用 → 点取消 → 状态"已取消"。
+2. **强杀 Sidecar 后自动重连**：运行中 kill `python -m yai_core.sidecar` → SW 收到
+   `sidecar_exit` 主动断开并重连 → 面板恢复"就绪" → 重连后新任务"你好，只回复 OK"正常完成。
+3. **关闭最后一个面板会重启 Bridge**：空闲时关闭面板 6s 内对应 Sidecar 退出；重开面板
+   重新拉起 Bridge/Sidecar，配置重新读取，状态"就绪"。
+
+本地截图（gitignore 产物，不在仓库分发）：`docs/exports/accept-reopen-cancel.png`、
+`docs/exports/accept-reopen-idle.png`。上述 8/9/11 条验证清单已由本记录覆盖。
+
 ## 验证清单（需要浏览器环境）
 
 1. `chrome://extensions` 加载无错误；点图标打开侧边栏。

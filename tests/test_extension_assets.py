@@ -140,3 +140,21 @@ def test_service_worker_restarts_bridge_and_sidecar() -> None:
     assert "activeRunId = null" not in run_case
     # 旧端口回调不能把新端口置空。
     assert "if (port !== current) return;" in worker
+
+
+def test_extension_handles_truncated_terminal_frames() -> None:
+    """VER-2：Bridge 超帧截断帧仍含终态标识，扩展静态契约必须能识别并收尾。"""
+    worker = _read("service_worker.js")
+    panel = _read("sidepanel.js")
+
+    # Service Worker：终态判定兼容截断帧（params.type / 顶层 event_type / method）。
+    assert "isTerminalNotification" in worker
+    assert "message.event_type" in worker
+    assert "message.run_id" in worker
+    assert "agent/cancelled" in worker and "agent/error" in worker
+
+    # 面板：截断帧也要 finishRun，且明确告诉用户结果被截断（不假装是完整结果）。
+    assert "message.event_type" in panel
+    assert "message.truncated" in panel
+    assert "已截断" in panel
+    assert "finishRun" in panel

@@ -148,15 +148,17 @@ function onBridgeMessage(message) {
 
 function handleNotification(message) {
   const params = message.params || {};
-  const eventType = params.type || message.method || "event";
+  const eventType = params.type || message.event_type || message.method || "event";
+  const runId = params.run_id || message.run_id || activeRunId;
+  const truncated = Boolean(message.truncated || params.truncated);
   if (message.method === "agent/cancelled") {
-    rememberFinishedRun(params.run_id || activeRunId);
+    rememberFinishedRun(runId);
     appendEvent("event", "任务已取消");
     finishRun("已取消");
     return;
   }
   if (message.method === "agent/error") {
-    rememberFinishedRun(params.run_id || activeRunId);
+    rememberFinishedRun(runId);
     appendEvent("error", `任务失败：${params.error || ""}`);
     finishRun("失败");
     return;
@@ -184,12 +186,23 @@ function handleNotification(message) {
     }
     case "done": {
       const finalText = String(params.data?.final_text || "").trim();
-      rememberFinishedRun(params.run_id || activeRunId);
-      appendEvent(
-        "done",
-        finalText || "（无最终文本：检查模型凭据 / 上面的 error 事件）"
-      );
-      finishRun("完成");
+      rememberFinishedRun(runId);
+      if (truncated) {
+        // Bridge 超帧截断：只保留了 final_text 摘要与终态标识，不能当完整结果展示。
+        appendEvent(
+          "done",
+          finalText
+            ? `${finalText}\n（事件过大已截断，完整结果/证据未转发）`
+            : "（事件过大已截断；运行已结束，完整结果/证据未转发）"
+        );
+        finishRun("完成（已截断）");
+      } else {
+        appendEvent(
+          "done",
+          finalText || "（无最终文本：检查模型凭据 / 上面的 error 事件）"
+        );
+        finishRun("完成");
+      }
       break;
     }
     default:

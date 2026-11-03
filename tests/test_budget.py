@@ -88,6 +88,9 @@ def test_max_model_calls_trips_before_second_call() -> None:
     done = _done(result)
     assert done["reason"] == "budget_exceeded"
     assert "预算上限" in result.final_text
+    # F12：被拒的第 2 次尝试不计入 DONE 成本，也不是 budget 的"尝试"。
+    assert done["model_calls"] == 1
+    assert done["budget"]["model_calls"] == 1
 
 
 def test_max_tool_calls_zero_blocks_execution_without_side_effect() -> None:
@@ -252,3 +255,62 @@ def test_budget_exceeded_done_and_run_result_carry_error_status() -> None:
     assert result.status == "error"
     assert result.error and "预算" in result.error
     assert model.calls == 0
+    # F12：被预算拒绝的那次尝试没有"发起"，DONE 与 budget 两端都不计。
+    assert done["model_calls"] == 0
+    assert done["budget"]["model_calls"] == 0
+
+
+# ---------- F12：模型调用次数按"尝试"口径计数 ----------
+
+
+def test_before_model_call_counts_attempts_and_record_only_tokens() -> None:
+    """F12：发起前计一次尝试；record 只累计 token，不重复加次数。"""
+    tracker = Budget(max_model_calls=2).start()
+    tracker.before_model_call()  # 尝试 1（即使随后失败也算）
+    tracker.before_model_call()  # 尝试 2
+    assert tracker.model_calls == 2
+
+    tracker.record_model_call(ModelResponse(content="ok"))
+    assert tracker.model_calls == 2  # record 不再加次数
+    assert tracker.token_usage_seen is False  # 无 usage 时只记次数
+
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.before_model_call()  # 第 3 次尝试：先判上限即熔断，不再加 1
+    assert exc.value.scope == "model_calls"
+    assert tracker.model_calls == 2
+
+
+def test_failed_model_attempt_is_counted_in_budget_snapshot() -> None:
+    """失败/超时的尝试同样消耗配额：budget 快照必须计入。"""
+    tracker = Budget(max_model_calls=5).start()
+    tracker.before_model_call()
+    # 模拟调用失败：loop 不会调用 record_model_call（没有 usage 可记）。
+    snapshot = tracker.snapshot()
+    assert snapshot["model_calls"] == 1
+    assert snapshot["prompt_tokens"] == snapshot["total_tokens"] == 0
+
+
+def test_run_level_failed_attempt_aligns_done_and_budget_calls() -> None:
+    """DONE.model_calls 与 DONE.budget.model_calls 在失败路径上一致。"""
+
+    class _RaisingModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def achat(self, messages, tools=None, *, tier="standard"):
+            self.calls += 1
+            raise RuntimeError("模型服务不可用")
+
+    model = _RaisingModel()
+    core = AgentCore(model, budget=Budget(max_model_calls=5))
+    core.register_tools(
+        [build_spec(lambda keyword: ["a"], name="search_notes")]
+    )
+
+    result = asyncio.run(core.run("搜索笔记里的周报"))
+
+    done = _done(result)
+    assert model.calls == 1
+    assert done["model_calls"] == 1
+    assert done["budget"]["model_calls"] == 1
+    assert done["model_calls"] == done["budget"]["model_calls"]

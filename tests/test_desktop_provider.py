@@ -114,14 +114,17 @@ def _provider(backend: FakeBackend, **policy_kw: Any) -> DesktopProvider:
 # ---------- 观察 / 白名单 ----------
 
 
-def test_list_windows_marks_allowed() -> None:
+def test_list_windows_hides_disallowed_windows() -> None:
     backend = FakeBackend()
     provider = _provider(backend, allowed_processes=frozenset({"9999"}))
     result = _run(provider.list_windows())
-    assert result["windows"][0]["allowed"] is False
+    assert result["windows"] == []
+    assert result["hidden_count"] == 1
 
     allowed = _provider(backend, allowed_processes=frozenset({"4242"}))
-    assert _run(allowed.list_windows())["windows"][0]["allowed"] is True
+    result = _run(allowed.list_windows())
+    assert result["windows"][0]["allowed"] is True
+    assert result["hidden_count"] == 0
 
 
 def test_observe_builds_versioned_refs() -> None:

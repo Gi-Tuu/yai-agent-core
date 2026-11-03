@@ -411,7 +411,12 @@ class AgentLoop(MetaToolRuntime):
         ctx.enforce_budget()
 
     async def _model_chat(
-        self, messages: list[dict], tools: list[dict] | None, *, tier: str
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        *,
+        tier: str,
+        tier_counts: dict[str, int] | None = None,
     ) -> ModelResponse:
         """统一模型调用入口：套一层硬超时，超时转带说明的 TimeoutError。
 
@@ -420,11 +425,17 @@ class AgentLoop(MetaToolRuntime):
         - 外层取消（用户终止 / aclose / 任务 cancel）：抛 CancelledError，
           它属于 BaseException、不会被这里或上层的 ``except Exception`` 吞掉，
           因而能干净传播、真正中断任务。
+
+        ``tier_counts`` 给了就按档位记录**已发起**的调用次数（审计 F12）：计数
+        放在预算闸之后、真正调用之前，因此被预算拒绝的尝试不会计入 DONE，与
+        :class:`~yai_core.kernel.budget.BudgetTracker` 的"尝试"口径严格一致。
         """
         tracker = self._active_budget
         if tracker is not None:
             # 调用前先过预算硬墙：已达模型调用上限则本次不再发起（熔断）。
             tracker.before_model_call()
+        if tier_counts is not None:
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
         if self.model_timeout is None:
             try:
                 resp = await self.model.achat(messages, tools=tools, tier=tier)
@@ -649,22 +660,16 @@ class AgentLoop(MetaToolRuntime):
         await self._append_history(ChatMessage(role="user", content=task))
         if final_text.strip():
             await self._append_history(ChatMessage(role="assistant", content=final_text))
-        done_data: dict[str, object] = {
-            "strategy": strategy.value,
-            "final_text": final_text,
-            "standard_calls": tier_counts[STANDARD],
-            "strong_calls": tier_counts[STRONG],
-            "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
-            "status": run_status,
-        }
-        if run_error_text is not None:
-            done_data["error"] = run_error_text
-        # 配置了预算就把用量快照随 DONE 流出（成本可观测）；触发熔断时标明原因。
-        if self._active_budget is not None:
-            done_data["budget"] = self._budget_snapshot()
-            if self._active_budget.exceeded is not None:
-                done_data["reason"] = "budget_exceeded"
-        yield AgentEvent(EventType.DONE, done_data)
+        yield AgentEvent(
+            EventType.DONE,
+            self._done_data(
+                strategy,
+                final_text,
+                tier_counts,
+                status=run_status,
+                error=run_error_text,
+            ),
+        )
 
     def _history_messages(self) -> list[ChatMessage]:
         """读取会话历史；宿主 MemoryStore 故障降级为"本次不注入历史"（CORE-2）。"""
@@ -697,6 +702,39 @@ class AgentLoop(MetaToolRuntime):
         if self._active_budget is None:
             return {}
         return self._active_budget.snapshot()
+
+    def _done_data(
+        self,
+        strategy: Strategy,
+        final_text: str,
+        tier_counts: dict[str, int],
+        *,
+        status: str = "ok",
+        error: str | None = None,
+    ) -> dict[str, object]:
+        """组装 DONE 载荷：所有收尾路径的 schema 键必须一致（审计 F12）。
+
+        固定键：``strategy`` / ``final_text`` / ``standard_calls`` /
+        ``strong_calls`` / ``model_calls`` / ``status`` / ``error``（成功时
+        ``error=None``）；配置预算时额外带 ``budget`` 快照（熔断再加 ``reason``）。
+        成本计数按"尝试"口径，与 :class:`~yai_core.kernel.budget.BudgetTracker`
+        一致：失败/超时的模型尝试也计入。
+        """
+        data: dict[str, object] = {
+            "strategy": strategy.value,
+            "final_text": final_text,
+            "standard_calls": tier_counts[STANDARD],
+            "strong_calls": tier_counts[STRONG],
+            "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
+            "status": status,
+            "error": error,
+        }
+        # 配置了预算就把用量快照随 DONE 流出（成本可观测）；触发熔断时标明原因。
+        if self._active_budget is not None:
+            data["budget"] = self._budget_snapshot()
+            if self._active_budget.exceeded is not None:
+                data["reason"] = "budget_exceeded"
+        return data
 
     async def _emit_capability_gap(
         self, decision: RouteDecision, task: str
@@ -757,12 +795,13 @@ class AgentLoop(MetaToolRuntime):
             )
             yield AgentEvent(
                 EventType.DONE,
-                {
-                    "strategy": Strategy.CLARIFY.value,
-                    "final_text": _CLARIFY_ABORT_TEXT,
-                    "status": "error",
-                    "error": "clarify_aborted",
-                },
+                self._done_data(
+                    Strategy.CLARIFY,
+                    _CLARIFY_ABORT_TEXT,
+                    {STANDARD: 0, STRONG: 0},
+                    status="error",
+                    error="clarify_aborted",
+                ),
             )
             return
         # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的乒乓。
@@ -896,12 +935,12 @@ class AgentLoop(MetaToolRuntime):
         ctx.add(ChatMessage(role="user", content=prompt))
         # 档位：成本感知开启时由策略决定（规划默认 strong），否则沿用路由建议 tier。
         plan_tier = tier_policy.for_planning().tier if tier_policy is not None else tier
-        if tier_counts is not None:
-            tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
         messages, state_event = await self._model_messages(ctx)
         if state_event is not None:
             yield state_event
-        resp = await self._model_chat(messages, None, tier=plan_tier)
+        resp = await self._model_chat(
+            messages, None, tier=plan_tier, tier_counts=tier_counts
+        )
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]
@@ -937,8 +976,6 @@ class AgentLoop(MetaToolRuntime):
             f"任务：{task}"
         )
         try:
-            if tier_counts is not None:
-                tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
             resp = await self._model_chat(
                 [
                     {"role": "system", "content": "你只输出 JSON 工具名数组。"},
@@ -946,6 +983,7 @@ class AgentLoop(MetaToolRuntime):
                 ],
                 None,
                 tier=STANDARD,
+                tier_counts=tier_counts,
             )
             names = self._parse_tool_names(resp.content)
         except BudgetExceeded:
@@ -1068,13 +1106,13 @@ class AgentLoop(MetaToolRuntime):
                     {"tier": tier, "reason": tier_reason, "iteration": iteration},
                 )
             last_tier = tier
-            if tier_counts is not None:
-                tier_counts[tier] = tier_counts.get(tier, 0) + 1
             try:
                 messages, state_event = await self._model_messages(ctx)
                 if state_event is not None:
                     yield state_event
-                resp = await self._model_chat(messages, tools_schema, tier=tier)
+                resp = await self._model_chat(
+                    messages, tools_schema, tier=tier, tier_counts=tier_counts
+                )
             except BudgetExceeded:
                 # 预算熔断冒泡到 astream 统一收尾，不能被下面的"模型失败体面 return"吞掉。
                 raise
@@ -1349,8 +1387,6 @@ class AgentLoop(MetaToolRuntime):
                 content="已达到工具调用上限，请基于已有结果直接给出最终答案。",
             )
         )
-        if tier_counts is not None:
-            tier_counts[STANDARD] = tier_counts.get(STANDARD, 0) + 1
         limit_data = {
             "tier": STANDARD,
             "iteration_limit": True,
@@ -1361,7 +1397,9 @@ class AgentLoop(MetaToolRuntime):
             messages, state_event = await self._model_messages(ctx)
             if state_event is not None:
                 yield state_event
-            resp = await self._model_chat(messages, None, tier=STANDARD)
+            resp = await self._model_chat(
+                messages, None, tier=STANDARD, tier_counts=tier_counts
+            )
         except BudgetExceeded:
             # 预算熔断仍由 astream 统一收尾；取消也不转成普通失败。
             raise

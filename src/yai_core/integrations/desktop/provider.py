@@ -84,18 +84,19 @@ class DesktopProvider:
             windows = await self.backend.list_windows()
         except DesktopError as exc:
             return {"ok": False, "status": "backend_error", "error": str(exc)}
+        # 元数据读取也受进程/标题白名单约束：被禁窗口的标题/进程不得进入模型上下文。
+        visible = [
+            window
+            for window in windows
+            if self.policy.allows_window(
+                window.window_id, window.title, window.process_id
+            )
+        ]
         return {
             "ok": True,
             "status": "observed",
-            "windows": [
-                {
-                    **window.to_public(),
-                    "allowed": self.policy.allows_window(
-                        window.window_id, window.title, window.process_id
-                    ),
-                }
-                for window in windows
-            ],
+            "windows": [{**window.to_public(), "allowed": True} for window in visible],
+            "hidden_count": len(windows) - len(visible),
         }
 
     async def observe(self, window_id: str) -> dict[str, Any]:

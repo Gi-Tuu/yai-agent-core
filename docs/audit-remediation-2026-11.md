@@ -85,3 +85,19 @@
    `verify_receipt_chain(单 run)` 为 True；半迁移库可打开。
 6. 文档：中英 architecture 的 decrypt 语义一致；白皮书数字标注 v0.25.0 快照；
    无死测试文件引用。
+
+
+## 5. Follow-up（2026-11-03，PR 合并后收尾）
+
+| 问题 | 修复 | 验证 |
+|---|---|---|
+| F12 成本口径 | `before_model_call` 计尝试、`record_model_call` 只累计 token；loop 计数收敛到 `_model_chat`（含 replan）；所有 DONE 固定成本键 | `test_budget.py` / `test_loop_runtime_contract.py`；全量通过 |
+| VER-2 证据上限 | 50 条 / detail 4k / 总 64KB，超限折叠 + `truncated` 标注 | `test_outcome_verification.py` |
+| VER-2 Bridge 截断 | 截断帧保留 `params.type/run_id/status/error` 与顶层 `event_type/run_id`；扩展识别并收尾 | `test_native_bridge.py` / 扩展静态契约 |
+| 多进程 vault 丢更新 | `<storage>.lock` 跨进程 + 进程内锁；`_save` 临界区覆盖检测/合并/原子写；拿不到锁降级并诊断 | `test_memory_vault.py`（spawn 双进程 10 条全保留） |
+| 适配器元数据泄漏 | tabs/windows 按策略过滤，只回 `hidden_count` | `test_adapter_metadata_filter.py` |
+| 真后端无回归 | 假 playwright / pywinauto SDK 覆盖真实后端代码路径 | `test_playwright_backend_fake_sdk.py` / `test_pywinauto_backend_fake_sdk.py` |
+| 真机验收 | 面板重开取消、强杀 sidecar 重连、关面板重启 Bridge | 真实 Edge 实测记录见 `docs/browser-extension-bridge.md` |
+
+残留：宿主 verifier 自返回的 evidence 未套上限（避免改验收结论）；advisory 文件锁
+不约束绕过 MemoryVault 的写入；真实鼠标点工具栏图标与安装包分发仍需人工。

@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import multiprocessing
 import os
 import stat
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -639,6 +641,128 @@ def test_external_corrupt_file_is_quarantined_before_overwrite(tmp_path: Path) -
     assert backups[0].read_bytes() == corrupted  # 原始坏字节已留档
     disk = MemoryVault(storage_path=path)
     assert {note.content for note in disk._notes} == {"a 的记忆", "b 新写的记忆"}  # noqa: SLF001
+
+
+# ---------- v0.26 followup：跨进程写锁（<storage>.lock + msvcrt/fcntl） ----------
+
+
+def _mp_remember_worker(path_str: str, phrases: list[str]) -> None:
+    """multiprocessing 子进程入口：在**另一个进程**里对同一 vault 连续 remember。
+
+    必须是模块级函数（spawn 需要可 pickle），且只用 yai_core 公共 API。
+    """
+    from yai_core.memory.vault import MemoryVault as _Vault
+
+    vault = _Vault(storage_path=Path(path_str))
+    for phrase in phrases:
+        vault.remember(phrase)
+        time.sleep(0.01)  # 放大两个进程的写重叠窗口
+
+
+def test_two_processes_writing_same_vault_keep_all_notes(tmp_path, monkeypatch) -> None:
+    """跨进程双写：两个独立进程各 remember 若干条，写锁保证一条都不丢。"""
+    path = tmp_path / "mp.json"
+    first = _DISTINCT_PHRASES[:5]
+    second = _DISTINCT_PHRASES[5:10]
+    # spawn 子进程要能 import 本测试模块与 yai_core（pytest 的 pythonpath 只在父进程
+    # 的 sys.path 上生效，不会传给子进程），这里显式补 PYTHONPATH。
+    root = Path(__file__).resolve().parents[1]
+    extra = os.pathsep.join([str(root / "tests"), str(root / "src")])
+    inherited = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "PYTHONPATH", extra + os.pathsep + inherited if inherited else extra
+    )
+
+    context = multiprocessing.get_context("spawn")
+    processes = [
+        context.Process(target=_mp_remember_worker, args=(str(path), phrases))
+        for phrases in (first, second)
+    ]
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(timeout=120)
+            assert process.exitcode == 0, f"子进程异常退出：{process.exitcode}"
+    finally:
+        for process in processes:
+            if process.is_alive():  # pragma: no cover - 超时兜底
+                process.terminate()
+
+    disk = MemoryVault(storage_path=path)
+    contents = {note.content for note in disk._notes}  # noqa: SLF001
+    assert set(first) <= contents
+    assert set(second) <= contents
+
+
+def test_lock_timeout_degrades_instead_of_blocking(monkeypatch, tmp_path) -> None:
+    """对端长时间持锁时不卡任务：等满上限 → 诊断 → 降级为无锁写入，数据照样落盘。"""
+    monkeypatch.setattr(vault_module, "LOCK_TIMEOUT_SECONDS", 0.05)
+    path = tmp_path / "memory.json"
+    events: list = []
+    vault = MemoryVault(storage_path=path, on_diagnostic=events.append)
+    vault.remember("先写一条占位")
+
+    events.clear()
+    with vault_module._file_lock(path):  # 主线程占着进程内 + OS 两把锁
+        started = time.monotonic()
+        note, _ = vault.remember("锁被占用期间写入的一条记忆")
+        elapsed = time.monotonic() - started
+
+    assert elapsed >= 0.05  # 确实等过锁
+    assert elapsed < 2.0  # 但没有无限等
+    assert vault.contains(note.id)
+    assert any(event.kind == "memory_lock_timeout" for event in events)
+    assert "锁被占用期间写入的一条记忆" in path.read_text(encoding="utf-8")
+
+
+def test_lock_file_is_created_released_and_holds_no_data(tmp_path) -> None:
+    path = tmp_path / "memory.json"
+    vault = MemoryVault(storage_path=path)
+    vault.remember("一条会写进数据文件的记忆")
+
+    lock_path = vault.lock_path
+    assert lock_path is not None
+    assert lock_path == path.with_name("memory.json.lock")
+    assert lock_path.exists()
+    # 锁文件不参与数据：里面不能出现记忆正文。
+    assert "一条会写进数据文件的记忆" not in lock_path.read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    # 保存结束后锁已释放：立刻还能再取到，不需要等超时降级。
+    started = time.monotonic()
+    with vault_module._file_lock(path) as locked:
+        assert locked is True
+    assert time.monotonic() - started < 1.0
+    # 纯内存库没有锁文件。
+    assert MemoryVault().lock_path is None
+
+
+def test_stale_lock_file_does_not_block_writes(tmp_path) -> None:
+    """进程崩溃残留的空/旧锁文件无害（锁随进程句柄释放，不看文件是否存在）。"""
+    path = tmp_path / "memory.json"
+    path.with_name("memory.json.lock").write_bytes(b"crashed process left me")
+
+    started = time.monotonic()
+    vault = MemoryVault(storage_path=path)
+    vault.remember("崩溃残留的锁文件不影响写入")
+
+    assert time.monotonic() - started < 1.0
+    assert "崩溃残留的锁文件不影响写入" in path.read_text(encoding="utf-8")
+
+
+def test_unusable_lock_file_degrades_without_failing_save(tmp_path) -> None:
+    """锁文件位置被目录占住（os.open 失败）时：诊断 + 无锁写入，不把保存弄失败。"""
+    path = tmp_path / "memory.json"
+    path.with_name("memory.json.lock").mkdir()  # 锁文件位置不可用
+    events: list = []
+    vault = MemoryVault(storage_path=path, on_diagnostic=events.append)
+
+    vault.remember("锁文件不可用也要能写入")
+
+    assert vault.dirty is False
+    assert "锁文件不可用也要能写入" in path.read_text(encoding="utf-8")
+    assert any(event.kind == "memory_lock_timeout" for event in events)
 
 
 def test_external_newer_version_is_not_overwritten(tmp_path: Path) -> None:

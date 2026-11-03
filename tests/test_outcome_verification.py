@@ -355,3 +355,99 @@ def test_browser_page_evidence_enters_verification() -> None:
 
 def test_verify_run_without_verifier_returns_none() -> None:
     assert _run(verify_run(None, "g", [])) is None
+
+
+# ---------- VER-2：证据条数 / detail / 总量上限 ----------
+
+
+def _collect_events_from_tool_results(count: int, *, big_detail: int = 0) -> list:
+    """构造 ``count`` 条带显式 evidence 的 TOOL_RESULT 事件（离线、纯内存）。"""
+    from yai_core import AgentEvent
+
+    events = []
+    for index in range(count):
+        evidence_item: dict = {"kind": "page", "summary": f"页面 {index}", "ok": True}
+        if big_detail:
+            evidence_item["detail"] = {"blob": "x" * big_detail}
+        events.append(
+            AgentEvent(
+                "tool_result",
+                {"tool": "browser_observe", "evidence": [evidence_item]},
+            )
+        )
+    return events
+
+
+def test_evidence_item_count_is_capped_with_truncation_marker() -> None:
+    from yai_core.verification import EVIDENCE_MAX_ITEMS
+
+    collected = evidence_from_events(_collect_events_from_tool_results(80))
+
+    assert len(collected) == EVIDENCE_MAX_ITEMS + 1  # 上限条 + 1 条截断标注
+    marker = collected[-1]
+    assert marker.kind == "truncated"
+    assert "截断" in marker.summary
+    assert marker.detail["candidates"] == 80
+    assert marker.detail["dropped"] == 80 - EVIDENCE_MAX_ITEMS
+    assert marker.detail["max_items"] == EVIDENCE_MAX_ITEMS
+
+
+def test_evidence_oversized_detail_is_clipped_and_marked() -> None:
+    from yai_core.verification import EVIDENCE_DETAIL_MAX_CHARS
+
+    collected = evidence_from_events(
+        _collect_events_from_tool_results(1, big_detail=EVIDENCE_DETAIL_MAX_CHARS * 3)
+    )
+
+    assert len(collected) == 2  # 证据 + 截断标注
+    clipped = collected[0]
+    assert clipped.detail["truncated"] is True
+    assert clipped.detail["original_chars"] > EVIDENCE_DETAIL_MAX_CHARS
+    assert len(clipped.detail["preview"]) == EVIDENCE_DETAIL_MAX_CHARS
+    marker = collected[1]
+    assert marker.kind == "truncated"
+    assert marker.detail["detail_truncated"] is True
+
+
+def test_evidence_total_size_is_capped() -> None:
+    import json
+
+    from yai_core.verification import EVIDENCE_TOTAL_MAX_CHARS
+
+    # 每条 detail 3900 字符（未触发单条截断），累计必然超过 64KB 总量上限。
+    collected = evidence_from_events(
+        _collect_events_from_tool_results(40, big_detail=3900)
+    )
+
+    marker = collected[-1]
+    assert marker.kind == "truncated"
+    assert marker.detail["dropped"] > 0
+    payload = json.dumps(
+        [item.to_dict() for item in collected], ensure_ascii=False
+    )
+    # 截断后总量必须落在硬上限内（含标注本身）。
+    assert len(payload) <= EVIDENCE_TOTAL_MAX_CHARS
+
+
+def test_done_verification_payload_stays_bounded_on_huge_evidence() -> None:
+    """端到端：超大证据经上限收敛后，DONE.verification 不会撑爆事件载荷。"""
+    import json
+
+    from yai_core.verification import EVIDENCE_TOTAL_MAX_CHARS
+
+    events = _collect_events_from_tool_results(120, big_detail=3900)
+    # 直接调用 verify_run 观察"交给验收器的证据"与"结论序列化体量"。
+    captured: list = []
+
+    class _EchoVerifier:
+        async def verify(self, goal, *, evidence=(), metadata=None):
+            captured.extend(evidence)
+            return VerificationResult(
+                status="unknown", goal=goal, evidence=tuple(evidence)
+            )
+
+    result = _run(verify_run(_EchoVerifier(), "g", events))
+    assert result is not None
+    assert captured and captured[-1].kind == "truncated"
+    payload = json.dumps(result.to_dict(), ensure_ascii=False)
+    assert len(payload) <= EVIDENCE_TOTAL_MAX_CHARS + 2_000
