@@ -11,6 +11,14 @@
 
 ### Added
 
+- **v0.27 Batch 3：受控浏览器真实任务 E2E**：新增 `scripts/browser_provider_task_smoke.py`，
+  在真实 Playwright Chromium + 本地 HTTP 页面上完成 open → observe → type →
+  重新观察 → click → observe，3 次审批，执行收据链完整，基于页面真实文本给出
+  `verified_success`。报告 `docs/browser-task-e2e.md`；明确该 E2E 是受控浏览器，
+  不是扩展当前标签页写操作（当前标签页仍只读，方案 A/B 未实施）。
+
+### Added
+
 - **v0.27 Batch 6：Windows 便携安装包与一键安装/卸载**：
   - `packaging/windows/installer.py`：复制冻结 Bridge 到稳定目录、调用注册脚本写
     bridge.json/manifest、注册 Chrome/Edge HKCU；`uninstall` 可注销并删除 Bridge，
