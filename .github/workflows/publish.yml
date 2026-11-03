@@ -45,6 +45,22 @@ jobs:
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           enable-cache: true
+
+      # 发布前门禁：历史审计发现 publish job 只 build 不测试，任意 v* tag 可把
+      # 坏 sdist 直接发到 PyPI。这里与 ci.yml 同口径跑最小但完整的门禁。
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install test dependencies
+        run: uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel --extra office
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Ruff lint
+        run: uv run ruff check src tests examples scripts fuzzing shell
+      - name: Type check (mypy)
+        run: uv run mypy src/yai_core
+      - name: Pytest
+        run: uv run pytest -q
+
       - name: Build sdist and wheel
         run: uv build
 

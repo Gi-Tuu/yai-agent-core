@@ -56,12 +56,24 @@ def _md_files() -> list[Path]:
     """仓库里**被跟踪**的 markdown；没有 git（解包后的 sdist）时退回遍历。
 
     只查被跟踪文件：本地过程稿与构建产物不在仓库里，不该把这条守卫弄红。
+
+    **用 ``-z`` 取 NUL 分隔输出**：默认 ``git ls-files`` 会对非 ASCII 文件名
+    （如中文文档）加引号并转义（``"docs/v026-\\344..."``），直接按行切会把引号
+    当成文件名的一部分，在 Linux CI 上打开失败（Windows 本地可能因 core.quotePath
+    配置不同而侥幸通过）。
     """
     if (ROOT / ".git").exists():
-        listed = subprocess.run(
-            ["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True
-        ).stdout.splitlines()
-        return sorted(ROOT / rel for rel in listed if rel)
+        completed = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],
+            cwd=ROOT,
+            capture_output=True,
+        )
+        names = [
+            item.decode("utf-8", "surrogateescape")
+            for item in completed.stdout.split(b"\0")
+            if item
+        ]
+        return sorted(ROOT / name for name in names)
     return sorted(ROOT.rglob("*.md"))
 
 

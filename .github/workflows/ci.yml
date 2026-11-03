@@ -66,6 +66,37 @@ jobs:
       - name: Pytest with coverage gate
         run: uv run pytest --cov=src/yai_core --cov-report=term-missing --cov-fail-under=90
 
+  # sdist 冒烟：测试不只验证"源码树能跑"，还要验证"发出去的包自己能用"。
+  # 历史事故：v0.26 的 tests/ 新增了对 extension/ 与 benchmarks/ 的依赖，
+  # 但 sdist include 白名单没同步，包内 pytest 7 例失败而 CI 全绿。
+  sdist:
+    name: sdist package tests
+    runs-on: ubuntu-24.04
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          enable-cache: true
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+      - name: Build sdist
+        run: uv build --sdist
+      - name: Unpack sdist and run in-package tests
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/yai-sdist
+          tar -xzf dist/*.tar.gz -C /tmp/yai-sdist
+          cd /tmp/yai-sdist/*/
+          # 先确认关键资产真的进包了（白名单漏项在这里最快暴露）。
+          test -d extension
+          test -d benchmarks/memory
+          uv sync --extra dev --extra llm --extra server --extra mcp --extra openapi --extra otel --extra office
+          uv run pytest -q
+
   # 模糊测试：atheris 仅在 Linux x86_64 / CPython 3.12+ 提供 wheel，故单独一个 job。
   # 该 job 不在分支保护 ruleset 的必需检查列表中（ruleset 只要求 test 矩阵与 CodeQL），
   # 因此即使失败也不阻塞合并；但会在 PR 上可见，用于持续暴露纯函数在畸形输入下的问题。

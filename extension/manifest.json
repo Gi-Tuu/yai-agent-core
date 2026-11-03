@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "YAI Agent Core（本地内核）",
+  "version": "0.1.0",
+  "description": "在浏览器侧边栏里使用本地 YAI Agent Core：可治理、可取消、结果可验证。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "sidePanel",
+    "nativeMessaging",
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "打开 YAI 侧边栏"
+  }
+}

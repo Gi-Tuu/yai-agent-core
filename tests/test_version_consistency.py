@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 #: 顶部版本徽章必须出现在这两份门面文件里，且版本号必须与包版本同值。
 README_FACADES = ("README.md", "README.en.md")
 
+#: 安全策略里的支持版本表必须与包版本的主次版本号一致（中英各一份）。
+SECURITY_FACADES = ("SECURITY.md", "SECURITY.zh-CN.md")
+
 
 def _pyproject_version() -> str:
     with (ROOT / "pyproject.toml").open("rb") as handle:
@@ -104,3 +107,30 @@ def test_changelog_latest_section_is_the_package_version() -> None:
     assert sections[0] == version, (
         f"CHANGELOG 最新小节是 v{sections[0]}，与包版本 v{version} 不一致"
     )
+
+
+# ---------- 安全策略的支持版本表（中英双份） ----------
+
+
+def _security_supported_minor(name: str) -> str | None:
+    """取 SECURITY 支持版本表里第一行 ✅ 的主次版本号（如 ``0.25``）。"""
+    text = (ROOT / name).read_text(encoding="utf-8")
+    match = re.search(r"\|\s*([0-9]+\.[0-9]+)\.x\s*\|\s*✅", text)
+    return match.group(1) if match else None
+
+
+def test_security_tables_match_package_minor() -> None:
+    version = _pyproject_version()
+    expected = ".".join(version.split(".")[:2])
+    for name in SECURITY_FACADES:
+        supported = _security_supported_minor(name)
+        assert supported == expected, (
+            f"{name} 的安全支持版本最新一行是 {supported}.x，"
+            f"与包版本 v{version} 的 {expected}.x 不一致——发版时漏改安全策略。"
+        )
+
+
+def test_security_facades_agree_on_support_window() -> None:
+    """中英两份 SECURITY 的支持窗口必须一致（否则用户会读到两套承诺）。"""
+    minors = {name: _security_supported_minor(name) for name in SECURITY_FACADES}
+    assert len(set(minors.values())) == 1, f"中英 SECURITY 支持版本不一致：{minors}"

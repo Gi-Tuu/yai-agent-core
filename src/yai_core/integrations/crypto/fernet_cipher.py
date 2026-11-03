@@ -8,7 +8,8 @@ Fernet 是 ``cryptography`` 库提供的对称加密方案（AES-128-CBC + HMAC-
 密钥管理（重要）：
 
 - 密钥**不会**、也不应由内核自动持久化。构造时不传 key 只会生成一把"一次性"密钥，
-  适合临时演示——进程重启后旧密文无法解密，vault 会按"文件损坏"冷启动为空库；
+  适合临时演示——进程重启后旧密文无法解密，vault 会标记 `decrypt_failed` 并
+  **只读降级、绝不覆盖原档**（需换回原密钥或显式迁移）；
 - 生产请用 :meth:`FernetStorageCipher.generate_key` 生成密钥，放到宿主的环境变量 /
   系统钥匙串 / KMS 中，再用 :meth:`from_env` 读取；密钥泄露=加密失效。
 
@@ -38,7 +39,7 @@ class FernetStorageCipher:
             ) from exc
 
         if key is None:
-            # 一次性密钥：仅用于临时演示 / 测试，重启后无法解旧密文（冷启动为空库）。
+            # 一次性密钥：仅用于临时演示 / 测试，重启后无法解旧密文（vault 只读降级）。
             key = Fernet.generate_key()
         elif isinstance(key, str):
             key = key.encode("utf-8")
@@ -49,7 +50,7 @@ class FernetStorageCipher:
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         # 篡改 / 密钥不符时抛 cryptography.fernet.InvalidToken（ValueError 子类），
-        # vault._load 会按"文件损坏"冷启动容忍，不会让进程崩溃。
+        # vault._load 按 decrypt_failed 只读降级并 quarantine，绝不覆盖原档。
         return self._fernet.decrypt(ciphertext)
 
     @staticmethod

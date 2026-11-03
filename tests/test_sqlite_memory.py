@@ -5,6 +5,7 @@
 
 import asyncio
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,6 +16,27 @@ from yai_core.memory import InMemoryStore, SqliteStore
 def run(coro):
     """同步测试里跑一个协程的小工具（仓库既有风格，不引入 pytest-asyncio）。"""
     return asyncio.run(coro)
+
+
+class _StepClock:
+    """可手动推进的时钟：推进时间而不是 sleep 等真实窗口。"""
+
+    def __init__(self) -> None:
+        self.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **kwargs) -> None:
+        self.now += timedelta(**kwargs)
+
+
+def _kv_keys(db) -> list[str]:
+    conn = sqlite3.connect(str(db))
+    try:
+        return [row[0] for row in conn.execute("SELECT key FROM kv ORDER BY key")]
+    finally:
+        conn.close()
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -305,3 +327,130 @@ def test_prune_without_any_policy_is_a_noop(tmp_path, monkeypatch) -> None:
     assert seen["ttl"] == 0
     assert len(store.history()) == 5
     store.close()
+
+
+# ---------- E 组：v0.26 数据完整性加固（损坏行 / 空库 / 连接释放 / KV 过期清理） ----------
+
+
+def test_history_tolerates_corrupt_tool_calls_json(tmp_path) -> None:
+    """单条 tool_calls 坏 JSON 只降级该行，不崩整段历史、也不让每个任务都起不来。"""
+    db = tmp_path / "corrupt.db"
+    store = SqliteStore(db)
+    run(store.append_history(ChatMessage(role="user", content="第一条正常")))
+    run(store.append_history(ChatMessage(role="assistant", content="正常回复")))
+    store.close()
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("UPDATE history SET tool_calls = '{不是 JSON' WHERE id = 2")
+    conn.commit()
+    conn.close()
+
+    events: list = []
+    store = SqliteStore(db, on_diagnostic=events.append)
+    try:
+        hist = store.history()  # 旧实现这里直接抛 JSONDecodeError
+        assert [m.content for m in hist] == ["第一条正常", "正常回复"]
+        assert hist[0].tool_calls is None
+        assert hist[1].tool_calls is None
+        assert any(event.data.get("column") == "tool_calls" for event in events)
+
+        # AgentLoop 启动回放同样不该再崩：一个坏 cell 不能让 agent 整体停摆。
+        core = AgentCore(_OneShotModel("答复"), memory=store)
+        assert asyncio.run(core.run("你好")).final_text == "答复"
+    finally:
+        store.close()
+
+
+def test_empty_db_file_is_backed_up_then_initialized(tmp_path) -> None:
+    """0 字节主库先备份成 <name>.empty-<ts> 再初始化，不静默当新库。"""
+    db = tmp_path / "empty.db"
+    db.write_bytes(b"")
+
+    events: list = []
+    store = SqliteStore(db, on_diagnostic=events.append)
+    try:
+        assert store.history() == []
+    finally:
+        store.close()
+
+    backups = list(tmp_path.glob("empty.db.empty-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b""  # 原始空文件留档
+    assert any(event.data.get("problem") == "empty_database" for event in events)
+    assert db.stat().st_size > 0  # 新库已建好
+
+
+def test_empty_db_with_sidecar_refuses_initialization(tmp_path) -> None:
+    """0 字节主库 + WAL 侧车 = 可能还有未 checkpoint 的数据，拒绝自动初始化。"""
+    db = tmp_path / "empty.db"
+    db.write_bytes(b"")
+    wal = tmp_path / "empty.db-wal"
+    wal.write_bytes(b"pretend uncheckpointed data")
+
+    with pytest.raises(RuntimeError, match="0 字节"):
+        SqliteStore(db)
+
+    assert db.read_bytes() == b""  # 主文件没被动过
+    assert wal.read_bytes() == b"pretend uncheckpointed data"  # 侧车更不许删
+
+
+def test_schema_too_new_failure_releases_database_file(tmp_path) -> None:
+    """构造失败必须关掉连接：否则 Windows 上库文件仍被占用，宿主连回滚都没法做。"""
+    db = tmp_path / "future.db"
+    store = SqliteStore(db)
+    store.close()
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="schema 版本"):
+        SqliteStore(db)
+
+    moved = db.with_name("moved.db")
+    db.replace(moved)  # 连接没关的话 Windows 上这里抛 PermissionError [WinError 32]
+    assert moved.exists()
+
+
+def test_get_purges_expired_kv_row(tmp_path) -> None:
+    clock = _StepClock()
+    db = tmp_path / "ttl_get.db"
+    store = SqliteStore(db, clock=clock)
+    try:
+        run(store.put("token", "abc", ttl_seconds=10))
+        clock.advance(seconds=11)
+        assert run(store.get("token")) is None
+        assert _kv_keys(db) == []  # 过期行顺手删掉（旧实现只过滤、行永远留着）
+    finally:
+        store.close()
+
+
+def test_prune_purges_expired_kv_rows(tmp_path) -> None:
+    clock = _StepClock()
+    db = tmp_path / "ttl_prune.db"
+    store = SqliteStore(db, clock=clock)
+    try:
+        for i in range(3):
+            run(store.put(f"expired-{i}", "v", ttl_seconds=10))
+        run(store.put("keep", "v"))
+        clock.advance(seconds=11)
+        store.prune()
+        assert _kv_keys(db) == ["keep"]
+    finally:
+        store.close()
+
+
+def test_reopen_current_schema_does_not_write(tmp_path) -> None:
+    """正常 v3 库重开只做只读探测：不写盘、不拿写锁（只读挂载 / 频繁重启友好）。"""
+    db = tmp_path / "noop.db"
+    store = SqliteStore(db)
+    run(store.put("k", "v"))
+    run(store.append_history(ChatMessage(role="user", content="hi")))
+    store.close()
+
+    before = db.stat().st_mtime_ns
+    again = SqliteStore(db)
+    opened = db.stat().st_mtime_ns
+    again.close()
+    assert opened == before, "迁移对账在已是最新 schema 时不应写盘"
+    assert db.stat().st_mtime_ns == before

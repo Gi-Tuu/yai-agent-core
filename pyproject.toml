@@ -76,6 +76,12 @@ dev = [
 docs = ["python-docx>=1.1"]
 # 原生桌面端：PySide6 + QML 把员工做成贴顶胶囊窗口（仅 shell 用，内核仍零依赖）
 desktop = ["PySide6>=6.6"]
+# 浏览器执行适配器（v0.26 Browser Provider）：Playwright 驱动 Chromium 页面观察与操作。
+# 仅 integrations.browser 需要；不装不影响内核，也不装不注册任何浏览器工具。
+browser = ["playwright>=1.40"]
+# Windows 桌面执行适配器（v0.26 Desktop Provider）：pywinauto 走 UIA。
+# 仅 integrations.desktop 与 scripts/windows_uia_smoke.py 需要；非 Windows 安装不受影响。
+windows = ["pywinauto>=0.6.8"]
 
 [build-system]
 requires = ["hatchling"]
@@ -100,6 +106,10 @@ include = [
     "/shell",
     "/examples",
     "/scripts",
+    # v0.26 起 tests/ 也覆盖扩展宿主与记忆基准：不带这两处，包内
+    # test_extension_assets / test_memory_metrics 会因缺文件而失败。
+    "/extension",
+    "/benchmarks",
     "/README.md",
     "/README.en.md",
     # .env.example：README 的安装段链接到它（只有占位符，无真实 Key）。
@@ -129,8 +139,13 @@ include = [
     "/docs/tracing.en.md",
     "/docs/multilang-interop.md",
     "/docs/whitepaper.md",
+    # benchmarks/agentdojo/README.md 链接到这篇评测说明；既然 /benchmarks 进包，
+    # 目标文档也必须进包，否则包内 markdown 断链。
+    "/docs/agentdojo-evaluation.md",
     # 能力与证据索引：README 的"第一次读代码"段落链接到它。
     "/docs/IMPLEMENTATION_STATUS.md",
+    # 2026-11 审计整改记录（IMPLEMENTATION_STATUS 链接到它）。
+    "/docs/audit-remediation-2026-11.md",
     "/docs/walkthrough",
     "/docs/releases",
     # 讲义里的截图（讲义 22 的五张桌面图等）：不带则包内图片全是断链。

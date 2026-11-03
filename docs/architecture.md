@@ -159,7 +159,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 在 P0（并发契约 / 硬超时 / 诊断）之上，P1 收敛四类与**成本和数据安全**相关的生产风险；四项均默认关闭或默认与旧版等价、内核零第三方硬依赖、全部离线可测。
 
 - **任务级预算硬上限与熔断（防失控烧钱）**：`AgentCore(budget=Budget(max_model_calls=, max_tool_calls=, max_tokens=))`，`None` 表示不限制、`0` 表示一次都不允许。loop 在顶层任务建一个 `BudgetTracker`（澄清递归复用同一账本）：模型调用在统一入口 `_model_chat` 计数（**不含**路由分类与上下文压缩），普通工具在执行分支计数（meta-tool 与组合编排不重复计、组合工具对外算 1 次），token 仅在模型回传真实 `usage` 时累计（缺失不估算）。任一上限触顶立即终止，发 `budget_exceeded` 事件（带 scope/used/limit 与账本快照），且熔断异常在两处容错回退中被显式重抛，不会被"降级"误吞。
-- **长期记忆落盘静态加密（第九个 SPI，opt-in）**：`spi/cipher.py` 定义同步 `StorageCipher`（`encrypt/decrypt(bytes)`）；`MemoryVault(path, cipher=...)` 落盘透明加密、读取解密，原子 `os.replace` 写盘；文件缺失、JSON 损坏或**解密失败（密钥不符 / 密文被篡改）一律冷启动为空库并重写**，保证进程永远起得来。不传 cipher 时仍为明文 JSON（向后兼容，文档明确告知）。算法不进内核：`[crypto]` extra 提供基于 Fernet（认证加密）的 `FernetStorageCipher`，支持 `generate_key()` 与 `from_env("YAI_VAULT_KEY")`（缺环境变量直接报错，不静默生成一次性密钥）。
+- **长期记忆落盘静态加密（第九个 SPI，opt-in）**：`spi/cipher.py` 定义同步 `StorageCipher`（`encrypt/decrypt(bytes)`）；`MemoryVault(path, cipher=...)` 落盘透明加密、读取解密，原子 `os.replace` 写盘；文件缺失、JSON 损坏或**解密失败（密钥不符 / 密文被篡改）按 `decrypt_failed` 进入只读降级、绝不静默覆盖原档**（损坏档先 quarantine 备份，由宿主换回密钥或显式迁移），不会崩溃。不传 cipher 时仍为明文 JSON（向后兼容，文档明确告知）。算法不进内核：`[crypto]` extra 提供基于 Fernet（认证加密）的 `FernetStorageCipher`，支持 `generate_key()` 与 `from_env("YAI_VAULT_KEY")`（缺环境变量直接报错，不静默生成一次性密钥）。
 - **集中配置 `CoreConfig`（防错配、易复用）**：`config.py` 的零依赖 dataclass 收敛 `AgentCore` 全部与模型无关的可选项，默认值与 kwargs 一致；`validate()` 在构造早期拒绝非法取值（次数非正、bool 冒充整数、`llm_router` / `context_compaction` / `budget` / `model_timeout` 类型错误）。`AgentCore.from_config(model, config)` 让多专员 / 多子员工复用同一份预算与开关；公共 kwargs 签名与默认行为不变。
 - **SQLite 在线热备份与恢复（防停服备份 / 数据损坏）**：`SqliteStore.backup_to(dest)` 用标准库 `Connection.backup` 在实例锁内做页级一致快照，无需停服，文件库与 `:memory:` 均可；`restore_to(backup, dest)` 离线恢复，备份损坏时直接抛 `sqlite3.DatabaseError` 而非静默起空库。崩溃恢复由 WAL 与原子写保证（close 后同路径重开数据不丢）。
 
@@ -181,15 +181,44 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 以下机制均已落地：内核零硬依赖、默认不改变既有宿主行为。
 
-- **多模态消息契约（v0.12）**：`ChatMessage.parts` 与 `TextPart`/`ImagePart`/`ResourcePart`（`src/yai_core/types.py:747-963`）。`parts_to_text()`（`types.py:901`）把片段降级成纯文本并明说"模型看不到"，图片与资源引用不静默丢弃。
+- **多模态消息契约（v0.12）**：`ChatMessage.parts` 与 `TextPart`/`ImagePart`/`ResourcePart`（`src/yai_core/types.py:875-1028`）。`parts_to_text()`（`types.py:1029`）把片段降级成纯文本并明说"模型看不到"，图片与资源引用不静默丢弃。
 - **能力清单 manifest v2（v0.12）**：`MANIFEST_VERSION = 2`、可读版本 `(1, 2)`（`src/yai_core/tools/manifest.py:43-46`）。v2 把治理语义纳入格式契约，老 reader 直接拒——宁可不导，不带着失效的安全语义跑。
 - **入参校验扩到 13 个关键字（v0.13）**：`src/yai_core/policy/approval.py:121` 校验结构类 4 个（`type`/`required`/`properties`/`items`）与取值域类 9 个（`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`）；尚未实现的键记录在册（`src/yai_core/tools/health.py:31`），不假装校验过。
-- **能力体检（v0.14）**：`check_tool_specs()`（`src/yai_core/tools/health.py:622`）静态核对声明能否被内核如实执行（不跑 handler、不联网）；`AgentCore.capability_health()`（`src/yai_core/core.py:394`）对已注册工具出体检报告。
-- **可信变更预览 + 执行收据（v0.14）**：`ChangePreview`（`src/yai_core/types.py:160`）带宿主给的真实 diff 与 token，执行前重算比对，变了即审批失效；`ExecutionReceipt`（`types.py:113`）区分 not_started/succeeded/failed/unknown/partial，据此判断能不能重试。
+- **能力体检（v0.14）**：`check_tool_specs()`（`src/yai_core/tools/health.py:622`）静态核对声明能否被内核如实执行（不跑 handler、不联网）；`AgentCore.capability_health()`（`src/yai_core/core.py:437`）对已注册工具出体检报告。
+- **可信变更预览 + 执行收据（v0.14）**：`ChangePreview`（`src/yai_core/types.py:235`）带宿主给的真实 diff 与 token，执行前重算比对，变了即审批失效；`ExecutionReceipt`（`types.py:125`）区分 not_started/succeeded/failed/unknown/partial，据此判断能不能重试。
 - **宿主实时状态（v0.15/v0.19）**：`HostStateProvider`（`src/yai_core/kernel/state.py:48`）每轮模型调用前注入只读瞬态快照，不进历史与记忆；provider 失败只发 `host_state_failed` 诊断（`kernel/state.py:170`），其余状态照常注入。
 - **Sidecar 协议（v0.16）**：`python -m yai_core.sidecar` 在 stdio 上跑 NDJSON + JSON-RPC 2.0（`src/yai_core/sidecar/protocol.py:18`），承载 initialize / agent/run / agent/cancel / ping / shutdown；工具面仍走 MCP / OpenAPI，协议里没有 tool/call。
 - **Office 文档文本抽取（v0.21）**：`src/yai_core/batteries/office_text.py:50` 的 `extract_text()`：docx/xlsx/pptx 走标准库 zipfile + ElementTree（零依赖），PDF 走可选 pypdf；三条安全闸（成员白名单、拒 DOCTYPE/ENTITY、限量截断）写在文件头。
-- **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:214`（超时取更严一档）与 `tools/executor.py:584`（频率闸在授权之前判定）真的强制。
+- **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:253`（超时取更严一档）与 `tools/executor.py:566`（频率闸在授权之前判定）真的强制。
+
+### 2.12 v0.26 执行适配器与可验证结果（Unreleased）
+
+v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外部系统并验证结果"做成**可选适配器**：
+
+- **Browser Provider（`src/yai_core/integrations/browser/`）**：只依赖 `BrowserBackend` Protocol；
+  快照引用形如 `s<N>:<i>`，页面变化后旧引用作废；观察/点击/输入/下拉/标签页/等待/导航
+  共 8 个工具注册进 `ToolRegistry`，由 `ToolExecutor` 统一做参数校验、权限、审批、收据与事件。
+  动作只返回 `executed + changed / no_observable_change / unknown`，不宣称任务完成；
+  真实后端 `playwright_backend.py` 走可选 `[browser]` extra，仅完成一次本机冒烟
+  （`scripts/browser_smoke.py`），**尚无 CI 回归**。
+- **Windows Desktop Provider（`src/yai_core/integrations/desktop/`）**：同一模式；UIA 语义 Pattern
+  优先、坐标点击默认关闭；控件引用带快照版本；高风险控件名默认拒绝、进程/标题白名单、
+  物理输入前焦点保护、`pause/resume` 用户接管；不跨 UAC / 安全桌面。
+  `[windows]` extra 提供 pywinauto 后端；`scripts/windows_uia_smoke.py` 已在本机完成一次
+  真机 UIA 冒烟（自建窗口 → 观察 → Invoke → 回调验证）。
+- **Outcome Verification（`src/yai_core/verification.py` + `types.py`）**：`Evidence` /
+  `VerificationResult` 与 `OutcomeVerifier` 契约把"工具调用成功"与"目标达成"分开；
+  `AgentCore(outcome_verifier=...)` 在 `DONE` 前收集收据与工具显式 `evidence`，结论附在
+  `DONE` 事件与 `RunResult.verification`；未配置保持 `None`，验收器异常降级 `not_verifiable`
+  并记诊断，不触发重试。
+- **浏览器扩展宿主 + Native Messaging Bridge（`extension/`、`sidecar/native_bridge.py`）**：
+  扩展只是 Host，通过长度帧 ↔ NDJSON 的独立 Bridge 连本地 Sidecar；不改 Sidecar 公开协议，
+  扩展来源 allowlist（fail closed）、操作白名单、凭据只存在本地配置；断连后结果标 `unknown`
+  且不自动重放。**扩展未在真实浏览器加载验收**。
+- **P0 记忆与 Provider 安全**：`MemoryVault` 加载失败分类 + quarantine/read_only/raise 处置
+  （绝不静默覆盖原档）+ owner 绑定；`FallbackModelProvider` 支持宿主声明的 provider 授权集合 /
+  敏感等级 / 锁定 / 禁止降级，未授权后端在发请求前被筛掉（零调用）。详见
+  `docs/IMPLEMENTATION_STATUS.md` 与 ADR 0004 / 0005。
 
 ## 3. SPI 契约
 
@@ -239,7 +268,7 @@ app = create_app(core)
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 
-v0.3 公网演示限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗口（`enabled=True`、
+v0.3 公网演示限流（默认开启）：`ratelimit.py` 提供每 IP 滑动窗口（`enabled=True`、
 `per_minute=30`、`window_seconds=60`，可用 `YAI_RATE_LIMIT_*` 调整或关闭）。中间件只拦
 `POST /v1/agent/run`，超限返回 429 + `Retry-After`（与响应体同源），被限请求不触达
 模型；三个 GET 验证端点永不限流（探活硬门槛）。客户端身份取 XFF 最左非空、回退对端

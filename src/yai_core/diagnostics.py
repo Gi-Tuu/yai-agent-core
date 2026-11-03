@@ -60,6 +60,14 @@ class DiagnosticKind(StrEnum):
     SCHEMA_FOCUS_FALLBACK = "schema_focus_fallback"
     #: 宿主实时状态 provider 抛错/超时，本轮跳过它（其余状态照常注入）。
     HOST_STATE_FAILED = "host_state_failed"
+    #: 长期记忆落盘加载失败（损坏 / 解密失败 / 版本不兼容 / 不可读）。
+    #: 宿主据此告警；具体处置（隔离备份 / 只读降级 / 抛错）见 MemoryVault。
+    MEMORY_LOAD_FAILED = "memory_load_failed"
+    #: 某个模型后端被路由治理挡下（未授权 / 禁用 / 无凭据 / 敏感等级不符 /
+    #: 被锁定到别的 provider），内核不会向它发起请求。
+    PROVIDER_ROUTE_BLOCKED = "provider_route_blocked"
+    #: 任务验收器抛错或返回非法对象，已降级为 not_verifiable（不影响任务结果）。
+    VERIFICATION_FAILED = "verification_failed"
 
 
 @dataclass

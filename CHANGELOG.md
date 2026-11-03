@@ -7,6 +7,126 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Browser Provider（可选执行适配器，v0.26 Batch 2）**：`yai_core.integrations.browser`
+  把"观察 → 引用 → 动作 → 再观察"做成受治理工具——页面快照 + 带版本的元素引用
+  （`s<N>:<index>`，旧快照引用一律判过期并要求重新观察）、点击 / 输入 / 下拉 /
+  标签页切换 / 条件等待 / 导航；所有工具仍走 `ToolRegistry` 与 `ToolExecutor`
+  的参数校验、权限策略、审批、收据与事件，**不另起 Tool Bus**。动作只报告
+  `executed + changed / no_observable_change / unknown`，不把"函数返回"当业务成功。
+  来源白名单、密码框默认拒填、导航前置 gate 与页面证据随事件流交给验收。
+  真实执行走可选 `[browser]` extra（Playwright，未安装不影响内核），离线测试用
+  假后端覆盖边界；**已在真实 Chromium 与系统 Chrome 上完成一条本地任务验收**
+  （`scripts/browser_smoke.py`，2026-11-03），真实站点多样性仍未覆盖。
+- **浏览器扩展宿主 + Native Messaging Bridge（v0.26 Batch 4）**：`extension/`
+  提供 Manifest V3 Side Panel（任务输入、事件流、审批 / 澄清、取消、连接状态，
+  `activeTab` + `chrome.scripting` 按需读取当前页面）；`yai_core.sidecar.native_bridge`
+  把 Native Messaging 的 4 字节长度帧与 Sidecar 的 NDJSON JSON-RPC 互转，
+  **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
+  操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
+  浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
+  - **侧边栏 LLM 设置入口（本机）**：面板新增“LLM 设置”折叠区（Base URL / 模型 /
+  强模型 / API Key），通过 Bridge `get_config` / `configure_llm` 读写本地
+  `%LOCALAPPDATA%\YAI\bridge.json`；读回时 Key 永远脱敏（`***末4位`），保存后提示
+  “关闭再打开侧边栏生效”。Key 不写 localStorage、保存后输入框清空。本机实测面板
+  回填 suanli.cn 配置并成功保存（`docs/exports/extension-llm-settings.png`）。
+- **CDP 模式与本地 LLM 配置（本机）**：`scripts/chrome_cdp.py` 启动/停止带调试端口的
+  独立 profile Chrome；`register_native_host.py --cdp-endpoint` 让 Playwright MCP 连接并
+  操作该 Chrome。真机验证（真实 Edge + Chrome 156）：侧边栏显示模型与 MCP 名，任务
+  「打开百度」经两次审批由 `browser_navigate`/`browser_evaluate` 完成，CDP 当前页为
+  `https://www.baidu.com/`（`docs/exports/extension-cdp-e2e.png`）。另加
+  `scripts/configure_bridge_llm.py`（`--show` 脱敏 / 更新 model/base_url / Key 走
+  stdin 或 getpass，不进浏览器、不落命令历史）。内核 `dependencies = []` 不变。
+- **扩展端到端任务验证（本机）**：`register_native_host.py --env-file` 把模型配置写入本地
+  `bridge.json`（不进入扩展/浏览器），`--browser-mcp playwright` 通过既有 MCP 集成挂载
+  Playwright MCP 浏览器工具；真实 Edge 中任务「打开百度」经审批 → `browser_navigate` /
+  `browser_evaluate` → 返回「百度一下，你就知道」。MCP 为可选 extra 且懒加载，内核
+  `dependencies = []` 不变。
+- **Native Messaging 自动注册 + 端到端验证（本机）**：新增
+  `scripts/register_native_host.py`（一条命令写 bridge 配置 / host manifest /
+  Chrome+Edge 的 HKCU 注册表，`--unregister` 可逆、`--dry-run` 可预览、不写密钥）；
+  Bridge 支持 `sidecar_command`（PyInstaller 冻结时必须）、默认配置路径
+  `%LOCALAPPDATA%\YAI\bridge.json`、本地排障日志 `bridge.log`，并修掉 Chrome/Edge
+  追加 `--parent-window=0` 被误当配置路径的启动失败。真实 Edge 端到端验证：用户扩展
+  ID 的侧边栏显示"协议握手完成（bridge v1）/ 就绪"，Bridge 日志 frozen=True / exit ok。
+- **侧边栏入口修复（用户反馈"没有侧边栏"）**：service worker 顶层与
+  onInstalled/onStartup 都设置 `openPanelOnActionClick`；新增 `chrome.action.onClicked`
+  兜底（`sidePanel.open` 失败时把 `sidepanel.html` 开成普通标签页）；面板页把
+  "native messaging host not found" 翻成可操作的中文提示；新增
+  `tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 兜底 / 资源引用）。
+状态：Bridge 已与**真实 Sidecar 进程**端到端验证；扩展已在 Playwright Chromium /
+  **真实 Edge** 加载出 MV3 service worker，且侧边栏页可渲染、`openPanelOnActionClick`
+  已开启（`scripts/extension_smoke.py`）。**看不到侧边栏的兜底**：service worker 顶层与
+  onInstalled/onStartup 都设置点击行为；点击图标若 sidePanel.open 失败会自动开成普通
+  标签页。真实鼠标点击、Native Messaging 注册与安装包分发仍需人工验收。
+- **记忆质量基准（v0.26 Batch 6）**：`benchmarks/memory/` 提供小型离线评测集与
+  `run_bench.py`，测量 Recall@5 / MRR@5 / 无关召回率 / P50·P95 延迟、词法与语义
+  互补收益、嵌入器故障降级一致性、更新删除后的索引一致性；假嵌入器与真实
+  bge-m3 明确区分（真实模型需本地 `models/bge-m3` + `[local-embed]`，不进 CI）。
+  本机真实 bge-m3 实测（18 条 / 12 query / k=5）：Recall@5 **1.000**、MRR@5 **0.917**、
+  P50 **12.27 ms**；纯词法 0.750。回归测试 `tests/test_memory_metrics.py`。
+- **Windows Desktop Provider（v0.26 Batch 5，可选适配器）**：`yai_core.integrations.desktop`
+  通过 UIA 观察窗口 / 控件树，语义操作（Invoke / Toggle / Select、ValuePattern）
+  优先，坐标点击默认关闭；控件引用带快照版本、过期即作废；高风险控件名（删除 /
+  卸载 / 格式化 / 关机…）默认拒绝；进程 / 标题白名单；物理输入前焦点保护；
+  `desktop_pause` / `desktop_resume` 支持用户接管；不越过 UAC / 安全桌面。
+  工具仍经 `ToolRegistry` + `ToolExecutor` 统一治理。真实后端
+  `PywinautoDesktopBackend` 走可选 `[windows]` extra；**本机真机 UIA 冒烟已通过**
+  （`scripts/windows_uia_smoke.py`：自建 WinForms 窗口 → UIA 观察 → Invoke →
+  按钮回调验证），其它真实应用与截图路径仍未验收。
+- **任务结果验收契约（Outcome Verification，v0.26 Batch 3）**：新增
+  `Evidence` / `VerificationResult` 与 `OutcomeVerifier` 契约、`CompositeVerifier`
+  组合规则（失败优先 / 全成功 / 部分 / 未确认 / 不可判定）；`AgentCore` 在 `DONE`
+  前收集执行收据与工具显式 `evidence`，把验收结论附到 `DONE` 事件与
+  `RunResult.verification`。验收器缺失保持 `None`（旧行为），抛错降级
+  `not_verifiable` 并发 `verification_failed` 诊断，**不触发任何重试或重复副作用**。
+- **Provider 路由治理（v0.26 P0）**：`FallbackModelProvider` 支持宿主声明的
+  `ProviderRoutingPolicy`——允许使用的 provider 集合、单 provider 敏感等级、
+  启用 / 凭据声明、锁定目标与"禁止降级"；未授权的后端在**发起请求之前**被筛掉
+  （零调用），无授权目标时抛 `NoAuthorizedProviderError` 明确停止；按任务的
+  `routing_context` 只能收紧（白名单取交、敏感等级取高、锁定不可解除、禁用降级
+  不可重开），模型输出无法修改授权。
+- **记忆落盘损坏安全（v0.26 P0）**：`MemoryVault` 加载失败不再静默清零——区分
+  不可读 / JSON 损坏 / 解密失败 / 版本不兼容 / owner 不匹配，分别按
+  `quarantine`（原始字节先备份成 `<name>.corrupt-<时间戳>` 再空库启动）、
+  `read_only`（写接口抛 `MemoryVaultReadOnlyError`）、`raise`（构造器抛
+  `MemoryVaultLoadError`）处置；解密失败与版本不兼容即使选 quarantine 也只读；
+  备份失败自动降级只读；全程发 `memory_load_failed` 诊断。
+- **记忆 owner 绑定（v0.26 P0 最小隔离方案）**：`MemoryVault(owner=...)` 写入
+  owner 并在加载时校验，不一致即 `owner_mismatch` + 只读，**不读入、不覆盖**
+  别的租户档案；旧文件无 owner 保持兼容。
+
+### Fixed
+
+- **2026-11 全仓审计整改（P1/P2 批量修复，均带回归测试）**：
+  - **数据完整性**：SQLite 迁移改为"列对账 + SAVEPOINT 单事务"，半迁移库、丢
+    `user_version` 的老库、标 v3 却缺列的库均可自愈；坏 `tool_calls` JSON 降级不再
+    让每个任务崩；0 字节库先备份再初始化；KV 过期行清理、构造失败关连接。
+  - **长期记忆**：`recall/arecall` 的 touch 落盘失败不再让读取失败；owner 双向
+    fail-closed 且保存绝不把已有 owner 写 null；写前检测外部修改并按 id 合并，多实例
+    不再静默丢更新；原子写补 `fsync`、quarantine 保留上限、未知 kind 不再 KeyError、
+    容量淘汰可观测。
+  - **终态契约**：内核/宿主 SPI 在 DONE 前失败时补发 `ERROR + DONE(status="error")`；
+    `RunResult` 新增 `status/error`；空最终文本不再写空 assistant；学习/反馈回调
+    best-effort；`DONE` 带 `status/error` 与成本字段。
+  - **执行治理**：gate/审批/策略回调异常按本次工具失败关闭（不再中断任务）；
+    handler 异常明确告知"副作用可能已发生"；rate-limit 改为授权通过后才扣配额，
+    未授权调用不能耗尽额度；收据链按 run 重置，单次任务收据可独立校验。
+  - **扩展/Bridge**：短任务 DONE 先于 run_started 不再卡死面板；sidecar 崩溃后
+    Bridge 清运行位并由 SW 主动重连；面板重开可恢复/取消运行中任务；关最后一个
+    面板会重启 Bridge 使配置生效；`configure_llm` 改 base_url 必须同时给新 Key；
+    配置原子写 + `.bak`；`--dry-run` 脱敏；CDP stop 校验 pid 镜像/命令行；
+    Playwright MCP 固定 `@playwright/mcp@0.0.84`；manifest 移除未用 `storage`。
+  - **验收**：CompositeVerifier 不再把抛异常/非法分支当成功；仅全部分支成功才
+    `verified_success`，异常分支计入 `not_verifiable` 并写入理由。
+  - **发布/守卫**：sdist 补 `/extension`、`/benchmarks` 与缺失文档；CI 新增 sdist
+    包内测试 job；publish 前增加 lock/ruff/mypy/pytest 门禁；零依赖守门改为模块
+    作用域 AST（可抓 `try: import httpx`，batteries 精确白名单）；事件守门改为
+    真实 `AgentEvent(EventType.X)` 构造点 + 21 类冻结集合。
+  - **文档**：修正"解密失败=冷启动空库"的过期描述（实际只读降级、绝不覆盖）、
+    Browser Provider 验证口径、白皮书数字标注 v0.25.0 快照、失效测试文件引用。
+
 ### Removed
 
 - **Render 公网演示实例**：删除线上的 `yai-agent-core` 服务，移除 `.github/workflows/keepwarm.yml`
@@ -820,7 +940,7 @@
 - **三态交互形态机**：待命是**圆球**（56×56，中央动态波形，执行中起伏），指针驻留 110ms **向右展开成胶囊**（340×52，状态文本 + 呼吸点），点击**向下展开成面板**（420×620）；指针离开窗口回到球，但**有授权/澄清挂起时拒绝收回**（离开判定留 320ms 宽限，避免跨子项抖动）。左上角锚定，整岛移动交给 `Window.startSystemMove()`（位移超 4px 判拖动，否则算点击），不再手算 DPI/多屏位移。
 - **面板改为"对话优先"**：主体只有"你说"与"它答"两种气泡，思考链与调用链折叠成一条 `› 过程 · N 步`，点击才展开明细；壳层改为不透明（半透明在开着其他软件的桌面上会让对话看起来是空的）。列表数据按专员各存一份 ListModel，切走再切回历史不丢。
 - **离线演示的授权卡改为真挂起**：`shell/demo_script.py` 走到 `permission_asked` / `clarify_requested` 时不再伪造事件，而是真的 `await channel.confirm/ask` 等待界面点击——无 Key 演示里的允许/拒绝走完整权限链路，拒绝会按"用户拒绝，未执行"收尾；并补齐仓库 / 笔记 / 陪伴三段主题脚本。
-- **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py` 8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
+- **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py`（现已拆分为 `tests/test_desktop_workbench.py` / `test_desktop_specialist.py` / `test_desktop_pending_summary.py` 等）8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
 - **语言中立能力清单（manifest）序列化**：`ToolSpec.to_manifest_dict()` / `from_manifest_dict()` 与 `tools/manifest.py`（批量打包 + JSON 文件读写）。composite 工作流（steps）与 code 工具（code，需宿主沙箱）作为"数据即能力"可跨进程 / 跨语言完整移植并执行；native/openapi/mcp 的 handler 不可移植，只导出能力声明。内核不另造调用通道（避免做成简化版 MCP），跨语言实际调用统一走 MCP / OpenAPI。新增 `tests/test_manifest.py`（含移植后组合工具端到端执行验证）与讲义第 21 篇。
 - **工程文档**：`docs/deployment-scaling.md`（部署 / 水平扩展 / 多租户）、`docs/multilang-interop.md`（多语言接入设计与 conformance 愿景）。
 - **PyPI 发布就绪**：补全 classifiers / project URLs、PEP 561 `py.typed` 标记，sdist 改为显式白名单（只含库源码、测试与核心文档，排除 inbox 与过程稿）；新增 OIDC Trusted Publishing 工作流 `publish.yml`（推 `v*` tag 触发、免 API token）。

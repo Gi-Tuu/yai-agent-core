@@ -17,7 +17,12 @@ from typing import Any, Literal
 
 from yai_core.channels import CollectChannel
 from yai_core.config import CoreConfig
-from yai_core.diagnostics import DiagnosticSink
+from yai_core.diagnostics import (
+    DiagnosticEvent,
+    DiagnosticLevel,
+    DiagnosticSink,
+    emit,
+)
 from yai_core.discovery import discover
 from yai_core.kernel import (
     DEFAULT_MODEL_TIMEOUT,
@@ -58,7 +63,16 @@ from yai_core.tools import (
 )
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.executor import DEFAULT_TOOL_RESULT_CHARS
-from yai_core.types import AgentEvent, EventType, RunResult, Strategy, Subject, ToolSpec
+from yai_core.types import (
+    AgentEvent,
+    EventType,
+    RunResult,
+    Strategy,
+    Subject,
+    ToolSpec,
+    VerificationResult,
+)
+from yai_core.verification import OutcomeVerifier, verify_run
 
 #: 任务结束后把"原始任务 + 实际策略 + 事后结果"回调给宿主（用于防抖落盘/埋点）。
 FeedbackHook = Callable[[str, Strategy, RouteOutcome], None]
@@ -96,6 +110,9 @@ class AgentCore:
         memory_storage: Path | str | None = None,
         memory_cipher: StorageCipher | None = None,
         memory_embedder: EmbeddingProvider | None = None,
+        memory_corruption_policy: str = "quarantine",
+        memory_owner: str | None = None,
+        outcome_verifier: OutcomeVerifier | None = None,
         auto_memory_recall: bool = False,
         auto_recall_k: int = 3,
         max_iters: int = 6,
@@ -136,6 +153,9 @@ class AgentCore:
             memory_storage=memory_storage,
             memory_cipher=memory_cipher,
             memory_embedder=memory_embedder,
+            memory_corruption_policy=memory_corruption_policy,
+            memory_owner=memory_owner,
+            outcome_verifier=outcome_verifier,
             auto_memory_recall=auto_memory_recall,
             auto_recall_k=auto_recall_k,
             max_iters=max_iters,
@@ -151,6 +171,10 @@ class AgentCore:
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
         self.model = model
+        # 诊断回调转发给验收旁路（验收失败只发诊断，不影响任务结果）。
+        self.on_diagnostic = on_diagnostic
+        # 任务验收器（可选）：run 结束时收集证据并判定目标是否达成。
+        self.outcome_verifier = outcome_verifier
         self.registry = ToolRegistry()
         # 自校准路由学习器（RouteSelector 契约）：默认 None，行为与不接入学习完全一致。
         self.learning = learning
@@ -198,6 +222,9 @@ class AgentCore:
                 storage_path=memory_storage,
                 cipher=memory_cipher,
                 embedder=memory_embedder,
+                on_corruption=memory_corruption_policy,
+                on_diagnostic=on_diagnostic,
+                owner=memory_owner,
             )
         self.executor = ToolExecutor(
             self.registry,
@@ -504,21 +531,77 @@ class AgentCore:
         DONE 是**展示终态**，不是生产者的最后动作：本次运行的学习回灌发生在
         DONE 之后。消费者收到 DONE 就 break 并关闭流，会跳过这次回灌；只把
         DONE 当结束的界面应继续耗尽事件流（后续事件可忽略）。
+
+        终态契约：正常情况下事件流以 ``DONE`` 结束；若内核 / 宿主 SPI 在 ``DONE``
+        之前失败（记忆落盘、学习器、通道之外的内部故障），这里会补发
+        ``ERROR(stage="internal")`` + ``DONE(status="error")``，宿主永远拿得到
+        确定终态。用户取消（``CancelledError`` / 提前关闭迭代器）仍原样传播且
+        **不发 DONE**——主动终止不是任务终态。
         """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
         async with self._task_lock:
             if self._closed:
                 raise RuntimeError("AgentCore 已关闭，不能运行任务")
+            # 收据链按 run 起算（Task-1 ↔ Batch 2 契约）：每个任务的首条收据
+            # prev_hash 为空，单次 run 的收据链才可独立校验。
+            self.executor.begin_run()
             events: list[AgentEvent] = []
             strategy: Strategy | None = None
             # 反馈要奖励**最先做出的路由决策**：澄清链里原任务先选 clarify，
             # 补充信息后才由内层重新路由成 react；只记最后一个策略会把功劳记错。
             decision_strategy: Strategy | None = None
             completed = False
+            terminal_seen = False
+            internal_failed = False
             run_error: BaseException | None = None
             # 指标旁路：run 开始打点；任何异常都不允许反噬主流程。
             self._metrics_start()
+
+            async def _process_event(
+                event: AgentEvent, *, run_verification: bool = True
+            ) -> None:
+                """事件唯一出口的收口：策略追踪 → 验收 → emit → 记账。
+
+                这里**不**兜底自身异常：``channel.emit`` / 验收旁路自身出错仍按
+                原契约上抛（宿主通道坏了就没法再把事件交给它）。只有内核 loop
+                在 DONE 之前失败，才走下面的 ERROR+DONE 救援路径（CORE-2）。
+                """
+                nonlocal strategy, decision_strategy, terminal_seen
+                data = event.data or {}
+                if "strategy" in data:
+                    strategy = Strategy(data["strategy"])
+                    if (
+                        decision_strategy is None
+                        and event.type == EventType.STRATEGY_SELECTED
+                    ):
+                        decision_strategy = strategy
+                if (
+                    run_verification
+                    and event.type == EventType.DONE
+                    and self.outcome_verifier is not None
+                    and "verification" not in data
+                ):
+                    # 任务级验收是 DONE 之前的旁路：证据来自本次 run 的收据与
+                    # 工具显式 evidence；验收失败只降级 not_verifiable，不改文本。
+                    verification = await verify_run(
+                        self.outcome_verifier,
+                        task,
+                        events + [event],
+                        metadata={
+                            "strategy": str(data.get("strategy", "")),
+                            "event_count": len(events) + 1,
+                        },
+                        on_diagnostic=self.on_diagnostic,
+                    )
+                    if verification is not None:
+                        event.data["verification"] = verification.to_dict()
+                if event.type == EventType.DONE:
+                    terminal_seen = True
+                await self.channel.emit(event)
+                events.append(event)
+                self._metrics_event(event)
+
             try:
                 # 实例锁保证薄壳委派读取的主体属于当前任务，而非模型参数。
                 self._task_subject = subject
@@ -526,28 +609,55 @@ class AgentCore:
                     stream = self._loop.astream(task, subject=subject)
                 try:
                     while True:
+                        pending: list[AgentEvent] = []
                         with egress_scope(egress_context):
                             try:
                                 event = await anext(stream)
                             except StopAsyncIteration:
                                 break
-                            await self.channel.emit(event)
-                            events.append(event)
-                            self._metrics_event(event)
-                            data = event.data or {}
-                            if "strategy" in data:
-                                strategy = Strategy(data["strategy"])
-                                if (
-                                    decision_strategy is None
-                                    and event.type == EventType.STRATEGY_SELECTED
-                                ):
-                                    decision_strategy = strategy
-                        # 不把生产者的 ContextVar 暴露给暂停期间的消费者。
-                        yield event
+                            except Exception as exc:  # noqa: BLE001
+                                # 内核 / 宿主 SPI 在 DONE 之前失败（CORE-2）：
+                                # 补发 ERROR(stage="internal") + DONE(status="error")，
+                                # 宿主拿到确定终态，而不是"流断在半路、永远等不到 DONE"。
+                                # CancelledError / GeneratorExit 是 BaseException，
+                                # 不会走到这里：继续传播且**不发 DONE**。
+                                if terminal_seen:
+                                    raise
+                                internal_failed = True
+                                run_error = exc
+                                pending = self._internal_error_terminal(
+                                    task, strategy, exc
+                                )
+                                for terminal_event in pending:
+                                    await _process_event(
+                                        terminal_event, run_verification=False
+                                    )
+                            else:
+                                await _process_event(event)
+                                pending = [event]
+                        for pending_event in pending:
+                            # 不把生产者的 ContextVar 暴露给暂停期间的消费者。
+                            yield pending_event
+                        if internal_failed:
+                            break
+                    if not terminal_seen:
+                        # 兜底：事件流正常结束却没有终止事件（内核契约破坏）。
+                        # 与异常路径同样补一个 error DONE，绝不让宿主无限等 DONE。
+                        internal_failed = True
+                        fallback_events = self._internal_error_terminal(
+                            task, strategy, RuntimeError("内核未产出终止事件")
+                        )
+                        with egress_scope(egress_context):
+                            for terminal_event in fallback_events:
+                                await _process_event(
+                                    terminal_event, run_verification=False
+                                )
+                        for terminal_event in fallback_events:
+                            yield terminal_event
                 finally:
                     with egress_scope(egress_context):
                         await stream.aclose()
-                completed = True
+                completed = not internal_failed
             except BaseException as exc:
                 # 记录取消 / 失败后原样抛出（CancelledError/GeneratorExit 必须继续传播）。
                 run_error = exc
@@ -555,8 +665,8 @@ class AgentCore:
             finally:
                 self._task_subject = None
                 self._metrics_finish(run_error)
-                # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）不计入，
-                # 避免把"用户中途终止"误当成负样本污染学习。
+                # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）或
+                # 被内核兜底为内部错误时不计入，避免把基础设施故障当负样本污染学习。
                 if completed:
                     chosen = (
                         decision_strategy
@@ -565,10 +675,40 @@ class AgentCore:
                     )
                     self._record_feedback(task, chosen, events)
 
+    def _internal_error_terminal(
+        self, task: str, strategy: Strategy | None, exc: BaseException
+    ) -> list[AgentEvent]:
+        """终态兜底：内核 / 宿主 SPI 在 DONE 之前失败时补齐 ERROR + DONE。
+
+        只用于"事件流已无法自然收尾"的救援路径；正常收尾不经过这里。
+        ``CancelledError`` / ``GeneratorExit`` 不在此处理——它们必须继续传播，
+        且**不发 DONE**（用户主动终止不是任务终态）。
+        """
+        message = f"{type(exc).__name__}: {exc}"
+        try:
+            resolved = strategy or self.router.classify(task, self.registry)
+        except Exception:  # noqa: BLE001 - 救援路径自身不允许再抛
+            resolved = Strategy.REACT
+        return [
+            AgentEvent(EventType.ERROR, {"stage": "internal", "error": message}),
+            AgentEvent(
+                EventType.DONE,
+                {
+                    "strategy": resolved.value,
+                    "final_text": "",
+                    "status": "error",
+                    "error": message,
+                },
+            ),
+        ]
+
     async def run(self, task: str, *, subject: Subject | None = None) -> RunResult:
         events: list[AgentEvent] = []
         final_text = ""
         strategy: Strategy | None = None
+        verification: VerificationResult | None = None
+        status = "ok"
+        error: str | None = None
         async for event in self.astream(task, subject=subject):
             events.append(event)
             data = event.data
@@ -576,12 +716,24 @@ class AgentCore:
                 strategy = Strategy(data["strategy"])
             if event.type.value == "done":
                 final_text = data.get("final_text", "")
+                status = str(data.get("status", "ok"))
+                raw_error = data.get("error")
+                error = str(raw_error) if raw_error is not None else None
+                raw_verification = data.get("verification")
+                if isinstance(raw_verification, dict):
+                    try:
+                        verification = VerificationResult.from_dict(raw_verification)
+                    except (TypeError, ValueError):
+                        verification = None
         chosen = strategy or self.router.classify(task, self.registry)
         # 反馈回灌已在 astream() 正常收尾时完成，这里不再重复记录。
         return RunResult(
             strategy=chosen,
             events=events,
             final_text=final_text,
+            verification=verification,
+            status=status,
+            error=error,
         )
 
     def _record_feedback(self, task: str, chosen: Strategy, events: list[AgentEvent]) -> None:
@@ -589,18 +741,36 @@ class AgentCore:
 
         反馈不进当次事件流（事件流在收集完才算得出结果），通过 ``on_feedback``
         回调与 :meth:`route_learning_status` 暴露给宿主（方案 A）。
+
+        学习器 / 宿主回调的任何异常都收口成诊断：这是 DONE **之后**的旁路，
+        绝不能把一次已经成功的任务变成 ``run()`` 抛异常（否则宿主重试会重复
+        已经发生的工具副作用，审计 F7）。
         """
         if self.learning is None:
             return
-        outcome = extract_route_outcome(
-            events,
-            chosen,
-            max_iters=self.max_iters,
-            clarify_budget=self.max_clarify_rounds,
-        )
-        self.learning.record(task, self.registry, chosen, outcome)
-        if self.on_feedback is not None:
-            self.on_feedback(task, chosen, outcome)
+        try:
+            outcome = extract_route_outcome(
+                events,
+                chosen,
+                max_iters=self.max_iters,
+                clarify_budget=self.max_clarify_rounds,
+            )
+            self.learning.record(task, self.registry, chosen, outcome)
+            if self.on_feedback is not None:
+                self.on_feedback(task, chosen, outcome)
+        except Exception as exc:  # noqa: BLE001 - 反馈旁路不得反噬已完成的 run
+            emit(
+                self.on_diagnostic,
+                DiagnosticEvent(
+                    kind="feedback_failed",
+                    message=(
+                        f"任务结束后的学习/反馈回灌失败（{type(exc).__name__}），"
+                        "已忽略，不影响本次结果"
+                    ),
+                    level=DiagnosticLevel.ERROR,
+                    data={"error": f"{type(exc).__name__}: {exc}"},
+                ),
+            )
 
     def route_learning_status(self) -> dict:
         """路由学习器的可观测状态；未启用返回 {"enabled": False}。"""

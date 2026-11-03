@@ -80,7 +80,7 @@ cp .env.example .env              # Windows: copy .env.example .env
   pytest
   ```
 
-- 类型注解为硬性要求：公开 API 必须带参数与返回值注解；数据结构优先用 `@dataclass`，枚举用 `StrEnum`。
+- 类型注解为硬性要求：公开 API 必须带参数与返回值注解；数据结构优先用 `@dataclass`，枚举用 `StrEnum`。CI 还会跑 `mypy` 并强制覆盖率门禁（≥ 90%）。
 - 每个模块开头写模块 docstring，说明它在全景图中的位置；面向学习者，复杂逻辑块配行内注释。
 - **改了源码就要同步改逐行讲解**：`docs/walkthrough/` 与代码逐块对应，行为变化时同 PR 更新对应篇目。
 

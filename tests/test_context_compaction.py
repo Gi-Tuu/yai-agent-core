@@ -573,3 +573,91 @@ def test_task_anchor_absent_when_task_still_in_context() -> None:
 
     messages, _ = asyncio.run(loop._model_messages(ctx))
     assert not any("【当前任务】" in m["content"] for m in messages)
+
+
+# ---------- F8：并行摘要失败时取消并 await 其余段 ----------
+
+
+class _FailingSegmentModel:
+    """第 ``fail_call`` 段摘要直接失败；其余段稍慢，便于观察是否被取消。"""
+
+    def __init__(self, fail_call: int) -> None:
+        self.fail_call = fail_call
+        self.started = 0
+        self.finished = 0
+        self.cancelled = 0
+
+    async def achat(self, messages, tools=None, *, tier="standard"):
+        self.started += 1
+        index = self.started
+        try:
+            if index == self.fail_call:
+                raise RuntimeError("segment boom")
+            await asyncio.sleep(0.05)
+            self.finished += 1
+            return ModelResponse(content=f"摘要-{index}")
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+
+
+@pytest.mark.parametrize("fail_call", [1, 2])
+def test_parallel_compaction_failure_cancels_and_awaits_siblings(
+    fail_call: int,
+) -> None:
+    """任一段失败后：兄弟段必须被取消并 await，不得留后台任务继续烧 token。"""
+
+    async def scenario():
+        ctx = _rounds_ctx(6)
+        model = _FailingSegmentModel(fail_call)
+        policy = CompactionPolicy(
+            hard_max_chars=200,
+            target_chars=100,
+            keep_recent_rounds=1,
+            parallel=3,
+        )
+        event = await compact_context(ctx, model, policy)
+        pending = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not asyncio.current_task() and not task.done()
+        ]
+        return event, model, pending
+
+    event, model, pending = asyncio.run(scenario())
+
+    assert event is None  # 失败 → 回退硬裁剪
+    assert model.started == 3
+    # 两个兄弟段都已结束（完成或被取消），且没有残留 pending task。
+    assert model.finished + model.cancelled == 2
+    assert pending == []
+
+
+# ---------- F10：上下文成本计入 assistant tool_calls 参数体量 ----------
+
+
+def test_context_cost_counts_assistant_tool_call_arguments() -> None:
+    from yai_core.kernel.context import message_cost
+
+    payload = "x" * 4000
+    message = ChatMessage(
+        role="assistant",
+        content="",
+        tool_calls=[
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "create_code_tool", "arguments": payload},
+            }
+        ],
+    )
+    assert message_cost(message) >= 4000
+
+    ctx = Context("系统提示", max_chars=1000)
+    ctx.add(ChatMessage(role="user", content="任务"))
+    ctx.add(message)
+    ctx.add(ChatMessage(role="user", content="下一轮"))
+    ctx.enforce_budget()
+    # 参数体量计入后，含大参数的旧轮会被整轮裁掉，不会超限带进模型。
+    assert ctx.total_chars() <= ctx.max_chars
+    assert [m.role for m in ctx.messages] == ["system", "user"]

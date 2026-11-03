@@ -33,6 +33,16 @@ from yai_core.learning import ContextualBanditSelector
 from yai_core.llm.anthropic import AnthropicProvider
 from yai_core.llm.fallback import FallbackModelProvider
 from yai_core.llm.openai_compat import OpenAICompatProvider
+from yai_core.llm.routing import (
+    NoAuthorizedProviderError,
+    ProviderPolicy,
+    ProviderRoutingError,
+    ProviderRoutingPolicy,
+    RoutingContext,
+    RoutingDecision,
+    current_routing,
+    routing_context,
+)
 from yai_core.llm.scripted import ScriptedModel
 from yai_core.metrics import MetricsRecorder
 from yai_core.spi import (
@@ -57,6 +67,7 @@ from yai_core.tools import (
     check_tool_specs,
 )
 from yai_core.types import (
+    VERIFICATION_STATUSES,
     AgentEvent,
     ApprovalPolicy,
     ApprovalRule,
@@ -65,6 +76,7 @@ from yai_core.types import (
     CompositeStep,
     ContentPart,
     EventType,
+    Evidence,
     ExecutionReceipt,
     GateDecision,
     ImagePart,
@@ -78,8 +90,15 @@ from yai_core.types import (
     ToolCallRequest,
     ToolGovernance,
     ToolSpec,
+    VerificationResult,
     parts_to_text,
     verify_receipt_chain,
+)
+from yai_core.verification import (
+    CompositeVerifier,
+    OutcomeVerifier,
+    evidence_from_events,
+    verify_run,
 )
 
 __version__ = "0.25.0"
@@ -119,6 +138,14 @@ __all__ = [
     "OpenAICompatProvider",
     "AnthropicProvider",
     "FallbackModelProvider",
+    "NoAuthorizedProviderError",
+    "ProviderPolicy",
+    "ProviderRoutingError",
+    "ProviderRoutingPolicy",
+    "RoutingContext",
+    "RoutingDecision",
+    "current_routing",
+    "routing_context",
     "ScriptedModel",
     "build_spec",
     "discover",
@@ -152,5 +179,12 @@ __all__ = [
     "ToolGovernance",
     "ToolSpec",
     "parts_to_text",
+    "CompositeVerifier",
+    "Evidence",
+    "OutcomeVerifier",
+    "VERIFICATION_STATUSES",
+    "VerificationResult",
+    "evidence_from_events",
+    "verify_run",
     "__version__",
 ]

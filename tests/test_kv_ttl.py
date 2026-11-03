@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from yai_core.memory import InMemoryStore, SqliteStore
+from yai_core.types import ChatMessage
 
 
 class FakeClock:
@@ -121,3 +122,148 @@ def test_sqlite_v1_to_v2_migration_preserves_kv(tmp_path) -> None:
     store2 = SqliteStore(db, clock=clock)
     assert run(store2.get("legacy")) == "kept"
     store2.close()
+
+
+# ---------- v0.26：迁移幂等对账（半迁移 / 丢 user_version 的库都要能自愈） ----------
+
+_V1_SCHEMA_NO_HISTORY = """
+CREATE TABLE kv (
+    scope      TEXT NOT NULL DEFAULT 'default',
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+    PRIMARY KEY (scope, key)
+);
+INSERT INTO kv(scope, key, value) VALUES ('default', 'legacy', 'kept');
+"""
+
+_V1_HISTORY_SCHEMA = """
+CREATE TABLE history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT NOT NULL DEFAULT 'default',
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL DEFAULT '',
+    tool_calls   TEXT,
+    tool_call_id TEXT,
+    name         TEXT,
+    created_at   TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+INSERT INTO history(scope, role, content) VALUES ('default', 'user', '用户数据还在');
+"""
+
+
+def _columns(db, table: str) -> set[str]:
+    conn = sqlite3.connect(db)
+    try:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    finally:
+        conn.close()
+
+
+def _user_version(db) -> int:
+    conn = sqlite3.connect(db)
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_partial_v1_to_v2_migration_is_idempotent(tmp_path) -> None:
+    """ALTER 已生效但 user_version 没落盘（进程在两条语句之间被杀）后重开必须自愈。"""
+    db = tmp_path / "half_migrated.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(_V1_SCHEMA_NO_HISTORY + "PRAGMA user_version = 1;")
+    # 模拟半迁移：DDL 已提交、版本号还停在 1
+    conn.execute("ALTER TABLE kv ADD COLUMN expires_at TEXT")
+    conn.commit()
+    conn.close()
+
+    store = SqliteStore(db)  # 旧实现这里抛 duplicate column name: expires_at（永远打不开）
+    try:
+        assert run(store.get("legacy")) == "kept"
+        run(store.put("after", "v", ttl_seconds=60))
+        assert run(store.get("after")) == "v"
+    finally:
+        store.close()
+
+    assert _user_version(db) == 3
+    assert "expires_at" in _columns(db, "kv")
+    assert "parts" in _columns(db, "history")  # history 缺失 -> 建表
+
+
+def test_version0_legacy_tables_are_reconciled(tmp_path) -> None:
+    """user_version=0 但表是老结构（.dump 重建会丢 user_version）：按列对账后可用。"""
+    db = tmp_path / "lost_version.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(_V1_SCHEMA_NO_HISTORY + _V1_HISTORY_SCHEMA)  # 不写 user_version
+    conn.commit()
+    conn.close()
+    assert _user_version(db) == 0
+
+    store = SqliteStore(db)  # 旧实现会把版本号置 3 但永远不补列
+    try:
+        # 旧数据保留、可读
+        assert run(store.get("legacy")) == "kept"
+        assert [m.content for m in store.history()] == ["用户数据还在"]
+        # 新写入也可用（旧实现：table history has no column named parts）
+        run(store.append_history(ChatMessage(role="user", content="迁移后的新消息")))
+        run(store.put("fresh", "v", ttl_seconds=60))
+        assert [m.content for m in store.history()][-1] == "迁移后的新消息"
+        assert run(store.get("fresh")) == "v"
+    finally:
+        store.close()
+
+    assert _user_version(db) == 3
+    assert {"parts"} <= _columns(db, "history")
+    assert {"expires_at"} <= _columns(db, "kv")
+    # 自愈后再开也不会破坏数据
+    again = SqliteStore(db)
+    try:
+        assert run(again.get("legacy")) == "kept"
+        assert len(again.history()) == 2
+    finally:
+        again.close()
+
+
+def test_v3_database_missing_column_self_heals(tmp_path) -> None:
+    """已经标成 v3 却缺列（旧实现的半迁移产物）也要能被对账修好，而不是永远报错。"""
+    db = tmp_path / "broken_v3.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE history (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope        TEXT NOT NULL DEFAULT 'default',
+            role         TEXT NOT NULL,
+            content      TEXT NOT NULL DEFAULT '',
+            tool_calls   TEXT,
+            tool_call_id TEXT,
+            name         TEXT,
+            created_at   TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        );
+        CREATE TABLE kv (
+            scope      TEXT NOT NULL DEFAULT 'default',
+            key        TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            PRIMARY KEY (scope, key)
+        );
+        INSERT INTO history(scope, role, content) VALUES ('default', 'user', 'v3 时代的老数据');
+        PRAGMA user_version = 3;
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteStore(db)  # 版本号说是 v3，但 parts / expires_at 都不在
+    try:
+        run(store.append_history(ChatMessage(role="user", content="补列后写入")))
+        run(store.put("k", "v", ttl_seconds=60))
+        assert [m.content for m in store.history()] == ["v3 时代的老数据", "补列后写入"]
+        assert run(store.get("k")) == "v"
+        assert run(store.get("v3 时代的老数据")) is None  # KV 与历史不串
+    finally:
+        store.close()
+
+    assert {"parts"} <= _columns(db, "history")
+    assert {"expires_at"} <= _columns(db, "kv")

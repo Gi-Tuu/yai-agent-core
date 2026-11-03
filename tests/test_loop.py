@@ -557,7 +557,9 @@ def test_iteration_limit_failure_keeps_decision_markers(failure: str) -> None:
     assert len(errors) == 1
     assert errors[0].data["stage"] == "model"
     assert result.events[-1].type.value == "done"
-    assert result.final_text == core.memory.history()[-1].content == messages[0].data["text"]
+    assert result.final_text == messages[0].data["text"]
+    # CORE-4：final_text 为空时不写 assistant 历史（失败任务不污染下一轮上下文）。
+    assert [message.role for message in core.memory.history()] == ["user"]
     assert not extract_route_outcome(result.events, result.strategy, max_iters=1).success
     assert cancelled == ([True] if failure == "timeout" else [])
 

@@ -192,7 +192,7 @@ At moments when the kernel **silently falls back so the main flow keeps running,
 On top of P0 (concurrency contract / hard timeout / diagnostics), P1 addresses four **cost and data-safety** risks. All four are off by default or behave exactly as before, keep zero hard third-party dependencies in the kernel, and are fully tested offline.
 
 - **Task-level hard budgets with a circuit breaker (prevent runaway spend):** `AgentCore(budget=Budget(max_model_calls=, max_tool_calls=, max_tokens=))`; `None` means unlimited and `0` means never allowed. The loop creates one `BudgetTracker` for the top-level task (clarification recursion reuses the same ledger). Model calls are counted at the single `_model_chat` entry point (**excluding** route classification and context compaction); normal tools are counted in the execution branch (meta-tools and composer inner steps are not double-counted; a composite tool counts as one call externally); tokens accumulate only when the model returns real `usage` (never estimated when missing). Hitting any cap terminates immediately, emits a `budget_exceeded` event (scope/used/limit plus a ledger snapshot), and the exception is explicitly re-raised in both tolerant fallback paths so it is never swallowed as a "degradation."
-- **At-rest encryption for long-term memory (9th SPI, opt-in):** `spi/cipher.py` defines the synchronous `StorageCipher` (`encrypt/decrypt(bytes)`). `MemoryVault(path, cipher=...)` transparently encrypts on write and decrypts on read using atomic `os.replace`; a missing file, corrupt JSON, or **failed decryption (wrong key / tampered ciphertext) always cold-starts to an empty store and rewrites it**, so the process can always boot. With no cipher the vault stays plaintext JSON (backward compatible, documented as such). The algorithm stays out of the kernel: the `[crypto]` extra ships `FernetStorageCipher` (authenticated encryption) with `generate_key()` and `from_env("YAI_VAULT_KEY")` (a missing env var raises rather than silently minting a one-time key).
+- **At-rest encryption for long-term memory (9th SPI, opt-in):** `spi/cipher.py` defines the synchronous `StorageCipher` (`encrypt/decrypt(bytes)`). `MemoryVault(path, cipher=...)` transparently encrypts on write and decrypts on read using atomic `os.replace`; a missing file, corrupt JSON, or **failed decryption (wrong key / tampered ciphertext) degrades to read-only with `decrypt_failed` and never silently overwrites the original vault** (the damaged file is quarantined first; the host must restore the key or migrate explicitly), so the process still boots without data loss. With no cipher the vault stays plaintext JSON (backward compatible, documented as such). The algorithm stays out of the kernel: the `[crypto]` extra ships `FernetStorageCipher` (authenticated encryption) with `generate_key()` and `from_env("YAI_VAULT_KEY")` (a missing env var raises rather than silently minting a one-time key).
 - **Centralized `CoreConfig` (prevent misconfiguration, enable reuse):** the zero-dependency `config.py` dataclass gathers every model-independent `AgentCore` option with defaults identical to the kwargs; `validate()` rejects bad values at construction time (non-positive counts, `bool` masquerading as an int, wrong types for `llm_router` / `context_compaction` / `budget` / `model_timeout`). `AgentCore.from_config(model, config)` lets multiple specialists / sub-employees share one budget-and-switch profile. The public kwargs signature and default behavior are unchanged.
 - **Online SQLite hot backup and restore:** `SqliteStore.backup_to(dest)` takes a page-consistent snapshot inside the instance lock using the stdlib `Connection.backup`, with no downtime, for both file and `:memory:` stores; `restore_to(backup, dest)` restores offline and raises `sqlite3.DatabaseError` on a corrupt backup instead of silently opening an empty database. Crash recovery is guaranteed by WAL plus atomic writes (reopening the same path after close loses no data).
 
@@ -214,15 +214,49 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 
 All of the following have shipped: zero hard kernel dependencies, and no change to existing host behavior by default.
 
-- **Multimodal message contract (v0.12):** `ChatMessage.parts` plus `TextPart`/`ImagePart`/`ResourcePart` (`src/yai_core/types.py:747-963`). `parts_to_text()` (`types.py:901`) degrades parts to plain text and states plainly that the model cannot see them — image and resource references are never dropped silently.
+- **Multimodal message contract (v0.12):** `ChatMessage.parts` plus `TextPart`/`ImagePart`/`ResourcePart` (`src/yai_core/types.py:875-1028`). `parts_to_text()` (`types.py:1029`) degrades parts to plain text and states plainly that the model cannot see them — image and resource references are never dropped silently.
 - **Capability manifest v2 (v0.12):** `MANIFEST_VERSION = 2` with supported versions `(1, 2)` (`src/yai_core/tools/manifest.py:43-46`). v2 makes the governance semantics part of the format contract, so an old reader rejects it outright — better to refuse the import than to run with silently voided safety semantics.
 - **Input validation over 13 schema keywords (v0.13):** `src/yai_core/policy/approval.py:121` validates 4 structural keywords (`type`/`required`/`properties`/`items`) plus 9 value-domain ones (`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`); keywords that are still unimplemented stay on record (`src/yai_core/tools/health.py:31`) instead of pretending they were checked.
-- **Capability health check (v0.14):** `check_tool_specs()` (`src/yai_core/tools/health.py:622`) statically checks whether a declaration can really be enforced by the kernel (no handler call, no network); `AgentCore.capability_health()` (`src/yai_core/core.py:394`) reports on the registered tools.
-- **Trusted change preview + execution receipt (v0.14):** `ChangePreview` (`src/yai_core/types.py:160`) carries the host-generated real diff and token, re-generated before execution and compared — a changed token invalidates the approval; `ExecutionReceipt` (`types.py:113`) distinguishes not_started/succeeded/failed/unknown/partial, which is what decides whether a call may be retried.
+- **Capability health check (v0.14):** `check_tool_specs()` (`src/yai_core/tools/health.py:622`) statically checks whether a declaration can really be enforced by the kernel (no handler call, no network); `AgentCore.capability_health()` (`src/yai_core/core.py:437`) reports on the registered tools.
+- **Trusted change preview + execution receipt (v0.14):** `ChangePreview` (`src/yai_core/types.py:235`) carries the host-generated real diff and token, re-generated before execution and compared — a changed token invalidates the approval; `ExecutionReceipt` (`types.py:125`) distinguishes not_started/succeeded/failed/unknown/partial, which is what decides whether a call may be retried.
 - **Live host state (v0.15/v0.19):** `HostStateProvider` (`src/yai_core/kernel/state.py:48`) injects a read-only, transient snapshot before each model call; it never enters history or memory, and a failing provider only emits a `host_state_failed` diagnostic (`kernel/state.py:170`) while the remaining state is still injected.
 - **Sidecar protocol (v0.16):** `python -m yai_core.sidecar` runs NDJSON + JSON-RPC 2.0 over stdio (`src/yai_core/sidecar/protocol.py:18`), carrying initialize / agent/run / agent/cancel / ping / shutdown; the tool surface still goes through MCP / OpenAPI — the protocol itself has no tool/call.
 - **Office document text extraction (v0.21):** `extract_text()` in `src/yai_core/batteries/office_text.py:50`: docx/xlsx/pptx go through the stdlib zipfile + ElementTree (zero dependency), PDF through the optional pypdf; the three safety gates (member allowlist, DOCTYPE/ENTITY rejection, size caps) are stated at the top of the file.
-- **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:214` (the timeout takes the stricter setting) and `tools/executor.py:584` (the rate gate runs before authorization).
+- **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:253` (the timeout takes the stricter setting) and `tools/executor.py:566` (the rate gate runs before authorization).
+
+### 2.12 v0.26 execution adapters and verifiable outcomes (Unreleased)
+
+v0.26 adds "actually operate external systems and verify the result" as **optional adapters**, without
+changing the kernel's dependencies or public contracts:
+
+- **Browser Provider (`src/yai_core/integrations/browser/`)** depends only on a `BrowserBackend`
+  Protocol. Element refs are snapshot-versioned (`s<N>:<i>`) and expire when the page changes; eight
+  tools (observe / click / type / select / tabs / switch / wait / open) register into `ToolRegistry`
+  and go through `ToolExecutor` for validation, policy, approval, receipts and events. Actions report
+  `executed + changed / no_observable_change / unknown` and never claim task success. The real backend
+  (`playwright_backend.py`) is an optional `[browser]` extra that has passed one local smoke run
+  (`scripts/browser_smoke.py`) but has **no CI regression coverage yet**.
+- **Windows Desktop Provider (`src/yai_core/integrations/desktop/`)** follows the same pattern: UIA
+  semantic patterns first, geometry clicks off by default, snapshot-versioned control refs, high-risk
+  control names refused, process/title allowlists, foreground guard before physical input, and
+  `pause/resume` for user takeover; it never crosses UAC / the secure desktop. The `[windows]` extra
+  provides the pywinauto backend; `scripts/windows_uia_smoke.py` has passed one real-machine UIA smoke
+  run (self-created window → observe → Invoke → callback verification).
+- **Outcome Verification (`src/yai_core/verification.py` + `types.py`)** separates "tool call succeeded"
+  from "goal achieved" via `Evidence` / `VerificationResult` and an `OutcomeVerifier` contract.
+  `AgentCore(outcome_verifier=...)` collects receipts and explicit tool `evidence` before `DONE` and
+  attaches the verdict to the `DONE` event and `RunResult.verification`; without a verifier it stays
+  `None`, and a failing verifier degrades to `not_verifiable` with a diagnostic — never a retry.
+- **Browser extension host + Native Messaging Bridge (`extension/`, `sidecar/native_bridge.py`)**: the
+  extension is only a Host; a standalone Bridge converts length-prefixed frames ↔ NDJSON to the local
+  Sidecar without changing the Sidecar protocol. Extension origins are allowlisted (fail closed), ops
+  are whitelisted, credentials live only in local config, and a disconnect marks the result `unknown`
+  without replaying anything. **The extension has not been loaded in a real browser yet.**
+- **P0 memory and provider safety**: `MemoryVault` classifies load failures and offers
+  quarantine/read_only/raise handling (never silently overwriting the original file) plus owner binding;
+  `FallbackModelProvider` accepts host-declared provider allowlists / sensitivity levels / lock / no-fallback,
+  and unauthorized backends are filtered out before any request (zero calls). See
+  `docs/IMPLEMENTATION_STATUS.md` and ADRs 0004 / 0005.
 
 ## 3. SPI contracts
 
@@ -274,7 +308,7 @@ app = create_app(core)
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 
-Review-period rate limiting (on by default): `rate_limit.py` provides a per-IP sliding window
+Review-period rate limiting (on by default): `ratelimit.py` provides a per-IP sliding window
 (`enabled=True`, `per_minute=30`, `window_seconds=60`; tune or disable with `YAI_RATE_LIMIT_*`). The
 middleware only intercepts `POST /v1/agent/run`, returning 429 + `Retry-After` on overflow (same origin
 as the response body); limited requests never reach the model. The three GET verification endpoints are

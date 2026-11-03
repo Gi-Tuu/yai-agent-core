@@ -42,6 +42,7 @@ from yai_core.spi import (
     ToolDiscovery,
     ToolSandbox,
 )
+from yai_core.verification import OutcomeVerifier
 
 
 def _is_positive_int(value: Any) -> bool:
@@ -87,6 +88,16 @@ class CoreConfig:
     memory_embedder: EmbeddingProvider | None = None
     auto_memory_recall: bool = False
     auto_recall_k: int = 3
+    #: 长期记忆落盘加载失败时的处置（v0.26 P0）：quarantine / read_only / raise，
+    #: 语义见 yai_core.memory.vault.CORRUPTION_POLICIES。默认隔离备份后继续，
+    #: 绝不静默覆盖原始档案。
+    memory_corruption_policy: str = "quarantine"
+    #: 可选的租户 / 所有者标识（v0.26 P0 记忆隔离最小方案）：写入落盘并校验；
+    #: 文件 owner 不一致时拒绝读取并只读降级，防止跨租户读/覆盖。
+    memory_owner: str | None = None
+    #: 任务结果验收器（v0.26 Outcome Verification）：run 结束时收集收据/工具证据，
+    #: 交给它判定目标是否达成；None 表示不做验收（保持旧行为）。
+    outcome_verifier: OutcomeVerifier | None = None
     # 循环 / 上下文控制。
     max_iters: int = 6
     max_clarify_rounds: int = 2
@@ -133,6 +144,16 @@ class CoreConfig:
                 raise ValueError(f"{label} 必须是正数或 None")
         if self.auto_memory_recall and not self.long_memory:
             raise ValueError("auto_memory_recall=True 时必须同时启用 long_memory=True")
+        if self.memory_corruption_policy not in ("quarantine", "read_only", "raise"):
+            raise ValueError(
+                "memory_corruption_policy 只接受 quarantine、read_only 或 raise"
+            )
+        if self.memory_owner is not None and not str(self.memory_owner).strip():
+            raise ValueError("memory_owner 必须是非空字符串或 None")
+        if self.outcome_verifier is not None and not callable(
+            getattr(self.outcome_verifier, "verify", None)
+        ):
+            raise ValueError("outcome_verifier 必须实现 async verify(goal, ...) 方法或为 None")
         if not _is_positive_int(self.auto_recall_k):
             raise ValueError("auto_recall_k 必须是 >=1 的整数")
         if self.memory_embedder is not None and not inspect.iscoroutinefunction(
@@ -149,5 +170,17 @@ class CoreConfig:
         return self
 
     def as_kwargs(self) -> dict[str, Any]:
-        """展开为 ``AgentCore(model, **cfg.as_kwargs())`` 所需的关键字参数字典。"""
-        return dataclasses.asdict(self)
+        """展开为 ``AgentCore(model, **cfg.as_kwargs())`` 所需的关键字参数字典。
+
+        只做**浅拷贝**：注入的 SPI 对象（channel / memory / policy / sandbox /
+        discovery / learning / metrics / outcome_verifier 等）必须按引用交给
+        ``AgentCore``。``dataclasses.asdict`` 会 deepcopy 它们，导致宿主持有的
+        句柄与内核实际使用的对象脱节（收不到事件、历史读不到、运行时撤销权限
+        不生效），含锁/连接/线程的实现（如内置 SqliteStore）甚至会直接抛出
+        ``TypeError``。配置里的值对象（CountBudget / CompactionPolicy）本身不可变，
+        也不需要复制。
+        """
+        return {
+            field.name: getattr(self, field.name)
+            for field in dataclasses.fields(self)
+        }

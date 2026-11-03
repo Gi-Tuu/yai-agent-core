@@ -320,7 +320,8 @@ def test_focus_message_never_becomes_done_or_history_answer(
     result = asyncio.run(core.run("查询工具零零"))
 
     assert result.final_text == result.events[-1].data["final_text"] == ""
-    assert core.memory.history()[-1].content == ""
+    # CORE-4：空 final_text（模型空回答 / react 失败）都不写 assistant 历史。
+    assert [message.role for message in core.memory.history()] == ["user"]
     assert len(model.calls) == 2
     outcome = extract_route_outcome(result.events, result.strategy)
     without_focus = [event for event in result.events if event.data.get("kind") != "schema_focus"]

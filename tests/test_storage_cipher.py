@@ -12,6 +12,7 @@ import pytest
 
 from yai_core import AgentCore, StorageCipher
 from yai_core.memory import MemoryVault
+from yai_core.memory.vault import MemoryVaultReadOnlyError
 
 try:
     import cryptography  # noqa: F401
@@ -77,18 +78,26 @@ def test_plaintext_default_is_backward_compatible(tmp_path: Path) -> None:
     assert reopened.status()["total"] == 1
 
 
-def test_decrypt_failure_cold_starts_empty(tmp_path: Path) -> None:
+def test_decrypt_failure_degrades_read_only_and_preserves_ciphertext(
+    tmp_path: Path,
+) -> None:
+    """v0.26 P0：解密失败不再"空库启动并覆盖"，改为只读降级 + 原档不动。"""
     path = tmp_path / "memory.enc.json"
     MemoryVault(storage_path=path, cipher=FakeCipher()).remember("秘密")
+    original = path.read_bytes()
 
-    # 换一把"解不开"的 cipher：冷启动为空库，不抛异常，进程不崩。
+    # 换一把"解不开"的 cipher：不抛异常（进程不崩），但只读、不覆盖。
     vault = MemoryVault(storage_path=path, cipher=BrokenCipher())
     assert vault.status()["total"] == 0
-    # 冷启动后 _save 已用新 cipher 重写，再次打开仍为空且可正常写入。
-    vault.remember("新的开始")
-    again = MemoryVault(storage_path=path, cipher=BrokenCipher())
-    # BrokenCipher 连自己刚写的也解不开（恒失败），故仍冷启动；这里只验证不崩。
-    assert again.status()["total"] == 0
+    assert vault.read_only is True
+    assert vault.status()["storage"]["status"] == "decrypt_failed"
+    with pytest.raises(MemoryVaultReadOnlyError):
+        vault.remember("新的开始")
+    assert path.read_bytes() == original
+
+    # 换回正确的 cipher：原记忆完整恢复（证明只读保护没有破坏档案）。
+    recovered = MemoryVault(storage_path=path, cipher=FakeCipher())
+    assert recovered.recall("秘密")[0]["content"] == "秘密"
 
 
 def test_core_passes_memory_cipher_through(tmp_path: Path) -> None:
@@ -105,6 +114,27 @@ def test_core_passes_memory_cipher_through(tmp_path: Path) -> None:
     )
     assert core.memory_vault is not None
     assert core.memory_vault._cipher is cipher  # noqa: SLF001 - 验证接线
+
+
+@pytest.mark.skipif(not HAS_CRYPTO, reason="未安装 [crypto] extra，跳过 Fernet 测试")
+def test_ephemeral_fernet_key_restart_degrades_read_only(tmp_path: Path) -> None:
+    """一次性密钥只适合演示：重启后换了一把密钥 = decrypt_failed + 只读，不是"空库可写"。
+
+    这个语义钉在测试里，避免文档/使用说明继续按"重启即空库"来写 runbook。
+    """
+    from yai_core.integrations.crypto import FernetStorageCipher
+
+    path = tmp_path / "memory.enc.json"
+    MemoryVault(storage_path=path, cipher=FernetStorageCipher()).remember("用一次性密钥写入")
+    original = path.read_bytes()
+
+    restarted = MemoryVault(storage_path=path, cipher=FernetStorageCipher())  # 新的一次性密钥
+
+    assert restarted.load_state["status"] == "decrypt_failed"
+    assert restarted.read_only is True
+    with pytest.raises(MemoryVaultReadOnlyError):
+        restarted.remember("重启后想再记一条")
+    assert path.read_bytes() == original  # 原始密文分毫不动
 
 
 @pytest.mark.skipif(not HAS_CRYPTO, reason="未安装 [crypto] extra，跳过 Fernet 测试")
