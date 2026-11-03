@@ -314,6 +314,9 @@ def _print_human(report: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    # Windows CI 的默认 stdout 可能是 cp1252；JSON 里含中文，显式 UTF-8 避免乱码/崩溃。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="离线记忆质量基准")
     parser.add_argument(
         "--real-embed",
