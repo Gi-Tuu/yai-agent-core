@@ -60,6 +60,10 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
         assert behaviour in js
     # 用户可见的状态要有明确文案，不能只留英文 lastError。
     assert "未注册本地 Bridge" in js
+    # 重复点击 / run_busy / 空最终文本 / 内部页面读取失败都要有可操作提示。
+    assert "setRunning" in js
+    assert "无最终文本" in js
+    assert "浏览器内部页面" in js
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。
     assert "connectNative" not in js
     assert "connectNative" in _read("service_worker.js")

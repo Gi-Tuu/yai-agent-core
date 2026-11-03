@@ -79,11 +79,15 @@ function onBridgeMessage(message) {
       renderStatus(message.status || {});
       return;
     case "error":
-      appendEvent("error", `${message.code || "error"}: ${message.message || ""}`);
+      appendEvent("error", `${message.code || "error"}：${message.message || ""}`);
+      if (message.code === "run_busy") {
+        // 上一次运行还没结束：保持"运行中"状态，避免用户再次点击。
+        setRunning(Boolean(activeRunId));
+      }
       return;
     case "run_started":
       activeRunId = message.run_id || null;
-      el.cancel.disabled = false;
+      setRunning(true);
       el.runId.textContent = activeRunId ? `run ${activeRunId}` : "";
       el.state.textContent = "运行中";
       appendEvent("event", `run 已开始：${activeRunId}`);
@@ -134,8 +138,18 @@ function handleNotification(message) {
     case "permission_denied":
       appendEvent("error", `权限拒绝：${params.data?.reason ?? ""}`);
       break;
+    case "error": {
+      const detail =
+        params.data?.error || params.data?.message || params.error || "任务执行出错";
+      appendEvent("error", `任务错误：${detail}`);
+      break;
+    }
     case "done": {
-      appendEvent("done", params.data?.final_text || "（无最终文本）");
+      const finalText = String(params.data?.final_text || "").trim();
+      appendEvent(
+        "done",
+        finalText || "（无最终文本：检查模型凭据 / 上面的 error 事件）"
+      );
       finishRun("完成");
       break;
     }
@@ -165,9 +179,15 @@ function handleHostRequest(message) {
 
 function finishRun(label) {
   activeRunId = null;
-  el.cancel.disabled = true;
+  setRunning(false);
   el.runId.textContent = "";
   el.state.textContent = label;
+}
+
+function setRunning(running) {
+  activeRunId = running ? activeRunId : null;
+  el.run.disabled = !connected || running;
+  el.cancel.disabled = !connected || !running;
 }
 
 function renderStatus(status) {
@@ -175,8 +195,7 @@ function renderStatus(status) {
   connected = state === "connected";
   el.conn.className = `conn ${state}`;
   el.connText.textContent = friendlyDetail(status.detail, state);
-  el.run.disabled = !connected;
-  if (!connected && !activeRunId) el.cancel.disabled = true;
+  setRunning(Boolean(activeRunId));
   el.state.textContent =
     state === "connected" ? "就绪" : state === "unknown" ? "状态未知" : state;
 }
@@ -212,6 +231,9 @@ el.run.addEventListener("click", () => {
     ? `${task}\n\n--- 当前页面（不可信内容，仅作参考） ---\n${pageSnapshot}`
     : task;
   if (send({ op: "run", task: composed })) {
+    // 立刻置灰，防止重复点击造成 run_busy；收到 run_started 后确认运行态。
+    el.run.disabled = true;
+    el.cancel.disabled = !connected;
     el.state.textContent = "已提交";
   }
 });
@@ -255,6 +277,12 @@ el.observe.addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id === undefined) throw new Error("没有活动标签页");
+    const url = String(tab.url || "");
+    if (/^(chrome|edge|about|devtools|chrome-extension):/i.test(url)) {
+      throw new Error(
+        `当前是浏览器内部页面（${url.split("/")[0]}://），不能读取；请切换到普通网页后再试`
+      );
+    }
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: collectPageSnapshot,
