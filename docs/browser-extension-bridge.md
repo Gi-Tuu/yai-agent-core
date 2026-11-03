@@ -36,25 +36,30 @@ Chrome / Edge Extension (MV3)
 
 1. 安装 YAI（仓库根目录）：`uv sync --extra llm`（真实模型）或按需加 `--extra browser`。
 2. 构建扩展：Chrome → `chrome://extensions` → 打开"开发者模式" → "加载已解压的扩展程序" → 选本仓库 `extension/` 目录。记下扩展 ID。
-3. 准备 Bridge 配置：复制 `extension/bridge.config.example.json` 到仓库外（例如 `%LOCALAPPDATA%\YAI\bridge.json`），把 `allowed_origins` 换成 `chrome-extension://<扩展 ID>/`。
-4. 生成可执行的 Native Host：Chrome 的 manifest `path` 必须指向可执行文件，
-   `python.exe` 无法携带 `-m` 参数。推荐二选一：
-   - **PyInstaller（推荐）**：`pyinstaller --onefile --name yai-bridge extension/native/bridge_host.py`，
-     把 `com.yai.agentcore.json` 的 `path` 指向生成的 `yai-bridge.exe`；
-   - 开发机调试：`python extension/native/bridge_host.py chrome-extension://<扩展 ID>/`（用配置环境变量）。
-   填写 `extension/native/com.yai.agentcore.json` 的 `path` 与 `allowed_origins`（换成扩展 ID）。
-5. 注册 Native Messaging Host（Chrome，当前用户）：
+3. 生成可执行的 Native Host（Chrome 的 manifest `path` 必须指向可执行文件，
+   `python.exe` 无法携带 `-m` 参数）：
    ```powershell
-   New-Item -Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.yai.agentcore' -Force | Out-Null
-   Set-ItemProperty -Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.yai.agentcore' `
-     -Name '(default)' -Value 'C:\path\to\com.yai.agentcore.json'
+   .\.venv\Scripts\python.exe -m PyInstaller --onefile --name yai-bridge `
+     --distpath dist --workpath build\pyinstaller --specpath build\pyinstaller `
+     --paths src extension\native\bridge_host.py
    ```
-   Edge 把 `Google\Chrome` 换成 `Microsoft\Edge`。Linux / macOS 路径见
-   [Chrome 官方文档](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)。
-6. 点扩展图标打开侧边栏；状态徽标显示"已连接本地 Sidecar"后即可运行任务。
+4. 注册（一条命令写配置 + manifest + Chrome/Edge 的 HKCU 注册表，不需要管理员权限；`--dry-run` 可先预览）：
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\register_native_host.py `
+     --extension-id <你的扩展ID> --launcher dist\yai-bridge.exe --python .\.venv\Scripts\python.exe
+   ```
+   它会写 `%LOCALAPPDATA%\YAI\bridge.json`（`allowed_origins` + `sidecar_command`，**不含模型凭据**）
+   与 `%LOCALAPPDATA%\YAI\com.yai.agentcore.json`，并注册
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.yai.agentcore` 与
+   `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.yai.agentcore`。
+   卸载：`python scripts\register_native_host.py --unregister`。
+5. 点扩展图标打开侧边栏；状态徽标显示"已连接本地 Sidecar"（或"协议握手完成"）后即可运行任务。
+   排障日志：`%LOCALAPPDATA%\YAI\bridge.log`（Chrome 看不到 native host 的 stderr，
+   Bridge 会把启动/错误写在这里）。
 
 > 模型凭据：在启动 Chrome 的环境里设置 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL`
-> （Sidecar 默认模型工厂读取这些变量），**不要**写进扩展或浏览器消息。
+> （Sidecar 默认模型工厂读取这些变量），**不要**写进扩展或浏览器消息。改完环境变量后
+> 需要重启 Chrome（子进程继承启动时的环境）。
 
 ## 协议映射
 
@@ -76,7 +81,14 @@ Chrome / Edge Extension (MV3)
 - 当前只支持 Chrome / Edge（Chromium 116+ Side Panel）；Firefox 等未适配。
 - **已真机验证**：扩展在 Chrome 156 / Edge 156 中能被 `--load-extension` 加载并注册
   MV3 service worker（`scripts/extension_smoke.py`，以 CDP target 为证据）；Bridge 与
-  真实 Sidecar 的 hello / status / shutdown 通过（`scripts/bridge_smoke.py`）。
+  真实 Sidecar 的 hello / status / shutdown 通过（`scripts/bridge_smoke.py`）；
+  **Native Messaging 端到端已在真实 Edge 验证**：注册后侧边栏状态变为
+  "协议握手完成（bridge v1）/ 就绪"，`%LOCALAPPDATA%\YAI\bridge.log` 记录
+  `frozen=True` 启动与 `exit ok`。
+- **排障**：面板显示 "Error when communicating with the native messaging host" 时，
+  先看 `%LOCALAPPDATA%\YAI\bridge.log`。实测 Chrome/Edge 会额外传
+  `--parent-window=0`（已处理，不再被当成配置路径）；也检查 manifest 的
+  `allowed_origins` 是否与扩展 ID 完全一致。
 - **仍未真机验证**：侧边栏点击流（工具栏图标 + 用户手势）、Native Messaging 注册
   （需要写注册表）、安装包分发、Service Worker 回收后的重连，以及跨浏览器差异。
 

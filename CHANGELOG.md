@@ -26,7 +26,14 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  - **侧边栏入口修复（用户反馈"没有侧边栏"）**：service worker 顶层与
+  - **Native Messaging 自动注册 + 端到端验证（本机）**：新增
+  `scripts/register_native_host.py`（一条命令写 bridge 配置 / host manifest /
+  Chrome+Edge 的 HKCU 注册表，`--unregister` 可逆、`--dry-run` 可预览、不写密钥）；
+  Bridge 支持 `sidecar_command`（PyInstaller 冻结时必须）、默认配置路径
+  `%LOCALAPPDATA%\YAI\bridge.json`、本地排障日志 `bridge.log`，并修掉 Chrome/Edge
+  追加 `--parent-window=0` 被误当配置路径的启动失败。真实 Edge 端到端验证：用户扩展
+  ID 的侧边栏显示"协议握手完成（bridge v1）/ 就绪"，Bridge 日志 frozen=True / exit ok。
+- **侧边栏入口修复（用户反馈"没有侧边栏"）**：service worker 顶层与
   onInstalled/onStartup 都设置 `openPanelOnActionClick`；新增 `chrome.action.onClicked`
   兜底（`sidePanel.open` 失败时把 `sidepanel.html` 开成普通标签页）；面板页把
   "native messaging host not found" 翻成可操作的中文提示；新增

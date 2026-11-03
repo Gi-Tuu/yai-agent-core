@@ -26,9 +26,11 @@ from yai_core.sidecar.native_bridge import (
     BridgeError,
     BridgeOriginError,
     NativeBridge,
+    default_config_path,
     encode_frame,
     load_bridge_config,
     read_frame,
+    resolve_config_path,
     write_frame,
 )
 
@@ -101,6 +103,22 @@ def test_empty_allowlist_rejects_everything() -> None:
         BridgeConfig().check_origin("chrome-extension://abcdef")
 
 
+def test_resolve_config_path_ignores_chrome_flags() -> None:
+    """Chrome / Edge 在 Windows 会追加 --parent-window=0，不能当配置路径。"""
+    assert (
+        resolve_config_path(["chrome-extension://abc/", "--parent-window=0"], None)
+        == default_config_path()
+    )
+    assert (
+        resolve_config_path(["chrome-extension://abc/", r"C:\cfg\bridge.json"], None)
+        == r"C:\cfg\bridge.json"
+    )
+    assert (
+        resolve_config_path(["chrome-extension://abc/"], r"E:\env\bridge.json")
+        == r"E:\env\bridge.json"
+    )
+
+
 def test_load_config_validates(tmp_path) -> None:
     path = tmp_path / "bridge.json"
     path.write_text(
@@ -109,6 +127,7 @@ def test_load_config_validates(tmp_path) -> None:
                 "allowed_origins": ["chrome-extension://abcdef/"],
                 "initialize": {"policy": {"mode": "auto"}},
                 "max_task_chars": 100,
+                "sidecar_command": ["python", "-m", "yai_core.sidecar"],
             }
         ),
         encoding="utf-8",
@@ -116,8 +135,16 @@ def test_load_config_validates(tmp_path) -> None:
     config = load_bridge_config(str(path))
     assert config.allowed_origins == frozenset({"chrome-extension://abcdef"})
     assert config.max_task_chars == 100
+    assert config.sidecar_command == ("python", "-m", "yai_core.sidecar")
 
     path.write_text(json.dumps({"max_task_chars": -1}), encoding="utf-8")
+    with pytest.raises(BridgeError):
+        load_bridge_config(str(path))
+
+    path.write_text(
+        json.dumps({"sidecar_command": "python -m yai_core.sidecar"}),
+        encoding="utf-8",
+    )
     with pytest.raises(BridgeError):
         load_bridge_config(str(path))
 

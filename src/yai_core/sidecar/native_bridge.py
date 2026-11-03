@@ -218,12 +218,16 @@ class BridgeConfig:
             interaction_timeout 等）；扩展无权修改。
         max_task_chars: 单个任务文本上限（默认 4000）。
         max_message_bytes: 出站帧上限，超过则截断为标记（默认 1 MiB）。
+        sidecar_command: 启动 Sidecar 的命令（如 ``["python", "-m", "yai_core.sidecar"]``）。
+            空表示用当前解释器；**PyInstaller 冻结成 exe 时必须显式给**，否则
+            ``sys.executable`` 会变成 Bridge 自身、把 Bridge 当 Sidecar 递归拉起。
     """
 
     allowed_origins: frozenset[str] = frozenset()
     initialize_params: dict[str, Any] = field(default_factory=dict)
     max_task_chars: int = 4000
     max_message_bytes: int = MAX_MESSAGE_BYTES
+    sidecar_command: tuple[str, ...] = ()
 
     def check_origin(self, origin: str | None) -> str:
         """校验 Chrome 传入的扩展来源；不合法直接拒绝。"""
@@ -619,32 +623,100 @@ def load_bridge_config(path: str | None) -> BridgeConfig:
         or max_task_chars <= 0
     ):
         raise BridgeError("max_task_chars 必须是正整数")
+    sidecar_command = raw.get("sidecar_command") or []
+    if not isinstance(sidecar_command, list) or not all(
+        isinstance(item, str) and item.strip() for item in sidecar_command
+    ):
+        raise BridgeError("sidecar_command 必须是非空字符串数组（或省略）")
     return BridgeConfig(
         allowed_origins=frozenset(item.strip().rstrip("/") for item in origins),
         initialize_params=dict(initialize),
         max_task_chars=max_task_chars,
+        sidecar_command=tuple(item.strip() for item in sidecar_command),
     )
+
+
+def default_config_path() -> str:
+    """Chrome 拉起 native host 时只传 origin、不传配置路径，因此需要默认位置。
+
+    Windows: ``%LOCALAPPDATA%\\YAI\\bridge.json``；其它平台回退到
+    ``$XDG_CONFIG_HOME/../YAI/bridge.json`` 或 ``~/.config/YAI/bridge.json``。
+    """
+    import os
+    from pathlib import Path
+
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CONFIG_HOME")
+    if base:
+        return str(Path(base) / "YAI" / "bridge.json")
+    return str(Path.home() / ".config" / "YAI" / "bridge.json")
+
+
+def default_log_path() -> str:
+    """Bridge 本地日志路径（Chrome 看不到 native host 的 stderr，排障靠它）。
+
+    写在配置同目录下：``%LOCALAPPDATA%\\YAI\\bridge.log``；写失败时静默忽略，
+    绝不因为日志问题影响协议。
+    """
+    import os
+    from pathlib import Path
+
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CONFIG_HOME")
+    if base:
+        return str(Path(base) / "YAI" / "bridge.log")
+    return str(Path.home() / ".config" / "YAI" / "bridge.log")
+
+
+def resolve_config_path(args: list[str], env_path: str | None = None) -> str:
+    """按优先级解析配置路径；忽略 Chrome 追加的 ``--parent-window`` 等参数。"""
+    explicit = args[1] if len(args) > 1 and not args[1].startswith("--") else None
+    return explicit or env_path or default_config_path()
+
+
+def _log(message: str) -> None:
+    try:
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        path = Path(default_log_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now(UTC).isoformat()} {message}\n")
+    except Exception:  # noqa: BLE001 - 日志是旁路，绝不反噬协议
+        pass
 
 
 async def main(argv: list[str] | None = None) -> int:
     """``python -m yai_core.sidecar.native_bridge`` 的入口。
 
-    Chrome 调起 native host 时 argv[1] 是扩展来源；配置路径来自第二个参数或
-    环境变量 ``YAI_BRIDGE_CONFIG``。
+    Chrome 调起 native host 时 argv[1] 是扩展来源，并可能追加自己的参数
+    （Windows 实测 `--parent-window=0`）；配置路径优先级：
+    显式非 `--` 开头的 argv[2] → 环境变量 ``YAI_BRIDGE_CONFIG`` →
+    :func:`default_config_path`。
     """
     import os
 
     args = list(sys.argv[1:] if argv is None else argv)
     origin = args[0] if args else ""
-    config_path = args[1] if len(args) > 1 else os.environ.get("YAI_BRIDGE_CONFIG")
+    config_path = resolve_config_path(args, os.environ.get("YAI_BRIDGE_CONFIG"))
     try:
         config = load_bridge_config(config_path)
         config.check_origin(origin)
     except (BridgeError, OSError, ValueError) as exc:
+        _log(f"refuse start origin={origin!r} config={config_path!r} error={exc}")
         print(f"[yai-bridge] 拒绝启动：{exc}", file=sys.stderr)
         return 2
+    _log(f"start origin={origin!r} config={config_path!r} frozen={getattr(sys, 'frozen', False)}")
 
-    transport = SubprocessSidecarTransport()
+    if getattr(sys, "frozen", False) and not config.sidecar_command:
+        _log("refuse start: frozen without sidecar_command")
+        print(
+            "[yai-bridge] 冻结的 Bridge 必须配置 sidecar_command"
+            "（指向可运行 yai_core.sidecar 的 Python 解释器）",
+            file=sys.stderr,
+        )
+        return 2
+
+    transport = SubprocessSidecarTransport(list(config.sidecar_command) or None)
     from functools import partial
 
     bridge = NativeBridge(
@@ -656,8 +728,16 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         await bridge.run()
     except BridgeOriginError as exc:  # pragma: no cover - start 前已校验
+        _log(f"origin error: {exc}")
         print(f"[yai-bridge] {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # noqa: BLE001 - 记录后以非零码退出，Chrome 会报通信失败
+        import traceback
+
+        _log(f"fatal: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        print(f"[yai-bridge] fatal: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    _log("exit ok")
     return 0
 
 

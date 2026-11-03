@@ -68,17 +68,24 @@ def _send(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
     process.stdin.flush()
 
 
-def _spawn(origin: str, config_path: Path) -> subprocess.Popen[bytes]:
+def _spawn(
+    origin: str, config_path: Path, *, executable: Path | None = None
+) -> subprocess.Popen[bytes]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.Popen(
-        [
+    env["YAI_BRIDGE_CONFIG"] = str(config_path)
+    if executable is not None:
+        command = [str(executable), origin]
+    else:
+        command = [
             sys.executable,
             "-m",
             "yai_core.sidecar.native_bridge",
             origin,
             str(config_path),
-        ],
+        ]
+    return subprocess.Popen(
+        command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -90,25 +97,43 @@ def _spawn(origin: str, config_path: Path) -> subprocess.Popen[bytes]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bridge ↔ 真实 Sidecar 验收")
     parser.add_argument("--json", action="store_true", help="JSON 输出")
+    parser.add_argument(
+        "--executable",
+        default="",
+        help="用已构建的 native host 可执行文件（如 dist\\yai-bridge.exe）而不是 python -m",
+    )
+    parser.add_argument(
+        "--origin",
+        default="chrome-extension://yaismoketest",
+        help="授权来源（默认 smoke 用的假扩展 ID）",
+    )
     args = parser.parse_args()
+    origin = args.origin.rstrip("/")
+    executable = Path(args.executable).expanduser().resolve() if args.executable else None
+    if executable is not None and not executable.is_file():
+        print(f"[bridge-smoke] 可执行文件不存在：{executable}")
+        return 2
 
     tmpdir = Path(tempfile.mkdtemp(prefix="yai-bridge-smoke-"))
     config_path = tmpdir / "bridge.json"
     config_path.write_text(
         json.dumps(
             {
-                "allowed_origins": ["chrome-extension://yaismoketest/"],
+                "allowed_origins": [origin + "/"],
                 "initialize": {"policy": {"mode": "auto"}, "interaction_timeout": 60},
                 "max_task_chars": 400,
+                # 冻结成 exe 时 sys.executable 是 Bridge 自己，必须显式给 Sidecar 启动命令；
+                # 非冻结进程也照常使用，保证 smoke 同时覆盖两种形态。
+                "sidecar_command": [sys.executable, "-m", "yai_core.sidecar"],
             }
         ),
         encoding="utf-8",
     )
 
-    evidence: dict[str, Any] = {"origin": "chrome-extension://yaismoketest"}
+    evidence: dict[str, Any] = {"origin": origin, "executable": str(executable or "")}
     try:
         # 负例：未授权来源必须直接拒绝启动（退出码 2），不建立任何会话。
-        denied = _spawn("chrome-extension://evil/", config_path)
+        denied = _spawn("chrome-extension://evil/", config_path, executable=executable)
         try:
             denied_stdout, denied_stderr = denied.communicate(timeout=30)
         except subprocess.TimeoutExpired:
@@ -119,7 +144,7 @@ def main() -> int:
             "utf-8", "replace"
         )
 
-        process = _spawn("chrome-extension://yaismoketest/", config_path)
+        process = _spawn(origin + "/", config_path, executable=executable)
         reader = _FrameReader(process.stdout)
         ready = reader.get(60)
         evidence["bridge_ready"] = ready.get("type")
