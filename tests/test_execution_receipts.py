@@ -359,7 +359,7 @@ def _assert_replay(first, second, calls, *, ok, status) -> None:
 @pytest.mark.parametrize("source", ["native", "code", "composite"])
 @pytest.mark.parametrize("audit", [False, True])
 @pytest.mark.parametrize("long_result", [False, True])
-def test_sensitive_success_replay_is_safe(source, audit, long_result) -> None:
+def test_success_replay_is_safe(source, audit, long_result) -> None:
     secret = "receipt-test-secret"
     calls = []
     output = {"headers": {"authorization": secret}, "padding": "x" * 2000}
@@ -413,7 +413,7 @@ def test_sensitive_success_replay_is_safe(source, audit, long_result) -> None:
     "source", ["native", "code", "code_exception", "composite", "composite_partial"]
 )
 @pytest.mark.parametrize("audit", [False, True])
-def test_sensitive_failure_replay_and_receipt_are_safe(source, audit) -> None:
+def test_failure_replay_and_receipt_are_safe(source, audit) -> None:
     secret = "receipt-error-secret"
     calls = []
 
@@ -909,7 +909,7 @@ def test_upgraded_receipt_keeps_chain_valid() -> None:
 
 @pytest.mark.parametrize("confirmed", [False, True])
 @pytest.mark.parametrize("audit", [False, True])
-def test_sensitive_postcondition_replay_keeps_exported_chain_valid(confirmed, audit) -> None:
+def test_postcondition_replay_keeps_exported_chain_valid(confirmed, audit) -> None:
     calls = []
     checks = []
 

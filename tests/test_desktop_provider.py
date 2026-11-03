@@ -204,7 +204,7 @@ def test_set_value_uses_value_pattern() -> None:
     assert result["status"] == "executed"
 
 
-def test_sensitive_control_blocked() -> None:
+def test_control_blocked() -> None:
     backend = FakeBackend()
     provider = _provider(backend)
     _run(provider.observe("1001"))
