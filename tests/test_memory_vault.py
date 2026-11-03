@@ -709,7 +709,8 @@ def test_lock_timeout_fails_closed_and_retries_after_release(monkeypatch, tmp_pa
         note, _ = vault.remember("锁被占用期间写入的一条记忆")
         elapsed = time.monotonic() - started
 
-    assert 0.05 <= elapsed < 2.0  # 等过锁，但没有无限阻塞
+    # 计时下限留出 10ms 余量：Windows 上 monotonic/轮询粒度可能略小于配置值。
+    assert 0.04 <= elapsed < 2.0  # 等过锁，但没有无限阻塞
     assert vault.contains(note.id), "内存变更必须保留"
     assert vault.dirty is True
     assert vault.last_write_persisted is False
