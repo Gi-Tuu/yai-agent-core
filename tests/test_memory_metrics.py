@@ -81,8 +81,7 @@ def test_benchmark_runs_offline_and_reports() -> None:
     completed = subprocess.run(
         [sys.executable, "benchmarks/memory/run_bench.py", "--json"],
         cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         encoding="utf-8",
         errors="replace",
         timeout=180,
