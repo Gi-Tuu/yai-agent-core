@@ -264,13 +264,8 @@ class ToolExecutor:
             return per_tool
         return min(self.handler_timeout, per_tool)
 
-    def _rate_limit_exceeded(self, name: str, hint: Any) -> bool:
-        """按工具自声明的频率上限判定本次调用是否超限（超限 = 不执行）。
-
-        进程内滑动窗口（多实例部署要跨实例总闸，那需要状态共享，不在这一层）。
-        窗口串认不出来时**不拦**（提示无法执行不等于授权执行——但反过来也不该
-        悄悄当成"没限"；这里选择不拦并让宿主从声明里看到原文）。
-        """
+    def _rate_limit_full(self, name: str, hint: Any) -> bool:
+        """只判定"当前窗口是否已满"，**不记账**（记账在授权通过后）。"""
         seconds = hint.window_seconds()
         if seconds is None:
             return False
@@ -280,10 +275,7 @@ class ToolExecutor:
             hits = self._rate_hits.setdefault(name, deque())
             while hits and hits[0] <= cutoff:
                 hits.popleft()
-            if len(hits) >= hint.count:
-                return True
-            hits.append(now)
-            return False
+            return len(hits) >= hint.count
 
     async def _invoke_handler(
         self, handler: Callable[..., Any], arguments: dict, timeout: float | None = None
@@ -474,6 +466,14 @@ class ToolExecutor:
                 return f"缓存依赖工具 {name} 的权限复核失败，拒绝重放"
         return ""
 
+    def begin_run(self) -> None:
+        """任务边界：重置收据链根，让单次 run 的收据链可独立校验。
+
+        由 ``AgentCore.astream`` 在获得实例锁后调用；不清理幂等缓存
+        （幂等缓存跨任务复用是刻意行为）。
+        """
+        self._audit.begin_run()
+
     async def execute(
         self,
         name: str,
@@ -523,10 +523,23 @@ class ToolExecutor:
         started: float,
         call_id: str,
     ) -> tuple[GateDecision | None, str | None]:
-        """工具自带闸、参数校验、频率上限三道前置闸。"""
+        """工具自带闸、外发来源、参数校验三道前置闸。
+
+        频率上限不在这里判定：它必须在授权通过之后才扣配额，否则被策略
+        拒绝的调用也能耗尽配额（多租户 DoS）。
+        """
         gate_fn = spec.governance.gate
-        decision = gate_fn(arguments, subject) if gate_fn is not None else None
-        decision = _tighten(decision, _native_approval(spec, arguments))
+        try:
+            decision = gate_fn(arguments, subject) if gate_fn is not None else None
+            decision = _tighten(decision, _native_approval(spec, arguments))
+        except Exception as exc:  # noqa: BLE001 - 宿主回调异常必须失败关闭
+            reason = f"工具 {name} 的准入闸异常，已失败关闭：{type(exc).__name__}"
+            events.append(self._audit.denied_event(spec, name, arguments, reason, "gate"))
+            self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, message=reason,
+            )
+            return None, reason
         if decision is not None and decision.reject:
             events.append(
                 self._audit.denied_event(spec, name, arguments, decision.reject, "gate")
@@ -562,8 +575,10 @@ class ToolExecutor:
             )
             return decision, message
 
+        # 频率上限先"只查不扣"：真正扣配额要等授权通过（否则被策略拒绝的调用
+        # 也能耗尽配额）。这里只判定本次是否已满，满则直接失败关闭。
         rate_hint = spec.governance.rate_limit
-        if rate_hint is not None and self._rate_limit_exceeded(name, rate_hint):
+        if rate_hint is not None and self._rate_limit_full(name, rate_hint):
             message = (
                 f"工具 {name} 超出调用频率上限"
                 f"（{rate_hint.count} 次 / {rate_hint.window}），本次未执行"
@@ -589,6 +604,21 @@ class ToolExecutor:
             )
             return decision, message
         return decision, None
+
+    def _record_rate_limit(self, name: str, hint: Any) -> None:
+        """授权通过后扣一次配额（与 _rate_limit_full 共用同一滑动窗口）。"""
+        if hint is None:
+            return
+        seconds = hint.window_seconds()
+        if seconds is None:
+            return
+        now = time.monotonic()
+        cutoff = now - seconds
+        with self._rate_lock:
+            hits = self._rate_hits.setdefault(name, deque())
+            while hits and hits[0] <= cutoff:
+                hits.popleft()
+            hits.append(now)
 
     async def _lookup_cache(
         self,
@@ -884,6 +914,7 @@ class ToolExecutor:
             return events, False, denial
 
         if spec.source == "composite" and spec.steps:
+            self._record_rate_limit(name, spec.governance.rate_limit)
             declared = spec.governance.timeout_ms
             if declared is None:
                 comp_events, ok, text = await self._execute_composite(
@@ -938,22 +969,30 @@ class ToolExecutor:
                 dependencies=trace[trace_start:], ok=ok, text=text, status=status,
             )
 
-        auth_events, approved, reason = await authorize_tool_call(
-            self.policy,
-            self.channel,
-            name,
-            arguments,
-            sensitive_paths=spec.governance.sensitive,
-            audit_sensitive=spec.governance.audit_sensitive,
-            subject=subject,
-            require_approval=decision.require_approval if decision else False,
-            approval_reason=decision.reason if decision else "",
-            approval_prompt=decision.prompt if decision else "",
-            risk=decision.risk if decision else "",
-            scope=decision.scope if decision else "",
-            target=decision.target if decision else "",
-            preview=preview,
-        )
+        try:
+            auth_events, approved, reason = await authorize_tool_call(
+                self.policy,
+                self.channel,
+                name,
+                arguments,
+                sensitive_paths=spec.governance.sensitive,
+                audit_sensitive=spec.governance.audit_sensitive,
+                subject=subject,
+                require_approval=decision.require_approval if decision else False,
+                approval_reason=decision.reason if decision else "",
+                approval_prompt=decision.prompt if decision else "",
+                risk=decision.risk if decision else "",
+                scope=decision.scope if decision else "",
+                target=decision.target if decision else "",
+                preview=preview,
+            )
+        except Exception as exc:  # noqa: BLE001 - 策略/通道异常必须失败关闭
+            reason = f"工具 {name} 的权限检查异常，已失败关闭：{type(exc).__name__}"
+            events.append(self._audit.denied_event(spec, name, arguments, reason, "policy"))
+            return self._audit.fail(
+                events, spec=spec, name=name, call_id=call_id,
+                started=started, message=reason,
+            )
         events.extend(auth_events)
         if not approved:
             source = (
@@ -990,6 +1029,10 @@ class ToolExecutor:
         )
         if denial is not None:
             return events, False, denial
+
+        # 授权与预览复核都通过后才真正扣频率配额：被拒绝/被预览拦截的调用
+        # 不消耗额度（审计：rate-limit 不应成为未授权调用的 DoS 面）。
+        self._record_rate_limit(name, spec.governance.rate_limit)
 
         if spec.source == "code":
             if budget is not None:
@@ -1065,7 +1108,12 @@ class ToolExecutor:
                 ok=False, text=message, status="unknown",
             )
         except Exception as exc:  # noqa: BLE001 - 工具错误必须回灌给模型而不是崩溃
-            message = f"工具 {name} 执行出错: {type(exc).__name__}: {exc}"
+            # handler 抛错时副作用可能已经发生（网络请求、写入、点击……），
+            # 必须把"未知"明白告诉模型，否则它会原样重试造成重复副作用。
+            message = (
+                f"工具 {name} 执行出错: {type(exc).__name__}: {exc}；"
+                "副作用可能已发生，不要盲目重试（需要确认时先用观察/验证工具核实）"
+            )
             events.append(
                 AgentEvent(EventType.TOOL_RESULT, {"tool": name, "ok": False,
                                                    "error": message})

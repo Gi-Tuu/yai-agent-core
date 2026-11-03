@@ -170,5 +170,17 @@ class CoreConfig:
         return self
 
     def as_kwargs(self) -> dict[str, Any]:
-        """展开为 ``AgentCore(model, **cfg.as_kwargs())`` 所需的关键字参数字典。"""
-        return dataclasses.asdict(self)
+        """展开为 ``AgentCore(model, **cfg.as_kwargs())`` 所需的关键字参数字典。
+
+        只做**浅拷贝**：注入的 SPI 对象（channel / memory / policy / sandbox /
+        discovery / learning / metrics / outcome_verifier 等）必须按引用交给
+        ``AgentCore``。``dataclasses.asdict`` 会 deepcopy 它们，导致宿主持有的
+        句柄与内核实际使用的对象脱节（收不到事件、历史读不到、运行时撤销权限
+        不生效），含锁/连接/线程的实现（如内置 SqliteStore）甚至会直接抛出
+        ``TypeError``。配置里的值对象（CountBudget / CompactionPolicy）本身不可变，
+        也不需要复制。
+        """
+        return {
+            field.name: getattr(self, field.name)
+            for field in dataclasses.fields(self)
+        }

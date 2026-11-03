@@ -147,8 +147,12 @@ class RunResult:
     strategy: Strategy
     events: list[AgentEvent]
     final_text: str
+    status: str = "ok"          # "ok" / "error"
+    error: str | None = None    # 失败原因（status=="error" 时）
 ```
 - `core.run()` 最终交给宿主的结果包：用了什么策略、全过程事件、最终文本。
+- `status/error` 是 v0.26 审计整改加的**加性字段**：宿主不必再扫描事件流判断任务成败；
+  事件流本身在失败时仍以 `ERROR + DONE(status="error")` 收尾。
 
 ## 自检
 

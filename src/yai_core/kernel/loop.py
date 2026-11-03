@@ -68,6 +68,36 @@ def _looks_like_raw_tool_call(text: str) -> bool:
     return "<tool_call" in lowered and "</tool_call>" in lowered
 
 
+#: 私有异常标记：这个异常来自"模型调用"（而不是工具/宿主 SPI/内核）。
+#: 上层据此给出 ``ERROR.stage = "model"`` 与对应诊断种类，避免把工具治理
+#: 故障错报成模型故障（审计 F5）；不改变异常类型，旧调用方照旧 except。
+_MODEL_STAGE_ATTR = "_yai_model_stage"
+
+
+def _mark_model_stage(exc: BaseException) -> None:
+    """给模型调用抛出的异常打私有标记；标记失败不影响异常继续传播。"""
+    try:
+        setattr(exc, _MODEL_STAGE_ATTR, True)
+    except Exception:  # noqa: BLE001 - 极少数异常实例不允许写属性
+        pass
+
+
+def _is_model_stage(exc: BaseException) -> bool:
+    """该异常是否来自模型调用（见 :func:`_mark_model_stage`）。"""
+    return bool(getattr(exc, _MODEL_STAGE_ATTR, False))
+
+
+def _set_outcome(
+    outcome: dict[str, object] | None, status: str, error: str = ""
+) -> None:
+    """把执行结局写进调用方传入的字典（``_react_cycle`` 的失败出口）。"""
+    if outcome is None:
+        return
+    outcome["status"] = status
+    if error:
+        outcome["error"] = error
+
+
 _SYSTEM_TEMPLATE = """你是运行在宿主软件内部的 AI 助手。\
 你可以使用宿主提供的工具（见下方工具目录）。\
 需要扩展能力时按此选择：\
@@ -252,7 +282,22 @@ class AgentLoop(MetaToolRuntime):
         if self._auto_recall is None:
             return
         try:
-            hits = await self._auto_recall(task)
+            if self.model_timeout is None:
+                hits = await self._auto_recall(task)
+            else:
+                # 召回可能走宿主 embedder（网络 / 重计算）：用模型硬超时同一额度
+                # 兜底。否则一次卡死的召回会把任务永远挂在 STRATEGY_SELECTED 之后，
+                # 而 model_timeout 根本覆盖不到这段（审计 F9）。
+                async with asyncio.timeout(self.model_timeout):
+                    hits = await self._auto_recall(task)
+        except TimeoutError:
+            self._diag(
+                "auto_recall_timeout",
+                f"任务起始主动召回超过 {self.model_timeout:g}s，已跳过注入",
+                level=DiagnosticLevel.WARNING,
+                timeout=self.model_timeout,
+            )
+            return
         except Exception as exc:  # noqa: BLE001 - 记忆增强失败不阻断主任务
             self._diag("auto_recall_failed", f"任务起始主动召回失败: {exc}")
             return
@@ -381,7 +426,11 @@ class AgentLoop(MetaToolRuntime):
             # 调用前先过预算硬墙：已达模型调用上限则本次不再发起（熔断）。
             tracker.before_model_call()
         if self.model_timeout is None:
-            resp = await self.model.achat(messages, tools=tools, tier=tier)
+            try:
+                resp = await self.model.achat(messages, tools=tools, tier=tier)
+            except Exception as exc:
+                _mark_model_stage(exc)
+                raise
         else:
             try:
                 # 用 asyncio.timeout 而不是 asyncio.wait_for：3.11 的 wait_for 会把
@@ -392,9 +441,14 @@ class AgentLoop(MetaToolRuntime):
                 async with asyncio.timeout(self.model_timeout):
                     resp = await self.model.achat(messages, tools=tools, tier=tier)
             except TimeoutError:
-                raise TimeoutError(
+                timeout_error = TimeoutError(
                     f"模型调用超过 {self.model_timeout:g}s 硬超时上限，已终止"
-                ) from None
+                )
+                _mark_model_stage(timeout_error)
+                raise timeout_error from None
+            except Exception as exc:
+                _mark_model_stage(exc)
+                raise
         if tracker is not None:
             # 成功返回后计数并累计 token；若因此越过 token 上限会在此熔断。
             tracker.record_model_call(resp)
@@ -472,7 +526,7 @@ class AgentLoop(MetaToolRuntime):
             # 压缩启用时推迟到模型调用前：先让压缩器看到完整旧轮，再硬裁剪兜底。
             trim_on_add=self.compaction_policy is None,
         )
-        for msg in self.memory.history():
+        for msg in self._history_messages():
             ctx.add(msg)
         # 任务起始主动召回：把与本任务相关的长期记忆作为一条 system 上下文注入，
         # 位于历史之后、user 任务之前。clarify 路径已在上方提前 return，不做召回。
@@ -485,6 +539,12 @@ class AgentLoop(MetaToolRuntime):
         tier_counts: dict[str, int] = {STANDARD: 0, STRONG: 0}
 
         final_text = ""
+        # 本次 run 的终态（CORE-4）：默认 ok；预算熔断 / 模型或内核失败 / 限尾
+        # 收尾失败等终止性错误统一置 error，并随 DONE 与 RunResult 流出。
+        run_status = "ok"
+        run_error_text: str | None = None
+        # react/plan 的失败出口（由 _react_cycle / _finish_at_iteration_limit 写入）。
+        outcome: dict[str, object] = {}
         try:
             if strategy == Strategy.PLAN:
                 # replan meta-tool 只在多步计划执行中需要，进入 PLAN 时幂等注册，
@@ -515,11 +575,15 @@ class AgentLoop(MetaToolRuntime):
                 tier_policy=self.tier_policy,
                 tier_counts=tier_counts,
                 subject=subject,
+                outcome=outcome,
             ):
                 yield ev
                 # 工具范围选择是过程决策，不是答案，也不能写进对话历史。
                 if ev.type == EventType.MODEL_MESSAGE and ev.data.get("kind") != "schema_focus":
                     final_text = ev.data.get("text", final_text)
+            if outcome.get("status") == "error":
+                run_status = "error"
+                run_error_text = str(outcome.get("error") or "任务执行失败")
         except BudgetExceeded as exc:
             # 执行器在熔断前已密封、还没来得及外发的事件（组合工具的中途子收据）
             # 挂在异常上随行到这里：先补发它们，收据链才不缺环。
@@ -530,6 +594,8 @@ class AgentLoop(MetaToolRuntime):
             label = _BUDGET_SCOPE_LABELS.get(exc.scope, exc.scope)
             stop_text = _BUDGET_STOP_TEXT.format(label=label)
             final_text = stop_text
+            run_status = "error"
+            run_error_text = stop_text
             yield AgentEvent(EventType.MODEL_MESSAGE, {"text": stop_text})
             yield AgentEvent(
                 EventType.BUDGET_EXCEEDED,
@@ -546,38 +612,85 @@ class AgentLoop(MetaToolRuntime):
             # react 主轮的模型异常已在循环内局部转 ERROR，不会走到这里。
             # CancelledError 属于 BaseException，不被本分支捕获，从而能干净传播、
             # 真正响应用户终止 / aclose / 任务取消（见 _model_chat）。
+            #
+            # stage 归因（审计 F5）：只有被 _model_chat 标记过的异常才算 model；
+            # 工具治理 / 宿主 SPI / 内核自身的异常一律 loop，不再错报成模型故障。
             is_timeout = isinstance(exc, TimeoutError)
+            model_stage = _is_model_stage(exc)
+            stage = "model" if model_stage else "loop"
+            error_text = f"{type(exc).__name__}: {exc}"
             self._diag(
-                DiagnosticKind.MODEL_TIMEOUT if is_timeout else DiagnosticKind.MODEL_ERROR,
+                (
+                    DiagnosticKind.MODEL_TIMEOUT
+                    if is_timeout
+                    else DiagnosticKind.MODEL_ERROR
+                )
+                if model_stage
+                else "loop_internal_error",
                 (
                     f"模型调用超过 {self.model_timeout:g}s 硬超时，已体面收尾"
                     if is_timeout
-                    else f"模型调用失败（{type(exc).__name__}），已体面收尾"
+                    else (
+                        f"模型调用失败（{type(exc).__name__}），已体面收尾"
+                        if model_stage
+                        else f"内核执行阶段异常（{type(exc).__name__}），已体面收尾"
+                    )
                 ),
                 level=DiagnosticLevel.ERROR,
-                stage="model",
-                error=f"{type(exc).__name__}: {exc}",
+                stage=stage,
+                error=error_text,
             )
-            yield AgentEvent(
-                EventType.ERROR,
-                {"stage": "model", "error": f"{type(exc).__name__}: {exc}"},
-            )
+            run_status = "error"
+            run_error_text = error_text
+            yield AgentEvent(EventType.ERROR, {"stage": stage, "error": error_text})
 
-        await self.memory.append_history(ChatMessage(role="user", content=task))
-        await self.memory.append_history(ChatMessage(role="assistant", content=final_text))
+        # 会话历史（CORE-2 / CORE-4）：写入失败只降级为诊断；final_text 为空时
+        # 不写 assistant，避免失败任务在共享历史里留下一条空回答污染下一轮。
+        await self._append_history(ChatMessage(role="user", content=task))
+        if final_text.strip():
+            await self._append_history(ChatMessage(role="assistant", content=final_text))
         done_data: dict[str, object] = {
             "strategy": strategy.value,
             "final_text": final_text,
             "standard_calls": tier_counts[STANDARD],
             "strong_calls": tier_counts[STRONG],
             "model_calls": tier_counts[STANDARD] + tier_counts[STRONG],
+            "status": run_status,
         }
+        if run_error_text is not None:
+            done_data["error"] = run_error_text
         # 配置了预算就把用量快照随 DONE 流出（成本可观测）；触发熔断时标明原因。
         if self._active_budget is not None:
             done_data["budget"] = self._budget_snapshot()
             if self._active_budget.exceeded is not None:
                 done_data["reason"] = "budget_exceeded"
         yield AgentEvent(EventType.DONE, done_data)
+
+    def _history_messages(self) -> list[ChatMessage]:
+        """读取会话历史；宿主 MemoryStore 故障降级为"本次不注入历史"（CORE-2）。"""
+        try:
+            return list(self.memory.history())
+        except Exception as exc:  # noqa: BLE001 - 历史是增强，故障不得阻断任务
+            self._diag(
+                "memory_history_failed",
+                f"读取会话历史失败（{type(exc).__name__}），本次不注入历史",
+                level=DiagnosticLevel.ERROR,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return []
+
+    async def _append_history(self, message: ChatMessage) -> None:
+        """写入会话历史；宿主 MemoryStore 故障只记诊断，绝不打断收尾（CORE-2）。"""
+        try:
+            await self.memory.append_history(message)
+        except Exception as exc:  # noqa: BLE001 - 落盘失败不得让任务"没有终态"
+            self._diag(
+                "memory_append_failed",
+                f"写入会话历史失败（{type(exc).__name__}），本次未持久化该条消息",
+                level=DiagnosticLevel.ERROR,
+                role=message.role,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
     def _budget_snapshot(self) -> dict[str, object]:
         """当前任务预算用量快照；未启用预算时返回空字典（调用方先判空）。"""
@@ -623,17 +736,33 @@ class AgentLoop(MetaToolRuntime):
             EventType.CLARIFY_REQUESTED,
             {"question": question, "round": depth + 1},
         )
-        answer = (await self.channel.ask(question) or "").strip()
+        answer = ""
+        try:
+            answer = (await self.channel.ask(question) or "").strip()
+        except Exception as exc:  # noqa: BLE001 - 通道故障不得让任务没有终态
+            self._diag(
+                "clarify_channel_failed",
+                f"澄清通道调用失败（{type(exc).__name__}），按“未获得补充信息”收尾",
+                level=DiagnosticLevel.ERROR,
+                round=depth + 1,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            answer = ""
         if not answer:
-            # 空回答 / 超时 / 用户终止：体面收尾，不再递归。
+            # 空回答 / 超时 / 通道故障 / 用户终止：体面收尾，不再递归。
             yield AgentEvent(EventType.MODEL_MESSAGE, {"text": _CLARIFY_ABORT_TEXT})
-            await self.memory.append_history(ChatMessage(role="user", content=task))
-            await self.memory.append_history(
+            await self._append_history(ChatMessage(role="user", content=task))
+            await self._append_history(
                 ChatMessage(role="assistant", content=_CLARIFY_ABORT_TEXT)
             )
             yield AgentEvent(
                 EventType.DONE,
-                {"strategy": Strategy.CLARIFY.value, "final_text": _CLARIFY_ABORT_TEXT},
+                {
+                    "strategy": Strategy.CLARIFY.value,
+                    "final_text": _CLARIFY_ABORT_TEXT,
+                    "status": "error",
+                    "error": "clarify_aborted",
+                },
             )
             return
         # 关键：把原任务与历次补充累积起来再重新路由，避免"问意图→问公司"的乒乓。
@@ -706,22 +835,38 @@ class AgentLoop(MetaToolRuntime):
             return
 
         # 防御性去重：既跳过已注册，也跳过候选之间的同名工具。
+        # 发现源返回畸形数据 / 注册失败都属于"增强失败"，必须就地降级，
+        # 不能让异常穿透成"任务没有终态"（CORE-2）。
         new_specs: list[ToolSpec] = []
-        seen: set[str] = set()
-        for spec in candidates:
-            if spec.name in seen or self.registry.has(spec.name):
-                continue
-            seen.add(spec.name)
-            new_specs.append(spec)
-        if not new_specs:
+        try:
+            seen: set[str] = set()
+            for spec in candidates:
+                if spec.name in seen or self.registry.has(spec.name):
+                    continue
+                seen.add(spec.name)
+                new_specs.append(spec)
+            if not new_specs:
+                return
+            self.registry.register_many(new_specs)
+        except Exception as exc:  # noqa: BLE001 - 发现是增强不是依赖，失败不致命
+            self._diag(
+                DiagnosticKind.DISCOVERY_FAILED,
+                f"工具发现结果处理失败（{type(exc).__name__}），本次不注册新工具",
+                level=DiagnosticLevel.ERROR,
+                source=type(self.discovery).__name__ if self.discovery else "",
+                need=need,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            yield AgentEvent(
+                EventType.ERROR,
+                {"stage": "tool_discovery", "error": f"{type(exc).__name__}: {exc}"},
+            )
             return
-
-        self.registry.register_many(new_specs)
         yield AgentEvent(
             EventType.TOOL_DISCOVERED,
             {
                 "missing": need,
-                "source": type(self.discovery).__name__,
+                "source": type(self.discovery).__name__ if self.discovery else "",
                 "registered": [s.name for s in new_specs],
             },
         )
@@ -860,6 +1005,7 @@ class AgentLoop(MetaToolRuntime):
         tier_policy: TierPolicy | None = None,
         tier_counts: dict[str, int] | None = None,
         subject: Subject | None = None,
+        outcome: dict[str, object] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """核心 ReAct 循环：模型调用 ↔ 工具执行，直到模型不再调工具或触达迭代上限。
 
@@ -869,6 +1015,10 @@ class AgentLoop(MetaToolRuntime):
         观察回灌促其自我修正，并把执行中新注册工具的完整 schema 并入下一轮
         （"发现了就能调到"）。达到 ``max_iters`` 后要求模型基于已有观察收尾。
         ``use_tools=False``（DIRECT）时不注入任何工具。
+
+        ``outcome`` 是调用方传入的结局字典：终止性失败（模型故障 / 协议异常 /
+        严格 direct 拒绝 / 审批预览失效 / 限尾收尾失败）在这里写入
+        ``{"status": "error", "error": ...}``，供 astream 落 DONE.status（CORE-4）。
         """
         if use_tools:
             tools_schema, focused_names, focus_decision = await self._focus_tool_schemas(
@@ -930,19 +1080,33 @@ class AgentLoop(MetaToolRuntime):
                 raise
             except Exception as exc:  # noqa: BLE001
                 is_timeout = isinstance(exc, TimeoutError)
+                model_stage = _is_model_stage(exc)
+                stage = "model" if model_stage else "loop"
+                error_text = f"{type(exc).__name__}: {exc}"
                 self._diag(
-                    DiagnosticKind.MODEL_TIMEOUT if is_timeout else DiagnosticKind.MODEL_ERROR,
+                    (
+                        DiagnosticKind.MODEL_TIMEOUT
+                        if is_timeout
+                        else DiagnosticKind.MODEL_ERROR
+                    )
+                    if model_stage
+                    else "loop_internal_error",
                     (
                         f"执行轮模型调用超过 {self.model_timeout:g}s 硬超时，已终止"
                         if is_timeout
-                        else f"执行轮模型调用失败（{type(exc).__name__}），已终止本轮"
+                        else (
+                            f"执行轮模型调用失败（{type(exc).__name__}），已终止本轮"
+                            if model_stage
+                            else f"执行轮异常（{type(exc).__name__}），已终止本轮"
+                        )
                     ),
                     level=DiagnosticLevel.ERROR,
                     stage="react",
                     iteration=iteration,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error_text,
                 )
-                yield AgentEvent(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"})
+                yield AgentEvent(EventType.ERROR, {"stage": stage, "error": error_text})
+                _set_outcome(outcome, "error", error_text)
                 return
 
             if not resp.tool_calls:
@@ -964,6 +1128,7 @@ class AgentLoop(MetaToolRuntime):
                         EventType.MODEL_MESSAGE,
                         {"text": _RAW_TOOL_CALL_NOTICE, "tier": tier},
                     )
+                    _set_outcome(outcome, "error", _RAW_TOOL_CALL_NOTICE)
                     return
                 ctx.add(ChatMessage(role="assistant", content=text))
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
@@ -984,6 +1149,9 @@ class AgentLoop(MetaToolRuntime):
                     text = "当前策略不允许调用工具，本次没有执行任何工具。"
                 ctx.add(ChatMessage(role="assistant", content=text))
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": text, "tier": tier})
+                _set_outcome(
+                    outcome, "error", "direct 策略下模型返回了工具调用，严格模式已拒绝执行"
+                )
                 return
 
             self._append_assistant_tool_calls(ctx, resp)
@@ -1007,6 +1175,7 @@ class AgentLoop(MetaToolRuntime):
                 message = terminal_messages[0]
                 ctx.add(ChatMessage(role="assistant", content=message))
                 yield AgentEvent(EventType.MODEL_MESSAGE, {"text": message, "tier": tier})
+                _set_outcome(outcome, "error", message)
                 return
 
             # 执行中发现的新工具：下一轮 function-calling 必须能看到其完整 schema，
@@ -1021,7 +1190,7 @@ class AgentLoop(MetaToolRuntime):
                 self._append_failure_reflection(ctx, failed)
 
         # 达到迭代上限：要求模型基于已有观察收尾。
-        async for ev in self._finish_at_iteration_limit(ctx, tier_counts):
+        async for ev in self._finish_at_iteration_limit(ctx, tier_counts, outcome):
             yield ev
 
     def _append_assistant_tool_calls(self, ctx: Context, resp: ModelResponse) -> None:
@@ -1168,7 +1337,10 @@ class AgentLoop(MetaToolRuntime):
         )
 
     async def _finish_at_iteration_limit(
-        self, ctx: Context, tier_counts: dict[str, int] | None = None
+        self,
+        ctx: Context,
+        tier_counts: dict[str, int] | None = None,
+        outcome: dict[str, object] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """达到工具调用上限：要求模型基于已有观察直接收尾。"""
         ctx.add(
@@ -1193,8 +1365,10 @@ class AgentLoop(MetaToolRuntime):
         except BudgetExceeded:
             # 预算熔断仍由 astream 统一收尾；取消也不转成普通失败。
             raise
-        except Exception:  # noqa: BLE001 - 保留上限决策，错误仍交给 astream 统一处理
-            # 没有模型答案就保持原有空收尾，不把合成文案写入历史。
+        except Exception as exc:  # noqa: BLE001 - 保留上限决策，错误仍交给 astream 统一处理
+            # 没有模型答案就保持原有空收尾，不把合成文案写入历史；
+            # 结局由 astream 的兜底分支置 error（异常已带 model 标记）。
+            _set_outcome(outcome, "error", f"{type(exc).__name__}: {exc}")
             yield AgentEvent(EventType.MODEL_MESSAGE, {"text": "", **limit_data})
             raise
         final_text = resp.content.strip()
@@ -1215,6 +1389,24 @@ class AgentLoop(MetaToolRuntime):
                 EventType.MODEL_MESSAGE,
                 {"text": _RAW_TOOL_CALL_NOTICE, **limit_data},
             )
+            _set_outcome(outcome, "error", _RAW_TOOL_CALL_NOTICE)
+            return
+        if not final_text and resp.tool_calls:
+            # 限尾收尾仍要求调工具（结构化 tool_calls）：既不能当最终答案，也不能
+            # 静默产出空回答（审计 F6）——明确报错 + 非空诚实文案，宿主不再白屏。
+            honest = (
+                "已达到工具调用上限，且模型未能基于已有结果收尾。请重试，"
+                "或把任务拆成更小的步骤分别执行。"
+            )
+            error = (
+                f"iteration_limit: 限尾收尾仍返回 {len(resp.tool_calls)} 个工具调用，"
+                "没有可交付的最终答案"
+            )
+            _set_outcome(outcome, "error", error)
+            yield AgentEvent(
+                EventType.ERROR, {"stage": "iteration_limit", "error": error}
+            )
+            yield AgentEvent(EventType.MODEL_MESSAGE, {"text": honest, **limit_data})
             return
         yield AgentEvent(
             EventType.MODEL_MESSAGE,

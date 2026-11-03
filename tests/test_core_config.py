@@ -1,6 +1,7 @@
 """CoreConfig：集中默认值、早期校验与 AgentCore.from_config 的离线测试。"""
 
 import asyncio
+import threading
 
 import pytest
 
@@ -133,3 +134,52 @@ def test_valid_semantic_memory_config_passes() -> None:
         auto_recall_k=5,
         memory_embedder=_OkayEmbedder(),
     ).validate()
+
+
+# ---------- CORE-1：as_kwargs 必须按引用传递注入的 SPI 对象 ----------
+
+
+class _LockedObject:
+    """带 threading.Lock 的宿主持久对象：dataclasses.asdict 会 deepcopy 失败。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()  # noqa: SLF001 - 故意制造不可 deepcopy 状态
+
+
+def test_as_kwargs_keeps_injected_spi_objects_by_reference() -> None:
+    from yai_core.channels import CollectChannel
+    from yai_core.memory import InMemoryStore
+    from yai_core.policy import AllowlistPolicy
+
+    channel = CollectChannel(default_answer="补充信息")
+    memory = InMemoryStore()
+    policy = AllowlistPolicy((), mode="allow_all")
+    learning = _LockedObject()
+
+    cfg = CoreConfig(
+        channel=channel, memory=memory, policy=policy, learning=learning
+    )
+    kwargs = cfg.as_kwargs()  # 旧实现会在 threading.Lock 上抛 TypeError
+
+    assert kwargs["channel"] is channel
+    assert kwargs["memory"] is memory
+    assert kwargs["policy"] is policy
+    assert kwargs["learning"] is learning
+
+
+def test_from_config_shares_host_injected_memory_and_channel() -> None:
+    """from_config 构造出的 core 必须复用宿主对象，而不是各自一份副本。"""
+    from yai_core.channels import CollectChannel
+    from yai_core.memory import InMemoryStore
+
+    memory = InMemoryStore()
+    channel = CollectChannel()
+    core = AgentCore.from_config(
+        ScriptedModel("你好"), CoreConfig(memory=memory, channel=channel)
+    )
+
+    assert core.memory is memory
+    assert core.channel is channel
+    asyncio.run(core.run("打个招呼"))
+    assert [message.role for message in memory.history()] == ["user", "assistant"]
+    assert channel.events  # 事件被投递到宿主自己的通道实例

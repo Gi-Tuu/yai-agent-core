@@ -43,7 +43,16 @@ class ExecutionAudit:
 
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
-        # 收据哈希链：上一条的 receipt_hash，串起本次进程内的执行审计链。
+        # 收据哈希链：上一条的 receipt_hash，串起本次运行内的执行审计链。
+        self._last_receipt_hash = ""
+
+    def begin_run(self) -> None:
+        """任务边界：重置链根，让单次 run 的收据可独立校验。
+
+        历史实现是进程级链：同一 AgentCore 跑第二个任务时，首条收据的
+        ``prev_hash`` 指向上一任务，宿主只导出本任务收据时
+        ``verify_receipt_chain`` 必然 False。审计链应按 run 独立成链。
+        """
         self._last_receipt_hash = ""
 
     def receipt(

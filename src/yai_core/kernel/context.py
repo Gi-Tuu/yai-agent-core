@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from yai_core.types import (
     ChatMessage,
     ImagePart,
@@ -21,8 +23,16 @@ def message_cost(
     总量、硬裁剪扣减、摘要压缩选区必须共用这一个函数：只让总量计入 parts，
     裁剪与压缩却还按 ``content`` 计算，会让长片段"看起来不占预算"——图片被
     无谓多删、纯文本片段则可能永远触发不了摘要。
+
+    ``tool_calls`` 的参数体量同样按字符口径计入：模型生成的工具参数（例如
+    ``create_code_tool`` 里的整段代码）可能远大于正文；只算 ``content`` 会让
+    ``Context.max_chars`` 这道"最终安全网"被工具参数击穿。
     """
     total = len(message.content)
+    if message.tool_calls:
+        total += len(
+            json.dumps(message.tool_calls, ensure_ascii=False, default=str)
+        )
     for part in getattr(message, "parts", None) or ():
         if isinstance(part, ImagePart):
             total += image_cost_chars

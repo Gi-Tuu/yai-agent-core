@@ -117,6 +117,27 @@ def test_core_passes_memory_cipher_through(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not HAS_CRYPTO, reason="未安装 [crypto] extra，跳过 Fernet 测试")
+def test_ephemeral_fernet_key_restart_degrades_read_only(tmp_path: Path) -> None:
+    """一次性密钥只适合演示：重启后换了一把密钥 = decrypt_failed + 只读，不是"空库可写"。
+
+    这个语义钉在测试里，避免文档/使用说明继续按"重启即空库"来写 runbook。
+    """
+    from yai_core.integrations.crypto import FernetStorageCipher
+
+    path = tmp_path / "memory.enc.json"
+    MemoryVault(storage_path=path, cipher=FernetStorageCipher()).remember("用一次性密钥写入")
+    original = path.read_bytes()
+
+    restarted = MemoryVault(storage_path=path, cipher=FernetStorageCipher())  # 新的一次性密钥
+
+    assert restarted.load_state["status"] == "decrypt_failed"
+    assert restarted.read_only is True
+    with pytest.raises(MemoryVaultReadOnlyError):
+        restarted.remember("重启后想再记一条")
+    assert path.read_bytes() == original  # 原始密文分毫不动
+
+
+@pytest.mark.skipif(not HAS_CRYPTO, reason="未安装 [crypto] extra，跳过 Fernet 测试")
 def test_fernet_cipher_roundtrip_and_tamper() -> None:
     from yai_core.integrations.crypto import FernetStorageCipher
 

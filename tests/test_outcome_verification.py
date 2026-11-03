@@ -164,7 +164,45 @@ def test_composite_dedupes_evidence() -> None:
     assert len(result.evidence) == 1
 
 
+# ---------- VER-1：异常/非法返回分支按 not_verifiable 计入，不得冒充全成功 ----------
+
+
+def test_composite_broken_branch_cannot_yield_verified_success() -> None:
+    composite = CompositeVerifier(
+        [
+            FakeVerifier(_result("verified_success")),
+            FakeVerifier(error=RuntimeError("state api down")),
+        ]
+    )
+    result = _run(composite.verify("g"))
+    # 一个分支成功、一个分支不可判定 → partial，而不是 verified_success。
+    assert result.status == "partial"
+    assert "state api down" in result.reason
+
+
+def test_composite_invalid_branch_cannot_yield_verified_success() -> None:
+    composite = CompositeVerifier(
+        [FakeVerifier(_result("verified_success")), FakeVerifier(raw="not-a-result")]
+    )
+    result = _run(composite.verify("g"))
+    assert result.status == "partial"
+    assert "#1" in result.reason
+
+
+def test_composite_failure_with_broken_branch_stays_failure_and_keeps_reasons() -> None:
+    composite = CompositeVerifier(
+        [
+            FakeVerifier(_result("verified_failure")),
+            FakeVerifier(error=RuntimeError("boom")),
+        ]
+    )
+    result = _run(composite.verify("g"))
+    assert result.status == "verified_failure"
+    assert "boom" in result.reason
+
+
 # ---------- 事件证据收集 ----------
+
 
 def test_evidence_from_events_reads_receipts_and_explicit_evidence() -> None:
     from yai_core import AgentEvent

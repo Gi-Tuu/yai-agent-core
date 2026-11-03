@@ -1154,6 +1154,11 @@ class RunResult:
     #: 任务级验收结果（v0.26 Outcome Verification）；未配置 verifier 时为 None。
     #: 注意它回答的是"目标是否达成"，不是"工具是否调用成功"——后者看收据。
     verification: VerificationResult | None = None
+    #: 任务终态（加性字段，默认 ``"ok"``）：``"ok"`` / ``"error"``。
+    #: 宿主不必再扫描事件流才能判断这次 run 是否失败；失败原因见 :attr:`error`。
+    status: str = "ok"
+    #: 失败原因（``status == "error"`` 时的可展示文本；成功时为 None）。
+    error: str | None = None
 
 
 #: 任务级验收状态（与执行收据的 ReceiptStatus 刻意分开）：

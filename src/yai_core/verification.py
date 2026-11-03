@@ -54,14 +54,15 @@ class CompositeVerifier:
 
     规则（确定、可解释，不引入模型判断）：
     1. 任一 ``verified_failure`` → ``verified_failure``；
-    2. 全部 ``verified_success`` → ``verified_success``；
+    2. **全部**分支 ``verified_success`` → ``verified_success``（抛异常/返回非法
+       对象的分支按 ``not_verifiable`` 计入结果，不能被"跳过"成成功）；
     3. 有成功也有未确认 / 部分 → ``partial``；
     4. 只有 ``unknown`` → ``unknown``；
     5. 没有任何有效结论（含空列表、全部抛错、全部 ``not_verifiable``）→
        ``not_verifiable``。
 
-    单个 verifier 抛错 / 返回非法对象不会中断整次验收：该分支记 ``not_verifiable``，
-    并在理由里写明（不能把异常当成功）。
+    单个 verifier 抛错 / 返回非法对象不会中断整次验收：该分支记 ``not_verifiable``
+    并**计入结果集**，理由里汇总写明（不能把异常当成功）。
     """
 
     def __init__(self, verifiers: Sequence[OutcomeVerifier]) -> None:
@@ -83,9 +84,26 @@ class CompositeVerifier:
                 )
             except Exception as exc:  # noqa: BLE001 - 验收失败不能反噬主流程
                 failures.append(f"#{index} {type(exc).__name__}: {exc}")
+                results.append(
+                    VerificationResult(
+                        status="not_verifiable",
+                        goal=goal,
+                        reason=f"验收器 #{index} 抛异常（{type(exc).__name__}）",
+                    )
+                )
                 continue
             if not isinstance(result, VerificationResult):
                 failures.append(f"#{index} 返回了非 VerificationResult 对象")
+                results.append(
+                    VerificationResult(
+                        status="not_verifiable",
+                        goal=goal,
+                        reason=(
+                            f"验收器 #{index} 返回了 {type(result).__name__}，"
+                            "不是 VerificationResult"
+                        ),
+                    )
+                )
                 continue
             results.append(result)
 
@@ -96,7 +114,7 @@ class CompositeVerifier:
             return VerificationResult(
                 status="not_verifiable",
                 goal=goal,
-                reason="；".join(failures) or "没有可用的验收器",
+                reason="没有可用的验收器",
             )
         failure = next(
             (item for item in results if item.status == "verified_failure"), None
@@ -106,11 +124,15 @@ class CompositeVerifier:
                 status="verified_failure",
                 goal=goal,
                 confidence=max(item.confidence for item in results),
-                reason=failure.reason or "至少一个验收器确认目标未达成",
+                reason=_merge_reason(
+                    failure.reason or "至少一个验收器确认目标未达成", failures
+                ),
                 evidence=merged_evidence,
             )
         successes = [item for item in results if item.status == "verified_success"]
         if len(successes) == len(results):
+            # 这里要求**全部**分支成功：异常/非法返回的分支已作为
+            # not_verifiable 条目计入 results，不会被漏掉。
             return VerificationResult(
                 status="verified_success",
                 goal=goal,
@@ -123,7 +145,7 @@ class CompositeVerifier:
                 status="partial",
                 goal=goal,
                 confidence=max(item.confidence for item in results),
-                reason="部分验收器确认达成、部分未确认",
+                reason=_merge_reason("部分验收器确认达成、部分未确认", failures),
                 evidence=merged_evidence,
             )
         if any(item.status == "unknown" for item in results):
@@ -131,15 +153,22 @@ class CompositeVerifier:
                 status="unknown",
                 goal=goal,
                 confidence=max(item.confidence for item in results),
-                reason="验收器无法确认结果",
+                reason=_merge_reason("验收器无法确认结果", failures),
                 evidence=merged_evidence,
             )
         return VerificationResult(
             status="not_verifiable",
             goal=goal,
-            reason="；".join(failures) or "所有验收器均不可判定",
+            reason=_merge_reason("所有验收器均不可判定", failures),
             evidence=merged_evidence,
         )
+
+
+def _merge_reason(reason: str, failures: Sequence[str]) -> str:
+    """在结论理由后附上"哪些分支不可判定"，不让异常分支被静默吞掉。"""
+    if not failures:
+        return reason
+    return f"{reason}（不可判定分支：{'；'.join(failures)}）"
 
 
 def _dedupe_evidence(items: Sequence[Evidence]) -> tuple[Evidence, ...]:

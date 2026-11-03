@@ -221,14 +221,23 @@ async def compact_context(
         if len(segments) <= 1:
             text = render_for_summary(ctx.messages, start, end)
             return [await _summarize(text)]
-        return list(
-            await asyncio.gather(
-                *[
-                    _summarize(render_for_summary(ctx.messages, seg_start, seg_end))
-                    for seg_start, seg_end in segments
-                ]
+        # 并行分段：任一段失败/超时/被取消时，必须取消并 await 其余段再上抛。
+        # 裸 ``asyncio.gather`` 在首个异常后不会取消兄弟任务，它们会脱离 await
+        # 在后台继续跑（继续烧 token、外层取消也传不到），是实打实的任务泄漏。
+        tasks = [
+            asyncio.ensure_future(
+                _summarize(render_for_summary(ctx.messages, seg_start, seg_end))
             )
-        )
+            for seg_start, seg_end in segments
+        ]
+        try:
+            return list(await asyncio.gather(*tasks))
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # return_exceptions：清理阶段的次生异常不得掩盖首个失败原因。
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     try:
         if timeout is None:

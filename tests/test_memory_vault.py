@@ -1,13 +1,21 @@
 """MemoryVault（结构化长期记忆）单元测试：纯标准库、离线、无 API Key。"""
 
 import asyncio
+import json
+import os
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import yai_core.memory.vault as vault_module
 from yai_core.discovery.scoring import token_similarity
-from yai_core.memory.vault import MemoryVault
+from yai_core.memory.vault import (
+    MemoryVault,
+    MemoryVaultReadOnlyError,
+    build_memory_tools,
+)
 
 
 class TickClock:
@@ -502,3 +510,218 @@ def test_max_notes_merge_does_not_evict_at_capacity() -> None:
 def test_invalid_max_notes_raises(bad) -> None:
     with pytest.raises(ValueError):
         MemoryVault(max_notes=bad)  # type: ignore[arg-type]
+
+
+# ---------- v0.26 数据完整性加固：读路径不因写盘失败而失败 ----------
+
+
+def test_recall_survives_save_failure(monkeypatch, tmp_path: Path) -> None:
+    """recall 的 touch 落盘失败只记 dirty + 诊断，召回结果照常返回。"""
+    path = tmp_path / "memory.json"
+    events: list = []
+    vault = MemoryVault(storage_path=path, on_diagnostic=events.append)
+    vault.remember("用户对芒果严重过敏", kind="fact", tags=["过敏"], importance=5)
+    original_write = MemoryVault._atomic_write
+
+    def _boom(self, raw: bytes) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(MemoryVault, "_atomic_write", _boom)
+    try:
+        hits = vault.recall("芒果过敏")
+        assert hits and "芒果" in hits[0]["content"]
+        assert vault.dirty is True
+        assert any(event.kind == "memory_save_failed" for event in events)
+        assert vault.status()["storage"]["dirty"] is True
+    finally:
+        monkeypatch.setattr(MemoryVault, "_atomic_write", original_write)
+
+    # 写能力恢复后，下一次写路径把完整状态补回磁盘（dirty 自动清掉）。
+    vault.remember("用户是湛江人", kind="profile")
+    assert vault.dirty is False
+    assert MemoryVault(storage_path=path).status()["total"] == 2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="只有 Windows 的只读属性会阻止 os.replace")
+def test_recall_survives_readonly_file_attribute(tmp_path: Path) -> None:
+    """Windows 场景：文件被置只读（备份恢复 / 安全策略）时读接口仍可用。"""
+    path = tmp_path / "memory.json"
+    vault = MemoryVault(storage_path=path)
+    vault.remember("用户对芒果严重过敏", kind="fact", importance=5)
+    os.chmod(path, stat.S_IREAD)
+    try:
+        hits = vault.recall("芒果过敏")
+        assert hits and "芒果" in hits[0]["content"]
+        assert vault.dirty is True
+    finally:
+        os.chmod(path, stat.S_IWRITE)
+    assert vault.remember("写能力恢复后的一条")[0].id
+
+
+def test_startup_cap_convergence_save_failure_does_not_raise(monkeypatch, tmp_path) -> None:
+    """打开存量库调小 max_notes 时，收敛落盘失败也不能让构造器抛错。"""
+    path = tmp_path / "vault.json"
+    first = MemoryVault(storage_path=path)
+    for phrase in _DISTINCT_PHRASES[:5]:
+        first.remember(phrase)
+
+    def _boom(self, raw: bytes) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(MemoryVault, "_atomic_write", _boom)
+    events: list = []
+    second = MemoryVault(storage_path=path, max_notes=2, on_diagnostic=events.append)
+
+    assert second.status()["total"] == 2  # 内存里已收敛
+    assert second.dirty is True  # 但磁盘还没更新
+    assert any(event.kind == "memory_save_failed" for event in events)
+
+
+def test_atomic_write_fsyncs_before_replace(monkeypatch, tmp_path: Path) -> None:
+    """原子写必须先 fsync 数据文件（掉电才不会留下空/半截文件）。"""
+    synced: list[int] = []
+
+    def _counting_fsync(fd: int) -> None:
+        synced.append(fd)
+
+    monkeypatch.setattr(vault_module.os, "fsync", _counting_fsync)
+    vault = MemoryVault(storage_path=tmp_path / "memory.json")
+    vault.remember("需要真正落盘的一条记忆")
+    assert synced, "落盘路径必须调用 os.fsync"
+
+
+# ---------- v0.26 数据完整性加固：多实例写冲突 = 合并而不是静默覆盖 ----------
+
+
+def test_two_instances_merge_instead_of_losing_updates(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    a = MemoryVault(storage_path=path)
+    b = MemoryVault(storage_path=path)  # 同一时刻另一实例（多会话 / 多进程等价）
+
+    a.remember("用户对芒果严重过敏", kind="fact")
+    b.remember("用户是湛江人", kind="profile")
+
+    disk = MemoryVault(storage_path=path)
+    contents = {note.content for note in disk._notes}  # noqa: SLF001
+    assert contents == {"用户对芒果严重过敏", "用户是湛江人"}
+
+
+def test_merge_applies_forget_tombstone_and_keeps_external_additions(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    seed = MemoryVault(storage_path=path)
+    mango, _ = seed.remember("用户对芒果严重过敏", kind="fact")
+    seed.remember("用户是湛江人", kind="profile")
+
+    a = MemoryVault(storage_path=path)
+    b = MemoryVault(storage_path=path)
+    b.remember("别的实例新增的一条记忆")  # 外部修改磁盘
+    assert a.forget(mango.id) is True  # a 本地删除芒果 -> 检测到外部修改后走合并
+
+    disk = MemoryVault(storage_path=path)
+    contents = {note.content for note in disk._notes}  # noqa: SLF001
+    assert "用户对芒果严重过敏" not in contents  # 墓碑生效，没被磁盘版本复活
+    assert "用户是湛江人" in contents
+    assert "别的实例新增的一条记忆" in contents
+
+
+def test_external_corrupt_file_is_quarantined_before_overwrite(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    a = MemoryVault(storage_path=path)
+    a.remember("a 的记忆", kind="fact")
+    b = MemoryVault(storage_path=path)  # 加载到 a 的记忆
+
+    corrupted = "{运行期间被外部写坏".encode()
+    path.write_bytes(corrupted)  # 运行期外部破坏
+
+    b.remember("b 新写的记忆")
+    backups = list(tmp_path.glob("memory.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == corrupted  # 原始坏字节已留档
+    disk = MemoryVault(storage_path=path)
+    assert {note.content for note in disk._notes} == {"a 的记忆", "b 新写的记忆"}  # noqa: SLF001
+
+
+def test_external_newer_version_is_not_overwritten(tmp_path: Path) -> None:
+    """运行期磁盘被更高版本的实现改写：只读降级，绝不用旧格式覆盖新档案。"""
+    path = tmp_path / "memory.json"
+    a = MemoryVault(storage_path=path)
+    a.remember("a 的记忆", kind="fact")
+    b = MemoryVault(storage_path=path)  # 加载到 a 的状态
+
+    newer = json.dumps({"version": 99, "notes": []}).encode()
+    path.write_bytes(newer)
+
+    with pytest.raises(MemoryVaultReadOnlyError):
+        b.remember("b 的新记忆")
+    assert b.read_only is True
+    assert path.read_bytes() == newer  # 更高版本的档案分毫不动
+
+
+# ---------- v0.26 P3：容量淘汰可观测、status 容忍未知 kind ----------
+
+
+def test_remember_reports_eviction_of_new_note(tmp_path: Path) -> None:
+    events: list = []
+    vault = MemoryVault(max_notes=2, on_diagnostic=events.append)
+    vault.remember("重要事实甲", importance=5)
+    vault.remember("重要事实乙", importance=5)
+
+    note, merged = vault.remember("新来的低重要度记录", importance=1)
+
+    assert merged is False
+    assert vault.contains(note.id) is False
+    assert vault.last_remember_evicted is True
+    assert any(event.kind == "memory_evicted" for event in events)
+
+    # 工具结果必须如实回报 stored=False（不能让模型以为"记住了"）。
+    remember_tool = next(spec for spec in build_memory_tools(vault) if spec.name == "remember")
+    result = remember_tool.handler(content="再来一条更低重要度的记录", importance=1)
+    assert result["stored"] is False
+
+
+def test_status_tolerates_unknown_kind_from_file(tmp_path: Path) -> None:
+    path = tmp_path / "memory.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "notes": [
+                    {
+                        "id": "abc123",
+                        "content": "一条结构合法但 kind 未知的记忆",
+                        "kind": "reminder",  # 旧版 / 未来版 / 手工编辑写入的类型
+                        "tags": [],
+                        "importance": 3,
+                        "created_at": "2026-11-03T00:00:00+00:00",
+                        "last_used_at": "2026-11-03T00:00:00+00:00",
+                        "access_count": 0,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    vault = MemoryVault(storage_path=path)
+
+    assert vault.load_state["status"] == "ok"
+    status = vault.status()  # 旧实现这里抛 KeyError
+    assert status["by_kind"]["reminder"] == 1
+    assert status["total"] == 1
+
+
+def test_memory_package_exports_public_errors() -> None:
+    """宿主必须能从公共入口 ``yai_core.memory`` 捕获异常类型。"""
+    import yai_core.memory as memory_pkg
+
+    for name in (
+        "MemoryVaultError",
+        "MemoryVaultLoadError",
+        "MemoryVaultReadOnlyError",
+        "MemoryNote",
+        "LOAD_OWNER_MISMATCH",
+    ):
+        assert name in memory_pkg.__all__
+        assert hasattr(memory_pkg, name)
+    assert issubclass(memory_pkg.MemoryVaultReadOnlyError, memory_pkg.MemoryVaultError)

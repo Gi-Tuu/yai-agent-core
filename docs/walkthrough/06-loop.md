@@ -233,6 +233,9 @@ async def astream(
     yield AgentEvent(EventType.DONE, done_data)
 ```
 - 收尾：把这一轮问答写进记忆，发 DONE 事件（携带最终结果）。
+- **终态保证（v0.26 审计整改）**：除 `CancelledError` 外，任何被内核捕获的失败都会让
+  事件流以 `ERROR + DONE` 收尾；`DONE` 带 `status`（`"ok"`/`"error"`）与可选 `error`，
+  空 `final_text` 不会再写进共享历史。宿主不得把"流断在半路"当成正常结束。
 - DONE 里还带**成本证据**：`standard_calls` / `strong_calls` / `model_calls` 是本次任务的
   模型调用次数（规划 + 执行 + 收尾口径，不含路由分类与上下文压缩调用）；配了预算时
   还会附上 `budget` 快照，触发熔断则附 `reason="budget_exceeded"`。

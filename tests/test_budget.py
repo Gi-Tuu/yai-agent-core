@@ -237,3 +237,18 @@ def test_tracker_model_call_boundary() -> None:
         tracker.before_model_call()
     assert exc.value.scope == "model_calls"
     assert tracker.model_calls == 1
+
+
+def test_budget_exceeded_done_and_run_result_carry_error_status() -> None:
+    """CORE-4：熔断终止也必须在 DONE / RunResult 上有可读终态。"""
+    model = ScriptedModel([ModelResponse(content="不应被调用")])
+    core = AgentCore(model, budget=Budget(max_model_calls=0))
+
+    result = asyncio.run(core.run("你好"))
+
+    done = _done(result)
+    assert done["status"] == "error"
+    assert done["reason"] == "budget_exceeded"
+    assert result.status == "error"
+    assert result.error and "预算" in result.error
+    assert model.calls == 0

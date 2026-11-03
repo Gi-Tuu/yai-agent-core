@@ -26,6 +26,7 @@ from yai_core.memory.vault import (
     LOAD_DECRYPT_FAILED,
     LOAD_MISSING,
     LOAD_OK,
+    LOAD_OWNER_MISMATCH,
     LOAD_UNREADABLE,
     LOAD_VERSION_INCOMPATIBLE,
     MemoryVault,
@@ -230,8 +231,11 @@ def test_status_exposes_storage_block(tmp_path: Path) -> None:
         "read_only",
         "quarantined_to",
         "owner",
+        "dirty",
+        "disk_synced",
     }
     assert storage["status"] == LOAD_MISSING
+    assert storage["dirty"] is False
 
 
 # ---------- 租户 / owner 隔离（v0.26 P0 最小方案） ----------
@@ -273,3 +277,68 @@ def test_legacy_file_without_owner_stays_readable(tmp_path: Path) -> None:
 
     assert migrated.load_state["status"] == "ok"
     assert migrated.status()["total"] == 1
+
+
+# ---------- owner fail-closed 的另一个方向：实例没声明 owner ----------
+
+
+def test_ownerless_instance_refuses_owned_file(tmp_path: Path) -> None:
+    """文件已声明 owner 而实例 owner=None：只读降级，既不读也不覆盖、不抹归属。"""
+    path = tmp_path / "memory.json"
+    MemoryVault(storage_path=path, owner="alice").remember("alice 的私密偏好")
+    original = path.read_bytes()
+
+    rogue = MemoryVault(storage_path=path)  # 宿主忘了传 owner
+
+    assert rogue.load_state["status"] == LOAD_OWNER_MISMATCH
+    assert rogue.read_only is True
+    assert rogue.status()["total"] == 0
+    assert rogue.recall("私密") == []  # 不把别人的记忆读进来
+    with pytest.raises(MemoryVaultReadOnlyError):
+        rogue.remember("rogue 写入")
+    assert path.read_bytes() == original  # 原始档案（含 owner）分毫不动
+
+    # alice 重新打开仍能看到自己的记忆、归属也没被抹掉
+    again = MemoryVault(storage_path=path, owner="alice")
+    assert again.load_state["status"] == LOAD_OK
+    assert again.status()["storage"]["owner"] == "alice"
+    assert again.status()["total"] == 1
+
+
+def test_ownerless_save_never_writes_null_owner(tmp_path: Path) -> None:
+    """未声明 owner 的实例读 legacy 文件后保存，不得把文件里的 owner 写成 null。
+
+    这里构造的是"文件 owner 为空 -> 声明 owner 写入 -> 再被未声明实例读到"的
+    相邻场景之外的直球场景：只用 alice 写、用无 owner 实例读 legacy 文件
+    （owner 未声明），保存后 owner 仍为空，这是兼容分支；关键是**不能**把
+    非空 owner 抹成 null——由上一个用例保证（那个实例根本读不进来）。
+    """
+    path = tmp_path / "memory.json"
+    MemoryVault(storage_path=path).remember("legacy 记忆")
+
+    ownerless = MemoryVault(storage_path=path)
+    ownerless.remember("又记一条")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["owner"] is None  # legacy 文件本来就没 owner，不会被编造也不会被写坏
+    assert len(payload["notes"]) == 2
+
+
+# ---------- quarantine 备份保留上限 ----------
+
+
+def test_quarantine_keeps_only_latest_backups(tmp_path: Path) -> None:
+    from yai_core.memory.vault import QUARANTINE_KEEP
+
+    path = tmp_path / "memory.json"
+    for generation in range(QUARANTINE_KEEP + 3):
+        path.write_bytes(f"{{broken generation {generation}".encode())
+        vault = MemoryVault(storage_path=path)
+        assert vault.load_state["status"] == LOAD_CORRUPT
+
+    backups = sorted(tmp_path.glob("memory.json.corrupt-*"))
+    assert len(backups) == QUARANTINE_KEEP
+    # 保留的是最新的若干份（最旧的那几代被清掉），且内容仍是原始坏字节
+    contents = {backup.read_text(encoding="utf-8") for backup in backups}
+    assert not any("generation 0" in text for text in contents)
+    assert any(f"generation {QUARANTINE_KEEP + 2}" in text for text in contents)

@@ -137,6 +137,7 @@ async def astream(self, task: str) -> AsyncIterator[AgentEvent]:
 ```python
 async def run(self, task: str) -> RunResult:
     events, final_text, strategy = [], "", None
+    status, error = "ok", None
     async for event in self.astream(task):
         events.append(event)
         data = event.data
@@ -145,11 +146,16 @@ async def run(self, task: str) -> RunResult:
             strategy = Strategy(data["strategy"])
         if event.type.value == "done":
             final_text = data.get("final_text", "")
+            status = str(data.get("status", "ok"))
+            raw = data.get("error")
+            error = str(raw) if raw is not None else None
     return RunResult(strategy=strategy or self.router.classify(task, self.registry),
-                     events=events, final_text=final_text)
+                     events=events, final_text=final_text,
+                     status=status, error=error)
 ```
 - `run` 是"懒人版"：内部消费 astream，把事件攒起来，最后打包成 RunResult。
 - 从事件数据里反推策略；兜底再 classify 一次（防御）。
+- v0.26 审计整改后，`RunResult.status/error` 直接来自 `DONE`；失败不靠"final_text 为空"猜。
 - 函数内 import Strategy 只是为了避免顶部循环导入的写法，你也可以放到顶部（这里没有真正的环，后续可简化）。
 
 ## 两条接入路径对比
