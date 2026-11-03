@@ -95,6 +95,20 @@ function handlePanelMessage(panelPort, message) {
       postToBridge({ op: "status" });
       break;
     }
+    case "get_config": {
+      postToBridge({ op: "get_config" });
+      break;
+    }
+    case "configure_llm": {
+      const payload = { op: "configure_llm" };
+      for (const field of ["base_url", "model", "strong_model", "api_key"]) {
+        if (typeof message[field] === "string" && message[field]) {
+          payload[field] = message[field];
+        }
+      }
+      postToBridge(payload);
+      break;
+    }
     case "shutdown": {
       postToBridge({ op: "shutdown" });
       break;

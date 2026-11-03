@@ -26,7 +26,12 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  - **CDP 模式与本地 LLM 配置（本机）**：`scripts/chrome_cdp.py` 启动/停止带调试端口的
+  - **侧边栏 LLM 设置入口（本机）**：面板新增“LLM 设置”折叠区（Base URL / 模型 /
+  强模型 / API Key），通过 Bridge `get_config` / `configure_llm` 读写本地
+  `%LOCALAPPDATA%\YAI\bridge.json`；读回时 Key 永远脱敏（`***末4位`），保存后提示
+  “关闭再打开侧边栏生效”。Key 不写 localStorage、保存后输入框清空。本机实测面板
+  回填 suanli.cn 配置并成功保存（`docs/exports/extension-llm-settings.png`）。
+- **CDP 模式与本地 LLM 配置（本机）**：`scripts/chrome_cdp.py` 启动/停止带调试端口的
   独立 profile Chrome；`register_native_host.py --cdp-endpoint` 让 Playwright MCP 连接并
   操作该 Chrome。真机验证（真实 Edge + Chrome 156）：侧边栏显示模型与 MCP 名，任务
   「打开百度」经两次审批由 `browser_navigate`/`browser_evaluate` 完成，CDP 当前页为

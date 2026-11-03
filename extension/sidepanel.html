@@ -34,6 +34,30 @@
       <div id="page-preview" class="page-preview hidden"></div>
     </section>
 
+    <details id="settings" class="settings">
+      <summary>LLM 设置（保存到本机配置）</summary>
+      <div class="settings-grid">
+        <label>Base URL
+          <input id="cfg-base-url" type="text" placeholder="https://api.suanli.cn/v1" />
+        </label>
+        <label>模型
+          <input id="cfg-model" type="text" placeholder="deepseek/deepseek-v4.1-flash-1017" />
+        </label>
+        <label>强模型（可选）
+          <input id="cfg-strong-model" type="text" placeholder="留空 = 不修改" />
+        </label>
+        <label>API Key（留空 = 不修改）
+          <input id="cfg-api-key" type="password" autocomplete="off"
+                 placeholder="只写入本机配置文件，不存浏览器" />
+        </label>
+      </div>
+      <div class="row">
+        <button id="cfg-load" class="ghost">读取当前配置</button>
+        <button id="cfg-save" class="primary">保存到本机</button>
+      </div>
+      <p id="cfg-status" class="hint"></p>
+    </details>
+
     <section id="approval" class="approval hidden">
       <div class="approval-head">
         <strong>需要确认</strong>

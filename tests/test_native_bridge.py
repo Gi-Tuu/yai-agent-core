@@ -119,6 +119,125 @@ def test_resolve_config_path_ignores_chrome_flags() -> None:
     )
 
 
+def test_configure_llm_writes_local_config_and_masks_key(tmp_path) -> None:
+    path = tmp_path / "bridge.json"
+    path.write_text(
+        json.dumps(
+            {
+                "allowed_origins": ["chrome-extension://abcdef/"],
+                "initialize": {
+                    "model": {"provider": "openai-compatible", "api_key": "sk-old"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = load_bridge_config(str(path))
+    written: list[dict[str, Any]] = []
+
+    async def writer(message: dict[str, Any]) -> None:
+        written.append(message)
+
+    async def reader() -> dict[str, Any] | None:
+        return None
+
+    bridge = NativeBridge(
+        FakeTransport(),
+        config=config,
+        read_message=reader,
+        write_message=writer,
+        config_path=str(path),
+    )
+    bridge._hello_done = True  # noqa: SLF001 - 单测直接置就绪态，避免走完整握手
+    _run(
+        bridge._handle_browser_message(  # noqa: SLF001
+            {
+                "op": "configure_llm",
+                "base_url": "https://api.new/v1",
+                "model": "m1",
+                "strong_model": "m2",
+                "api_key": "sk-new-9999",
+            }
+        )
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    model = saved["initialize"]["model"]
+    assert model["base_url"] == "https://api.new/v1"
+    assert model["model"] == "m1"
+    assert model["strong_model"] == "m2"
+    assert model["api_key"] == "sk-new-9999"
+    assert (tmp_path / "bridge.json.bak").is_file()
+
+    assert written[-1]["type"] == "config_saved"
+    assert written[-1]["model"]["api_key"] == "***9999"
+    assert "sk-new-9999" not in json.dumps(written, ensure_ascii=False)
+
+
+def test_configure_llm_without_config_path_is_rejected() -> None:
+    written: list[dict[str, Any]] = []
+
+    async def writer(message: dict[str, Any]) -> None:
+        written.append(message)
+
+    async def reader() -> dict[str, Any] | None:
+        return None
+
+    bridge = NativeBridge(
+        FakeTransport(),
+        config=BridgeConfig(allowed_origins=frozenset({"chrome-extension://abc"})),
+        read_message=reader,
+        write_message=writer,
+    )
+    bridge._hello_done = True  # noqa: SLF001
+    _run(
+        bridge._handle_browser_message(  # noqa: SLF001
+            {"op": "configure_llm", "model": "m1"}
+        )
+    )
+    assert written[-1]["type"] == "error"
+    assert "配置文件" in written[-1]["message"]
+
+
+def test_get_config_returns_masked_model(tmp_path) -> None:
+    path = tmp_path / "bridge.json"
+    path.write_text(
+        json.dumps(
+            {
+                "allowed_origins": ["chrome-extension://abcdef/"],
+                "initialize": {
+                    "model": {
+                        "provider": "openai-compatible",
+                        "api_key": "sk-secret-1234",
+                        "model": "m1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    written: list[dict[str, Any]] = []
+
+    async def writer(message: dict[str, Any]) -> None:
+        written.append(message)
+
+    async def reader() -> dict[str, Any] | None:
+        return None
+
+    bridge = NativeBridge(
+        FakeTransport(),
+        config=load_bridge_config(str(path)),
+        read_message=reader,
+        write_message=writer,
+        config_path=str(path),
+    )
+    bridge._hello_done = True  # noqa: SLF001
+    _run(bridge._handle_browser_message({"op": "get_config"}))  # noqa: SLF001
+    assert written[-1]["type"] == "llm_config"
+    assert written[-1]["model"]["api_key"] == "***1234"
+    assert written[-1]["model"]["model"] == "m1"
+
+
 def test_load_config_validates(tmp_path) -> None:
     path = tmp_path / "bridge.json"
     path.write_text(

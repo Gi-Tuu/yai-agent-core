@@ -9,8 +9,9 @@
 - Bridge 是**本地进程**，由浏览器按 native host manifest 拉起；Chrome 会把
   扩展来源作为第一个参数传入（``chrome-extension://<id>/``）。Bridge 只在
   来源命中 ``allowed_origins`` 时启动，否则直接退出——不信任扩展自报身份。
-- **浏览器端不保管任何高权限凭据**：模型 / 策略等 initialize 参数来自 Bridge
-  自己的本地配置文件或环境变量，扩展消息里**没有**接受这些字段的入口。
+- **浏览器端不保管任何高权限凭据**：模型 / 策略等 initialize 参数默认来自 Bridge
+  自己的本地配置文件或环境变量；扩展只能在用户显式点击"保存"时经 `configure_llm`
+  写本地配置（Key 只走一次内存、不落浏览器存储，且读回时永远脱敏）。
 - 扩展只能发白名单内的操作（hello / run / cancel / host_response / ping /
   status / shutdown），每个入站消息都有大小与字段校验。
 - 出站事件超过 Native Messaging 单帧上限时替换为截断标记，避免整帧被浏览器
@@ -29,6 +30,7 @@ import struct
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -41,7 +43,17 @@ _FRAME_HEADER = struct.Struct("<I")
 
 #: 扩展允许发送的操作白名单。
 ALLOWED_OPS = frozenset(
-    {"hello", "run", "cancel", "host_response", "ping", "status", "shutdown"}
+    {
+        "hello",
+        "run",
+        "cancel",
+        "host_response",
+        "ping",
+        "status",
+        "shutdown",
+        "get_config",
+        "configure_llm",
+    }
 )
 
 #: Sidecar 允许反向请求宿主的白名单方法。
@@ -252,6 +264,16 @@ def _normalize_origin(origin: str | None) -> str:
     return f"chrome-extension://{parts.netloc}"
 
 
+def masked_model(model: Any) -> dict[str, Any]:
+    """返回可安全发给浏览器的模型配置视图：Key 只保留末 4 位。"""
+    if not isinstance(model, dict):
+        return {}
+    view = dict(model)
+    key = str(view.pop("api_key", "") or "")
+    view["api_key"] = ("***" + key[-4:]) if key else ""
+    return view
+
+
 # ---------------------------------------------------------------- Bridge
 
 
@@ -269,9 +291,11 @@ class NativeBridge:
         config: BridgeConfig,
         read_message: ReadMessage,
         write_message: WriteMessage,
+        config_path: str | None = None,
     ) -> None:
         self.transport = transport
         self.config = config
+        self._config_path = config_path
         self._read_browser = read_message
         self._write_browser_raw = write_message
         self._write_lock = asyncio.Lock()
@@ -610,6 +634,78 @@ class NativeBridge:
         self._stopping = True
         await self._send({"type": "shutdown_ack"})
 
+    # ---------- LLM 配置（面板入口；Key 只写本地配置文件） ----------
+
+    async def _op_get_config(self, _message: dict[str, Any]) -> None:
+        self._require_hello()
+        await self._send(
+            {
+                "type": "llm_config",
+                "model": masked_model(self.config.initialize_params.get("model")),
+                "config_path": str(self._config_path or ""),
+            }
+        )
+
+    async def _op_configure_llm(self, message: dict[str, Any]) -> None:
+        self._require_hello()
+        if not self._config_path:
+            raise BridgeError("Bridge 未从配置文件启动，无法保存 LLM 配置")
+        path = Path(self._config_path)
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                raise ValueError("顶层不是 object")
+        except FileNotFoundError:
+            current = {
+                "allowed_origins": sorted(self.config.allowed_origins),
+                "initialize": dict(self.config.initialize_params),
+                "max_task_chars": self.config.max_task_chars,
+            }
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise BridgeError(f"读取本地配置失败：{exc}") from exc
+
+        initialize = current.setdefault("initialize", {})
+        if not isinstance(initialize, dict):
+            raise BridgeError("本地配置 initialize 不是 object")
+        model = dict(initialize.get("model") or {})
+        model.setdefault("provider", "openai-compatible")
+        for name in ("base_url", "model", "strong_model"):
+            value = message.get(name)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise BridgeError(f"configure_llm.{name} 必须是字符串")
+            if value.strip():
+                model[name] = value.strip()
+        api_key = message.get("api_key")
+        if api_key is not None:
+            if not isinstance(api_key, str):
+                raise BridgeError("configure_llm.api_key 必须是字符串")
+            if api_key.strip():
+                model["api_key"] = api_key.strip()
+        initialize["model"] = model
+
+        backup = path.with_suffix(path.suffix + ".bak")
+        try:
+            if path.is_file():
+                backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(current, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise BridgeError(f"写入本地配置失败：{exc}") from exc
+        # 同一次连接里更新内存视图，下次 hello/status 显示新模型（运行中的 Sidecar 不变）。
+        self.config.initialize_params["model"] = model
+        await self._send(
+            {
+                "type": "config_saved",
+                "model": masked_model(model),
+                "note": "已保存到本机配置；关闭再打开侧边栏后生效（Bridge 重新读取配置）",
+            }
+        )
+
     def _require_hello(self) -> None:
         if not self._hello_done:
             raise BridgeError("请先发送 hello 完成协议握手")
@@ -742,6 +838,7 @@ async def main(argv: list[str] | None = None) -> int:
         config=config,
         read_message=partial(_read_stdin_message),
         write_message=partial(_write_stdout_message),
+        config_path=config_path,
     )
     try:
         await bridge.run()

@@ -32,6 +32,13 @@ const el = {
   clarifyQuestion: document.getElementById("clarify-question"),
   clarifyAnswer: document.getElementById("clarify-answer"),
   clarifySend: document.getElementById("clarify-send"),
+  cfgBaseUrl: document.getElementById("cfg-base-url"),
+  cfgModel: document.getElementById("cfg-model"),
+  cfgStrongModel: document.getElementById("cfg-strong-model"),
+  cfgApiKey: document.getElementById("cfg-api-key"),
+  cfgLoad: document.getElementById("cfg-load"),
+  cfgSave: document.getElementById("cfg-save"),
+  cfgStatus: document.getElementById("cfg-status"),
 };
 
 let port = null;
@@ -101,6 +108,14 @@ function onBridgeMessage(message) {
       return;
     case "host_request":
       handleHostRequest(message);
+      return;
+    case "llm_config":
+      applyLlmConfig(message.model, message.config_path);
+      return;
+    case "config_saved":
+      applyLlmConfig(message.model);
+      el.cfgStatus.textContent = message.note || "已保存";
+      appendEvent("event", "LLM 配置已保存到本机（重开侧边栏生效）");
       return;
     case "notification":
       handleNotification(message);
@@ -272,6 +287,47 @@ function hideApproval() {
   el.approval.classList.add("hidden");
   pendingRequestId = null;
 }
+
+function applyLlmConfig(model, configPath) {
+  const info = model || {};
+  el.cfgBaseUrl.value = info.base_url || "";
+  el.cfgModel.value = info.model || "";
+  el.cfgStrongModel.value = info.strong_model || "";
+  el.cfgApiKey.value = "";
+  el.cfgApiKey.placeholder = info.api_key
+    ? `已配置（${info.api_key}），留空不修改`
+    : "只写入本机配置文件，不存浏览器";
+  const location = info.base_url ? ` @ ${info.base_url}` : "";
+  el.cfgStatus.textContent =
+    `当前：${info.model || "未配置模型"}${location}` +
+    (configPath ? `（${configPath}）` : "");
+}
+
+el.cfgLoad.addEventListener("click", () => {
+  if (!send({ op: "get_config" })) {
+    el.cfgStatus.textContent = "未连接本地 Bridge";
+  }
+});
+
+el.cfgSave.addEventListener("click", () => {
+  const payload = { op: "configure_llm" };
+  const fields = {
+    base_url: el.cfgBaseUrl.value.trim(),
+    model: el.cfgModel.value.trim(),
+    strong_model: el.cfgStrongModel.value.trim(),
+    api_key: el.cfgApiKey.value,
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value) payload[key] = value;
+  }
+  if (Object.keys(payload).length === 1) {
+    el.cfgStatus.textContent = "没有要保存的改动";
+    return;
+  }
+  if (send(payload)) {
+    el.cfgStatus.textContent = "正在保存到本机配置…";
+  }
+});
 
 el.observe.addEventListener("click", async () => {
   try {

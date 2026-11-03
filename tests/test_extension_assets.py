@@ -39,10 +39,10 @@ def test_service_worker_registers_click_behavior_with_fallback() -> None:
     assert "chrome.action.onClicked" in text
     assert "chrome.sidePanel.open" in text
     assert "openPanelAsTab" in text
-    # 面板显示当前模型 / MCP（非敏感字段，不含 api_key）。
+    # 面板显示当前模型 / MCP（非敏感字段，不含 api_key 值本身）。
     assert "message.model" in text
     assert "mcp_servers" in text
-    assert "api_key" not in text
+    assert "localStorage" not in text
 
 
 def test_sidepanel_page_and_assets_exist() -> None:
@@ -52,10 +52,22 @@ def test_sidepanel_page_and_assets_exist() -> None:
     assert 'id="conn-text"' in html
     assert 'src="sidepanel.js"' in html
     assert 'href="sidepanel.css"' in html
+    # LLM 设置入口（用户反馈"没看到配置 LLM 的入口"，这里守住 DOM 与输入类型）。
+    for element_id in (
+        "cfg-base-url",
+        "cfg-model",
+        "cfg-strong-model",
+        "cfg-api-key",
+        "cfg-load",
+        "cfg-save",
+    ):
+        assert f'id="{element_id}"' in html
+    assert 'type="password"' in html
     assert (EXT / "sidepanel.js").is_file()
     assert (EXT / "sidepanel.css").is_file()
-    # 面板页不引外部脚本（离线可用、无供应链面）。
-    assert "http://" not in html and "https://" not in html
+    # 面板页不引外部脚本（离线可用、无供应链面）；placeholder 里的 URL 不算。
+    assert 'src="http' not in html and 'href="http' not in html
+    assert "localStorage" not in _read("sidepanel.js")
 
 
 def test_sidepanel_js_has_no_unresolved_placeholders() -> None:

@@ -87,7 +87,8 @@ Chrome / Edge Extension (MV3)
 .\.venv\Scripts\python.exe scripts\chrome_cdp.py status
 
 # 2) 把 MCP 配置改成 CDP 端点（会写进本地 bridge.json）
-.\.venv\Scripts\python.exe scriptsegister_native_host.py `
+.\.venv\Scripts\python.exe scripts
+egister_native_host.py `
   --extension-id <扩展ID> --launcher dist\yai-bridge-v2.exe --python .\.venv\Scripts\python.exe `
   --env-file .env --browser-mcp playwright --cdp-endpoint http://127.0.0.1:9222
 
@@ -105,6 +106,27 @@ Chrome / Edge Extension (MV3)
 > 说明：CDP 连接的是 `scripts/chrome_cdp.py` 启动的那个 Chrome（独立 profile），
 > 不是你正在用的默认 Chrome 窗口；已有 Chrome 无法事后开启调试端口。若想接入已有窗口，
 > 需要以 `--remote-debugging-port` 启动它。
+
+## LLM 配置入口（面板 + 本地 CLI）
+
+侧边栏里有 **“LLM 设置（保存到本机配置）”** 折叠区：可填 Base URL / 模型 / 强模型 /
+API Key（密码框）。行为：
+
+- “读取当前配置”会回填模型/Base URL，Key 只显示 `***末4位`（Bridge 永远不回传明文）；
+- “保存到本机”把配置写进 `%LOCALAPPDATA%\YAI\bridge.json`（先备份 `.bak`），
+  **关闭再打开侧边栏生效**（Bridge 重新读取配置）；
+- Key 只在点击保存时经一次内存传输，写入本机配置文件；**不存上次/不写 localStorage**，
+  输入框保存后清空；面板不提供“读回明文 Key”。
+- 本机实测：读取后输入框回填 `https://api.suanli.cn/v1` / `deepseek/...`，
+  Key 显示 `已配置（***QRhb）`；保存返回“已保存到本机配置；关闭再打开侧边栏后生效”。
+  截图：`docs/exports/extension-llm-settings.png`（gitignore）。
+
+仍保留等价 CLI（适合脚本/CI）：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --show
+Get-Content .env | .\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --api-key-stdin
+```
 
 ## LLM 配置（本地，不走浏览器）
 
