@@ -45,6 +45,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
+from yai_core.fsutil import replace_with_retry
+
 #: Bridge 自身的协议版本（与 Sidecar 的 PROTOCOL_VERSION 分开演进）。
 BRIDGE_PROTOCOL_VERSION = 1
 
@@ -522,7 +524,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(str(tmp), str(path))
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink()
