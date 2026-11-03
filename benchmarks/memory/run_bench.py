@@ -64,22 +64,28 @@ async def _evaluate(
     *,
     semantic: bool,
     repeats: int,
+    warmup: int = 1,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """逐 query：先 warmup，再重复测量；延迟用**全部样本**算 P50/P95。"""
     per_query: list[dict[str, Any]] = []
     latencies: list[float] = []
     for item in QUERIES:
-        best_ms = float("inf")
+        for _ in range(max(0, warmup)):
+            if semantic:
+                await vault.arecall(item["q"], k=K)
+            else:
+                vault.recall(item["q"], k=K)
         ranked_keys: list[str] = []
+        samples: list[float] = []
         for _ in range(max(1, repeats)):
             started = time.perf_counter()
             if semantic:
                 results = await vault.arecall(item["q"], k=K)
             else:
                 results = vault.recall(item["q"], k=K)
-            elapsed = (time.perf_counter() - started) * 1000
-            best_ms = min(best_ms, elapsed)
+            samples.append((time.perf_counter() - started) * 1000)
             ranked_keys = [mapping.get(row["id"], "") for row in results]
-        latencies.append(best_ms)
+        latencies.extend(samples)
         relevant = list(item["expected"])
         per_query.append(
             {
@@ -91,8 +97,19 @@ async def _evaluate(
                 "irrelevant": irrelevant_rate(ranked_keys, relevant, K),
             }
         )
-    return aggregate(per_query, k=K, latencies_ms=latencies), per_query
+    metrics = aggregate(per_query, k=K, latencies_ms=latencies)
+    metrics["latency_samples"] = len(latencies)
+    return metrics, per_query
 
+
+async def _cold_start(vault: MemoryVault, *, semantic: bool) -> float:
+    """首次调用（未预热）耗时；冷启动与热启动分开报告。"""
+    started = time.perf_counter()
+    if semantic:
+        await vault.arecall(QUERIES[0]["q"], k=K)
+    else:
+        vault.recall(QUERIES[0]["q"], k=K)
+    return (time.perf_counter() - started) * 1000
 
 def _complement(
     lexical: list[dict[str, Any]], semantic: list[dict[str, Any]]
@@ -170,12 +187,21 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
             "queries": len(QUERIES),
             "k": K,
             "embedder": "real-bge-m3" if args.real_embed else "fake-concept-axes",
+            "embedder_kind": "real" if args.real_embed else "fake",
+            "device": "cpu",
+            "warmup": args.warmup,
+            "repeats": args.repeats,
         }
     }
 
     lexical_vault, lexical_map = _build_vault()
+    cold_lexical = await _cold_start(lexical_vault, semantic=False)
     lexical_metrics, lexical_rows = await _evaluate(
-        lexical_vault, lexical_map, semantic=False, repeats=args.repeats
+        lexical_vault,
+        lexical_map,
+        semantic=False,
+        repeats=args.repeats,
+        warmup=args.warmup,
     )
     report["lexical"] = lexical_metrics
 
@@ -186,21 +212,35 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
             semantic_metrics, semantic_rows = None, None
         else:
             semantic_vault, semantic_map = _build_vault(embedder)
+            cold_semantic = await _cold_start(semantic_vault, semantic=True)
             semantic_metrics, semantic_rows = await _evaluate(
-                semantic_vault, semantic_map, semantic=True, repeats=args.repeats
+                semantic_vault,
+                semantic_map,
+                semantic=True,
+                repeats=args.repeats,
+                warmup=args.warmup,
             )
             report["semantic"] = semantic_metrics
             report["real_embed"] = {"skipped": False, "model_dir": "models/bge-m3"}
     else:
         semantic_vault, semantic_map = _build_vault(ConceptEmbedder())
+        cold_semantic = await _cold_start(semantic_vault, semantic=True)
         semantic_metrics, semantic_rows = await _evaluate(
-            semantic_vault, semantic_map, semantic=True, repeats=args.repeats
+            semantic_vault,
+            semantic_map,
+            semantic=True,
+            repeats=args.repeats,
+            warmup=args.warmup,
         )
         report["semantic"] = semantic_metrics
 
     degraded_vault, degraded_map = _build_vault(BrokenEmbedder())
     degraded_metrics, degraded_rows = await _evaluate(
-        degraded_vault, degraded_map, semantic=True, repeats=args.repeats
+        degraded_vault,
+        degraded_map,
+        semantic=True,
+        repeats=args.repeats,
+        warmup=args.warmup,
     )
     report["degraded_embedding"] = degraded_metrics
 
@@ -221,6 +261,13 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
             )
             == 0
         ]
+    report["latency"] = {
+        "cold_lexical_ms": cold_lexical,
+        "cold_semantic_ms": cold_semantic if args.real_embed else None,
+        "warmup": args.warmup,
+        "repeats": args.repeats,
+        "note": "P50/P95 使用全部热启动样本；冷启动单独计时",
+    }
     report["index_consistency"] = _index_consistency()
     return report
 
@@ -229,7 +276,10 @@ def _print_human(report: dict[str, Any]) -> None:
     dataset = report["dataset"]
     print(f"数据集：{dataset['notes']} 条记忆 / {dataset['queries']} 个 query / k={K}")
     print(f"嵌入器：{dataset['embedder']}\n")
-    header = f"{'模式':<12}{'Recall@5':>10}{'MRR@5':>10}{'无关率':>10}{'P50(ms)':>10}"
+    header = (
+        f"{'模式':<12}{'Recall@5':>10}{'MRR@5':>10}{'无关率':>10}"
+        f"{'P50(ms)':>10}{'P95(ms)':>10}"
+    )
     print(header)
     print("-" * len(header))
     for label, key in (
@@ -243,6 +293,7 @@ def _print_human(report: dict[str, Any]) -> None:
         print(
             f"{label:<12}{row['recall@5']:>10.3f}{row['mrr@5']:>10.3f}"
             f"{row['irrelevant_rate']:>10.3f}{row['latency_p50_ms']:>10.2f}"
+            f"{row['latency_p95_ms']:>10.2f}"
         )
     comp = report.get("lexical_vs_semantic")
     if comp:
@@ -270,7 +321,10 @@ def main() -> int:
         help="用本地 bge-m3（需模型文件与 [local-embed]）",
     )
     parser.add_argument(
-        "--repeats", type=int, default=3, help="每个 query 重复次数（取最快一次计时）"
+        "--repeats", type=int, default=5, help="每个 query 热启动重复测量次数"
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=1, help="每个 query 预热次数（不计入 P50/P95）"
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     args = parser.parse_args()

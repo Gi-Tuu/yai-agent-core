@@ -11,6 +11,19 @@
 
 ### Added
 
+- **v0.27 Batch 6：记忆评测扩量与统计口径修正**：
+  - 数据集扩到 **114 条记忆 / 60 query**（中英、同义、词法零重叠、冲突/更新/删除/
+    标签/多用户语义），标注相关性；
+  - `run_bench.py` 改为 warmup + 每个 query 5 次重复，P50/P95 用全部热启动样本，
+    冷启动单独计时，记录 fake/real 与 device；真实 BGE-M3 本机 CPU 结果
+    Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms。
+  - 新增 `scale_bench.py`：100/1,000 条实测；**10,000 条未跑通**（remember 去重
+    O(n²) + 全量 JSON 重写），明确当前实现的大规模边界，不引入向量数据库。
+  - 报告：`docs/memory-evaluation.md`；回归：`tests/test_memory_metrics.py`、
+    `tests/test_memory_scale.py`。
+
+### Added
+
 - **v0.27 Batch 5：Windows 真实应用验证**：新增 `scripts/windows_real_apps_smoke.py`，
   用系统自带 `charmap.exe` 在真实 UIA 上验证窗口枚举/白名单、观察、文本输入+回读、
   按钮 Invoke、聚焦、用户接管（pause/resume）、旧引用失效、未允许窗口拒绝；

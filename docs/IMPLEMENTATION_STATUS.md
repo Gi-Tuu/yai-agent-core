@@ -78,7 +78,7 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
-| 记忆质量基准（v0.26.0） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`tests/test_memory_metrics.py`；本机真实 bge-m3 实测 Recall@5 1.000 / MRR@5 0.917 / P50 12.27ms（18 条 / 12 query） | 语料小、标注非穷尽；真实 BGE 数字不随仓库分发、不进 CI；假嵌入器分数不代表真实语义效果 |
+| 记忆质量基准（v0.27 扩量） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query；真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms（CPU）；假嵌入器 Recall@5 0.971 / P50 1.5ms | 假嵌入器不代表真实语义；1000 条构建 79.8s（O(n²)），10,000 条未跑通，当前实现不适合 10k 规模；详见 `docs/memory-evaluation.md` |
 
 ## 五、宿主与协议
 

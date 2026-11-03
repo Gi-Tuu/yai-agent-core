@@ -98,3 +98,98 @@ class BrokenEmbedder:
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
         raise RuntimeError("embedding backend down")
+
+
+# ---------------------------------------------------------------------------
+# v0.27 Batch 6：扩展到 100+ 记忆 / 50+ query（中文为主，含少量英文 query）。
+# 每个主题 8 条记忆、4 个标注 query；主题与用词刻意避开旧数据集，降低误合并。
+# ---------------------------------------------------------------------------
+
+_EXT_TOPICS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("quarter_review", "季度复盘", "fact", ("工作",), (
+        "收集三个月的目标完成率", "整理跨团队依赖清单", "复盘延期原因",
+        "列出下季度优先事项", "记录客户反馈分类", "核对预算执行偏差",
+        "归档会议决议", "生成一页纸摘要",
+    )),
+    ("flight_rebook", "航班改签", "fact", ("出差",), (
+        "核对改签手续费", "确认新航班行李额", "联系酒店调整入住",
+        "保存航司客服编号", "检查中转时间", "记录延误证明",
+        "比较高铁备选方案", "同步同行人行程",
+    )),
+    ("nut_allergy", "坚果过敏", "fact", ("过敏", "饮食"), (
+        "避开含腰果的酱料", "检查配料表交叉污染", "随身携带抗过敏药",
+        "聚餐提前告知餐厅", "记录过敏反应时间", "选择无坚果零食",
+        "查看航班餐食备注", "更新紧急联系人",
+    )),
+    ("turtle_care", "乌龟饲养", "profile", ("宠物",), (
+        "每周换水两次", "晒背灯每天四小时", "记录进食量",
+        "控制水温二十八度", "补充钙粉频率", "观察龟壳状态",
+        "清理过滤棉", "冬季加温方案",
+    )),
+    ("fund_plan", "基金定投", "preference", ("记账",), (
+        "每月十号自动扣款", "设置止盈提醒", "分散行业配置",
+        "记录手续费", "每季度再平衡", "保留现金流缓冲",
+        "查看最大回撤", "更新风险承受等级",
+    )),
+    ("classical_playlist", "古典乐单", "preference", ("音乐",), (
+        "周末早晨听巴赫", "工作专注听极简主义", "睡前听德彪西",
+        "收藏大提琴协奏曲", "整理现场录音", "标注喜欢的指挥",
+        "尝试不同版本对比", "分享给朋友",
+    )),
+    ("low_carb", "低碳饮食", "preference", ("饮食",), (
+        "早餐减少精制碳水", "午餐增加蔬菜比例", "记录每日蛋白质",
+        "替换含糖饮料", "周末备餐计划", "外食选择清蒸",
+        "避免深夜加餐", "每月复盘体重",
+    )),
+    ("emergency_contact", "紧急联系人", "fact", ("联系方式",), (
+        "手机快捷拨号设置", "保存家庭医生电话", "更新公司 HR 联系方式",
+        "记录邻居电话", "添加物业值班号码", "同步到紧急卡",
+        "每半年核对一次", "备注关系与优先级",
+    )),
+    ("high_contrast_theme", "高对比主题", "preference", ("主题", "可访问性"), (
+        "提高文字与背景对比度", "关闭透明效果", "放大系统字号",
+        "使用粗体光标", "减少动画闪烁", "测试色盲模式",
+        "保存两套主题配置", "记录可读性反馈",
+    )),
+    ("neck_health", "颈椎保健", "note", ("健康",), (
+        "每小时起身活动", "调整显示器高度", "做颈部拉伸",
+        "记录疼痛等级", "更换枕头高度", "热敷十五分钟",
+        "避免长时间低头", "预约理疗时间",
+    )),
+    ("balcony_storage", "阳台收纳", "note", ("居家",), (
+        "测量柜体尺寸", "分类收纳工具", "标记收纳盒内容",
+        "清理过期物品", "增加防潮层", "规划绿植位置",
+        "拍照留档布局", "每月检查一次",
+    )),
+    ("french_learning", "法语学习", "note", ("学习",), (
+        "每天背二十个单词", "完成听力练习", "跟读一段新闻",
+        "记录语法错题", "每周写一篇短文", "和语伴对话",
+        "复习动词变位", "安排阶段测试",
+    )),
+)
+
+
+def _build_extended() -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    notes: list[dict[str, Any]] = []
+    queries: list[dict[str, Any]] = []
+    for slug, label, kind, tags, details in _EXT_TOPICS:
+        keys: list[str] = []
+        for index, detail in enumerate(details, start=1):
+            key = f"{slug}_{index}"
+            keys.append(key)
+            notes.append(
+                _note(
+                    key,
+                    f"{label}待办 {index}：{detail}（记录号 {slug}-{index}）",
+                    kind,
+                    *tags,
+                )
+            )
+        for suffix in ("", " 安排", " 记录", " 注意事项"):
+            queries.append(_q(f"{label}{suffix}", *keys[:4]))
+    return tuple(notes), tuple(queries)
+
+
+_EXT_NOTES, _EXT_QUERIES = _build_extended()
+NOTES = NOTES + _EXT_NOTES
+QUERIES = QUERIES + _EXT_QUERIES
