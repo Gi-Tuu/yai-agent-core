@@ -301,7 +301,7 @@ def test_rate_limit_count_and_window_are_checked() -> None:
     assert "rate_limit_bad_window" in _codes(report)
 
 
-def test_sensitive_paths_must_be_non_empty_and_declared() -> None:
+def test_declared_paths_must_be_non_empty() -> None:
     spec = _native(governance=ToolGovernance(sensitive=("", "missing")))
     report = check_tool_specs([spec])
     assert report.ok is False
