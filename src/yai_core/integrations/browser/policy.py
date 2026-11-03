@@ -8,9 +8,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 from yai_core.types import ApprovalPolicy, RateLimitHint
+
+#: 安全默认只允许的 Web 协议；file:/javascript:/data:/about: 等需要显式放开。
+SUPPORTED_SCHEMES = frozenset({"http", "https"})
+
+#: 会改变页面状态、生产安全预设默认要求审批的浏览器动作。
+MUTATING_ACTIONS = frozenset({"click", "type", "select", "open", "switch_tab"})
+
+
+class BrowserSecurityWarning(UserWarning):
+    """使用了宽松默认策略（开发/测试模式）时的显式告警。"""
 
 
 class BrowserError(RuntimeError):
@@ -91,6 +102,9 @@ class BrowserPolicy:
     allowed_origins: frozenset[str] = frozenset()
     allow_password_fields: bool = False
     allow_downloads: bool = False
+    #: 是否允许 file:/javascript:/data:/about: 等非 HTTP(S) 协议。
+    #: 默认 False：这些协议不在来源白名单语义内，也最容易绕过来源边界。
+    allow_special_schemes: bool = False
     max_text_chars: int = 8000
     max_elements: int = 60
     action_timeout_ms: int = 30_000
@@ -111,8 +125,76 @@ class BrowserPolicy:
             or self.rate_limit_per_minute <= 0
         ):
             raise ValueError("BrowserPolicy.rate_limit_per_minute 必须是正整数或 None")
+        for origin in self.allowed_origins:
+            if origin == "*":
+                continue
+            if "://*." in origin:
+                scheme, _, host = origin.partition("://*.")
+            else:
+                parts = urlsplit(origin)
+                scheme, host = parts.scheme.lower(), parts.netloc
+            if scheme not in SUPPORTED_SCHEMES or not host:
+                raise ValueError(
+                    "BrowserPolicy.allowed_origins 只接受 http(s) 来源或 "
+                    f"https://*.host 通配，得到 {origin!r}"
+                )
+
+    @classmethod
+    def secure(
+        cls,
+        allowed_origins: Any,
+        *,
+        allow_downloads: bool = False,
+        rate_limit_per_minute: int | None = 60,
+        max_text_chars: int = 8000,
+        max_elements: int = 60,
+        action_timeout_ms: int = 30_000,
+    ) -> BrowserPolicy:
+        """生产安全预设：必须显式列出来源，修改性动作默认要审批。
+
+        与默认构造的区别：``allowed_origins`` 不能为空、不能是 ``*``；click /
+        type / select / open / switch_tab 默认进审批；密码框、下载、特殊协议关闭。
+        """
+        if isinstance(allowed_origins, str):
+            allowed_origins = [allowed_origins]
+        origins = frozenset(
+            str(item).strip().rstrip("/").lower() for item in allowed_origins
+        )
+        if not origins:
+            raise ValueError("BrowserPolicy.secure 必须显式提供至少一个允许来源")
+        if "*" in origins:
+            raise ValueError("BrowserPolicy.secure 不接受全通配 '*'; 请显式列出来源")
+        return cls(
+            allowed_origins=origins,
+            allow_password_fields=False,
+            allow_downloads=allow_downloads,
+            allow_special_schemes=False,
+            max_text_chars=max_text_chars,
+            max_elements=max_elements,
+            action_timeout_ms=action_timeout_ms,
+            require_approval_for=MUTATING_ACTIONS,
+            rate_limit_per_minute=rate_limit_per_minute,
+        )
+
+    @classmethod
+    def development(cls) -> BrowserPolicy:
+        """显式的开发/测试宽松预设；生产请用 :meth:`secure`。"""
+        return cls()
+
+    @property
+    def is_permissive(self) -> bool:
+        """是否处于“来源全开 / 无额外审批”的宽松模式。"""
+        return (not self.allowed_origins or "*" in self.allowed_origins) and (
+            not self.require_approval_for
+        )
 
     def allows_origin(self, url: str) -> bool:
+        try:
+            scheme = (urlsplit((url or "").strip()).scheme or "").lower()
+        except ValueError:
+            return False
+        if scheme not in SUPPORTED_SCHEMES and not self.allow_special_schemes:
+            return False
         return origin_allowed(url, self.allowed_origins)
 
     def check_origin(self, url: str, *, action: str = "observe") -> None:

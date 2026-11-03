@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from yai_core.diagnostics import DiagnosticSink
@@ -24,6 +25,7 @@ from yai_core.integrations.desktop.models import (
 from yai_core.integrations.desktop.policy import (
     DesktopError,
     DesktopPolicy,
+    DesktopSecurityWarning,
     StaleControlRefError,
 )
 from yai_core.types import ToolGovernance, ToolSpec
@@ -50,8 +52,16 @@ class DesktopProvider:
     ) -> None:
         if policy is not None and not isinstance(policy, DesktopPolicy):
             raise ValueError("policy 必须是 DesktopPolicy 实例或 None")
+        if policy is None:
+            warnings.warn(
+                "DesktopProvider 未显式传入 DesktopPolicy，使用开发/测试宽松默认"
+                "（不限制进程/窗口）；生产请用 DesktopPolicy.secure([...]) 声明可操作范围。",
+                DesktopSecurityWarning,
+                stacklevel=2,
+            )
+            policy = DesktopPolicy.development()
         self.backend = backend
-        self.policy = policy or DesktopPolicy()
+        self.policy = policy
         self.on_diagnostic = on_diagnostic
         self._version = 0
         self._snapshot: DesktopSnapshot | None = None

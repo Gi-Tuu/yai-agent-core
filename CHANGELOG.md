@@ -9,6 +9,18 @@
 
 ### Fixed
 
+### Security
+
+- **v0.27 Batch 2：浏览器/桌面安全默认值**：
+  - 新增 `BrowserPolicy.secure(...)` / `development()` / `is_permissive`；生产 preset
+    必须显式列出来源（拒绝空/`*`），click/type/select/open/switch_tab 默认审批；
+    `file:/javascript:/data:/about:` 默认拒绝（`allow_special_schemes=False`）。
+  - `BrowserProvider`/`DesktopProvider` 未显式传 policy 时发出
+    `BrowserSecurityWarning`/`DesktopSecurityWarning`；新增 `DesktopPolicy.secure(...)`，
+    必须显式声明进程/窗口范围，高风险控件与坐标点击保持关闭。
+  - Playwright 后端在路由层拦截 `document/subdocument`：未授权重定向在加载前
+    abort，不再只检查最终 URL；新增真实本地 HTTP 服务器 + 真实 Playwright 回归。
+  - 文档：`docs/production-permissions.md` 增加生产 secure preset 与上线自查项。
 - **v0.27 Batch 1：并发写入 fail-closed**：
   - `MemoryVault` 拿不到写锁时**放弃本次磁盘写入**（不再无锁 read-modify-write）：
     内存变更与 `dirty` 保留、发 `memory_lock_timeout` 诊断，由下一次写入或

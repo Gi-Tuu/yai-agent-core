@@ -104,6 +104,10 @@ class FakeContext:
     def __init__(self) -> None:
         self.pages: list[FakePage] = [FakePage()]
         self.closed = False
+        self.routes: list[tuple[str, object]] = []
+
+    async def route(self, pattern: str, handler: object) -> None:
+        self.routes.append((pattern, handler))
 
     async def new_page(self) -> FakePage:
         page = FakePage()

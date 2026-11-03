@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from yai_core.diagnostics import DiagnosticSink
@@ -25,6 +26,7 @@ from yai_core.integrations.browser.policy import (
     BrowserError,
     BrowserPolicy,
     BrowserPolicyError,
+    BrowserSecurityWarning,
     StaleElementRefError,
     origin_of,
 )
@@ -61,8 +63,21 @@ class BrowserProvider:
     ) -> None:
         if not isinstance(policy, BrowserPolicy) and policy is not None:
             raise ValueError("policy 必须是 BrowserPolicy 实例或 None")
+        if policy is None:
+            warnings.warn(
+                "BrowserProvider 未显式传入 BrowserPolicy，使用开发/测试宽松默认"
+                "（来源不限制、修改性动作不额外审批）；生产请用 "
+                "BrowserPolicy.secure([...]) 显式列出来源。",
+                BrowserSecurityWarning,
+                stacklevel=2,
+            )
+            policy = BrowserPolicy.development()
         self.backend = backend
-        self.policy = policy or BrowserPolicy()
+        self.policy = policy
+        # 可选后端能力：在导航/重定向阶段就拦截未授权文档请求，而不是等最终页面。
+        setter = getattr(backend, "set_origin_guard", None)
+        if callable(setter):
+            setter(policy.allows_origin)
         self.on_diagnostic = on_diagnostic
         self._version = 0
         self._snapshot: Snapshot | None = None

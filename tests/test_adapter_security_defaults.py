@@ -1,0 +1,96 @@
+"""适配器安全默认值：显式 secure preset、特殊协议默认拒绝、宽松模式必须告警。"""
+
+from __future__ import annotations
+
+import warnings
+
+import pytest
+
+from yai_core.integrations.browser import (
+    BrowserPolicy,
+    BrowserProvider,
+    BrowserSecurityWarning,
+)
+from yai_core.integrations.desktop import (
+    DesktopPolicy,
+    DesktopProvider,
+    DesktopSecurityWarning,
+)
+
+
+class _NoopBackend:
+    pass
+
+
+def test_browser_defaults_reject_special_schemes() -> None:
+    policy = BrowserPolicy.development()
+    assert policy.allows_origin("https://example.com/page") is True
+    for url in (
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "about:blank",
+    ):
+        assert policy.allows_origin(url) is False, url
+    assert BrowserPolicy(allow_special_schemes=True).allows_origin(
+        "file:///tmp/a.html"
+    ) is True
+
+
+def test_browser_secure_preset_requires_explicit_origins_and_approval() -> None:
+    with pytest.raises(ValueError):
+        BrowserPolicy.secure([])
+    with pytest.raises(ValueError):
+        BrowserPolicy.secure(["*"])
+    with pytest.raises(ValueError):
+        BrowserPolicy.secure(["file:///tmp/a"])
+
+    policy = BrowserPolicy.secure(["https://app.example.com"])
+    assert policy.allowed_origins == frozenset({"https://app.example.com"})
+    assert policy.require_approval_for >= {
+        "click",
+        "type",
+        "select",
+        "open",
+        "switch_tab",
+    }
+    assert policy.allow_password_fields is False
+    assert policy.allow_downloads is False
+    assert policy.allows_origin("https://app.example.com/x") is True
+    assert policy.allows_origin("https://evil.example.com/x") is False
+
+
+def test_browser_provider_warns_on_permissive_default() -> None:
+    with pytest.warns(BrowserSecurityWarning):
+        provider = BrowserProvider(_NoopBackend())  # type: ignore[arg-type]
+    assert provider.policy.is_permissive is True
+
+    secure = BrowserPolicy.secure(["https://app.example.com"])
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        BrowserProvider(_NoopBackend(), policy=secure)  # type: ignore[arg-type]
+    assert not any(isinstance(item.message, BrowserSecurityWarning) for item in captured)
+
+
+def test_desktop_secure_preset_requires_process_allowlist() -> None:
+    with pytest.raises(ValueError):
+        DesktopPolicy.secure([])
+    policy = DesktopPolicy.secure(["123"], allowed_window_titles=["记事本"])
+    assert policy.allowed_processes == frozenset({"123"})
+    assert policy.allow_high_risk_controls is False
+    assert policy.allow_geometry_click is False
+    assert policy.is_permissive is False
+    assert policy.allows_window("1", "记事本 - 未命名", "1234") is True
+    assert policy.allows_window("2", "机密窗口", "9999") is False
+
+
+def test_desktop_provider_warns_on_permissive_default() -> None:
+    with pytest.warns(DesktopSecurityWarning):
+        provider = DesktopProvider(_NoopBackend())  # type: ignore[arg-type]
+    assert provider.policy.is_permissive is True
+
+    secure = DesktopPolicy.secure(["123"])
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        DesktopProvider(_NoopBackend(), policy=secure)  # type: ignore[arg-type]
+    assert not any(isinstance(item.message, DesktopSecurityWarning) for item in captured)

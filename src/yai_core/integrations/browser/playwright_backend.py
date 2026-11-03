@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 from typing import Any
 
 from yai_core.integrations.browser.models import ElementInfo, PageObservation, TabInfo
@@ -101,6 +102,12 @@ class PlaywrightBrowserBackend:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        #: 导航/重定向阶段的来源守卫（由 BrowserProvider 注入）；None = 不额外限制。
+        self._origin_guard: Callable[[str], bool] | None = None
+
+    def set_origin_guard(self, guard: Callable[[str], bool] | None) -> None:
+        """注入导航请求守卫；document/subdocument 请求在**加载前**校验来源。"""
+        self._origin_guard = guard
 
     async def start(self) -> None:
         try:
@@ -117,8 +124,27 @@ class PlaywrightBrowserBackend:
             launch_kwargs["channel"] = self.channel
         self._browser = await launcher.launch(**launch_kwargs)
         self._context = await self._browser.new_context()
+        await self._context.route("**/*", self._guard_request)
         self._page = await self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
+
+    async def _guard_request(self, route: Any) -> None:
+        """导航/重定向守卫：未授权 document 请求在加载前 abort（不写入上下文）。"""
+        request = route.request
+        if self._origin_guard is None or request.resource_type not in (
+            "document",
+            "subdocument",
+        ):
+            await route.continue_()
+            return
+        try:
+            allowed = bool(self._origin_guard(request.url))
+        except Exception:  # noqa: BLE001 - 守卫自身异常必须失败关闭
+            allowed = False
+        if allowed:
+            await route.continue_()
+        else:
+            await route.abort()
 
     async def close(self) -> None:
         for closer in (self._context, self._browser):
