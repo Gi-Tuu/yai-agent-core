@@ -91,6 +91,52 @@ def _unregister_windows(*, dry_run: bool) -> list[str]:
     return removed
 
 
+def _load_env_file(path: str) -> dict[str, str]:
+    """读 ``.env`` 的 KEY=VALUE（不打印值）；用于把模型配置写进本地 bridge.json。"""
+    values: dict[str, str] = {}
+    for line in Path(path).expanduser().read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, _, value = text.partition("=")
+        value = value.strip().strip("\"'")
+        if key.strip():
+            values[key.strip()] = value
+    return values
+
+
+def _model_config(values: dict[str, str]) -> dict[str, Any]:
+    model: dict[str, Any] = {"provider": "openai-compatible"}
+    mapping = {
+        "OPENAI_API_KEY": "api_key",
+        "OPENAI_BASE_URL": "base_url",
+        "LLM_MODEL": "model",
+        "LLM_STRONG_MODEL": "strong_model",
+    }
+    for env_key, config_key in mapping.items():
+        if values.get(env_key):
+            model[config_key] = values[env_key]
+    return model if "api_key" in model else {}
+
+
+def _browser_mcp(server: str, *, headless: bool) -> list[dict[str, Any]]:
+    if server == "none":
+        return []
+    if server != "playwright":
+        raise ValueError(f"未知 MCP 浏览器服务器：{server}")
+    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome"]
+    if headless:
+        args.append("--headless")
+    return [
+        {
+            "alias": "browser",
+            "command": "npx",
+            "args": args,
+            "prefix": "browser_",
+        }
+    ]
+
+
 def register(args: argparse.Namespace) -> int:
     if not _EXTENSION_ID_RE.fullmatch(args.extension_id or ""):
         return _fail("--extension-id 必须是 32 位 a–p 的 Chrome 扩展 ID")
@@ -105,9 +151,26 @@ def register(args: argparse.Namespace) -> int:
     manifest_path = Path(args.manifest).expanduser().resolve()
     origin = f"chrome-extension://{args.extension_id}/"
 
+    initialize: dict[str, Any] = {
+        "policy": {"mode": args.policy_mode},
+        "interaction_timeout": 300,
+    }
+    if args.env_file:
+        model = _model_config(_load_env_file(args.env_file))
+        if model:
+            initialize["model"] = model
+        else:
+            print("[register-native-host] .env 里没找到 OPENAI_API_KEY，跳过模型配置")
+    try:
+        mcp = _browser_mcp(args.browser_mcp, headless=args.mcp_headless)
+    except ValueError as exc:
+        return _fail(str(exc))
+    if mcp:
+        initialize["mcp"] = mcp
+
     config: dict[str, Any] = {
         "allowed_origins": [origin],
-        "initialize": {"policy": {"mode": "auto"}, "interaction_timeout": 300},
+        "initialize": initialize,
         "max_task_chars": 4000,
         "sidecar_command": [str(python), "-m", "yai_core.sidecar"],
     }
@@ -140,6 +203,11 @@ def register(args: argparse.Namespace) -> int:
         "manifest": str(manifest_path),
         "registered": registered,
         "dry_run": args.dry_run,
+        "policy_mode": args.policy_mode,
+        "model_configured": bool(initialize.get("model", {}).get("api_key")),
+        "model_base_url": initialize.get("model", {}).get("base_url", ""),
+        "model_name": initialize.get("model", {}).get("model", ""),
+        "mcp_servers": [item.get("alias") for item in initialize.get("mcp", [])],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
@@ -185,6 +253,29 @@ def main(argv: list[str] | None = None) -> int:
         help="native host manifest 路径",
     )
     parser.add_argument("--browsers", default="chrome,edge", help="逗号分隔：chrome,edge")
+    parser.add_argument(
+        "--env-file",
+        default="",
+        help="可选：从 .env 读取 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL 写进本地配置"
+        "（只写本地 bridge.json，不打印值）",
+    )
+    parser.add_argument(
+        "--browser-mcp",
+        choices=("none", "playwright"),
+        default="none",
+        help="可选：接入浏览器 MCP 服务器（Playwright MCP，按需可选，不影响内核依赖）",
+    )
+    parser.add_argument(
+        "--mcp-headless",
+        action="store_true",
+        help="Playwright MCP 以无头模式运行（默认有头，用户能看到被操作的 Chrome）",
+    )
+    parser.add_argument(
+        "--policy-mode",
+        choices=("auto", "allow_all", "deny_all"),
+        default="auto",
+        help="Sidecar 权限策略：auto=白名单外询问（默认，面板弹审批）",
+    )
     parser.add_argument("--dry-run", action="store_true", help="只打印，不落盘/写注册表")
     parser.add_argument("--unregister", action="store_true", help="删除注册表与 manifest")
     args = parser.parse_args(argv)

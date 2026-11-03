@@ -26,7 +26,12 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  - **Native Messaging 自动注册 + 端到端验证（本机）**：新增
+  - **扩展端到端任务验证（本机）**：`register_native_host.py --env-file` 把模型配置写入本地
+  `bridge.json`（不进入扩展/浏览器），`--browser-mcp playwright` 通过既有 MCP 集成挂载
+  Playwright MCP 浏览器工具；真实 Edge 中任务「打开百度」经审批 → `browser_navigate` /
+  `browser_evaluate` → 返回「百度一下，你就知道」。MCP 为可选 extra 且懒加载，内核
+  `dependencies = []` 不变。
+- **Native Messaging 自动注册 + 端到端验证（本机）**：新增
   `scripts/register_native_host.py`（一条命令写 bridge 配置 / host manifest /
   Chrome+Edge 的 HKCU 注册表，`--unregister` 可逆、`--dry-run` 可预览、不写密钥）；
   Bridge 支持 `sidecar_command`（PyInstaller 冻结时必须）、默认配置路径

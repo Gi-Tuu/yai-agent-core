@@ -61,6 +61,22 @@ Chrome / Edge Extension (MV3)
 > （Sidecar 默认模型工厂读取这些变量），**不要**写进扩展或浏览器消息。改完环境变量后
 > 需要重启 Chrome（子进程继承启动时的环境）。
 
+## 模型与工具接入（本机实测）
+
+- **模型凭据**：`register_native_host.py --env-file .env` 会把 `OPENAI_API_KEY / OPENAI_BASE_URL /
+  LLM_MODEL / LLM_STRONG_MODEL` 写进本地 `%LOCALAPPDATA%\YAI\bridge.json` 的
+  `initialize.model`（**只在本机配置文件里，不进入扩展、不发给浏览器**；打印结果时不会回显 Key）。
+  不想落盘的话，也可以改用用户级环境变量 + 重启浏览器。
+- **浏览器能力（可选）**：`--browser-mcp playwright` 会在 `initialize.mcp` 里加一个
+  Playwright MCP server（`npx -y @playwright/mcp@latest --browser chrome`，默认有头、用户能看到
+  被操作的 Chrome；`--mcp-headless` 可无头）。这是**可选扩展**：MCP 走既有 `[mcp]` extra
+  与懒加载集成，内核 `dependencies` 仍为空（AST 守门测试照常通过）。
+- **审批**：默认 `policy.mode=auto`，白名单外工具会在侧边栏弹确认卡；`allow_all` 仅建议本机演示。
+
+本机端到端实测（真实 Edge + 真实 Chrome via Playwright MCP）：任务「打开百度首页，告诉我标题」
+→ 路由 `react` → 两次审批 → `browser_navigate` / `browser_evaluate` 成功 → 最终回答
+「百度一下，你就知道」。截图：`docs/exports/extension-e2e.png`（gitignore）。
+
 ## 协议映射
 
 | 浏览器消息 | Sidecar（JSON-RPC） | 说明 |
