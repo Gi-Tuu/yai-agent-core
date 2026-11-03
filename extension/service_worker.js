@@ -173,9 +173,13 @@ function onBridgeMessage(message) {
     return;
   }
   if (message.type === "hello_ok") {
+    const model = message.model ? ` · 模型 ${message.model}` : "";
+    const servers = (message.mcp_servers || []).length
+      ? ` · MCP ${message.mcp_servers.join(",")}`
+      : "";
     setStatus({
       state: "connected",
-      detail: `协议握手完成（bridge v${message.bridge_protocol_version}）`,
+      detail: `协议握手完成（bridge v${message.bridge_protocol_version}${model}${servers}）`,
       sidecarProtocol: message.sidecar_protocol_version,
     });
     return;

@@ -29,7 +29,8 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | native 函数 / OpenAPI 3 / MCP 三源统一 | 已验证 | `tests/test_openapi_bridge.py`、`test_mcp_bridge.py` | MCP 需安装 `[mcp]` extra |
-| 浏览器 MCP 扩展端到端（v0.26，扩展宿主） | 已验证（本机真实 Edge） | `scripts/register_native_host.py --browser-mcp playwright` + 侧边栏任务「打开百度」→ `browser_navigate` / `browser_evaluate` 成功 | 属于宿主扩展能力：MCP 可选、懒加载，内核 `dependencies` 仍为空；Playwright MCP 启动的 Chrome 与用户当前标签页无关 |
+| 浏览器 MCP 扩展端到端（v0.26，扩展宿主） | 已验证（本机真实 Edge；含 CDP 模式） | `scripts/register_native_host.py --browser-mcp playwright [--cdp-endpoint]` + 侧边栏任务「打开百度」；CDP 模式经 `scripts/chrome_cdp.py` 启动的 Chrome 验证（`/json/list` 当前页 = baidu） | 属于宿主扩展能力：MCP 可选、懒加载，内核 `dependencies` 仍为空；CDP 连接的是 chrome_cdp 启动的独立 profile Chrome，不能接管已有默认窗口 |
+| 本地 LLM 配置（v0.26，扩展宿主） | 已验证（脚本 + 单测） | `scripts/configure_bridge_llm.py --show/--model/--api-key-stdin`；`tests/test_bridge_llm_config.py` | Key 只写本地 bridge.json、输出脱敏、不进浏览器；改完需重开侧边栏 |
 | 能力缺口自发现 + 远程发现源 | 已验证 | `tests/test_discovery*.py`、`test_remote_discovery.py` | 发现不等于授权，仍走统一策略 |
 | 能力清单（manifest）导出 / 导入 | 已验证 | `tests/test_manifest.py` | `handler` 与 `gate` 是函数，不导出也不凭快照重建 |
 | 参数严格校验 | 已验证 | `tests/test_openai_compat.py`、`test_anthropic_provider.py` | 历史上下文里的坏参数只做渲染，不转发 |
@@ -82,7 +83,7 @@
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26，Unreleased） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
-| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证加载 + 侧边栏页 + 点击行为 + 端到端任务（Playwright Chromium / 真实 Edge）** | `scripts/extension_smoke.py`：MV3 service worker 出现、`sidepanel.html` 渲染无页错误、`sidePanel.getPanelBehavior().openPanelOnActionClick=true`；`tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 标签页兜底）；系统 Chrome 的 CLI `--load-extension` 受策略限制，UI 手动加载路径需人工确认；本机真实 Edge 端到端：任务「打开百度」经 Native Bridge → Sidecar → MCP 浏览器工具完成并返回标题（`docs/exports/extension-e2e.png`） | 真实鼠标点击工具栏图标→侧边栏出现、Native Messaging 注册、安装包分发与 Service Worker 回收仍未自动化验收 |
+| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证加载 + 侧边栏页 + 点击行为 + 端到端任务（Playwright Chromium / 真实 Edge）** | `scripts/extension_smoke.py`：MV3 service worker 出现、`sidepanel.html` 渲染无页错误、`sidePanel.getPanelBehavior().openPanelOnActionClick=true`；`tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 标签页兜底）；系统 Chrome 的 CLI `--load-extension` 受策略限制，UI 手动加载路径需人工确认；本机真实 Edge 端到端：任务「打开百度」经 Native Bridge → Sidecar → MCP 浏览器工具完成并返回标题（`docs/exports/extension-e2e.png`）；CDP 模式（`scripts/chrome_cdp.py` + `--cdp-endpoint`）已验证操作该 Chrome 窗口（`docs/exports/extension-cdp-e2e.png`） | 真实鼠标点击工具栏图标→侧边栏出现、Native Messaging 注册、安装包分发与 Service Worker 回收仍未自动化验收 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |
 

@@ -119,14 +119,20 @@ def _model_config(values: dict[str, str]) -> dict[str, Any]:
     return model if "api_key" in model else {}
 
 
-def _browser_mcp(server: str, *, headless: bool) -> list[dict[str, Any]]:
+def _browser_mcp(
+    server: str, *, headless: bool, cdp_endpoint: str = ""
+) -> list[dict[str, Any]]:
     if server == "none":
         return []
     if server != "playwright":
         raise ValueError(f"未知 MCP 浏览器服务器：{server}")
-    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome"]
-    if headless:
-        args.append("--headless")
+    if cdp_endpoint:
+        # 连接一个已经在跑的 Chrome（用户当前会话），工具操作的是这个浏览器。
+        args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", cdp_endpoint]
+    else:
+        args = ["-y", "@playwright/mcp@latest", "--browser", "chrome"]
+        if headless:
+            args.append("--headless")
     return [
         {
             "alias": "browser",
@@ -162,7 +168,9 @@ def register(args: argparse.Namespace) -> int:
         else:
             print("[register-native-host] .env 里没找到 OPENAI_API_KEY，跳过模型配置")
     try:
-        mcp = _browser_mcp(args.browser_mcp, headless=args.mcp_headless)
+        mcp = _browser_mcp(
+            args.browser_mcp, headless=args.mcp_headless, cdp_endpoint=args.cdp_endpoint
+        )
     except ValueError as exc:
         return _fail(str(exc))
     if mcp:
@@ -269,6 +277,11 @@ def main(argv: list[str] | None = None) -> int:
         "--mcp-headless",
         action="store_true",
         help="Playwright MCP 以无头模式运行（默认有头，用户能看到被操作的 Chrome）",
+    )
+    parser.add_argument(
+        "--cdp-endpoint",
+        default="",
+        help="连接已有 Chrome 的 CDP 端点（如 http://127.0.0.1:9222）；给了就控制该浏览器会话",
     )
     parser.add_argument(
         "--policy-mode",

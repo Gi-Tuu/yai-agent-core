@@ -29,7 +29,13 @@ body {
 .bar { display: flex; align-items: center; justify-content: space-between; }
 .brand { font-weight: 700; letter-spacing: 0.18em; color: var(--accent); }
 
-.conn { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.conn { display: flex; align-items: center; gap: 6px; color: var(--muted); min-width: 0; }
+.conn #conn-text {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .conn.connected .dot { background: var(--ok); }
 .conn.connecting .dot { background: var(--warn); }

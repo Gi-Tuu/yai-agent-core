@@ -39,6 +39,10 @@ def test_service_worker_registers_click_behavior_with_fallback() -> None:
     assert "chrome.action.onClicked" in text
     assert "chrome.sidePanel.open" in text
     assert "openPanelAsTab" in text
+    # 面板显示当前模型 / MCP（非敏感字段，不含 api_key）。
+    assert "message.model" in text
+    assert "mcp_servers" in text
+    assert "api_key" not in text
 
 
 def test_sidepanel_page_and_assets_exist() -> None:

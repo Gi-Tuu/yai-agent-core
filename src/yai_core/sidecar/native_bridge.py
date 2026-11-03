@@ -498,11 +498,29 @@ class NativeBridge:
             )
             return
         self._hello_done = True
+        model_config = self.config.initialize_params.get("model") or {}
+        mcp_config = self.config.initialize_params.get("mcp") or []
         await self._send(
             {
                 "type": "hello_ok",
                 "bridge_protocol_version": BRIDGE_PROTOCOL_VERSION,
                 "sidecar_protocol_version": self._sidecar_protocol,
+                # 只回显非敏感信息，供面板显示"当前用的哪个模型/接了哪些工具"。
+                "model": (
+                    str(model_config.get("model", ""))
+                    if isinstance(model_config, dict)
+                    else ""
+                ),
+                "base_url": (
+                    str(model_config.get("base_url", ""))
+                    if isinstance(model_config, dict)
+                    else ""
+                ),
+                "mcp_servers": [
+                    str(item.get("alias", ""))
+                    for item in mcp_config
+                    if isinstance(item, dict)
+                ],
                 "capabilities": {
                     "streaming": True,
                     "approval": True,

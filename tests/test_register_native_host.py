@@ -56,3 +56,15 @@ def test_browser_mcp_config_is_optional_and_prefixed() -> None:
     assert "@playwright/mcp" in " ".join(entry["args"])
     assert "--headless" in entry["args"]
     assert "--headless" not in _module._browser_mcp("playwright", headless=False)[0]["args"]
+
+
+def test_browser_mcp_cdp_endpoint_switches_mode() -> None:
+    entry = _module._browser_mcp(
+        "playwright", headless=False, cdp_endpoint="http://127.0.0.1:9222"
+    )[0]
+    args = entry["args"]
+    assert "--cdp-endpoint" in args
+    assert args[args.index("--cdp-endpoint") + 1] == "http://127.0.0.1:9222"
+    # CDP 模式连接已有浏览器，不应再传 --browser / --headless。
+    assert "--browser" not in args
+    assert "--headless" not in args

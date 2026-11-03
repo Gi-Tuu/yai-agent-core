@@ -77,6 +77,49 @@ Chrome / Edge Extension (MV3)
 → 路由 `react` → 两次审批 → `browser_navigate` / `browser_evaluate` 成功 → 最终回答
 「百度一下，你就知道」。截图：`docs/exports/extension-e2e.png`（gitignore）。
 
+## CDP 模式：让工具操作你自己的 Chrome 窗口
+
+默认的 Playwright MCP 会新开一个受控浏览器；想操作用户自己的 Chrome 会话，用 CDP 连接：
+
+```powershell
+# 1) 启动一个带远程调试端口的 Chrome（独立 profile；Chrome 不允许对默认 profile 开调试端口）
+.\.venv\Scripts\python.exe scripts\chrome_cdp.py start          # 默认 http://127.0.0.1:9222
+.\.venv\Scripts\python.exe scripts\chrome_cdp.py status
+
+# 2) 把 MCP 配置改成 CDP 端点（会写进本地 bridge.json）
+.\.venv\Scripts\python.exe scriptsegister_native_host.py `
+  --extension-id <扩展ID> --launcher dist\yai-bridge-v2.exe --python .\.venv\Scripts\python.exe `
+  --env-file .env --browser-mcp playwright --cdp-endpoint http://127.0.0.1:9222
+
+# 3) 关闭再打开侧边栏让 Bridge 重新加载配置
+# 4) 用完停止调试用 Chrome（不影响你平时用的 Chrome）
+.\.venv\Scripts\python.exe scripts\chrome_cdp.py stop
+```
+
+**本机真机验证（真实 Edge + 真实 Chrome/156 via CDP）**：侧边栏显示
+`协议握手完成（bridge v1 · 模型 deepseek/deepseek-v4.1-flash-1017 · MCP browser）`；
+任务「打开百度首页，告诉我标题」→ 两次审批 → `browser_navigate` / `browser_evaluate`
+成功，回答「百度一下，你就知道」；`http://127.0.0.1:9222/json/list` 中当前页面为
+`https://www.baidu.com/`。截图：`docs/exports/extension-cdp-e2e.png`（gitignore）。
+
+> 说明：CDP 连接的是 `scripts/chrome_cdp.py` 启动的那个 Chrome（独立 profile），
+> 不是你正在用的默认 Chrome 窗口；已有 Chrome 无法事后开启调试端口。若想接入已有窗口，
+> 需要以 `--remote-debugging-port` 启动它。
+
+## LLM 配置（本地，不走浏览器）
+
+面板只显示当前模型 / MCP 名字（`hello_ok` 的非敏感字段）；API Key 不进浏览器：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --show
+.\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --model deepseek/deepseek-v4.1-flash-1017 `
+  --base-url https://api.suanli.cn/v1
+Get-Content .env | .\.venv\Scripts\python.exe scripts\configure_bridge_llm.py --api-key-stdin  # Key 不落命令历史
+```
+
+修改后关闭/重开侧边栏生效；脚本输出永远对 Key 脱敏。MCP 与这些配置都是宿主侧可选能力，
+内核 `dependencies = []` 不变。
+
 ## 协议映射
 
 | 浏览器消息 | Sidecar（JSON-RPC） | 说明 |

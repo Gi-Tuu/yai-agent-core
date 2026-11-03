@@ -26,7 +26,14 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  - **扩展端到端任务验证（本机）**：`register_native_host.py --env-file` 把模型配置写入本地
+  - **CDP 模式与本地 LLM 配置（本机）**：`scripts/chrome_cdp.py` 启动/停止带调试端口的
+  独立 profile Chrome；`register_native_host.py --cdp-endpoint` 让 Playwright MCP 连接并
+  操作该 Chrome。真机验证（真实 Edge + Chrome 156）：侧边栏显示模型与 MCP 名，任务
+  「打开百度」经两次审批由 `browser_navigate`/`browser_evaluate` 完成，CDP 当前页为
+  `https://www.baidu.com/`（`docs/exports/extension-cdp-e2e.png`）。另加
+  `scripts/configure_bridge_llm.py`（`--show` 脱敏 / 更新 model/base_url / Key 走
+  stdin 或 getpass，不进浏览器、不落命令历史）。内核 `dependencies = []` 不变。
+- **扩展端到端任务验证（本机）**：`register_native_host.py --env-file` 把模型配置写入本地
   `bridge.json`（不进入扩展/浏览器），`--browser-mcp playwright` 通过既有 MCP 集成挂载
   Playwright MCP 浏览器工具；真实 Edge 中任务「打开百度」经审批 → `browser_navigate` /
   `browser_evaluate` → 返回「百度一下，你就知道」。MCP 为可选 extra 且懒加载，内核
