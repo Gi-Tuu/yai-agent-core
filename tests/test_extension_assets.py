@@ -58,6 +58,7 @@ def test_sidepanel_page_and_assets_exist() -> None:
     html = _read("sidepanel.html")
     assert 'id="run"' in html
     assert 'id="events"' in html
+    assert 'id="collapse"' in html
     assert 'id="conn-text"' in html
     # ADR 0006：面板必须明确区分"当前标签页只读快照"与"受控浏览器"。
     assert 'id="browser-mode"' in html
@@ -103,6 +104,10 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
     # activeTab 不保证每次入口都授予：读取前按 origin 请求可选宿主权限。
     assert "permissions.request" in js
     assert "ensureOriginPermission" in js
+    # 工作流折叠：新 run 自动收起历史，事件列表在固定面板内滚动。
+    assert "startRunSection" in js
+    assert "run-section" in js
+    assert 'id="collapse"' in _read("sidepanel.html")
     manifest = _read("manifest.json")
     assert "optional_host_permissions" in manifest
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。

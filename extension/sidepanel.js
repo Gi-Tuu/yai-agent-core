@@ -24,6 +24,7 @@ const el = {
   runId: document.getElementById("run-id"),
   events: document.getElementById("events"),
   clear: document.getElementById("clear"),
+  collapse: document.getElementById("collapse"),
   approval: document.getElementById("approval"),
   approvalTool: document.getElementById("approval-tool"),
   approvalPayload: document.getElementById("approval-payload"),
@@ -48,6 +49,9 @@ let pendingRequestId = null;
 let pageSnapshot = null;
 //: 用户点击“读取当前页面”时授权的标签页；当前页操作只认这个 tab，不随后续焦点漂移。
 let authorizedTabId = null;
+//: 当前运行的折叠工作流；新 run 开始时自动折叠上一轮，避免会话无限拉长。
+let currentRunSection = null;
+let currentRunList = null;
 let connected = false;
 //: 已结束的 run_id：忽略迟到的 run_started（短任务终态先到的竞态，NB-1）。
 const finishedRunIds = new Set();
@@ -115,6 +119,7 @@ function onBridgeMessage(message) {
       setRunning(true);
       el.runId.textContent = activeRunId ? `run ${activeRunId}` : "";
       el.state.textContent = "运行中";
+      startRunSection(activeRunId);
       appendEvent("event", `run 已开始：${activeRunId}`);
       return;
     case "status":
@@ -305,6 +310,7 @@ function tabActionFunc(action, selector, value) {
 }
 
 function finishRun(label) {
+  markCurrentRunSection(label);
   activeRunId = null;
   pendingRequestId = null;
   hideApproval();
@@ -377,11 +383,40 @@ function friendlyDetail(detail, state) {
   return text;
 }
 
+function startRunSection(runId) {
+  // 历史工作流自动折叠，只保留当前运行展开。
+  for (const section of el.events.querySelectorAll("details.run-section")) {
+    section.open = false;
+  }
+  const details = document.createElement("details");
+  details.className = "run-section";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = `工作流${runId ? ` · ${runId}` : ""}`;
+  const list = document.createElement("ol");
+  list.className = "run-events";
+  details.append(summary, list);
+  el.events.appendChild(details);
+  currentRunSection = details;
+  currentRunList = list;
+  el.events.scrollTop = el.events.scrollHeight;
+}
+
+function markCurrentRunSection(label) {
+  if (!currentRunSection) return;
+  const summary = currentRunSection.querySelector("summary");
+  if (summary && !summary.textContent.includes(label)) {
+    summary.textContent = `${summary.textContent} · ${label}`;
+  }
+}
+
 function appendEvent(kind, text) {
   const item = document.createElement("li");
   item.className = kind;
   item.textContent = text;
-  el.events.appendChild(item);
+  const list = currentRunList || el.events;
+  list.appendChild(item);
+  if (currentRunSection) currentRunSection.open = true;
   el.events.scrollTop = el.events.scrollHeight;
 }
 
@@ -409,7 +444,17 @@ el.cancel.addEventListener("click", () => {
   send({ op: "cancel", run_id: activeRunId });
 });
 
-el.clear.addEventListener("click", () => el.events.replaceChildren());
+el.clear.addEventListener("click", () => {
+  el.events.replaceChildren();
+  currentRunSection = null;
+  currentRunList = null;
+});
+
+el.collapse.addEventListener("click", () => {
+  for (const section of el.events.querySelectorAll("details.run-section")) {
+    section.open = false;
+  }
+});
 
 el.approve.addEventListener("click", () => {
   if (!pendingRequestId) return;

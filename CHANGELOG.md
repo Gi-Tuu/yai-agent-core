@@ -20,6 +20,12 @@
   `optional_host_permissions`（http/https），读取前按当前 origin 显式请求一次；
   用户拒绝则不读取。当前标签页写操作同样要求该 origin 授权仍然有效。
 
+### Changed
+
+- **侧边栏工作流折叠与固定布局**：每轮 run 生成 `<details>` 工作流块，新 run
+  自动折叠历史；`.stream`/`#events` 在 `100vh` 面板内独立滚动，审批区固定在工作流
+  上方，不再随事件增长把页面拉长。新增“折叠历史”按钮，保留“清空”。
+
 ### Added
 
 - **v0.27 Batch 3：当前标签页受限写操作（opt-in）**：`initialize.current_tab_tool=true`

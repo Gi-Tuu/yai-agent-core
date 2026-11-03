@@ -10,7 +10,7 @@
 ```text
 Chrome / Edge Extension (MV3)
   ├─ Service Worker：只做侧边栏 ↔ Bridge 的连接/转发，随时可被浏览器回收
-  ├─ Side Panel：任务输入、事件流、审批/澄清、取消、连接状态
+  ├─ Side Panel：任务输入、可折叠工作流、审批/澄清、取消、连接状态
   └─ chrome.scripting（activeTab）：用户点击"读取当前页面"才注入一次性采集函数
         ⇅ Native Messaging（4 字节小端长度 + UTF-8 JSON）
   yai_core.sidecar.native_bridge（本地 Bridge 进程）
