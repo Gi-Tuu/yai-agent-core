@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import io
 import sys
+from pathlib import Path
 from typing import Any
 
 from yai_core.integrations.desktop.models import (
@@ -31,6 +32,33 @@ from yai_core.integrations.desktop.policy import (
     DesktopBackendError,
     StaleControlRefError,
 )
+
+
+def _process_image(process_id: str) -> tuple[str, str]:
+    """返回 ``(映像名, 完整路径)``；取不到时为空串，不阻塞观察。"""
+    if sys.platform != "win32" or not process_id.isdigit():
+        return "", ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, int(process_id))
+        if not handle:
+            return "", ""
+        try:
+            buffer = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buffer))
+            if not kernel32.QueryFullProcessImageNameW(
+                handle, 0, buffer, ctypes.byref(size)
+            ):
+                return "", ""
+            path = buffer.value
+            return Path(path).name, path
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 - 进程已退出/权限不足时降级为空
+        return "", ""
 
 
 def _runtime_key(element_info: Any) -> str:
@@ -77,11 +105,15 @@ class PywinautoDesktopBackend:
                     continue
             except Exception:  # noqa: BLE001 - 个别窗口属性取不到不应中断枚举
                 pass
+            pid = str(info.process_id)
+            process_name, process_path = _process_image(pid)
             out.append(
                 WindowInfo(
                     window_id=str(window.handle),
                     title=window.window_text(),
-                    process_id=str(info.process_id),
+                    process_id=pid,
+                    process_name=process_name,
+                    process_path=process_path,
                     class_name=str(info.class_name or ""),
                     enabled=bool(getattr(info, "enabled", True)),
                     visible=bool(getattr(info, "visible", True)),
@@ -148,11 +180,15 @@ class PywinautoDesktopBackend:
         except Exception:  # noqa: BLE001
             focused = ""
         fingerprint = _observation_fingerprint(window_id, window, collected, focused)
+        pid = str(info.process_id)
+        process_name, process_path = _process_image(pid)
         return DesktopObservation(
             window=WindowInfo(
                 window_id=window_id,
                 title=window.window_text(),
-                process_id=str(info.process_id),
+                process_id=pid,
+                process_name=process_name,
+                process_path=process_path,
                 class_name=str(info.class_name or ""),
                 enabled=bool(getattr(info, "enabled", True)),
                 visible=bool(getattr(info, "visible", True)),

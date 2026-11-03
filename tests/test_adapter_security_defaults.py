@@ -80,7 +80,9 @@ def test_desktop_secure_preset_requires_process_allowlist() -> None:
     assert policy.allow_high_risk_controls is False
     assert policy.allow_geometry_click is False
     assert policy.is_permissive is False
-    assert policy.allows_window("1", "记事本 - 未命名", "1234") is True
+    # PID 精确匹配（v0.27.1 收紧）：旧的 "123" 前缀放行 "1234" 语义已废弃。
+    assert policy.allows_window("1", "记事本 - 未命名", "123") is True
+    assert policy.allows_window("1", "记事本 - 未命名", "1234") is False
     assert policy.allows_window("2", "机密窗口", "9999") is False
 
 
@@ -94,3 +96,8 @@ def test_desktop_provider_warns_on_permissive_default() -> None:
         warnings.simplefilter("always")
         DesktopProvider(_NoopBackend(), policy=secure)  # type: ignore[arg-type]
     assert not any(isinstance(item.message, DesktopSecurityWarning) for item in captured)
+
+    # 仅标题白名单不构成安全边界：即便显式传了 policy，也要告警（v0.27.1 收紧）。
+    title_only = DesktopPolicy(allowed_window_titles=frozenset({"记事本"}))
+    with pytest.warns(DesktopSecurityWarning):
+        DesktopProvider(_NoopBackend(), policy=title_only)  # type: ignore[arg-type]

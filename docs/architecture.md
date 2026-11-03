@@ -191,7 +191,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **Office 文档文本抽取（v0.21）**：`src/yai_core/batteries/office_text.py:50` 的 `extract_text()`：docx/xlsx/pptx 走标准库 zipfile + ElementTree（零依赖），PDF 走可选 pypdf；三条安全闸（成员白名单、拒 DOCTYPE/ENTITY、限量截断）写在文件头。
 - **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:253`（超时取更严一档）与 `tools/executor.py:566`（频率闸在授权之前判定）真的强制。
 
-### 2.12 v0.26 执行适配器与可验证结果（Unreleased）
+### 2.12 v0.26 执行适配器与可验证结果（v0.26.0 已发布）
 
 v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外部系统并验证结果"做成**可选适配器**：
 
@@ -203,7 +203,8 @@ v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外�
   离线回归覆盖后端起停/观察/动作/标签页/等待/旧引用，另有 `scripts/browser_smoke.py`
   一次本机真机冒烟；**真实站点的自动回归仍缺失**。
 - **Windows Desktop Provider（`src/yai_core/integrations/desktop/`）**：同一模式；UIA 语义 Pattern
-  优先、坐标点击默认关闭；控件引用带快照版本；高风险控件名默认拒绝、进程/标题白名单、
+  优先、坐标点击默认关闭；控件引用带快照版本；高风险控件名默认拒绝；进程身份白名单
+  （PID 精确匹配 / 映像名 / 完整路径）收窄可操作进程，窗口标题仅作附加过滤、不算安全边界；
   物理输入前焦点保护、`pause/resume` 用户接管；不跨 UAC / 安全桌面。
   `[windows]` extra 提供 pywinauto 后端；假 pywinauto SDK 的离线回归覆盖后端观察/Invoke/
   SetValue/坐标点击/旧引用，`scripts/windows_uia_smoke.py` 另在本机完成一次真机 UIA 冒烟

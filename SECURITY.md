@@ -34,6 +34,11 @@
    a policy denial, and discovery never bypasses authorization.
 4. **Secrets and data.** `.env` is in `.gitignore` — never commit real API keys. All SQLite access uses
    parameterized queries; SQL is never string-concatenated.
+5. **Optional execution adapters ship with secure presets.** `BrowserProvider` / `DesktopProvider`
+   default to a permissive development policy and emit a warning when used without one; production must
+   construct `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`. For Desktop, declare at least
+   one process identity — exact PID, image name, or full path. Window-title allowlists and control-name
+   keywords are filters, not security boundaries; a policy with no process identity also warns.
 
 ## Reporting a vulnerability
 

@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 if sys.platform == "win32":
     from yai_core.integrations.desktop.pywinauto_backend import (
         PywinautoDesktopBackend,
+        _process_image,
     )
 
 
@@ -181,3 +184,22 @@ def test_backend_actions_and_stale_control(fake_pywinauto: FakeDesktop) -> None:
         asyncio.run(backend.invoke("1001", "9.9"))
     with pytest.raises(DesktopBackendError):
         asyncio.run(backend.observe("9999"))
+
+
+# ---------- 进程身份：_process_image 是白名单的底层数据源 ----------
+
+
+def test_process_image_degrades_for_unparseable_pid() -> None:
+    # 退出的进程 / 权限不足 / 空 PID 都降级为空串，绝不抛错打断窗口枚举。
+    assert _process_image("") == ("", "")
+    assert _process_image("abc") == ("", "")
+    assert _process_image("-1") == ("", "")
+
+
+def test_process_image_reports_running_process() -> None:
+    # 用当前 pytest 进程自身做真实调用：映像名与路径必须都取到。
+    name, path = _process_image(str(os.getpid()))
+    assert name.lower().endswith(".exe")
+    assert path
+    assert Path(path).name == name
+    assert Path(path).exists()

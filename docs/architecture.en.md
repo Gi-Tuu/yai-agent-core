@@ -224,7 +224,7 @@ All of the following have shipped: zero hard kernel dependencies, and no change 
 - **Office document text extraction (v0.21):** `extract_text()` in `src/yai_core/batteries/office_text.py:50`: docx/xlsx/pptx go through the stdlib zipfile + ElementTree (zero dependency), PDF through the optional pypdf; the three safety gates (member allowlist, DOCTYPE/ENTITY rejection, size caps) are stated at the top of the file.
 - **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:253` (the timeout takes the stricter setting) and `tools/executor.py:566` (the rate gate runs before authorization).
 
-### 2.12 v0.26 execution adapters and verifiable outcomes (Unreleased)
+### 2.12 v0.26 execution adapters and verifiable outcomes (released in v0.26.0)
 
 v0.26 adds "actually operate external systems and verify the result" as **optional adapters**, without
 changing the kernel's dependencies or public contracts:
@@ -239,8 +239,10 @@ changing the kernel's dependencies or public contracts:
   (`scripts/browser_smoke.py`); **automated regression against real sites is still missing**.
 - **Windows Desktop Provider (`src/yai_core/integrations/desktop/`)** follows the same pattern: UIA
   semantic patterns first, geometry clicks off by default, snapshot-versioned control refs, high-risk
-  control names refused, process/title allowlists, foreground guard before physical input, and
-  `pause/resume` for user takeover; it never crosses UAC / the secure desktop. The `[windows]` extra
+  control names refused, a process-identity allowlist (exact PID / image name / full path) narrowing
+  which processes may be operated — window titles are only an extra filter, never a security
+  boundary — a foreground guard before physical input, and `pause/resume` for user takeover; it never
+  crosses UAC / the secure desktop. The `[windows]` extra
   provides the pywinauto backend; `scripts/windows_uia_smoke.py` has passed one real-machine UIA smoke
   run (self-created window → observe → Invoke → callback verification).
 - **Outcome Verification (`src/yai_core/verification.py` + `types.py`)** separates "tool call succeeded"

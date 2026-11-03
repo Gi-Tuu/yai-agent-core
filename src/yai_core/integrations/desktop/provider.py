@@ -61,6 +61,13 @@ class DesktopProvider:
                 stacklevel=2,
             )
             policy = DesktopPolicy.development()
+        elif policy.is_permissive:
+            warnings.warn(
+                "DesktopPolicy 没有进程身份约束（PID/映像名/路径），仅标题白名单"
+                "不构成安全边界；生产请用 DesktopPolicy.secure(...) 声明进程身份。",
+                DesktopSecurityWarning,
+                stacklevel=2,
+            )
         self.backend = backend
         self.policy = policy
         self.on_diagnostic = on_diagnostic
@@ -100,7 +107,11 @@ class DesktopProvider:
             window
             for window in windows
             if self.policy.allows_window(
-                window.window_id, window.title, window.process_id
+                window.window_id,
+                window.title,
+                window.process_id,
+                window.process_name,
+                window.process_path,
             )
         ]
         return {
@@ -123,7 +134,13 @@ class DesktopProvider:
                 "error": "backend.observe() 必须返回 DesktopObservation",
             }
         window = observation.window
-        if not self.policy.allows_window(window.window_id, window.title, window.process_id):
+        if not self.policy.allows_window(
+            window.window_id,
+            window.title,
+            window.process_id,
+            window.process_name,
+            window.process_path,
+        ):
             self._adopt_empty(observation)
             return {
                 "ok": False,
@@ -235,7 +252,13 @@ class DesktopProvider:
             }
         assert self._snapshot is not None
         window = self._snapshot.observation.window
-        if not self.policy.allows_window(window.window_id, window.title, window.process_id):
+        if not self.policy.allows_window(
+            window.window_id,
+            window.title,
+            window.process_id,
+            window.process_name,
+            window.process_path,
+        ):
             return {"ok": False, "status": "window_not_allowed", "window_id": window.window_id}
         if not control.enabled:
             return {"ok": False, "status": "control_disabled", "ref": ref}
