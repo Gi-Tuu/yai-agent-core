@@ -18,12 +18,16 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
 import tempfile
+import threading
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -102,9 +106,137 @@ QUARANTINE_KEEP = 5
 DIAG_MEMORY_SAVE_FAILED = "memory_save_failed"
 DIAG_MEMORY_DISK_MODIFIED = "memory_disk_modified"
 DIAG_MEMORY_EVICTED = "memory_evicted"
+#: 等写锁超时、降级为无锁写入（仍有 mtime/size 合并兜底，但要让运维看得见）。
+DIAG_MEMORY_LOCK_TIMEOUT = "memory_lock_timeout"
 
 #: "加载时文件还不存在"的磁盘指纹：之后文件被别的实例建出来也算外部修改，必须先合并。
 _MISSING_DISK_SIGNATURE = (-1, -1)
+
+# ---------- 跨进程写锁 ----------
+
+#: 锁文件后缀：数据文件 ``x.json`` 的锁文件是 ``x.json.lock``（同目录，不参与数据）。
+LOCK_SUFFIX = ".lock"
+
+#: 等锁上限（秒）与轮询间隔：拿不到锁就降级继续，绝不把任务卡死。
+LOCK_TIMEOUT_SECONDS = 2.0
+LOCK_POLL_SECONDS = 0.02
+
+#: 进程内互斥表：key = 解析后的绝对路径。
+#: 为什么 OS 锁之外还要它：Windows 的字节范围锁是按**进程**持有的，同进程里另一个
+#: 句柄并不能可靠地互斥自己；而线程池（uvicorn 等）会并发调用同一个实例，同一进程内
+#: 的"重读→合并→原子写"也必须串行。条目数 = 用过的 vault 文件数（每租户一个路径时是
+#: 常数级），不会随运行时间增长。
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_path(path: Path) -> Path:
+    """数据文件对应的锁文件路径：``<storage>.lock``。"""
+    return path.with_name(path.name + LOCK_SUFFIX)
+
+
+def _process_lock_for(path: Path) -> threading.Lock:
+    """取该存储路径在本进程内的互斥锁（同路径永远同一把）。"""
+    try:
+        key = str(path.resolve())
+    except OSError:  # pragma: no cover - 路径解析失败时退回字面路径
+        key = str(path)
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
+
+def _try_lock(fd: int) -> None:
+    """非阻塞地取一把排它锁；被占用时抛 ``OSError``（调用方负责重试/降级）。
+
+    平台模块用 ``importlib`` 动态取：直接在分支里 ``import`` 会让跨平台 mypy 拿另一个
+    平台的桩去做属性检查（Windows 的 fcntl 桩没有 ``flock``、Linux 的 msvcrt 桩没有
+    ``locking``），动态导入 + 属性访问让类型检查只看契约、不看平台桩。
+    """
+    os.lseek(fd, 0, os.SEEK_SET)
+    if os.name == "nt":  # pragma: no cover - Windows 专用分支
+        msvcrt = importlib.import_module("msvcrt")
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl = importlib.import_module("fcntl")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(fd: int) -> None:
+    """释放 :func:`_try_lock` 取的锁（尽力而为；关 fd 时 OS 也会兜底释放）。"""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        if os.name == "nt":  # pragma: no cover - Windows 专用分支
+            msvcrt = importlib.import_module("msvcrt")
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl = importlib.import_module("fcntl")
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:  # pragma: no cover - 解锁失败没有补救手段
+        pass
+
+
+@contextmanager
+def _file_lock(
+    path: Path,
+    *,
+    timeout: float | None = None,
+    poll: float | None = None,
+) -> Iterator[bool]:
+    """对 ``<path>.lock`` 取写锁（进程内 + 跨进程），``yield`` 是否真的拿到锁。
+
+    临界区由调用方决定（``MemoryVault._save`` 把"重读 → 合并 → 原子写"整段放进去）。
+    **非阻塞重试**：等满 ``timeout``（默认 :data:`LOCK_TIMEOUT_SECONDS`）仍拿不到就
+    ``yield False``——调用方照样落盘，退回"无锁 + mtime/size 合并"的旧口径，绝不把
+    任务卡住（记忆是增强，不是主流程依赖）。
+
+    锁文件只用于加锁、不写任何数据；进程崩溃时 OS 自动释放句柄锁，残留的空
+    ``.lock`` 文件无害（下次打开继续复用）。锁是 advisory 的：绕过本类直接写数据文件
+    的进程不受它约束。
+    """
+    wait = LOCK_TIMEOUT_SECONDS if timeout is None else timeout
+    interval = LOCK_POLL_SECONDS if poll is None else poll
+    deadline = time.monotonic() + max(wait, 0.0)
+    process_lock = _process_lock_for(path)
+    process_acquired = process_lock.acquire(timeout=max(wait, 0.0))
+    fd: int | None = None
+    locked = False
+    try:
+        if process_acquired:
+            try:
+                lock_file = _lock_path(path)
+                lock_file.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(str(lock_file), os.O_RDWR | os.O_CREAT, 0o600)
+            except OSError:
+                # 连锁文件都建不出来（只读目录 / 目录被删）：按未加锁继续；
+                # 真正的写如果也要失败，会由 _atomic_write 抛给调用方。
+                fd = None
+            while fd is not None:
+                try:
+                    _try_lock(fd)
+                except OSError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(interval, remaining))
+                    continue
+                locked = True
+                break
+        yield locked
+    finally:
+        if locked and fd is not None:
+            _unlock(fd)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:  # pragma: no cover - 关不掉也没有别的选择
+                pass
+        if process_acquired:
+            process_lock.release()
+
 
 
 class MemoryVaultError(RuntimeError):
@@ -248,8 +380,12 @@ class MemoryVault:
       ``forget`` / 容量淘汰生效），合并后原子写；外部文件已损坏则先 quarantine 再覆盖；
     - **原子写带上 durability**：临时文件 ``flush + fsync`` 后才 ``os.replace``，
       POSIX 上再 fsync 父目录——掉电后不会留下"半截/空文件"把整库记忆带走；
-    - 进程内不做文件锁：跨进程并发仍靠"写前检测 + 合并"缩小丢失面，强互斥应由宿主
-      用单实例或外部锁保证（写与写在两个进程里同毫秒发生仍可能各写一版）。
+    - **跨进程写锁**：``_save`` 的"重读 → 合并 → 原子写"整段在 ``<storage>.lock`` 的
+      OS 级文件锁内执行（Windows ``msvcrt.locking`` / POSIX ``fcntl.flock``，同进程内
+      再加一把 ``threading.Lock``）。等锁上限 :data:`LOCK_TIMEOUT_SECONDS`（2 秒），
+      超时只发 ``memory_lock_timeout`` 诊断并降级为无锁写入——记忆是增强，不能把任务
+      卡死。锁是 advisory 的：绕过 :class:`MemoryVault` 直接改数据文件的进程不受约束；
+      极端情况下（超时降级 + 粗粒度 mtime 文件系统）仍可能各写一版。
     - 已知边界：跨实例的 ``forget`` 只保证**本实例**不会把它写回去；另一个仍持有该条目的
       实例若随后写入，会按"本地优先"把它带回来。需要跨实例删除语义时，应由宿主保证
       同一文件同一时刻只有一个写入者（或改用共享数据库实现）。
@@ -330,6 +466,15 @@ class MemoryVault:
     def dirty(self) -> bool:
         """内存状态是否尚未成功落盘（上一次保存失败后为 True）。"""
         return self._dirty
+
+    @property
+    def lock_path(self) -> Path | None:
+        """写锁文件路径（``<storage>.lock``）；纯内存库返回 None。
+
+        锁文件只用来加锁、不含任何数据，可以安全地随数据文件一起备份/忽略；
+        进程崩溃后残留的空锁文件不影响下一次打开。
+        """
+        return _lock_path(self.storage_path) if self.storage_path is not None else None
 
     def contains(self, note_id: str) -> bool:
         """该 id 是否仍在本库内存状态里（``remember`` 后可能已因容量上限被淘汰）。"""
@@ -946,9 +1091,12 @@ class MemoryVault:
     def _save(self) -> bool:
         """把内存状态原子落盘，返回是否真的写了；只读降级时直接跳过（返回 False）。
 
-        写前先做一次**外部修改检测**：文件若在本实例加载 / 上次保存之后被别人改过
-        （另一个实例、另一个进程、手工编辑），先重读并按 note id 合并再写。绝不盲目
-        覆盖——那正是"多实例各写一版、后写者静默吃掉落更新"的根因。
+        临界区：**"外部修改检测 → 重读合并 → 序列化加密 → 原子写 → 记录指纹"整段**
+        在 ``<storage>.lock`` 的写锁内执行（进程内 ``threading.Lock`` + 跨进程
+        ``msvcrt.locking`` / ``fcntl.flock``）。不加锁的话，两个进程可能同时读到同一份
+        旧文件、各自合并出一版、再先后覆盖——后写者把前者的新增静默吃掉（TOCTOU）。
+        拿不到锁（对端长时间持有）时等满 :data:`LOCK_TIMEOUT_SECONDS` 后记一条
+        ``memory_lock_timeout`` 诊断并降级为无锁写入，绝不阻塞任务。
 
         Raises:
             OSError: 磁盘满 / 只读 / 文件被占用等写失败（写路径要浮出来让宿主看见）。
@@ -959,26 +1107,54 @@ class MemoryVault:
         if self._read_only:
             # 只读降级：读路径（如 recall 的 touch）不得落盘改写原文件。
             return False
-        if self._external_change_detected():
-            self._merge_external()
-        payload = {
-            "version": STORAGE_VERSION,
-            # 绝不把文件里已有的 owner 写成 null：未声明 owner 的实例只是"沿用"归属，
-            # 不是替别的租户"取消"归属（否则任何 owner 配置都会把该文件当 legacy 收下）。
-            "owner": self._owner if self._owner is not None else self._stored_owner,
-            "saved_at": self._clock().isoformat(),
-            "notes": [note.to_dict() for note in self._notes],
-        }
-        raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-        if self._cipher is not None:
-            raw = self._cipher.encrypt(raw)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(raw)
-        # 落盘成功：脏标记清零、墓碑清零（已体现在磁盘上）、重新记录磁盘指纹。
-        self._dirty = False
-        self._forgotten_ids.clear()
-        self._record_disk_signature()
+        with _file_lock(self.storage_path) as locked:
+            if not locked:
+                self._emit_lock_timeout()
+            if self._external_change_detected():
+                self._merge_external()
+            payload = {
+                "version": STORAGE_VERSION,
+                # 绝不把文件里已有的 owner 写成 null：未声明 owner 的实例只是"沿用"归属，
+                # 不是替别的租户"取消"归属（否则任何 owner 配置都会把该文件当 legacy 收下）。
+                "owner": self._owner if self._owner is not None else self._stored_owner,
+                "saved_at": self._clock().isoformat(),
+                "notes": [note.to_dict() for note in self._notes],
+            }
+            raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+            if self._cipher is not None:
+                raw = self._cipher.encrypt(raw)
+            self._atomic_write(raw)
+            # 落盘成功：脏标记清零、墓碑清零（已体现在磁盘上）、重新记录磁盘指纹。
+            self._dirty = False
+            self._forgotten_ids.clear()
+            self._record_disk_signature()
         return True
+
+    def _emit_lock_timeout(self) -> None:
+        """未取得写锁、降级为无锁写入时的诊断（降级必须可观测，不许静默）。
+
+        两种可能：对端进程/线程长时间持有锁（等满上限），或锁文件本身建不出来
+        （只读目录 / 位置被占）。两种都退回"外部修改检测 + 合并"的旧口径。
+        """
+        emit(
+            self._on_diagnostic,
+            DiagnosticEvent(
+                kind=DIAG_MEMORY_LOCK_TIMEOUT,
+                level=DiagnosticLevel.WARNING,
+                message=(
+                    "未能取得长期记忆写锁（等待上限 "
+                    f"{LOCK_TIMEOUT_SECONDS:g} 秒或锁文件不可创建），已降级为无锁写入"
+                    f"（仍有 mtime/size 外部修改检测兜底）：{self.storage_path}"
+                ),
+                data={
+                    "path": str(self.storage_path),
+                    "lock_path": str(self.lock_path),
+                    "timeout_seconds": LOCK_TIMEOUT_SECONDS,
+                    "locked": False,
+                },
+            ),
+        )
 
     def _save_safely(self, *, reason: str = "") -> bool:
         """尽力落盘：失败只记 ``memory_save_failed`` 诊断 + dirty，绝不向外抛。

@@ -22,6 +22,7 @@ import pytest
 
 from yai_core import (
     AgentCore,
+    Budget,
     ModelResponse,
     ScriptedModel,
     build_spec,
@@ -78,8 +79,95 @@ def test_success_run_carries_ok_status_and_no_error() -> None:
     assert result.error is None
     done = _done(result)
     assert done.data["status"] == "ok"
-    assert "error" not in done.data
+    # F12：所有 DONE 都带 error 键（成功时为 None），schema 跨路径一致。
+    assert done.data["error"] is None
     assert _roles(core.memory) == ["user", "assistant"]
+
+
+#: 所有 DONE 路径都必须带齐的 schema 键（审计 F12：跨路径键一致）。
+_DONE_SCHEMA_KEYS = {
+    "strategy",
+    "final_text",
+    "standard_calls",
+    "strong_calls",
+    "model_calls",
+    "status",
+    "error",
+}
+
+
+def test_every_done_path_uses_the_same_schema_keys() -> None:
+    """正常 / 熔断 / 澄清中止 / 内部救援四条 DONE 路径的键集合一致。"""
+    cases: list[dict] = []
+
+    normal = _run(AgentCore(ScriptedModel([ModelResponse(content="完成")])).run("你好"))
+    cases.append(_done(normal).data)
+
+    budget_core = AgentCore(
+        ScriptedModel([ModelResponse(content="不应被调用")]),
+        budget=Budget(max_model_calls=0),
+    )
+    cases.append(_done(_run(budget_core.run("你好"))).data)
+
+    clarify_core = AgentCore(
+        ScriptedModel([ModelResponse(content="不应被调用")]),
+        channel=CollectChannel(default_answer=""),
+    )
+    cases.append(_done(_run(clarify_core.run("随便"))).data)
+
+    selector_core = AgentCore(
+        ScriptedModel([ModelResponse(content="不应被调用")]), learning=_BoomSelector()
+    )
+    selector_core.register_tools([build_spec(search_notes)])
+    cases.append(_done(_run(selector_core.run("搜索笔记里的周报"))).data)
+
+    for done in cases:
+        assert set(done) >= _DONE_SCHEMA_KEYS, f"缺键：{_DONE_SCHEMA_KEYS - set(done)}"
+        assert isinstance(done["standard_calls"], int)
+        assert isinstance(done["strong_calls"], int)
+        assert isinstance(done["model_calls"], int)
+        # 成本计数按"尝试"口径汇总，不是任意加总值。
+        assert done["model_calls"] == (
+            done["standard_calls"] + done["strong_calls"]
+        )
+
+
+def test_abort_and_rescue_done_report_zero_cost_fields() -> None:
+    """澄清中止 / 内部救援没有新的模型调用，成本字段必须是 0 而不是缺失。"""
+    clarify_core = AgentCore(
+        ScriptedModel([ModelResponse(content="不应被调用")]),
+        channel=CollectChannel(default_answer=""),
+    )
+    clarify_done = _done(_run(clarify_core.run("随便"))).data
+    assert clarify_done["standard_calls"] == 0
+    assert clarify_done["strong_calls"] == 0
+    assert clarify_done["model_calls"] == 0
+
+    selector_core = AgentCore(
+        ScriptedModel([ModelResponse(content="不应被调用")]), learning=_BoomSelector()
+    )
+    selector_core.register_tools([build_spec(search_notes)])
+    rescue_done = _done(_run(selector_core.run("搜索笔记里的周报"))).data
+    assert rescue_done["standard_calls"] == 0
+    assert rescue_done["strong_calls"] == 0
+    assert rescue_done["model_calls"] == 0
+
+
+def test_failed_model_attempt_is_counted_in_both_done_and_budget() -> None:
+    """F12：失败的模型尝试必须同时计入 DONE.model_calls 与 budget.model_calls。"""
+    core = AgentCore(
+        _RaisingModel(RuntimeError("模型服务不可用")),
+        budget=Budget(max_model_calls=5),
+    )
+    core.register_tools([build_spec(search_notes)])
+
+    result = _run(core.run("搜索笔记里的周报"))
+
+    done = _done(result).data
+    assert done["model_calls"] == 1
+    assert done["standard_calls"] == 1
+    assert done["budget"]["model_calls"] == 1  # 尝试口径：失败也计数
+    assert done["budget"]["model_calls"] == done["model_calls"]
 
 
 def test_run_result_additive_fields_have_safe_defaults() -> None:

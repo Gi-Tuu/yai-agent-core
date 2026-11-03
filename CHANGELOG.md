@@ -5,7 +5,7 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.26.0] - 2026-11-03
 
 ### Added
 
@@ -98,6 +98,28 @@
   别的租户档案；旧文件无 owner 保持兼容。
 
 ### Fixed
+
+- **2026-11 审计 follow-up（收尾项，均带回归测试）**：
+  - **成本口径**：`BudgetTracker.model_calls` 改为按“已发起的尝试”计数（失败/超时计入、
+    被熔断拒绝的不计），`record_model_call` 只累计 token；loop 的成本计数收敛到
+    `_model_chat` 唯一入口（含 replan meta-tool），所有 DONE 路径固定
+    `strategy/final_text/standard_calls/strong_calls/model_calls/status/error` 键，
+    中止/救援 DONE 补零值成本字段。
+  - **验收证据上限**：`evidence_from_events` 对条数（50）、单条 detail（4k）、
+    总序列化体量（64KB）设上限，超限折叠并追加 `kind="truncated"` 标注证据，
+    避免超大 DONE 触发 Bridge 截断。
+  - **Bridge 截断**：超帧替换帧保留 `type/original_bytes/method` 与
+    `params.type/run_id/status/error`（及顶层 `event_type/run_id` 镜像），
+    扩展对截断 done/cancelled/error 仍能收尾并清理运行态；不透传超大
+    evidence/verification。
+  - **长期记忆**：`MemoryVault` 增加跨进程写锁（Windows `msvcrt` / POSIX `flock`
+    + 进程内锁），`_save` 的“检测外部修改→合并→原子写”整段在锁内；2s 拿不到锁
+    降级继续并记诊断，不阻塞任务。
+  - **适配器**：`browser_tabs` / `desktop_list_windows` 按来源/进程/标题白名单
+    过滤元数据（只回 `hidden_count`）；新增假 playwright/pywinauto SDK 的离线
+    回归，覆盖真实后端代码路径（不启动真实浏览器/窗口）。
+  - **真机验收**：真实 Edge 上验证运行中重开面板可取消、强杀 Sidecar 自动重连、
+    关最后一个面板重启 Bridge 并重读配置（截图见 docs/exports，gitignore）。
 
 - **2026-11 全仓审计整改（P1/P2 批量修复，均带回归测试）**：
   - **数据完整性**：SQLite 迁移改为"列对账 + SAVEPOINT 单事务"，半迁移库、丢

@@ -118,10 +118,13 @@ class BrowserProvider:
             tabs = await self.backend.list_tabs()
         except BrowserError as exc:
             return {"ok": False, "status": "backend_error", "error": str(exc)}
+        # 元数据读取也受来源白名单约束：被禁标签页的 URL/标题不得进入模型上下文。
+        visible = [tab for tab in tabs if self.policy.allows_origin(tab.url)]
         return {
             "ok": True,
             "status": "observed",
-            "tabs": [tab.to_public() for tab in tabs],
+            "tabs": [tab.to_public() for tab in visible],
+            "hidden_count": len(tabs) - len(visible),
         }
 
     async def switch_tab(self, tab_id: str) -> dict[str, Any]:

@@ -6,9 +6,11 @@
 
 三类硬上限（均可选，``None`` 表示不限制）：
 
-- ``max_model_calls``：执行期模型调用次数（规划 / 工具聚焦 / ReAct 主轮 / 重规划
-  / 收尾，经内核统一入口 ``_model_chat`` 的调用；**不含**路由分类与上下文压缩，
-  这两类各有独立开关、频率有界）。与 ``DONE.model_calls`` 同口径。
+- ``max_model_calls``：执行期模型调用**尝试**次数（规划 / 工具聚焦 / ReAct 主轮 /
+  重规划 / 收尾，经内核统一入口 ``_model_chat`` 的每次发起；**含**失败 / 超时的
+  尝试；被熔断拒绝、根本没有发起的那次不计数；**不含**路由分类与上下文压缩，
+  这两类各有独立开关、频率有界）。与 ``DONE.model_calls`` 同口径：两端都按
+  "已发起的尝试"计数。
 - ``max_tool_calls``：实际经 :class:`ToolExecutor` 执行的业务工具次数（与
   ``TOOL_CALL`` 事件同口径）；内核 meta-tool（发现 / 创建 / 组合 / 重规划）的
   编排动作不计入。
@@ -92,7 +94,12 @@ class Budget:
 
 @dataclass
 class BudgetTracker:
-    """单个任务执行期的预算计数与熔断判定（非线程安全，依赖内核串行契约）。"""
+    """单个任务执行期的预算计数与熔断判定（非线程安全，依赖内核串行契约）。
+
+    ``model_calls`` 是**尝试**计数：在 :meth:`before_model_call`（发起前）加 1，
+    因此失败 / 超时的尝试也计入；被熔断拒绝、根本没有发起的那次不计数。
+    :meth:`record_model_call` 只累计成功调用返回的 token 用量，不再重复加次数。
+    """
 
     spec: Budget
     model_calls: int = 0
@@ -110,19 +117,24 @@ class BudgetTracker:
         raise exc
 
     def before_model_call(self) -> None:
-        """发起一次模型调用前检查：调用次数已达上限则立即熔断（本次不发起）。"""
+        """发起一次模型调用**尝试**前检查并计数：已达上限则熔断（本次不发起）。
+
+        计数口径是"尝试"：先判上限，通过后立刻 ``model_calls += 1``——即使这次
+        调用随后失败/超时，它也确实消耗了配额与时间，必须计入（审计 F12）。
+        与 ``DONE.model_calls`` 同口径。
+        """
         limit = self.spec.max_model_calls
         if limit is not None and self.model_calls >= limit:
             self._trip(BudgetExceeded(SCOPE_MODEL_CALLS, limit, self.model_calls))
+        self.model_calls += 1
 
     def record_model_call(self, response: ModelResponse | None) -> None:
-        """一次模型调用返回后计数；若因此越过 token 上限立即熔断。
+        """一次模型调用成功返回后**只累计 token 用量**；次数已在发起前计过。
 
-        调用失败（无 response）不计入成功次数，也不累计 token——预算防的是持续
-        成功烧钱，失败重试由 :class:`~yai_core.llm.fallback.FallbackModelProvider`
-        的退避/冷却另行约束。
+        调用失败（无 response）不会走到这里（内核失败路径不调用本方法），失败
+        尝试的次数也已由 :meth:`before_model_call` 记入；若累计 token 越过上限
+        立即熔断。
         """
-        self.model_calls += 1
         usage = getattr(response, "usage", None)
         if usage is None:
             return

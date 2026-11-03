@@ -47,7 +47,12 @@ class MetaToolRuntime(ABC):
 
     @abstractmethod
     async def _model_chat(
-        self, messages: list[dict], tools: list[dict] | None, *, tier: str
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        *,
+        tier: str,
+        tier_counts: dict[str, int] | None = None,
     ) -> ModelResponse:
         raise NotImplementedError
 
@@ -261,8 +266,6 @@ class MetaToolRuntime(ABC):
         plan_tier = (
             tier_policy.for_planning().tier if tier_policy is not None else STRONG
         )
-        if tier_counts is not None:
-            tier_counts[plan_tier] = tier_counts.get(plan_tier, 0) + 1
         messages, state_event = await self._model_messages(ctx)
         if state_event is not None:
             yield state_event
@@ -300,7 +303,9 @@ class MetaToolRuntime(ABC):
                 ),
             }
         )
-        resp = await self._model_chat(messages, None, tier=plan_tier)
+        resp = await self._model_chat(
+            messages, None, tier=plan_tier, tier_counts=tier_counts
+        )
         steps = [s.strip() for s in re.findall(r"\d+[.、)]\s*(.+)", resp.content)]
         if not steps:
             steps = [task]

@@ -6,11 +6,11 @@
 
 | Version | Security updates |
 | --- | --- |
+| 0.26.x | ✅ |
 | 0.25.x | ✅ |
-| 0.24.x | ✅ |
-| < 0.24 | ❌ |
+| < 0.25 | ❌ |
 
-> Security fixes ship only in the latest minor (0.25.x); older versions are not backported — the ✅
+> Security fixes ship only in the latest minor (0.26.x); older versions are not backported — the ✅
 > above only marks that the version is still inside the support window.
 
 ## Secure deployment defaults (read before exposing to the internet)

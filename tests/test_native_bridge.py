@@ -22,10 +22,12 @@ import pytest
 from yai_core.sidecar.native_bridge import (
     BRIDGE_PROTOCOL_VERSION,
     MAX_MESSAGE_BYTES,
+    TRUNCATED_FINAL_TEXT_MAX,
     BridgeConfig,
     BridgeError,
     BridgeOriginError,
     NativeBridge,
+    build_truncated_message,
     default_config_path,
     encode_frame,
     load_bridge_config,
@@ -895,3 +897,163 @@ def test_configure_llm_write_is_atomic_with_backup(tmp_path: Any) -> None:
     assert json.loads(backup.read_text(encoding="utf-8")) == json.loads(original)
     assert list(tmp_path.glob("*.tmp-*")) == []
     assert not (tmp_path / "bridge.json.lock").exists()
+
+
+# ---------- VER-2 followup：超帧截断保留终态标识 ----------
+
+
+def test_truncated_message_keeps_terminal_metadata_and_drops_evidence() -> None:
+    """截断帧必须带 type/original_bytes/params.type/run_id，且不透传 evidence/verification。"""
+    huge = {
+        "type": "notification",
+        "method": "agent/event",
+        "params": {
+            "run_id": "r1",
+            "seq": 3,
+            "type": "done",
+            "data": {
+                "final_text": "x" * 5000,
+                "verification": {
+                    "status": "verified_success",
+                    "evidence": [{"kind": "page", "summary": "y" * 5000}],
+                },
+                "evidence": [{"kind": "page", "summary": "y" * 5000}],
+            },
+        },
+    }
+
+    frame = build_truncated_message(huge, 9000)
+
+    assert frame["type"] == "notification"
+    assert frame["truncated"] is True
+    assert frame["original_bytes"] == 9000
+    assert frame["method"] == "agent/event"
+    # 顶层镜像字段：扩展不解析嵌套 params 也能识别终态。
+    assert frame["event_type"] == "done"
+    assert frame["run_id"] == "r1"
+    assert frame["params"]["type"] == "done"
+    assert frame["params"]["run_id"] == "r1"
+    assert frame["params"]["seq"] == 3
+    # final_text 可截断，但不能把整段大字段带过去。
+    assert len(frame["params"]["data"]["final_text"]) == TRUNCATED_FINAL_TEXT_MAX
+    dumped = json.dumps(frame, ensure_ascii=False)
+    assert "verification" not in dumped
+    assert "evidence" not in dumped
+    assert len(encode_frame(frame)) - 4 < 9000
+
+
+def test_truncated_error_and_host_request_keep_actionable_fields() -> None:
+    """error 的原因、审批的工具名要保留短副本；arguments 等大字段丢弃。"""
+    error_frame = build_truncated_message(
+        {
+            "type": "notification",
+            "method": "agent/error",
+            "params": {"run_id": "r2", "error": "boom" * 500},
+        },
+        4000,
+    )
+    assert error_frame["method"] == "agent/error"
+    assert error_frame["params"]["run_id"] == "r2"
+    assert error_frame["params"]["error"].startswith("boom")
+    assert len(error_frame["params"]["error"]) <= 300
+
+    approval = build_truncated_message(
+        {
+            "type": "host_request",
+            "request_id": "srv-9",
+            "method": "approval/request",
+            "params": {"tool": "submit", "arguments": {"x": "y" * 5000}},
+        },
+        5000,
+    )
+    assert approval["request_id"] == "srv-9"
+    assert approval["method"] == "approval/request"
+    assert approval["params"]["tool"] == "submit"
+    assert "arguments" not in approval["params"]
+
+
+def test_oversized_done_notification_is_truncated_but_still_terminal() -> None:
+    """构造超大 done：输出截断帧仍含 params.type/run_id，且 Bridge 运行位已释放。"""
+
+    async def scenario() -> tuple[Harness, dict[str, Any], dict[str, Any]]:
+        harness = Harness(
+            config=BridgeConfig(
+                allowed_origins=frozenset({"chrome-extension://abcdef"}),
+                max_message_bytes=600,
+            )
+        )
+        task = asyncio.create_task(harness.bridge.run())
+        await _wait_for(harness, "bridge_ready")
+        harness.send(_hello())
+        await _wait_for(harness, "hello_ok")
+        harness.send({"op": "run", "task": "产生巨大结果的短任务"})
+        await _wait_for(harness, "run_started")
+        harness.transport.push_notification(
+            "agent/event",
+            {
+                "run_id": "r1",
+                "seq": 0,
+                "type": "done",
+                "data": {
+                    "final_text": "x" * 5000,
+                    "verification": {"status": "verified_success"},
+                    "evidence": [{"kind": "page", "summary": "y" * 5000}],
+                },
+            },
+        )
+        truncated = await _wait_for(harness, "notification")
+        harness.send({"op": "status"})
+        status = await _wait_for(harness, "status")
+        harness.send(None)
+        await task
+        return harness, truncated, status
+
+    _harness, truncated, status = _run(scenario())
+    assert truncated.get("truncated") is True
+    assert truncated["event_type"] == "done"
+    assert truncated["run_id"] == "r1"
+    assert truncated["params"]["type"] == "done"
+    assert truncated["params"]["run_id"] == "r1"
+    assert "verification" not in json.dumps(truncated)
+    assert "evidence" not in json.dumps(truncated)
+    # 终态照样结算运行位（不会因截断而卡运行中）。
+    assert status["active_run_id"] is None
+    assert len(encode_frame(truncated)) - 4 <= 600
+
+
+def test_oversized_done_compacts_within_configured_frame_limit() -> None:
+    """极小的自定义上限触发二次瘦身：帧仍 <= 上限且保留 params.type/run_id。"""
+
+    async def scenario() -> dict[str, Any]:
+        harness = Harness(
+            config=BridgeConfig(
+                allowed_origins=frozenset({"chrome-extension://abcdef"}),
+                max_message_bytes=300,
+            )
+        )
+        task = asyncio.create_task(harness.bridge.run())
+        await _wait_for(harness, "bridge_ready")
+        harness.send(_hello())
+        await _wait_for(harness, "hello_ok")
+        harness.send({"op": "run", "task": "大结果"})
+        await _wait_for(harness, "run_started")
+        harness.transport.push_notification(
+            "agent/event",
+            {
+                "run_id": "r1",
+                "seq": 0,
+                "type": "done",
+                "data": {"final_text": "x" * 5000},
+            },
+        )
+        truncated = await _wait_for(harness, "notification")
+        harness.send(None)
+        await task
+        return truncated
+
+    truncated = _run(scenario())
+    assert truncated.get("truncated") is True
+    assert truncated["params"]["type"] == "done"
+    assert truncated["params"]["run_id"] == "r1"
+    assert truncated["event_type"] == "done"
+    assert len(encode_frame(truncated)) - 4 <= 300
