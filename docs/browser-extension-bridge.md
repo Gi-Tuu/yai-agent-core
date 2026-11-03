@@ -85,7 +85,10 @@ Chrome / Edge Extension (MV3)
 
 ## CDP 模式：让工具操作你自己的 Chrome 窗口
 
-默认的 Playwright MCP 会新开一个受控浏览器；想操作用户自己的 Chrome 会话，用 CDP 连接：
+默认的 Playwright MCP 会新开一个受控浏览器；想操作用户自己的 Chrome 会话，用 CDP 连接。
+使用 `--cdp-endpoint` 注册时，配置会自动改用 `scripts/playwright_mcp_launcher.py`：
+端点未监听时先自动拉起 `scripts/chrome_cdp.py start` 的独立调试 Chrome；仍失败则
+**回退到 MCP 自管浏览器**，保证每次 initialize 不会因 9222 未启动而全部 browser_* 不可用。
 
 ```powershell
 # 1) 启动一个带远程调试端口的 Chrome（独立 profile；Chrome 不允许对默认 profile 开调试端口）

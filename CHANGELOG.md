@@ -9,6 +9,14 @@
 
 ### Fixed
 
+- **MCP CDP 服务缺失**：新增 `scripts/playwright_mcp_launcher.py`。使用
+  `--cdp-endpoint` 注册/配置时自动改用启动器：先检测 9222，未监听则调用
+  `chrome_cdp.py start` 拉起独立调试 Chrome；仍失败则去掉 CDP 参数回退到 MCP
+  自管浏览器，避免 sidecar 初始化直接 ECONNREFUSED、所有 `browser_*` 不可用。
+  `register_native_host.py --cdp-endpoint` 新安装也走启动器。
+
+### Fixed
+
 ### Fixed
 
 - **扩展读取页面 URL**：`chrome.tabs.query` 未授予 `tabs` 时 `tab.url` 为空，读取会报

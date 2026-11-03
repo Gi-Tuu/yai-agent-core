@@ -46,7 +46,12 @@ def main() -> int:
     shutil.copy2(_bridge(), bundle / "bin" / "yai-bridge.exe")
     for name in ("installer.py", "install.cmd", "uninstall.cmd"):
         shutil.copy2(HERE / name, bundle / name)
-    for name in ("register_native_host.py", "configure_bridge_llm.py"):
+    for name in (
+        "register_native_host.py",
+        "configure_bridge_llm.py",
+        "playwright_mcp_launcher.py",
+        "chrome_cdp.py",
+    ):
         shutil.copy2(ROOT / "scripts" / name, bundle / "scripts" / name)
     shutil.copytree(ROOT / "extension", bundle / "extension")
     (bundle / "README.md").write_text(
