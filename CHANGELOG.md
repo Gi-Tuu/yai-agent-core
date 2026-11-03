@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **原子写共享重试统一**：新增 `yai_core.fsutil.replace_with_retry`，MemoryVault 与
+  Bridge 配置写盘共用；仅对 Windows 瞬态 `PermissionError` 做有界退避，其他错误
+  立即上抛。新增 `tests/test_fsutil.py`（前两次失败第三次成功 / 持续失败不改旧文件）。
+
 ### Fixed
 
 - **MCP CDP 服务缺失**：新增 `scripts/playwright_mcp_launcher.py`。使用
