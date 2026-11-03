@@ -251,6 +251,9 @@ async function runTabAction(requestId, params) {
     }
     const tab = await chrome.tabs.get(authorizedTabId);
     if (!tab || tab.id === undefined) throw new Error("授权标签页已关闭");
+    const originPattern = await ensureOriginPermission(tab.url || "");
+    const has = await chrome.permissions.contains({ origins: [originPattern] });
+    if (!has) throw new Error("授权已被撤销；请重新点击“读取当前页面”");
     const execution = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: tabActionFunc,
@@ -477,6 +480,28 @@ el.cfgSave.addEventListener("click", () => {
   }
 });
 
+
+/** activeTab 只在部分入口授予；读取前按当前 origin 请求一次性站点权限。 */
+async function ensureOriginPermission(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("当前标签页 URL 无效");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`不支持读取 ${url.protocol}// 页面`);
+  }
+  const originPattern = `${url.protocol}//${url.host}/*`;
+  const has = await chrome.permissions.contains({ origins: [originPattern] });
+  if (has) return originPattern;
+  const granted = await chrome.permissions.request({ origins: [originPattern] });
+  if (!granted) {
+    throw new Error("你拒绝了该站点的读取权限；页面未被读取");
+  }
+  return originPattern;
+}
+
 el.observe.addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -487,6 +512,7 @@ el.observe.addEventListener("click", async () => {
         `当前是浏览器内部页面（${url.split("/")[0]}://），不能读取；请切换到普通网页后再试`
       );
     }
+    await ensureOriginPermission(url);
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: collectPageSnapshot,

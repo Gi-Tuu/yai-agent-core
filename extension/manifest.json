@@ -10,6 +10,10 @@
     "activeTab",
     "scripting"
   ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"

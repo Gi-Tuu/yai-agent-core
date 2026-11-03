@@ -93,6 +93,11 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
     assert "tab_action/request" in js
     assert "authorizedTabId" in js
     assert "selector_not_found" in js
+    # activeTab 不保证每次入口都授予：读取前按 origin 请求可选宿主权限。
+    assert "permissions.request" in js
+    assert "ensureOriginPermission" in js
+    manifest = _read("manifest.json")
+    assert "optional_host_permissions" in manifest
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。
     assert "connectNative" not in js
     assert "connectNative" in _read("service_worker.js")

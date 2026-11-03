@@ -9,6 +9,13 @@
 
 ### Fixed
 
+### Fixed
+
+- **扩展读取页面权限**：真实 Side Panel 中 activeTab 不保证在“读取当前页面”时仍有
+  授予，导致 `Cannot access contents of the page`。manifest 增加
+  `optional_host_permissions`（http/https），读取前按当前 origin 显式请求一次；
+  用户拒绝则不读取。当前标签页写操作同样要求该 origin 授权仍然有效。
+
 ### Added
 
 - **v0.27 Batch 3：当前标签页受限写操作（opt-in）**：`initialize.current_tab_tool=true`

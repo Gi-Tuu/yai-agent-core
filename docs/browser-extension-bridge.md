@@ -31,7 +31,7 @@ Chrome / Edge Extension (MV3)
 | 字段白名单 | `configure_llm` 只允许改 `initialize.model` 的 `base_url/model/strong_model/api_key`（改不了 `sidecar_command`/`allowed_origins`/其它 initialize 字段）；**改 base_url/provider 必须同时提供新 api_key**，旧 Key 不会被改道送到新端点；base_url 只接受 http/https。`host_response` 只允许回应 `srv-*` 反向请求 |
 | 大小限制 | 入站帧 ≤ 1 MiB；出站超限替换为 `truncated` 标记（避免 Chrome 杀 host 进程） |
 | 配置写盘 | Bridge 与本地 CLI 共用"文件锁 + 同目录 temp + fsync + os.replace"；旧版本轮为 `.bak`，不会留半截 JSON |
-| 读取页面 | 默认不注入脚本；用户点击"读取当前页面"才用 `activeTab` + `chrome.scripting` 一次性采集，页面内容按**不可信输入**附加到任务 |
+| 读取页面 | 默认不注入脚本；用户点击"读取当前页面"时先对**当前 origin** 请求可选宿主权限（`optional_host_permissions`，每个站点一次），再用 `activeTab`/`scripting` 采集；页面内容按**不可信输入**附加到任务。拒绝授权则不读取 |
 | 读取 ≠ 操作 | 只有只读快照；受控浏览器操作走 Browser Provider（受 `BrowserPolicy` 治理）或宿主显式配置的 Playwright MCP（独立/CDP 会话），**不控制当前标签页**。详见 [ADR 0006](adr/0006-browser-execution-unification.md) |
 
 > 面板顶部会显示"当前标签页：只读快照；受控浏览器：未接入 / MCP browser"，
