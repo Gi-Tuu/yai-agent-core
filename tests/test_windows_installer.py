@@ -5,11 +5,15 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load():
     path = ROOT / "packaging" / "windows" / "installer.py"
+    if not path.is_file():
+        pytest.skip("sdist 不包含 packaging/windows/installer.py")
     spec = importlib.util.spec_from_file_location("windows_installer", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
