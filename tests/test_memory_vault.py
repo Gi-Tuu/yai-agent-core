@@ -862,3 +862,22 @@ def test_memory_package_exports_public_errors() -> None:
         assert name in memory_pkg.__all__
         assert hasattr(memory_pkg, name)
     assert issubclass(memory_pkg.MemoryVaultReadOnlyError, memory_pkg.MemoryVaultError)
+
+
+def test_atomic_replace_retries_transient_permission_error(tmp_path, monkeypatch) -> None:
+    """Windows 上目标文件被短暂占用时，os.replace 的 PermissionError 应有界重试。"""
+    path = tmp_path / "retry.json"
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        if calls["count"] < 2:
+            calls["count"] += 1
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(vault_module.os, "replace", flaky_replace)
+    vault = MemoryVault(storage_path=path)
+    vault.remember("短暂占用后仍应成功落盘")
+    assert calls["count"] == 2
+    assert "短暂占用后仍应成功落盘" in path.read_text(encoding="utf-8")

@@ -1384,7 +1384,20 @@ class MemoryVault:
                 # 先落数据再 rename：否则掉电可能留下"名字已换、内容没到"的空/半截文件，
                 # 而 quarantine 只能救坏字节、救不回上一版好数据。
                 os.fsync(handle.fileno())
-            os.replace(tmp_name, self.storage_path)
+            # Windows 上目标文件可能被另一个进程的短暂读句柄/索引器占用，
+            # os.replace 会抛 WinError 5（PermissionError）。这是**瞬态**共享冲突，
+            # 不是数据错误；在持锁状态下做有界退避重试，避免把整次 remember 打崩。
+            last_error: PermissionError | None = None
+            for attempt in range(8):
+                try:
+                    os.replace(tmp_name, self.storage_path)
+                    last_error = None
+                    break
+                except PermissionError as exc:
+                    last_error = exc
+                    time.sleep(0.05 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
             self._fsync_directory(self.storage_path.parent)
         finally:
             if os.path.exists(tmp_name):
