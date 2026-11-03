@@ -23,8 +23,15 @@ def test_manifest_is_mv3_with_side_panel() -> None:
     assert manifest["manifest_version"] == 3
     assert manifest["side_panel"]["default_path"] == "sidepanel.html"
     permissions = set(manifest.get("permissions", []))
-    # 最小权限：只保留实际用到的四项（storage 未使用，已移除）。
-    assert permissions == {"sidePanel", "nativeMessaging", "activeTab", "scripting"}
+    # 最小权限：只保留实际用到的五项（storage 未使用，已移除）。
+    # tabs 仅用于读取当前标签页 URL/title，不含页面内容。
+    assert permissions == {
+        "sidePanel",
+        "nativeMessaging",
+        "activeTab",
+        "scripting",
+        "tabs",
+    }
     assert "storage" not in permissions
     assert manifest["background"]["service_worker"] == "service_worker.js"
     # 侧边栏依赖用户手势打开，不能声明 action popup（会抢走点击）。
