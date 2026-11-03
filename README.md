@@ -248,7 +248,7 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成，当前发布版本）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **v0.26（开发中，未发布）**：把执行能力做成可选适配器——Browser Provider（快照引用 / 来源闸 / 统一治理）、Windows Desktop Provider（UIA / 焦点保护 / 用户接管 / 本机真机冒烟）、Outcome Verification 契约（执行收据与任务验收分离）、浏览器扩展 + Native Messaging Bridge（未真机加载）、P0 记忆损坏安全与 Provider 路由治理。全部为独立可选模块，内核仍零第三方硬依赖；逐项证据与未验证边界见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)
+- **v0.26（开发中，未发布）**：把执行能力做成可选适配器——Browser Provider（快照引用 / 来源闸 / 统一治理；真实 Chromium 验证）/ Windows Desktop Provider（UIA / 焦点保护 / 用户接管 / 本机真机冒烟）、Outcome Verification 契约（执行收据与任务验收分离）、浏览器扩展 + Native Messaging Bridge（Chrome/Edge 真机加载验证）、P0 记忆损坏安全与 Provider 路由治理。全部为独立可选模块，内核仍零第三方硬依赖；逐项证据与未验证边界见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)
 - **下个版本候选（未排序）**：跨实例分布式限流、生产级沙箱适配器递进（gVisor / 微 VM / 远程执行）、组合工具的可视化编排（宿主侧）、多模态资源引用的宿主侧解析器推广
 - **v1.0（规划中）**：作为 AI Companion 项目 [AMBRACE](https://github.com/Gi-Tuu/AMBRACE) 的 Agent 内核回流嵌入
 

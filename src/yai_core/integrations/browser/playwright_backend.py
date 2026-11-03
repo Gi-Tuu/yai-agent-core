@@ -85,12 +85,18 @@ class PlaywrightBrowserBackend:
         headless: bool = True,
         browser_name: str = "chromium",
         timeout_ms: int = 15_000,
+        channel: str | None = None,
     ) -> None:
         if browser_name not in ("chromium", "firefox", "webkit"):
             raise ValueError("browser_name 只接受 chromium / firefox / webkit")
+        if channel is not None and browser_name != "chromium":
+            raise ValueError("channel 只对 chromium 生效（chrome / msedge 等）")
         self.headless = headless
         self.browser_name = browser_name
         self.timeout_ms = timeout_ms
+        #: 使用系统安装的品牌浏览器（如 ``chrome`` / ``msedge``）而不是 Playwright
+        #: 自带 build；None = 用 Playwright 下载的 Chromium。
+        self.channel = channel
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
@@ -106,7 +112,10 @@ class PlaywrightBrowserBackend:
             ) from exc
         self._playwright = await async_playwright().start()
         launcher = getattr(self._playwright, self.browser_name)
-        self._browser = await launcher.launch(headless=self.headless)
+        launch_kwargs: dict[str, Any] = {"headless": self.headless}
+        if self.channel is not None:
+            launch_kwargs["channel"] = self.channel
+        self._browser = await launcher.launch(**launch_kwargs)
         self._context = await self._browser.new_context()
         self._page = await self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)

@@ -214,15 +214,15 @@ Alongside the turn-level compaction in §2.5, two further pieces of "bytes fed t
 
 All of the following have shipped: zero hard kernel dependencies, and no change to existing host behavior by default.
 
-- **Multimodal message contract (v0.12):** `ChatMessage.parts` plus `TextPart`/`ImagePart`/`ResourcePart` (`src/yai_core/types.py:747-963`). `parts_to_text()` (`types.py:901`) degrades parts to plain text and states plainly that the model cannot see them — image and resource references are never dropped silently.
+- **Multimodal message contract (v0.12):** `ChatMessage.parts` plus `TextPart`/`ImagePart`/`ResourcePart` (`src/yai_core/types.py:875-1028`). `parts_to_text()` (`types.py:1029`) degrades parts to plain text and states plainly that the model cannot see them — image and resource references are never dropped silently.
 - **Capability manifest v2 (v0.12):** `MANIFEST_VERSION = 2` with supported versions `(1, 2)` (`src/yai_core/tools/manifest.py:43-46`). v2 makes the governance semantics part of the format contract, so an old reader rejects it outright — better to refuse the import than to run with silently voided safety semantics.
 - **Input validation over 13 schema keywords (v0.13):** `src/yai_core/policy/approval.py:121` validates 4 structural keywords (`type`/`required`/`properties`/`items`) plus 9 value-domain ones (`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`); keywords that are still unimplemented stay on record (`src/yai_core/tools/health.py:31`) instead of pretending they were checked.
-- **Capability health check (v0.14):** `check_tool_specs()` (`src/yai_core/tools/health.py:622`) statically checks whether a declaration can really be enforced by the kernel (no handler call, no network); `AgentCore.capability_health()` (`src/yai_core/core.py:394`) reports on the registered tools.
-- **Trusted change preview + execution receipt (v0.14):** `ChangePreview` (`src/yai_core/types.py:160`) carries the host-generated real diff and token, re-generated before execution and compared — a changed token invalidates the approval; `ExecutionReceipt` (`types.py:113`) distinguishes not_started/succeeded/failed/unknown/partial, which is what decides whether a call may be retried.
+- **Capability health check (v0.14):** `check_tool_specs()` (`src/yai_core/tools/health.py:622`) statically checks whether a declaration can really be enforced by the kernel (no handler call, no network); `AgentCore.capability_health()` (`src/yai_core/core.py:437`) reports on the registered tools.
+- **Trusted change preview + execution receipt (v0.14):** `ChangePreview` (`src/yai_core/types.py:235`) carries the host-generated real diff and token, re-generated before execution and compared — a changed token invalidates the approval; `ExecutionReceipt` (`types.py:125`) distinguishes not_started/succeeded/failed/unknown/partial, which is what decides whether a call may be retried.
 - **Live host state (v0.15/v0.19):** `HostStateProvider` (`src/yai_core/kernel/state.py:48`) injects a read-only, transient snapshot before each model call; it never enters history or memory, and a failing provider only emits a `host_state_failed` diagnostic (`kernel/state.py:170`) while the remaining state is still injected.
 - **Sidecar protocol (v0.16):** `python -m yai_core.sidecar` runs NDJSON + JSON-RPC 2.0 over stdio (`src/yai_core/sidecar/protocol.py:18`), carrying initialize / agent/run / agent/cancel / ping / shutdown; the tool surface still goes through MCP / OpenAPI — the protocol itself has no tool/call.
 - **Office document text extraction (v0.21):** `extract_text()` in `src/yai_core/batteries/office_text.py:50`: docx/xlsx/pptx go through the stdlib zipfile + ElementTree (zero dependency), PDF through the optional pypdf; the three safety gates (member allowlist, DOCTYPE/ENTITY rejection, size caps) are stated at the top of the file.
-- **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:214` (the timeout takes the stricter setting) and `tools/executor.py:584` (the rate gate runs before authorization).
+- **ACC execution hints are really enforced (v0.12):** `execution.timeout_ms` / `rate_limit` used to be parsed but ignored; they are now translated in one hop into native `ToolGovernance` data (`src/yai_core/integrations/acc/evaluate.py:117`, wired in at `src/yai_core/integrations/openapi/discovery.py:238`) and genuinely enforced by `src/yai_core/tools/executor.py:253` (the timeout takes the stricter setting) and `tools/executor.py:566` (the rate gate runs before authorization).
 
 ### 2.12 v0.26 execution adapters and verifiable outcomes (Unreleased)
 
@@ -307,7 +307,7 @@ app = create_app(core)
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 
-Review-period rate limiting (on by default): `rate_limit.py` provides a per-IP sliding window
+Review-period rate limiting (on by default): `ratelimit.py` provides a per-IP sliding window
 (`enabled=True`, `per_minute=30`, `window_seconds=60`; tune or disable with `YAI_RATE_LIMIT_*`). The
 middleware only intercepts `POST /v1/agent/run`, returning 429 + `Retry-After` on overflow (same origin
 as the response body); limited requests never reach the model. The three GET verification endpoints are

@@ -17,7 +17,8 @@
   `executed + changed / no_observable_change / unknown`，不把"函数返回"当业务成功。
   来源白名单、密码框默认拒填、导航前置 gate 与页面证据随事件流交给验收。
   真实执行走可选 `[browser]` extra（Playwright，未安装不影响内核），离线测试用
-  假后端覆盖。真实浏览器验证状态：**已实现·未真机验证**。
+  假后端覆盖边界；**已在真实 Chromium 与系统 Chrome 上完成一条本地任务验收**
+  （`scripts/browser_smoke.py`，2026-11-03），真实站点多样性仍未覆盖。
 - **浏览器扩展宿主 + Native Messaging Bridge（v0.26 Batch 4）**：`extension/`
   提供 Manifest V3 Side Panel（任务输入、事件流、审批 / 澄清、取消、连接状态，
   `activeTab` + `chrome.scripting` 按需读取当前页面）；`yai_core.sidecar.native_bridge`
@@ -25,7 +26,9 @@
   **不改 Sidecar 公开协议**。Bridge 只认 allowlist 内的扩展来源（fail closed）、
   操作白名单、入站 1 MiB 上限、出站超限截断；模型凭据只来自本地配置，
   浏览器端不持有。断连后结果标 `unknown`，不自动重放可能已有副作用的操作。
-  状态：Bridge 协议与转换已离线测试；扩展本身**未真机加载验收**。
+  状态：Bridge 已与**真实 Sidecar 进程**端到端验证；扩展已在**真实 Chrome / Edge**
+  加载出 MV3 service worker（`scripts/extension_smoke.py`）。侧边栏点击流、Native
+  Messaging 注册与安装包分发仍需人工验收。
 - **记忆质量基准（v0.26 Batch 6）**：`benchmarks/memory/` 提供小型离线评测集与
   `run_bench.py`，测量 Recall@5 / MRR@5 / 无关召回率 / P50·P95 延迟、词法与语义
   互补收益、嵌入器故障降级一致性、更新删除后的索引一致性；假嵌入器与真实

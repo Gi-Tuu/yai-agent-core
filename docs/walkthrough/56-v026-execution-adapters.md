@@ -68,7 +68,8 @@ v0.26 新增的每一项都先回答过同一个问题：**它属于 Core、Inte
    no_observable_change / unknown`，**从不返回 `success`**；"是否完成"由验收契约回答；
 3. **治理不另起一套**：`build_browser_tools()` 只造 `ToolSpec`，注册进 `ToolRegistry` 后
    由 `ToolExecutor` 做参数校验 / 权限 / 审批 / 收据 / 事件；来源白名单、密码框拒填、
-   导航 gate 是**额外收紧**，不是替代。
+   导航 gate 是**额外收紧**，不是替代。真实 Chromium / 系统 Chrome 已用
+   `scripts/browser_smoke.py` 跑通一条完整任务（含来源闸与旧引用过期）。
 
 ## 5. Windows Desktop Provider：语义优先、焦点保护、用户接管
 
@@ -107,7 +108,10 @@ v0.26 新增的每一项都先回答过同一个问题：**它属于 Core、Inte
 - `extension/`：MV3 Side Panel；Service Worker 只做连接/转发，断连把状态标 `unknown`
   且**不自动重放**任务；"读取当前页面"必须用户点击，走 `activeTab` + `chrome.scripting`
   一次性采集；
-- 生命周期诚实声明：Bridge 与一次扩展连接绑定，不提供跨进程任务恢复。
+- 生命周期诚实声明：Bridge 与一次扩展连接绑定，不提供跨进程任务恢复；
+- 真机验收（2026-11-03）：Bridge ↔ 真实 Sidecar 握手/状态/关闭通过；扩展在
+  Chrome 156 / Edge 156 加载出 MV3 service worker（`scripts/bridge_smoke.py` /
+  `scripts/extension_smoke.py`），侧边栏点击与 native host 注册仍需人工验收。
 
 ## 8. 记忆质量基准
 

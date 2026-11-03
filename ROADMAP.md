@@ -252,13 +252,13 @@
   owner 绑定；Provider 路由治理（宿主授权集合 / 敏感等级 / 锁定 / 禁止降级 / 未授权零调用 /
   子任务单调收窄）。
 - **Browser Provider**：快照引用 + 来源闸 + 8 个受治理工具 + 执行器收据；可选 `[browser]`
-  extra（Playwright，未真机验收）。
+  extra（Playwright）；**真实 Chromium / 系统 Chrome 已完成一条本地任务验收**。
 - **Windows Desktop Provider**：UIA 语义优先 / 焦点保护 / 高风险拒绝 / 用户接管；
   可选 `[windows]` extra；本机真机冒烟已通过，第三方应用未验收。
 - **Outcome Verification**：`Evidence` / `VerificationResult` / `OutcomeVerifier`，
   执行收据与任务验收分离；DONE 事件与 `RunResult.verification` 携带结论（ADR 0005）。
 - **浏览器扩展宿主 + Native Messaging Bridge**：MV3 Side Panel + 独立 Bridge（不改 Sidecar
-  协议）；扩展未真机加载（ADR 0004）。
+  协议）；扩展已在真实 Chrome / Edge 加载出 MV3 service worker；侧边栏与 native host 注册待人工验收（ADR 0004）。
 - **记忆质量基准**：Recall@5 / MRR / 延迟 / 降级一致性；本机真实 bge-m3 实测
   Recall@5 1.000 / MRR 0.917 / P50 12.27 ms。
 

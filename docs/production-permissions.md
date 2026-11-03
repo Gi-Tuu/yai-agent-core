@@ -63,5 +63,5 @@ def subject_provider() -> Subject:
 - [ ] `auto_approve_tools` 显式设置（默认值会触发 ProductionSafetyWarning）
 - [ ] 写操作 / 外发 / 资源类工具都有 `ToolGovernance` 声明
 - [ ] 白名单外工具的审批通道有人接（Channel.confirm 的宿主实现）
-- [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/competitions/deployment.md`）
+- [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/deployment-scaling.md`）
 - [ ] 预算三道墙（模型 / 工具 / token）按需配置（`Budget`）

@@ -1,8 +1,10 @@
 # YAI Agent Core 浏览器扩展（MV3 · Side Panel）与 Native Bridge
 
-> 状态：**Bridge 协议与消息转换已离线测试；扩展本身尚未在真实 Chrome / Edge 中加载验收**
-> （本机没有可用浏览器测试环境，不冒充真机通过）。真实浏览器验证清单见文末。
-
+> 状态（2026-11-03 本机真机验收）：**扩展已在真实 Chrome 156 / Edge 156 中加载成功**
+> （`scripts/extension_smoke.py`：`--pack-extension` 通过、MV3 service worker 出现在 CDP targets）；
+> **Bridge 已与真实 Sidecar 端到端验证**（`scripts/bridge_smoke.py`）。
+> 仍未验证：侧边栏点击流、Native Messaging 注册（需写注册表）、安装包分发与 Service Worker 回收。
+> 这些必须按文末清单人工验收，不能把"加载成功"当成"交互链路已验证"。
 ## 结构
 
 ```text
@@ -72,7 +74,33 @@ Chrome / Edge Extension (MV3)
 - 断连 / Service Worker 被回收后，侧边栏把结果标为 **unknown**，**不会自动重做**可能已有副作用的操作；
   用户需要重新描述任务或先确认外部状态。
 - 当前只支持 Chrome / Edge（Chromium 116+ Side Panel）；Firefox 等未适配。
-- 真实浏览器加载、跨浏览器差异、长任务跨 Service Worker 回收等行为**尚未真机验收**。
+- **已真机验证**：扩展在 Chrome 156 / Edge 156 中能被 `--load-extension` 加载并注册
+  MV3 service worker（`scripts/extension_smoke.py`，以 CDP target 为证据）；Bridge 与
+  真实 Sidecar 的 hello / status / shutdown 通过（`scripts/bridge_smoke.py`）。
+- **仍未真机验证**：侧边栏点击流（工具栏图标 + 用户手势）、Native Messaging 注册
+  （需要写注册表）、安装包分发、Service Worker 回收后的重连，以及跨浏览器差异。
+
+## 本机验收命令（2026-11-03）
+
+```powershell
+# 1) 真实浏览器任务（Playwright Chromium；也可 --channel chrome 用系统 Chrome）
+.\.venv\Scripts\python.exe scripts\browser_smoke.py --json
+
+# 2) Bridge ↔ 真实 Sidecar（无浏览器，帧协议 + 未授权来源拒绝）
+.\.venv\Scripts\python.exe scripts\bridge_smoke.py --json
+
+# 3) 扩展真机加载（有头 Chrome / Edge；headless 不会加载扩展）
+.\.venv\Scripts\python.exe scripts\extension_smoke.py --json
+.\.venv\Scripts\python.exe scripts\extension_smoke.py --browser msedge --json
+
+# 4) Windows 桌面 UIA 冒烟（自建窗口，不碰用户程序）
+.\.venv\Scripts\python.exe scripts\windows_uia_smoke.py --json
+```
+
+证据摘要：浏览器任务 11 条执行收据（来源闸拦截、旧引用过期均验证）；Chrome / Edge 两
+端各自出现 `chrome-extension://<id>/service_worker.js` target；Bridge 未授权来源退出码 2、
+授权来源握手/状态/关闭全通过。注意 **未加载 unpacked 扩展的 ID 由路径决定**，正式注册
+native host 时要用固定安装路径下的稳定 ID。
 
 ## 验证清单（需要浏览器环境）
 

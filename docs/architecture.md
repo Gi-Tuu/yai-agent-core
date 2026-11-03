@@ -181,15 +181,15 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 以下机制均已落地：内核零硬依赖、默认不改变既有宿主行为。
 
-- **多模态消息契约（v0.12）**：`ChatMessage.parts` 与 `TextPart`/`ImagePart`/`ResourcePart`（`src/yai_core/types.py:747-963`）。`parts_to_text()`（`types.py:901`）把片段降级成纯文本并明说"模型看不到"，图片与资源引用不静默丢弃。
+- **多模态消息契约（v0.12）**：`ChatMessage.parts` 与 `TextPart`/`ImagePart`/`ResourcePart`（`src/yai_core/types.py:875-1028`）。`parts_to_text()`（`types.py:1029`）把片段降级成纯文本并明说"模型看不到"，图片与资源引用不静默丢弃。
 - **能力清单 manifest v2（v0.12）**：`MANIFEST_VERSION = 2`、可读版本 `(1, 2)`（`src/yai_core/tools/manifest.py:43-46`）。v2 把治理语义纳入格式契约，老 reader 直接拒——宁可不导，不带着失效的安全语义跑。
 - **入参校验扩到 13 个关键字（v0.13）**：`src/yai_core/policy/approval.py:121` 校验结构类 4 个（`type`/`required`/`properties`/`items`）与取值域类 9 个（`enum`/`pattern`/`minimum`/`maximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`）；尚未实现的键记录在册（`src/yai_core/tools/health.py:31`），不假装校验过。
-- **能力体检（v0.14）**：`check_tool_specs()`（`src/yai_core/tools/health.py:622`）静态核对声明能否被内核如实执行（不跑 handler、不联网）；`AgentCore.capability_health()`（`src/yai_core/core.py:394`）对已注册工具出体检报告。
-- **可信变更预览 + 执行收据（v0.14）**：`ChangePreview`（`src/yai_core/types.py:160`）带宿主给的真实 diff 与 token，执行前重算比对，变了即审批失效；`ExecutionReceipt`（`types.py:113`）区分 not_started/succeeded/failed/unknown/partial，据此判断能不能重试。
+- **能力体检（v0.14）**：`check_tool_specs()`（`src/yai_core/tools/health.py:622`）静态核对声明能否被内核如实执行（不跑 handler、不联网）；`AgentCore.capability_health()`（`src/yai_core/core.py:437`）对已注册工具出体检报告。
+- **可信变更预览 + 执行收据（v0.14）**：`ChangePreview`（`src/yai_core/types.py:235`）带宿主给的真实 diff 与 token，执行前重算比对，变了即审批失效；`ExecutionReceipt`（`types.py:125`）区分 not_started/succeeded/failed/unknown/partial，据此判断能不能重试。
 - **宿主实时状态（v0.15/v0.19）**：`HostStateProvider`（`src/yai_core/kernel/state.py:48`）每轮模型调用前注入只读瞬态快照，不进历史与记忆；provider 失败只发 `host_state_failed` 诊断（`kernel/state.py:170`），其余状态照常注入。
 - **Sidecar 协议（v0.16）**：`python -m yai_core.sidecar` 在 stdio 上跑 NDJSON + JSON-RPC 2.0（`src/yai_core/sidecar/protocol.py:18`），承载 initialize / agent/run / agent/cancel / ping / shutdown；工具面仍走 MCP / OpenAPI，协议里没有 tool/call。
 - **Office 文档文本抽取（v0.21）**：`src/yai_core/batteries/office_text.py:50` 的 `extract_text()`：docx/xlsx/pptx 走标准库 zipfile + ElementTree（零依赖），PDF 走可选 pypdf；三条安全闸（成员白名单、拒 DOCTYPE/ENTITY、限量截断）写在文件头。
-- **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:214`（超时取更严一档）与 `tools/executor.py:584`（频率闸在授权之前判定）真的强制。
+- **ACC 执行提示真被执行（v0.12）**：`execution.timeout_ms` / `rate_limit` 此前只解析不执行；现经 `src/yai_core/integrations/acc/evaluate.py:117` 一跳翻译成原生 `ToolGovernance` 数据（`src/yai_core/integrations/openapi/discovery.py:238`），由 `src/yai_core/tools/executor.py:253`（超时取更严一档）与 `tools/executor.py:566`（频率闸在授权之前判定）真的强制。
 
 ### 2.12 v0.26 执行适配器与可验证结果（Unreleased）
 
@@ -267,7 +267,7 @@ app = create_app(core)
 # uvicorn module:app --host 0.0.0.0 --port 8000
 ```
 
-v0.3 公网演示限流（默认开启）：`rate_limit.py` 提供每 IP 滑动窗口（`enabled=True`、
+v0.3 公网演示限流（默认开启）：`ratelimit.py` 提供每 IP 滑动窗口（`enabled=True`、
 `per_minute=30`、`window_seconds=60`，可用 `YAI_RATE_LIMIT_*` 调整或关闭）。中间件只拦
 `POST /v1/agent/run`，超限返回 429 + `Retry-After`（与响应体同源），被限请求不触达
 模型；三个 GET 验证端点永不限流（探活硬门槛）。客户端身份取 XFF 最左非空、回退对端

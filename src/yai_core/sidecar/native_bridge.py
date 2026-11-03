@@ -186,6 +186,15 @@ class SubprocessSidecarTransport:
             except TimeoutError:
                 process.kill()
                 await process.wait()
+        # 显式关闭子进程 transport：Python 3.13 上若留给它随事件循环回收，
+        # 解释器退出时会对已关闭的管道发 ResourceWarning（stderr 噪音）。
+        transport = getattr(process, "_transport", None)
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(0)
 
 
 def encode_ndjson(message: dict[str, Any]) -> bytes:
