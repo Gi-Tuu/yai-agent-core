@@ -40,3 +40,22 @@
   标签页**；扩展 `activeTab + scripting` 仍只负责读取当前页只读快照。
 - “授权当前标签页 → 直接写操作”依赖 Extension Backend / CDP 复用方案（ADR 0006
   的 A/B），尚未实现；在实现前不得把本 E2E 或“读取当前页”宣传成“能操作当前页”。
+
+
+## 当前标签页写操作（v0.27 追加，opt-in）
+
+在 ADR 0006 的 C 边界内新增一条**受限**路径，默认关闭：
+
+- `initialize.current_tab_tool=true` 时 Sidecar 注册 `current_tab_action` 工具；
+- 工具只接受 `action=click|type` + CSS `selector` + `value`，每次动作走
+  `ToolExecutor` 审批；不执行任意 JS、不读未授权页面；
+- 扩展面板只对用户点击“读取当前页面”时绑定的 `authorizedTabId` 执行
+  `chrome.scripting`，不随后续焦点漂移；无 activeTab 授权时失败关闭；
+- 协议级回归：`tests/test_sidecar_protocol.py` 覆盖“默认不注册 / 显式开启后
+  审批 + 反向 tab_action/request + 工具结果”全链路。
+
+**真实浏览器当前标签页 E2E 限制**：`activeTab` 授权必须来自用户手势，当前
+Playwright 自动化把侧边栏作为普通标签页打开，无法模拟真实 Side Panel 的用户点击；
+因此本环境只能验证协议链路与扩展静态行为，真实点击侧边栏的端到端仍需人工按
+`docs/browser-extension-bridge.md` 验收。在人工验收前，不得宣称“当前标签页写操作
+已真机通过”。

@@ -78,7 +78,9 @@ ALLOWED_OPS = frozenset(
 )
 
 #: Sidecar 允许反向请求宿主的白名单方法。
-HOST_REQUEST_METHODS = frozenset({"approval/request", "clarify/request"})
+HOST_REQUEST_METHODS = frozenset(
+    {"approval/request", "clarify/request", "tab_action/request"}
+)
 
 ReadMessage = Callable[[], Awaitable[dict[str, Any] | None]]
 WriteMessage = Callable[[dict[str, Any]], Awaitable[None]]

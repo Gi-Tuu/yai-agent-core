@@ -45,11 +45,51 @@ from yai_core.sidecar.protocol import (
 from yai_core.sidecar.protocol import (
     request as rpc_request,
 )
-from yai_core.types import Subject
+from yai_core.types import ApprovalPolicy, Subject, ToolGovernance, ToolSpec
 
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ModelFactory = Callable[[dict[str, Any]], Any]
 ToolAttacher = Callable[[AgentCore, dict[str, Any]], Awaitable[list[Any]]]
+
+
+def _current_tab_tool(channel: SidecarChannel | None) -> ToolSpec:
+    """仅在 initialize.current_tab_tool=true 时注册；默认关闭（ADR 0006 C 边界）。"""
+
+    async def handler(
+        action: str, selector: str, value: str = ""
+    ) -> dict[str, Any]:
+        if channel is None:
+            return {"ok": False, "error": "sidecar_channel_not_ready"}
+        if action not in ("click", "type"):
+            return {"ok": False, "error": "unsupported_action"}
+        if not selector.strip():
+            return {"ok": False, "error": "selector_required"}
+        return await channel.current_tab_action(action, selector, value)
+
+    return ToolSpec(
+        name="current_tab_action",
+        description=(
+            "在用户已显式授权的当前标签页执行 click/type（CSS selector）。"
+            "只支持 activeTab；必须先由用户点击“读取当前页面”授权，且每次动作需要审批。"
+            "不会操作受控浏览器，也不会读取未授权页面。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["click", "type"]},
+                "selector": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["action", "selector"],
+        },
+        handler=handler,
+        governance=ToolGovernance(
+            approval=ApprovalPolicy(
+                required=True,
+                prompt="在当前标签页执行 browser action（用户已授权 activeTab）",
+            )
+        ),
+    )
 
 
 def _build_openai_model(config: dict[str, Any]) -> Any:
@@ -373,6 +413,8 @@ class SidecarServer:
         except (TypeError, ValueError) as exc:
             raise RpcError(INVALID_PARAMS, f"AgentCore 配置不合法：{exc}") from exc
 
+        if bool(params.get("current_tab_tool", False)):
+            core.register_tools([_current_tab_tool(self._channel)])
         try:
             self._bridges = await self._tool_attacher(core, params)
         except (ValueError, ImportError) as exc:

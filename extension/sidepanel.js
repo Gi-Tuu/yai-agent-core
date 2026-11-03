@@ -46,6 +46,8 @@ let port = null;
 let activeRunId = null;
 let pendingRequestId = null;
 let pageSnapshot = null;
+//: 用户点击“读取当前页面”时授权的标签页；当前页操作只认这个 tab，不随后续焦点漂移。
+let authorizedTabId = null;
 let connected = false;
 //: 已结束的 run_id：忽略迟到的 run_started（短任务终态先到的竞态，NB-1）。
 const finishedRunIds = new Set();
@@ -227,7 +229,76 @@ function handleHostRequest(message) {
     el.clarifyQuestion.textContent = params.question || "请补充信息";
     el.clarifyAnswer.value = "";
     el.clarifyAnswer.focus();
+    return;
   }
+  if (message.method === "tab_action/request") {
+    void runTabAction(message.request_id, params);
+  }
+}
+
+/** 受限的当前标签页操作：只 click/type 指定 selector，不执行任意 JS。 */
+async function runTabAction(requestId, params) {
+  let result;
+  try {
+    const action = String(params.action || "");
+    const selector = String(params.selector || "");
+    const value = String(params.value || "");
+    if (!requestId) throw new Error("缺少 request_id");
+    if (action !== "click" && action !== "type") throw new Error("不支持的动作");
+    if (!selector) throw new Error("缺少 selector");
+    if (authorizedTabId === null) {
+      throw new Error("请先点击“读取当前页面”授权当前标签页");
+    }
+    const tab = await chrome.tabs.get(authorizedTabId);
+    if (!tab || tab.id === undefined) throw new Error("授权标签页已关闭");
+    const execution = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: tabActionFunc,
+      args: [action, selector, value],
+    });
+    result = { ok: true, result: execution?.[0]?.result || null };
+  } catch (error) {
+    result = { ok: false, error: String(error && error.message ? error.message : error) };
+  }
+  port.postMessage({ op: "host_response", request_id: requestId, result });
+}
+
+/** 在页面内执行；必须保持可序列化，不能引用闭包变量。 */
+function tabActionFunc(action, selector, value) {
+  return new Promise((resolve) => {
+    const element = document.querySelector(selector);
+    if (!element) {
+      resolve({ ok: false, error: "selector_not_found" });
+      return;
+    }
+    const before = document.body ? String(document.body.innerText || "") : "";
+    if (action === "click") {
+      element.click();
+    } else if (action === "type") {
+      element.focus();
+      const proto =
+        element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(element, value);
+      else element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      resolve({ ok: false, error: "unsupported_action" });
+      return;
+    }
+    setTimeout(() => {
+      resolve({
+        ok: true,
+        before: before.slice(0, 1000),
+        after: document.body ? String(document.body.innerText || "").slice(0, 2000) : "",
+        title: document.title,
+        url: location.href,
+      });
+    }, 60);
+  });
 }
 
 function finishRun(label) {
@@ -424,6 +495,7 @@ el.observe.addEventListener("click", async () => {
     const snapshot = results?.[0]?.result;
     if (!snapshot || !snapshot.text) throw new Error("页面没有可读文本");
     pageSnapshot = snapshot.text;
+    authorizedTabId = tab.id;
     el.pagePreview.classList.remove("hidden");
     el.pagePreview.textContent =
       `${snapshot.title}\n${snapshot.url}\n\n${snapshot.text.slice(0, 1500)}`;

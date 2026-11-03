@@ -11,6 +11,14 @@
 
 ### Added
 
+- **v0.27 Batch 3：当前标签页受限写操作（opt-in）**：`initialize.current_tab_tool=true`
+  时 Sidecar 注册 `current_tab_action`（仅 click/type + CSS selector + 审批）；
+  扩展只对用户授权并绑定的 `authorizedTabId` 执行 `chrome.scripting`，不执行任意 JS；
+  Bridge 新增 `tab_action/request` 反向请求。协议级全链路回归已过；真实 Side Panel
+  的用户手势 activeTab E2E 仍需人工验收（自动化无法模拟）。
+
+### Added
+
 - **v0.27 Batch 5：Desktop 下拉选择**：新增 `desktop_select` 工具与
   `DesktopBackend.select_option`；UIA ComboBox 优先 `select`，其次 ValuePattern，
   不支持时失败关闭、不猜坐标；secure preset 默认要求审批。字符映射表真实冒烟

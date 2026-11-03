@@ -89,6 +89,10 @@ def test_sidepanel_js_has_no_unresolved_placeholders() -> None:
     # 受控浏览器状态必须可见；不得把"读取当前页"说成"能操作当前页"。
     assert "受控浏览器" in js
     assert "只读快照" in js
+    # v0.27：当前标签页写操作（opt-in）只走受限 click/type + authorizedTabId。
+    assert "tab_action/request" in js
+    assert "authorizedTabId" in js
+    assert "selector_not_found" in js
     # Native Messaging 连接只发生在 service worker（浏览器端不持有凭据/不直连进程）。
     assert "connectNative" not in js
     assert "connectNative" in _read("service_worker.js")
