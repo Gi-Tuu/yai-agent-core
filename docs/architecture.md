@@ -158,7 +158,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 
 在 P0（并发契约 / 硬超时 / 诊断）之上，P1 收敛四类与**成本和数据安全**相关的生产风险；四项均默认关闭或默认与旧版等价、内核零第三方硬依赖、全部离线可测。
 
-- **任务级预算硬上限与熔断（防失控烧钱）**：`AgentCore(budget=Budget(max_model_calls=, max_tool_calls=, max_tokens=))`，`None` 表示不限制、`0` 表示一次都不允许。loop 在顶层任务建一个 `BudgetTracker`（澄清递归复用同一账本）：模型调用在统一入口 `_model_chat` 计数（**不含**路由分类与上下文压缩），普通工具在执行分支计数（meta-tool 与组合编排不重复计、组合工具对外算 1 次），token 仅在模型回传真实 `usage` 时累计（缺失不估算）。任一上限触顶立即终止，发 `budget_exceeded` 事件（带 scope/used/limit 与账本快照），且熔断异常在两处容错回退中被显式重抛，不会被"降级"误吞。
+- **任务级预算硬上限与熔断（防失控烧钱）**：`AgentCore(budget=Budget(max_model_calls=, max_tool_calls=, max_tokens=))`，`None` 表示不限制、`0` 表示一次都不允许。loop 在顶层任务建一个 `BudgetTracker`（澄清递归复用同一账本）：模型调用在统一入口 `_model_chat` 按**尝试**计数（失败/超时也计，被熔断拒绝的不计；**不含**路由分类与上下文压缩），与 `DONE.model_calls` 同口径，普通工具在执行分支计数（meta-tool 与组合编排不重复计、组合工具对外算 1 次），token 仅在模型回传真实 `usage` 时累计（缺失不估算）。任一上限触顶立即终止，发 `budget_exceeded` 事件（带 scope/used/limit 与账本快照），且熔断异常在两处容错回退中被显式重抛，不会被"降级"误吞。
 - **长期记忆落盘静态加密（第九个 SPI，opt-in）**：`spi/cipher.py` 定义同步 `StorageCipher`（`encrypt/decrypt(bytes)`）；`MemoryVault(path, cipher=...)` 落盘透明加密、读取解密，原子 `os.replace` 写盘；文件缺失、JSON 损坏或**解密失败（密钥不符 / 密文被篡改）按 `decrypt_failed` 进入只读降级、绝不静默覆盖原档**（损坏档先 quarantine 备份，由宿主换回密钥或显式迁移），不会崩溃。不传 cipher 时仍为明文 JSON（向后兼容，文档明确告知）。算法不进内核：`[crypto]` extra 提供基于 Fernet（认证加密）的 `FernetStorageCipher`，支持 `generate_key()` 与 `from_env("YAI_VAULT_KEY")`（缺环境变量直接报错，不静默生成一次性密钥）。
 - **集中配置 `CoreConfig`（防错配、易复用）**：`config.py` 的零依赖 dataclass 收敛 `AgentCore` 全部与模型无关的可选项，默认值与 kwargs 一致；`validate()` 在构造早期拒绝非法取值（次数非正、bool 冒充整数、`llm_router` / `context_compaction` / `budget` / `model_timeout` 类型错误）。`AgentCore.from_config(model, config)` 让多专员 / 多子员工复用同一份预算与开关；公共 kwargs 签名与默认行为不变。
 - **SQLite 在线热备份与恢复（防停服备份 / 数据损坏）**：`SqliteStore.backup_to(dest)` 用标准库 `Connection.backup` 在实例锁内做页级一致快照，无需停服，文件库与 `:memory:` 均可；`restore_to(backup, dest)` 离线恢复，备份损坏时直接抛 `sqlite3.DatabaseError` 而非静默起空库。崩溃恢复由 WAL 与原子写保证（close 后同路径重开数据不丢）。
@@ -199,13 +199,15 @@ v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外�
   快照引用形如 `s<N>:<i>`，页面变化后旧引用作废；观察/点击/输入/下拉/标签页/等待/导航
   共 8 个工具注册进 `ToolRegistry`，由 `ToolExecutor` 统一做参数校验、权限、审批、收据与事件。
   动作只返回 `executed + changed / no_observable_change / unknown`，不宣称任务完成；
-  真实后端 `playwright_backend.py` 走可选 `[browser]` extra，仅完成一次本机冒烟
-  （`scripts/browser_smoke.py`），**尚无 CI 回归**。
+  真实后端 `playwright_backend.py` 走可选 `[browser]` extra：假 playwright SDK 的
+  离线回归覆盖后端起停/观察/动作/标签页/等待/旧引用，另有 `scripts/browser_smoke.py`
+  一次本机真机冒烟；**真实站点的自动回归仍缺失**。
 - **Windows Desktop Provider（`src/yai_core/integrations/desktop/`）**：同一模式；UIA 语义 Pattern
   优先、坐标点击默认关闭；控件引用带快照版本；高风险控件名默认拒绝、进程/标题白名单、
   物理输入前焦点保护、`pause/resume` 用户接管；不跨 UAC / 安全桌面。
-  `[windows]` extra 提供 pywinauto 后端；`scripts/windows_uia_smoke.py` 已在本机完成一次
-  真机 UIA 冒烟（自建窗口 → 观察 → Invoke → 回调验证）。
+  `[windows]` extra 提供 pywinauto 后端；假 pywinauto SDK 的离线回归覆盖后端观察/Invoke/
+  SetValue/坐标点击/旧引用，`scripts/windows_uia_smoke.py` 另在本机完成一次真机 UIA 冒烟
+  （自建窗口 → 观察 → Invoke → 回调验证）。
 - **Outcome Verification（`src/yai_core/verification.py` + `types.py`）**：`Evidence` /
   `VerificationResult` 与 `OutcomeVerifier` 契约把"工具调用成功"与"目标达成"分开；
   `AgentCore(outcome_verifier=...)` 在 `DONE` 前收集收据与工具显式 `evidence`，结论附在

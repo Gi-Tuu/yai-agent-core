@@ -8,8 +8,8 @@
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
 > 一条命令看治理闭环：`python scripts/demo_governance_loop.py`
 >
-> **当前 HEAD（2026-11-03 审计整改后）实测**：2 319 项收集、全量离线通过（7 项环境跳过）、
-> 内核行覆盖率 91.19%（门禁 90%）；审计整改项与验证边界见
+> **当前 HEAD（2026-11-03 审计整改 + follow-up 后）实测**：2 347 项收集、全量离线通过（5 项环境跳过）、
+> 内核行覆盖率 93.19%（门禁 90%）；审计整改项与验证边界见
 > [`docs/audit-remediation-2026-11.md`](audit-remediation-2026-11.md)。
 
 ## 一、内核与执行
@@ -40,7 +40,7 @@
 | 参数严格校验 | 已验证 | `tests/test_openai_compat.py`、`test_anthropic_provider.py` | 历史上下文里的坏参数只做渲染，不转发 |
 | ACC 声明与 OpenAPI 绑定 | 已验证 | `tests/test_acc_*.py`（4 个模块） | **可选 translator**：内核原生治理为主，ACC 不是依赖 |
 | Office 文本抽取（docx/xlsx/pptx 零依赖，PDF 走 `[office]` extra pypdf） | 已验证 | `tests/test_office_text.py`、`tests/test_agentdojo_aggregate.py` | 文本级抽取：版面/样式/公式/数字单元格不进文本层；zip 炸弹与实体攻击有闸 |
-| Browser Provider（v0.26，Unreleased，可选适配器） | **已实现·本机冒烟（真实 Chromium / 系统 Chrome 各 1 次；无 CI 回归）** | `scripts/browser_smoke.py`（2026-11-03 通过：来源闸 / 输入 / 下拉 / 点击 / 等待 / 再观察 / 旧引用过期，11 条收据）；`tests/test_browser_provider.py`（假后端边界） | 真后端 `playwright_backend.py` 未进 CI（覆盖率 24%）；嵌套 frame、下载/上传、CAPTCHA、真实站点多样性与视觉定位未验证 |
+| Browser Provider（v0.26，Unreleased，可选适配器） | **已实现·假 SDK 离线回归 + 本机真机冒烟** | `tests/test_browser_provider.py` + `tests/test_playwright_backend_fake_sdk.py`（假 playwright SDK 覆盖 start/observe/动作/标签页/等待/关闭/旧引用）；`scripts/browser_smoke.py`（2026-11-03 真实 Chromium 冒烟：来源闸 / 输入 / 下拉 / 点击 / 等待 / 再观察 / 旧引用过期，11 条收据） | CI 不装真实浏览器，真后端仍无真实站点自动回归；嵌套 frame、下载/上传、CAPTCHA、真实站点多样性与视觉定位未验证。`browser_tabs` 现按来源白名单过滤，被禁标签页只回计数 |
 
 ## 三、治理与安全
 
@@ -60,6 +60,8 @@
 | 执行收据哈希链 | 已验证 | `tests/test_execution_receipts.py::test_receipt_chain_links_and_detects_tampering`；`verify_receipt_chain()` | 进程内串链；跨进程续链由宿主决定 |
 | 记忆落盘损坏安全（v0.26，Unreleased） | 已验证 | `tests/test_memory_vault_corruption.py`、`tests/test_storage_cipher.py` | 分类（不可读 / 损坏 / 解密失败 / 版本不兼容 / owner 不一致）；quarantine / read_only / raise 三种处置；解密失败与版本不兼容强制只读；绝不静默覆盖原档 |
 | 记忆 owner 绑定（v0.26，Unreleased，最小隔离） | 已验证 | `tests/test_memory_vault_corruption.py`（owner_mismatch / 同 owner / 旧文件兼容） | 完整多租户仍由宿主用独立实例 / 独立路径；本项只防止误读误覆盖 |
+| Vault 跨进程写锁（2026-11 follow-up） | 已验证 | `tests/test_memory_vault.py`（multiprocessing 双进程各写 5 条全保留、超时降级不阻塞、锁文件不含数据、残留锁无害） | advisory 锁：绕过 MemoryVault 直接写数据文件的进程不受约束；2s 超时后仍靠 mtime/size 合并兜底 |
+| 成本口径与验收证据上限（2026-11 follow-up） | 已验证 | `tests/test_budget.py`、`tests/test_loop_runtime_contract.py`、`tests/test_outcome_verification.py`；DONE 所有路径固定键、model_calls 按"尝试"计且与 budget 一致；证据 50 条/详情 4k/总量 64KB 截断并标注 | 宿主 verifier 自返回的 evidence 不套该上限；replan meta-tool 计数已收口到 `_model_chat` |
 | 外发 URL 来源闸（v0.25.0） | 已验证 | `tests/test_egress_guard.py` | 声明路径按 schema 校验；声明保护但缺任务上下文则拒绝；未知 URL 不因此拒绝，不做跨任务污点追踪 |
 | 外发来源闸边界加固（v0.25.0，B1） | 已验证 | `tests/test_egress_guard.py`（Markdown/HTML/JSON 包裹、大小写与 www 变体、并发隔离、事件字段） | 主机名区域 ASCII 后紧粘 CJK 视为主机名终止；路径比较大小写不敏感；IDNA 有损映射保留独立身份 |
 | 红线：内核零第三方硬依赖 | 已验证 | `tests/test_kernel_dependencies.py`（AST 全库扫描，注入即红） | 懒加载在函数体内仍允许 |
@@ -83,11 +85,11 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
-| Windows Desktop Provider（v0.26，Unreleased，可选适配器） | 已验证（假后端 + **本机真机 UIA 冒烟**） | `tests/test_desktop_provider.py`；`scripts/windows_uia_smoke.py`（2026-11-03 通过：自建 WinForms 窗口观察 → Invoke → 按钮回调验证） | 仅本机一次冒烟；其它真实应用、截图、UAC 提权窗口未验收；坐标点击默认关闭；非 Windows 构造即报错 |
+| Windows Desktop Provider（v0.26，Unreleased，可选适配器） | **已验证（假 SDK 离线回归 + 本机真机 UIA 冒烟）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 现按进程/标题白名单过滤，被禁窗口只回计数 |
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26，Unreleased） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
-| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证加载 + 侧边栏页 + 点击行为 + 端到端任务（Playwright Chromium / 真实 Edge）** | `scripts/extension_smoke.py`：MV3 service worker 出现、`sidepanel.html` 渲染无页错误、`sidePanel.getPanelBehavior().openPanelOnActionClick=true`；`tests/test_extension_assets.py` 静态守卫（manifest / 点击行为 / 标签页兜底）；系统 Chrome 的 CLI `--load-extension` 受策略限制，UI 手动加载路径需人工确认；本机真实 Edge 端到端：任务「打开百度」经 Native Bridge → Sidecar → MCP 浏览器工具完成并返回标题（`docs/exports/extension-e2e.png`）；CDP 模式（`scripts/chrome_cdp.py` + `--cdp-endpoint`）已验证操作该 Chrome 窗口（`docs/exports/extension-cdp-e2e.png`） | 真实鼠标点击工具栏图标→侧边栏出现、Native Messaging 注册、安装包分发与 Service Worker 回收仍未自动化验收 |
+| 浏览器扩展宿主（v0.26，Unreleased，MV3 Side Panel） | **已验证：加载/侧边栏/点击行为/真实任务 + 真机状态恢复** | `scripts/extension_smoke.py`（MV3 SW、sidepanel.html、`openPanelOnActionClick=true`）；`tests/test_extension_assets.py` 静态契约；真实 Edge 端到端任务「打开百度」经 Bridge→Sidecar→MCP 返回标题；**2026-11-03 真机验收：运行中关/开面板恢复"运行中"并可取消、强杀 Sidecar 后 SW 自动重连且新任务成功、关最后一个面板后 Bridge 重启并重读配置**（截图 `docs/exports/accept-reopen-cancel.png`、`accept-reopen-idle.png`，本地产物） | 真实鼠标点工具栏图标、安装包分发仍未自动化；真实站点的多标签/下载/上传/CAPTCHA 未验证 |
 | 宿主实时状态 | 已验证 | `tests/test_host_state_provider.py` | 状态是增强，失败只降级 |
 | 通道（CLI / 收集 / 桌面 / sidecar） | 已验证 | `tests/test_cli_channel.py`、`test_sidecar_server.py` | 审批与澄清必须经通道回宿主 |
 
@@ -119,16 +121,18 @@ MCP Server · Multi-Agent 编排 · 内置向量数据库 · 内置 UI（桌面�
 ## 九、已知边界（没验证的，不假装验证过）
 
 - **真实模型只做抽样验证**：CI 全部用脚本模型，不依赖网络与 API Key。
-- **Playwright 后端已在真实 Chromium / 系统 Chrome 验证一条完整任务**（`scripts/browser_smoke.py`：
-  导航 / 观察 / 输入 / 下拉 / 点击 / 等待 / 再观察 + 来源闸 + 旧引用过期，11 条收据）；
-  仍不覆盖嵌套 frame、下载 / 上传、CAPTCHA、真实站点多样性与视觉定位。
-- **浏览器扩展已在真实 Chrome / Edge 加载出 MV3 service worker**（`scripts/extension_smoke.py`）；
-  但**侧边栏点击流、Native Messaging 注册、安装包分发**仍需人工按
-  `docs/browser-extension-bridge.md` 验收，不能把"加载成功"当成"交互链路已验证"。
-- **Windows Desktop Provider**：本机只完成一次自建 WinForms 窗口的 UIA 冒烟
-  （观察 / 语义 Invoke / 回调验证）；对第三方真实应用、复杂控件 Pattern、截图、
+- **Playwright 后端**：假 playwright SDK 的离线回归覆盖后端起停/观察/动作/标签页/等待/
+  旧引用（进 CI）；另有 `scripts/browser_smoke.py` 一次真实 Chromium/系统 Chrome 冒烟
+  （导航 / 观察 / 输入 / 下拉 / 点击 / 等待 / 再观察 + 来源闸 + 旧引用过期，11 条收据）；
+   仍不覆盖嵌套 frame、下载 / 上传、CAPTCHA、真实站点多样性与视觉定位。
+- **浏览器扩展**：真实 Edge 已验证加载、侧边栏、审批/澄清、真实任务、运行中重开面板
+  取消、强杀 Sidecar 自动重连、关最后一个面板重启 Bridge 并重读配置（见
+  `docs/browser-extension-bridge.md` 真机验收记录）；**真实鼠标点工具栏图标、安装包分发**
+  仍需人工验收，不能把"加载成功"当成"分发链路已验证"。
+- **Windows Desktop Provider**：假 pywinauto SDK 的离线回归覆盖观察/Invoke/SetValue/
+  坐标点击/旧引用（进 CI）；另在本机完成一次自建 WinForms 窗口的 UIA 冒烟
+  （观察 / 语义 Invoke / 回调验证）。对第三方真实应用、复杂控件 Pattern、截图、
   多显示器与 UAC 提权窗口**没有**验证，不能据此宣称"通用桌面自动化已验证"。
-  Playwright 浏览器后端同理保持「已实现·未真机验证」。
 - **公网演示实例已停用**：Render 上的 `yai-agent-core` 服务已于 2026-11-02 删除；今后任何公网部署都应显式配置 `YAI_API_KEY`（见 ADR 0002 D3）。
 - **Windows 符号链接竞态**只能收窄、不能根除（POSIX 有 `O_NOFOLLOW`）；对应测试在 Windows 跳过。
 - **桌面壳只在 Windows 真机验证**；60fps 数据仅来自 2560×1600 / dpr 1.5 一次采样。
