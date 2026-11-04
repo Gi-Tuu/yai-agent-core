@@ -3,7 +3,7 @@
 > English: [deployment-scaling.en.md](deployment-scaling.en.md)
 
 > 事实基线：yai-agent-core **v0.11.0**，最后核实 **2026-10-16**（本地仓库实测）。
-> 单实例公网部署（Render / VPS + Caddy）见 [`docs/demo-deployment.md`](demo-deployment.md)；
+> 单实例公网部署（Render / VPS + Caddy）见 [`docs/guides/demo-deployment.md`](demo-deployment.md)；
 > 本文回答更进一步的三个问题：**内核为什么能水平扩展、多租户怎么隔离、生产形态怎么搭。**
 >
 > **一句话立场**：内核永远是"进程内、单租户"的 SQLite 式内核，**`tenant_id` 不会出现在任何
@@ -19,7 +19,7 @@
 - 它**不监听端口、不持有全局单例、不启动后台线程**；只有调用 `await core.run(task)` / `core.astream(task)` 时才工作。
 - 每个实例自带**独立**的 `ToolRegistry`、`memory`、`policy`、`router`、`channel`、`executor`、`code_manager`。
 - 会话状态全部存放在**构造时注入的 memory** 里，内核自身不持有可变业务状态 → **内核无状态、可多实例**。
-- **一个实例内任务串行**：`astream`/`run` 全程持有实例级 `asyncio.Lock`，打到同一 core 的并发请求会排队，以免两条任务在 `await` 点交错、污染共享的上下文 / 记忆 / 路由学习态。要并发承载多条相互独立的会话，请按本文 L1 / L2 **多实例**装配，而不是往单个 core 上堆并发；无状态的模型 / 发现源 / 沙箱可跨实例共享。完整并发契约见 [`architecture.md` §2.6](architecture.md#26-并发模型与多租户隔离)。
+- **一个实例内任务串行**：`astream`/`run` 全程持有实例级 `asyncio.Lock`，打到同一 core 的并发请求会排队，以免两条任务在 `await` 点交错、污染共享的上下文 / 记忆 / 路由学习态。要并发承载多条相互独立的会话，请按本文 L1 / L2 **多实例**装配，而不是往单个 core 上堆并发；无状态的模型 / 发现源 / 沙箱可跨实例共享。完整并发契约见 [`architecture.md` §2.6](../architecture.md#26-并发模型与多租户隔离)。
 
 ```
                  ┌──────────────────────────────┐

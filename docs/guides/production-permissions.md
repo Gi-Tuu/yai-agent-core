@@ -97,5 +97,5 @@ desktop = DesktopProvider(backend, policy=desktop_policy)
 - [ ] 白名单外工具的审批通道有人接（Channel.confirm 的宿主实现）
 - [ ] 浏览器/桌面适配器使用 `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`；
       桌面至少声明一种进程身份（PID / 映像名 / 路径），仅标题白名单不算安全边界
-- [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/deployment-scaling.md`）
+- [ ] `YAI_API_KEY` 等公网暴露面已按部署文档评估（见 `docs/guides/deployment-scaling.md`）
 - [ ] 预算三道墙（模型 / 工具 / token）按需配置（`Budget`）

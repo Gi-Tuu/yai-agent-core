@@ -97,7 +97,7 @@
 | 多进程 vault 丢更新 | `<storage>.lock` 跨进程 + 进程内锁；`_save` 临界区覆盖检测/合并/原子写；拿不到锁降级并诊断 | `test_memory_vault.py`（spawn 双进程 10 条全保留） |
 | 适配器元数据泄漏 | tabs/windows 按策略过滤，只回 `hidden_count` | `test_adapter_metadata_filter.py` |
 | 真后端无回归 | 假 playwright / pywinauto SDK 覆盖真实后端代码路径 | `test_playwright_backend_fake_sdk.py` / `test_pywinauto_backend_fake_sdk.py` |
-| 真机验收 | 面板重开取消、强杀 sidecar 重连、关面板重启 Bridge | 真实 Edge 实测记录见 `docs/browser-extension-bridge.md` |
+| 真机验收 | 面板重开取消、强杀 sidecar 重连、关面板重启 Bridge | 真实 Edge 实测记录见 `docs/guides/browser-extension-bridge.md` |
 
 残留：宿主 verifier 自返回的 evidence 未套上限（避免改验收结论）；advisory 文件锁
 不约束绕过 MemoryVault 的写入；真实鼠标点工具栏图标与安装包分发仍需人工。

@@ -57,5 +57,5 @@
 **真实浏览器当前标签页 E2E 限制**：`activeTab` 授权必须来自用户手势，当前
 Playwright 自动化把侧边栏作为普通标签页打开，无法模拟真实 Side Panel 的用户点击；
 因此本环境只能验证协议链路与扩展静态行为，真实点击侧边栏的端到端仍需人工按
-`docs/browser-extension-bridge.md` 验收。在人工验收前，不得宣称“当前标签页写操作
+`docs/guides/browser-extension-bridge.md` 验收。在人工验收前，不得宣称“当前标签页写操作
 已真机通过”。

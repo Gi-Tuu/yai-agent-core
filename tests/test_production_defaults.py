@@ -35,7 +35,7 @@ def test_default_config_warns_production_safety() -> None:
     assert any(issubclass(w.category, ProductionSafetyWarning) for w in caught), (
         "默认 allow_all 配置必须发生产安全警告"
     )
-    assert any("docs/production-permissions.md" in str(w.message) for w in caught)
+    assert any("docs/guides/production-permissions.md" in str(w.message) for w in caught)
 
 
 def test_explicit_policy_does_not_warn() -> None:
@@ -59,7 +59,7 @@ def test_warning_not_raised_as_error_by_default_filters() -> None:
 
 
 def test_production_policy_example_builds_and_enforces() -> None:
-    """docs/production-permissions.md 的配套示例可构建且审批策略生效（防文档漂移）。"""
+    """docs/guides/production-permissions.md 的配套示例可构建且审批策略生效（防文档漂移）。"""
     import sys
 
     root = Path(__file__).resolve().parents[1]

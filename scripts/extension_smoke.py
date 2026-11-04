@@ -9,7 +9,7 @@
 
 **限制（如实说明）**：脚本不点击工具栏图标/侧边栏（无法在自动化里模拟该用户手势），
 Native Messaging 还需要在注册表登记 native host 后由真实用户会话触发；这两项仍属
-人工验收清单（docs/browser-extension-bridge.md）。扩展加载失败会明确报失败，不假通过。
+人工验收清单（docs/guides/browser-extension-bridge.md）。扩展加载失败会明确报失败，不假通过。
 
 用法::
 

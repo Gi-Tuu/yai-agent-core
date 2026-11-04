@@ -1,7 +1,7 @@
 # OpenSSF Best Practices Badge（原 CII）自评清单 —— YAI Agent Core
 
 > 对照 OpenSSF Best Practices **Passing** 级官方标准（https://www.bestpractices.dev/en/criteria/passing ）
-> 逐条评估本仓库当前 main（**v0.25.0**，2026-11-03 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
+> 逐条评估本仓库当前 main（**v0.27.1**，2026-11-05 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
 > 复核要点见文末「八、复核记录（2026-10-25）」；仓库内文本与**平台记录**已于
 > 2026-10-25 一并更新（平台侧由项目所有者本人 GitHub 账号登录后提交，见第八节）。
 >
@@ -23,6 +23,10 @@
 > **平台侧同步已完成**：2026-10-25 13:58 UTC 由项目所有者本人登录后提交，五处更新（`maintained`
 > 的版本号、`version_tags` 的示例 tag、`test_most` 的覆盖率、两条 `dynamic_analysis*` 由 Unmet 改 Met），
 > 回读公开 JSON 确认 `badge_level=passing`、Passing 完成度 100%、`updated_at` 已推进。
+>
+> **2026-11-05 复核**：徽章状态不变（Passing）。测试规模 **2 386 项**（全量离线通过，5 项环境跳过）、
+> 内核行覆盖率 **93.12%**（CI 门禁 90）；当前版本 v0.27.1。本轮无状态变化（判定与 2026-10-25 一致），
+> 平台侧记录未重新提交（如需把最新数字同步到平台，按文首网页步骤操作）。
 
 状态图例：✅ Met · ⚠️ Unmet（需填理由） · ➖ N/A（需填理由）
 
@@ -44,7 +48,7 @@
 | sites_https | 站点（网站/仓库/下载）支持 HTTPS/TLS（MUST） | ✅ | GitHub / Gitee / PyPI 均 HTTPS |
 | discussion | 可搜索、URL 可定位、新人可参与、无需专有软件的讨论机制（MUST） | ✅ | GitHub Issues / PR（Gitee 同步） |
 | english | 英文文档、接受英文反馈（SHOULD） | ✅ | **Met**：已提供 README.en.md、CONTRIBUTING.en.md、SECURITY.md、docs/architecture.en.md、docs/comparison.en.md，并接受英文 issue / code review；2026-10-10 随 Passing 自评（#15360）勾选 Met。 |
-| maintained | 项目处于维护状态（MUST） | ✅ | 持续提交（建库 2026-09-09，403 次提交，2026-10-25 仍有合并），ROADMAP 活跃；GitHub 开放 issue/PR 计数为 0 |
+| maintained | 项目处于维护状态（MUST） | ✅ | 持续提交（建库 2026-09-09，539 次提交，2026-11 仍有合并），ROADMAP 活跃；GitHub 开放 issue/PR 计数为 0 |
 
 ## 二、Change Control 变更控制
 
@@ -54,9 +58,9 @@
 | repo_track | 记录改动内容/人/时间（MUST） | ✅ | git 历史 |
 | repo_interim | 含版本之间的中间版本，非仅最终发布（MUST） | ✅ | 主干持续 commit |
 | repo_distributed | 使用分布式 VCS（SUGGESTED） | ✅ | git |
-| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.25.0 唯一（21 个发布 tag） |
-| version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（当前 `0.22.1`） |
-| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.25.0`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
+| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.27.1 唯一（25 个发布 tag，含里程碑 tag） |
+| version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（当前 `0.27.1`） |
+| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.27.1`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
 | release_notes | 每版有人可读发布说明，非 git log（MUST，Met URL） | ✅ | `CHANGELOG.md` |
 | release_notes_vulns | 列出本版修复的、已分配 CVE 的公开运行时漏洞（MUST，可 N/A） | ➖ | **N/A 理由**："项目成果自身无已分配 CVE 的公开漏洞；故无此类条目。" |
 | report_process | 提供提交 bug 的流程（MUST，Met URL） | ✅ | GitHub Issues + `.github/ISSUE_TEMPLATE/` |
@@ -75,9 +79,9 @@
 | build | 若需构建，提供可自动重建的工作构建系统（MUST，可 N/A） | ✅ | hatchling 构建后端，`uv build` / pip 安装 |
 | build_common_tools | 使用常见构建工具（SUGGESTED，可 N/A） | ✅ | 标准 Python 打包（hatchling + uv） |
 | build_floss_tools | 仅用 FLOSS 工具即可构建（SHOULD，可 N/A） | ✅ | 工具链全 FLOSS |
-| test | 至少一个 FLOSS 自动测试套件，并说明如何运行（MUST） | ✅ | pytest 套件，**1 881 项（1 876 通过 + 5 跳过，全部离线、不依赖网络与密钥）**；CI 与 README/CONTRIBUTING 说明 `uv run pytest` |
+| test | 至少一个 FLOSS 自动测试套件，并说明如何运行（MUST） | ✅ | pytest 套件，**2 386 项（全量离线通过，5 项环境跳过，不依赖网络与密钥）**；CI 与 README/CONTRIBUTING 说明 `uv run pytest` |
 | test_invocation | 测试套件可以该语言的标准方式调用（SHOULD） | ✅ | `pytest` / `uv run pytest` |
-| test_most | 套件覆盖多数分支/输入/功能（SUGGESTED） | ✅ | 行覆盖率 **94.37%**（2026-10-25 本地全量实测：8 017 语句 / 451 未覆盖；CI 门禁 90） |
+| test_most | 套件覆盖多数分支/输入/功能（SUGGESTED） | ✅ | 内核行覆盖率 **93.12%**（2026-11-05 实测；CI 门禁 90） |
 | test_continuous_integration | 实施持续集成（SUGGESTED） | ✅ | GitHub Actions（多版本矩阵） |
 | test_policy | 有"新功能须加测试"的策略（MUST） | ✅ | CONTRIBUTING / AGENTS 纪律："改行为必须同步加/改测试" |
 | tests_are_added | 最近重大改动有遵守加测试的证据（MUST） | ✅ | 近期 compaction / 沙箱 / 动态发现源均带对应测试 |
@@ -157,3 +161,16 @@
 - **Discussions 仍未开启**：Issue + PR 已满足 `discussion` 条；是否开 Discussions 属维护决策，
   本轮明确不做。
 - **本文件不构成新的对外承诺**：第三方评分以平台复扫结果为准；自评结论不替代复扫。
+
+## 九、复核记录（2026-11-05）
+
+| 项 | 2026-10-25 复核 | 2026-11-05 复核 |
+|---|---|---|
+| 自评基线 | main v0.25.0 | main v0.27.1 |
+| 测试规模 | 2 075 项（2 070 通过 + 5 跳过） | **2 386 项**（全量离线通过，5 项环境跳过），exit 0 |
+| 行覆盖率 | 95.65%（2026-10-25 全项目语句口径） | **93.12%**（内核行覆盖率口径，CI 门禁 90；全项目口径以 CI coverage job 输出为准） |
+| 发布 tag | 21 个 tag：v0.5.0-hangzhou、v0.7.0 … v0.25.0 | **25 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.27.1 |
+| 提交活跃度 | 414 次提交 | **539 次提交**（截至 2026-11-05）；GitHub 开放 issue/PR 计数 0 |
+
+判定与徽章状态不变（Passing）；平台侧记录本轮未重新提交，最新数字以本表与
+`docs/IMPLEMENTATION_STATUS.md` 为准。

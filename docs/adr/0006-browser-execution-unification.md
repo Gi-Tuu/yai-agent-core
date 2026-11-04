@@ -2,7 +2,7 @@
 
 - 状态：Accepted（2026-11-03，v0.27 Batch 3）
 - 关联：`src/yai_core/integrations/browser/`、`extension/`、`src/yai_core/sidecar/native_bridge.py`、
-  `docs/browser-extension-bridge.md`、`docs/IMPLEMENTATION_STATUS.md`
+  `docs/guides/browser-extension-bridge.md`、`docs/IMPLEMENTATION_STATUS.md`
 - 关联任务书：v0.27 §5（Browser Extension 与 Browser Provider 执行路径统一）
 
 ## 背景
@@ -71,5 +71,5 @@
 ## 验收
 
 - 面板对"只读快照"与"受控浏览器"有可见区分（静态测试钉住 DOM/文案）。
-- `docs/browser-extension-bridge.md` 明确写出"读取当前标签页 ≠ 操作当前标签页"。
+- `docs/guides/browser-extension-bridge.md` 明确写出"读取当前标签页 ≠ 操作当前标签页"。
 - 后续 A/B 实施必须附权限一致性测试与真实 E2E；未完成前保持本 ADR 的 C 边界。

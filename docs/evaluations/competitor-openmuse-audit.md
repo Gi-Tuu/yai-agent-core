@@ -57,7 +57,7 @@
 | ReAct 编排 / 规划 / 子 Agent | `AgentLoop` + `AdaptiveRouter` + `shell/employee` | **已有等效** |
 | 多 Provider 路由 / 故障转移 | v0.26 `ProviderRoutingPolicy` + `allow_fallback` | **已有等效且更严格**（宿主授权集合、未授权零调用、子任务收窄） |
 | L1/L2/L3 审批 | 原生参数级审批 + `PermissionPolicy` + 收据 | **已有等效**（声明驱动，非写死） |
-| 浏览器自动化 | v0.26 Browser Provider（治理/快照引用/收据）+ 可选 Playwright | **已有等效**；真实浏览器未真机验收（竞品同样缺自动化证据） |
+| 浏览器自动化 | v0.26 Browser Provider（治理/快照引用/收据）+ 可选 Playwright | **已有等效**；真实 Chromium 冒烟与受控任务 E2E 已完成（`docs/evaluations/browser-task-e2e.md`），真实站点多样性未覆盖（竞品同样缺自动化证据） |
 | Windows 桌面自动化 | v0.26 Desktop Provider（UIA、焦点保护、高风险拒绝）+ 本机真机冒烟 | **已有等效**；覆盖面窄于竞品（竞品工具更多） |
 | 确定性产物验收 | v0.26 `VerificationResult` + 宿主 verifier + 浏览器/桌面证据 | **已有等效契约**；具体领域 verifier 需宿主实现 |
 | 截图 / 视觉定位 | 仅契约位（后端 `screenshot()`，默认返回 None） | **真缺口**（不作为必需能力，按需再补） |

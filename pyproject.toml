@@ -126,38 +126,30 @@ include = [
     # uv.lock：tests/test_version_consistency.py 会读它核对版本串。
     "/uv.lock",
     # 核心文档（README 里的相对链接在 sdist 内也要可达）。
-    # 刻意**不**整包 include /docs：docs/exports（构建产物）与本机过程稿都在那儿；
-    # 只点名带核心几篇与讲义目录。
+    # 刻意**不**整包 include /docs：docs/exports（构建产物）与本机过程稿都在那儿。
+    # 门面/索引点名带；公开专题按 2026-11 重组后的目录带——
+    # evaluations/（评测与证据）、guides/（宿主与运维指南）、reports/（时点报告）、
+    # adr/（架构决策记录），规则统一为"被 git 跟踪的公开文档全随包分发"。
     "/docs/architecture.md",
     "/docs/architecture.en.md",
     "/docs/reading-guide.md",
     "/docs/comparison.md",
     "/docs/comparison.en.md",
-    "/docs/deployment-scaling.md",
-    "/docs/deployment-scaling.en.md",
-    "/docs/tracing.md",
-    "/docs/tracing.en.md",
-    "/docs/multilang-interop.md",
     "/docs/whitepaper.md",
-    # benchmarks/agentdojo/README.md 链接到这篇评测说明；既然 /benchmarks 进包，
-    # 目标文档也必须进包，否则包内 markdown 断链。
-    "/docs/agentdojo-evaluation.md",
-    # 能力与证据索引：README 的"第一次读代码"段落链接到它。
+    # 能力与证据索引 / 文档总索引：README 的"第一次读代码"段落链接到它们。
     "/docs/IMPLEMENTATION_STATUS.md",
-    "/docs/memory-evaluation.md",
-    "/docs/browser-task-e2e.md",
-    "/docs/windows-real-apps.md",
-    "/docs/sidepanel-manual-acceptance.md",
-    # 2026-11 审计整改记录（IMPLEMENTATION_STATUS 链接到它）。
-    "/docs/audit-remediation-2026-11.md",
+    "/docs/DOCUMENT_MAP.md",
+    "/docs/evaluations",
+    "/docs/guides",
+    "/docs/reports",
+    "/docs/adr",
     "/docs/walkthrough",
     "/docs/releases",
     # 讲义里的截图（讲义 22 的五张桌面图等）：不带则包内图片全是断链。
     "/docs/assets",
-    # 白皮书与部署文档引用的赛事配图（**仅这两项被 git 跟踪的公开内容**；
+    # 白皮书引用的赛事配图（**仅这些被 git 跟踪的公开内容**；
     # 含个人信息的本地材料（对接材料、更新邮件等）
     # 全都未被跟踪，绝不能进包）。
-    "/docs/demo-deployment.md",
     "/docs/figs",
 ]
 # hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录。
@@ -178,6 +170,10 @@ exclude = [
     "docs/宣传视频-*.md",
     "docs/工具管理永久保留-*.md",
     "docs/终端工艺视觉-*.md",
+    # 下面三篇只列在 .git/info/exclude（hatchling 未必读它），防御性再排一次。
+    "docs/v025-audit-report.md",
+    "docs/v025-执行落地方案.md",
+    "docs/v026-执行记录.md",
 ]
 
 [tool.ruff]

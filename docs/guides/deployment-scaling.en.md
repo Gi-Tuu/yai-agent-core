@@ -4,7 +4,7 @@
 
 > Baseline of fact: yai-agent-core **v0.11.0**, last verified **2026-10-16** (against the local repository).
 > Single-instance public deployment (Render / VPS + Caddy) is covered in
-> [`docs/demo-deployment.md`](demo-deployment.md); this document answers three questions
+> [`docs/guides/demo-deployment.md`](demo-deployment.md); this document answers three questions
 > one level further: **why the kernel scales horizontally, how tenants are isolated, and how to build the
 > production shape.**
 >
@@ -23,7 +23,7 @@
 - It **does not listen on a port, hold a global singleton, or start background threads**; it only works when you call `await core.run(task)` / `core.astream(task)`.
 - Each instance carries its **own independent** `ToolRegistry`, `memory`, `policy`, `router`, `channel`, `executor`, and `code_manager`.
 - Session state lives entirely in the **memory injected at construction**; the kernel itself holds no mutable business state → **the kernel is stateless and multi-instance capable**.
-- **Tasks are serialized within one instance**: `astream`/`run` hold an instance-level `asyncio.Lock` for the whole call, so concurrent requests hitting the same core queue up rather than interleaving at `await` points and corrupting shared context / memory / route-learning state. To carry multiple independent sessions concurrently, assemble **multiple instances** per L1 / L2 below instead of piling concurrency onto a single core; stateless model / discovery sources / sandboxes may be shared across instances. The full concurrency contract is in [`architecture.en.md` §2.6](architecture.en.md#26-concurrency-model-and-multi-tenant-isolation).
+- **Tasks are serialized within one instance**: `astream`/`run` hold an instance-level `asyncio.Lock` for the whole call, so concurrent requests hitting the same core queue up rather than interleaving at `await` points and corrupting shared context / memory / route-learning state. To carry multiple independent sessions concurrently, assemble **multiple instances** per L1 / L2 below instead of piling concurrency onto a single core; stateless model / discovery sources / sandboxes may be shared across instances. The full concurrency contract is in [`architecture.en.md` §2.6](../architecture.en.md#26-concurrency-model-and-multi-tenant-isolation).
 
 ```
                  ┌──────────────────────────────┐

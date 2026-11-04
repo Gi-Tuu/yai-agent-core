@@ -32,8 +32,8 @@
 
 ### Fixed
 
-- **文档与代码同步**：`docs/production-permissions.md`（进程身份配置与告警条件）、
-  `docs/windows-real-apps.md`（PID 精确匹配 + 12 项检查）、`docs/IMPLEMENTATION_STATUS.md`、
+- **文档与代码同步**：`docs/guides/production-permissions.md`（进程身份配置与告警条件）、
+  `docs/evaluations/windows-real-apps.md`（PID 精确匹配 + 12 项检查）、`docs/IMPLEMENTATION_STATUS.md`、
   `docs/architecture(.en).md`、`docs/walkthrough/56-v026-execution-adapters.md`、
   `ROADMAP.md`（v0.26 发布状态）、`SECURITY(.zh-CN).md`（适配器安全默认值）；并修正
   `IMPLEMENTATION_STATUS` 开头停在 v0.26.0 的发布版本漂移。
@@ -45,12 +45,12 @@
 - **受控浏览器真实任务 E2E**：`scripts/browser_provider_task_smoke.py` 在真实
   Playwright Chromium + 本地 HTTP 页面上完成 open → observe → type → 重新观察 →
   click → observe，3 次审批，执行收据链完整，并基于页面真实文本给出
-  `verified_success`。报告：`docs/browser-task-e2e.md`。
+  `verified_success`。报告：`docs/evaluations/browser-task-e2e.md`。
 - **当前标签页受限写操作（opt-in）**：`initialize.current_tab_tool=true` 时注册
   `current_tab_action`（仅 click/type + CSS selector + 逐次审批）；扩展只对
   `authorizedTabId` 执行 `chrome.scripting`，Bridge 新增 `tab_action/request`。
   默认关闭；协议级全链路回归已过，真实 Side Panel 人工验收清单见
-  `docs/sidepanel-manual-acceptance.md`。
+  `docs/evaluations/sidepanel-manual-acceptance.md`。
 - **Desktop 下拉选择**：新增 `desktop_select` 与 `DesktopBackend.select_option`；
   UIA ComboBox 优先 `select`、其次 ValuePattern，不支持时失败关闭；真实
   `charmap.exe` 冒烟扩展到 12/12（含字体下拉回读）。
@@ -266,7 +266,7 @@
   路由学习去掉工具计数启发式的成败否决，改用限尾收尾标记（一轮多工具的
   成功任务不再被误判失败），benchmark 模拟轨迹同步补上限尾标记。
 - **AgentDojo 真机评测 harness 与首份报告**（`benchmarks/agentdojo/`、
-  `docs/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，
+  `docs/evaluations/agentdojo-evaluation.md`）：用隔离 venv 把 AgentCore 包成 AgentDojo pipeline，
   跑 `important_instructions` 攻击；报告给出 raw ASR / 结果达成 / 无警示三层口径、
   四个 suite 的 clean utility / 攻击下 utility 与失败归因。harness 不进运行时依赖，
   也不进离线 CI（需真实模型）。
@@ -292,7 +292,7 @@
 
 - **生产安全默认值（D-1）**：`AgentCore` 默认配置（`auto_approve_tools=True` 且未显式
   传入 `PermissionPolicy`）现在发 `ProductionSafetyWarning`，指路新增的
-  `docs/production-permissions.md` 与可运行示例 `examples/production_policy.py`。
+  `docs/guides/production-permissions.md` 与可运行示例 `examples/production_policy.py`。
   行为零变化；v0.26 计划提供默认值翻转的弃用迁移路径（先 DeprecationWarning，
   再翻转为 `auto_approve_tools=False`），是否执行待拍板。
 - **外发来源闸边界加固（B1）**：主机名区域 ASCII 后紧粘 CJK 视为主机名终止；
@@ -306,7 +306,7 @@
 - **生产宿主集成示例（B6）**：`examples/host_production/`——Subject 注入与隔离、
   白名单+外发治理、HostStateProvider、SSE 流式+权限拒绝、生命周期 aclose、
   并发多实例，4 项端到端测试。
-- **执行审计持久化边界文档**（`docs/execution-audit-persistence.md`，B7）与
+- **执行审计持久化边界文档**（`docs/guides/execution-audit-persistence.md`，B7）与
   OTel span 属性防敏感参数泄漏回归测试。
 - **IMPLEMENTATION_STATUS 校准 + ADR 0003（ACC 边界）/ 0002（运行时认证边界）**。
 
@@ -389,7 +389,7 @@
 ### Changed
 
 - **仓库内容整理为通用口径**：原材料目录里只有两类内容值得留下，已迁到通用位置——
-  部署手册 → `docs/demo-deployment.md`，白皮书配图与绘图脚本 → `docs/figs/` + `scripts/draw_figs.py`；
+  部署手册 → `docs/guides/demo-deployment.md`，白皮书配图与绘图脚本 → `docs/figs/` + `scripts/draw_figs.py`；
   过期清单、视频录制脚本、提交目录（`submissions/`）与对应构建脚本一并移出仓库
   （内容仍在 git 历史里，可按需取回）。代码与文档里的措辞统一为"公网演示 / 探活"。
 - **部署验证端点更名**：改为 `/.well-known/yai-verification.json`，鉴权白名单与三条测试同步。
@@ -485,7 +485,7 @@
 
 ### Docs
 
-- **CII 自证与门面口径**：`docs/openssf-best-practices-self-assessment.md` 刷新到实测数字
+- **CII 自证与门面口径**：`docs/evaluations/openssf-best-practices-self-assessment.md` 刷新到实测数字
   （1 911 项 / 95.65% / 414 次提交 / 18 个 tag），并把"如何修改已有自评"改成正确入口
   （`/passing/edit`——站点并不存在 `/edit`）。**平台记录已于 2026-10-25 同步**：`maintained` 的版本号、
   `version_tags` 的示例 tag、`test_most` 的覆盖率，以及两条 `dynamic_analysis*` 由 Unmet 改 Met；
@@ -987,7 +987,7 @@
 - **运行指标与就绪探针（metrics / readiness，零依赖 + 可选 OTel）**：
   - **零依赖 `MetricsRecorder`**：新增 `metrics.py`，在 `astream` 唯一出口旁路 tap（开始 / 逐事件 / `finally` 结算），统计 runs（started/completed/failed/cancelled，取消类与真实异常分开）、按策略计数、工具调用 total/errors、模型档位 standard/strong（DONE 一次性结算）、各类事件计数，以及 run 墙钟时延直方图（`monotonic` 测时、`+Inf` 桶=总数）；一把 `threading.Lock` 兼容跨线程采集，`snapshot()` 深拷贝隔离，脏数据容错。`render_prometheus()` 手拼合规 exposition（histogram `_bucket/_sum/_count`），不装客户端即可被 Prometheus 抓。指标回调任何异常自吞、绝不反噬主流程；`CoreConfig.metrics` 可注入自定义收集器并做四方法鸭子校验。
   - **`/readyz` 与 `/metrics` 端点**：新增 `batteries/fastapi_server/readiness.py`——探针为普通同步/async 函数（None/True=ok、False/str=失败、dict 取 `ok`、异常=error），`asyncio.gather` 并发、`wait_for` 超时（默认 5s）、异常逐探针隔离，任一失败 `/readyz` 返回 503（编排据此摘流量、不重启）；默认探针只报告工具数与记忆后端、不调模型不联网，宿主可经 `readiness_probes=` 追加 DB/模型探活。`GET /metrics` 默认 Prometheus 文本、`?format=json` 结构化快照；配了 `YAI_API_KEY` 时 `/metrics` 默认鉴权、`YAI_METRICS_PUBLIC=1` 可显式公开，`/health` 与 `/readyz` 恒公开；GET 探针路径不受限流影响。
-  - **OTel meter 桥接（可选 `[otel]` extra）**：新增 `integrations/metrics/otel_meter.py`，全部用 observable 仪器、采集时从 `core.metrics_snapshot()` pull（run 热路径零回调），不初始化 MeterProvider/Exporter；输出 `yai.agent.runs{outcome}`、`.runs.by_strategy`、`.tool.calls{tool,result}`、`.model.calls{tier}`、`.events{type}`、`.run.duration{le}` 累计桶 + `.sum`、`.uptime` gauge。新增 `tests/test_metrics_recorder.py`（8 例）、`tests/test_readiness_metrics_api.py`（9 例）、`tests/test_otel_metrics_bridge.py`（InMemoryMetricReader 离线断言）、逐行讲义第 38 篇，并在 `docs/deployment-scaling.md` 增补健康检查与指标抓取章节；内核仍零硬依赖。
+  - **OTel meter 桥接（可选 `[otel]` extra）**：新增 `integrations/metrics/otel_meter.py`，全部用 observable 仪器、采集时从 `core.metrics_snapshot()` pull（run 热路径零回调），不初始化 MeterProvider/Exporter；输出 `yai.agent.runs{outcome}`、`.runs.by_strategy`、`.tool.calls{tool,result}`、`.model.calls{tier}`、`.events{type}`、`.run.duration{le}` 累计桶 + `.sum`、`.uptime` gauge。新增 `tests/test_metrics_recorder.py`（8 例）、`tests/test_readiness_metrics_api.py`（9 例）、`tests/test_otel_metrics_bridge.py`（InMemoryMetricReader 离线断言）、逐行讲义第 38 篇，并在 `docs/guides/deployment-scaling.md` 增补健康检查与指标抓取章节；内核仍零硬依赖。
 - **长期记忆语义召回与任务起始主动召回（opt-in）**：
   - **词法 OR 语义双通道召回**：`MemoryVault` 新增异步 `arecall(query, *, k, kinds, tags)`，在原词法通道（token 相关度 + 重要度加权）之外，当宿主注入 `EmbeddingProvider` 时叠加语义通道（复用 `discovery/semantic.py` 的标准库余弦相似度，阈值 0.45），两通道按记忆 id 取并集、融合分取 `max`，跨语言 / 换说法（中文记忆 vs 英文 query）也能召回；同步 `recall` 保留为纯词法、行为不变，`recall` 工具 handler 改异步并走 `arecall`。记忆向量按需懒批量计算并按 id 缓存，`remember` 合并 / `forget` 删除即失效；embedder 抛错或返回数量不符时降级纯词法并记录 `semantic_last_error`，`status()` 新增 `semantic_enabled` / `semantic_last_error`。
   - **任务起始主动召回**：`AgentLoop` 新增可选回调 `auto_recall`，在历史之后、user 任务之前自动用任务文本检索长期记忆，命中则作为一条 system 上下文注入（明确"若与本次明确指令冲突以本次为准"）并发新事件 `MEMORIES_RECALLED`（条数 + 每条 id/kind/摘要）；clarify 反问路径不召回；回调任何异常只发本地诊断、绝不阻断主任务。由 `AgentCore(long_memory=True, memory_embedder=..., auto_memory_recall=True, auto_recall_k=3)` 开启，默认关闭、行为与旧版一致；`CoreConfig.validate()` 拦截"开召回但没开长期记忆""k 非正整数""embedder 非 async embed_texts"三类非法组合。新增 `tests/test_auto_memory_recall.py`（3 例 core 级端到端）、`tests/test_memory_vault.py`（+8 语义用例）、`tests/test_core_config.py`（+3 校验）与逐行讲义第 37 篇；内核仍零硬依赖。
@@ -996,7 +996,7 @@
 - **远程发现源按 need 筛选**：`RemoteSourceDiscovery` 此前返回配置内全部工具，现对已构造 ToolSpec（无 keywords）做保守双通道收窄：词法用 name+description 的**双向**相关度（query→工具、工具→query 取大，修正单向对长 query 的稀释），按实测分布标定阈值 0.20、margin 0.08、top_k 8；宿主提供 embedder 时叠加语义 gate（跨概念高召回）。任一通道识别即收窄、两通道都不中**回退全量**（跌破阈值只导致不收窄、不漏召回），语义通道失败不致命；`filter_by_need=False` 保持全量。新增逐行讲义第 30 篇，`tests/test_remote_discovery.py` 由 5 扩到 11。真机 bge 端到端待补 ONNX 权重。
 - **动态重规划 replan（PLAN 专属）**：新增 meta-tool `replan`（`tools/meta.py`），模型在执行多步计划中、因新结果发现原计划走不通（漏前置 / 顺序要调 / 前提不成立）时可显式调用；loop 进入 PLAN 分支时幂等注册（`_ensure_replan_tool`，空宿主 / direct / 简单 react 不注册），`_handle_replan` 让模型保留已完成步骤、基于当前观察产出修正计划，发 `plan_revised` 事件（修订序号 / 原因 / 新步骤，解析不出步骤回退原任务），回灌后按新计划继续。replan 只重排内部计划、无外部副作用，因此不走用户授权闸，业务工具仍逐个授权。另修正聚焦模式：meta-tool 完整 schema 经 `_with_meta_schemas` 在大规模工具集裁剪下始终注入（同时修复 request_capability / create_code_tool 的可见性）。新增逐行讲义第 31 篇与 `tests/test_replan.py`。
 - **成本·延迟感知选档 tiering**：新增零硬依赖的 `kernel/tiering.py`——默认 standard（便宜快），仅在生成 / 修订计划（`for_planning`）、工具失败后的纠偏轮、执行到第 3 轮仍未完成（`select`）时才升 strong，选档本身是确定性规则、不额外调用模型；档位相对上一轮变化才发 `tier_changed` 事件（首轮声明起始档），DONE 事件新增 `standard_calls` / `strong_calls` / `model_calls` 成本汇总。由 `AgentCore(cost_aware=True/False)` 开关，关闭时执行轮恒 standard、行为与旧版一致，宿主可自定义规则松紧。新增逐行讲义第 32 篇与 `tests/test_tiering.py`。
-- **结构化 tracing（OpenTelemetry，opt-in）**：新增可选 `[otel]` extra 与 `integrations/tracing/`，在**外侧订阅** `astream` 事件流（不改 kernel/loop、不把 opentelemetry 转成硬依赖、库内不初始化 TracerProvider/Exporter）：一次 run 映射为一个 root span `yai.agent.run`（任务、最终策略、模型档位、结果长度、错误状态），每次工具调用是其下的 `yai.tool.<name>` 子 span（参数、成功预览 / 失败置 ERROR，对无配对 CALL 的组合 / meta 工具结果补即时 span，流中断时关闭未闭合 span），策略选择 / 计划 / 澄清 / 能力缺口 / 发现·组合·创建工具 / 压缩 / 重规划 / 档位切换等落为 root span event。对外提供 `traced_astream`（边渲染边埋点、事件一个不丢）与 `traced_run`（聚合为 RunResult）；宿主配好 TracerProvider / OTLP 即可对接 Jaeger / Tempo。新增 `tests/test_tracing_otel.py`（InMemory exporter 离线断言 span 树，模块 100% 覆盖）、`docs/tracing.md`（中英）与逐行讲义第 33 篇；CI lint&test 矩阵加装 `[otel]`。
+- **结构化 tracing（OpenTelemetry，opt-in）**：新增可选 `[otel]` extra 与 `integrations/tracing/`，在**外侧订阅** `astream` 事件流（不改 kernel/loop、不把 opentelemetry 转成硬依赖、库内不初始化 TracerProvider/Exporter）：一次 run 映射为一个 root span `yai.agent.run`（任务、最终策略、模型档位、结果长度、错误状态），每次工具调用是其下的 `yai.tool.<name>` 子 span（参数、成功预览 / 失败置 ERROR，对无配对 CALL 的组合 / meta 工具结果补即时 span，流中断时关闭未闭合 span），策略选择 / 计划 / 澄清 / 能力缺口 / 发现·组合·创建工具 / 压缩 / 重规划 / 档位切换等落为 root span event。对外提供 `traced_astream`（边渲染边埋点、事件一个不丢）与 `traced_run`（聚合为 RunResult）；宿主配好 TracerProvider / OTLP 即可对接 Jaeger / Tempo。新增 `tests/test_tracing_otel.py`（InMemory exporter 离线断言 span 树，模块 100% 覆盖）、`docs/guides/tracing.md`（中英）与逐行讲义第 33 篇；CI lint&test 矩阵加装 `[otel]`。
 - **生产加固三件套（并发契约 / 模型硬超时 / 零依赖诊断）**：
   - **并发串行契约**：`AgentCore` 持有实例级 `asyncio.Lock`，`astream`/`run` 全程（含跨 `yield` 与 finally 的学习反馈回灌）串行，杜绝两条任务在 `await` 点交错踩脏共享的上下文 / 记忆 / 注册表 / 学习态；生成器被 `aclose()` 或宿主提前关闭时锁自动释放。明确"**一个实例 = 一条串行会话，要并发就多实例**（无状态模型 / 发现 / 沙箱可共享单例，registry/memory/learning 随实例独立）"。
   - **模型调用硬超时与取消传播**：`AgentCore(model_timeout=60.0|None)` 在 loop 层用 `asyncio.wait_for` 统一包裹全部模型调用（不改 `ModelProvider.achat` SPI 签名），超时抛 `TimeoutError` 并体面收尾、`CancelledError` 正确传播不被吞；`compact_context(timeout=...)` 超时回退硬裁剪；三份沙箱重构为 asyncio 原生子进程，超时 / 取消先 `kill()` 再排空 transport（Docker 另强制删除一次性容器），不再遗留后台进程。
@@ -1018,7 +1018,7 @@
 
 ### Changed
 
-- **多租户 / 水平扩展部署指南增强并首次英文化（#41）**：`docs/deployment-scaling.md` 把 scope 明确为"租户内会话 / 专员边界"，新增跨不可信企业的硬隔离形态（SQLite-per-tenant 目录 + 每租户独立 DEK / KMS 信封加密 + `TenantCoreFactory` + 空闲 LRU 换出 + Postgres RLS 升级路线）、九维每租户隔离矩阵与 prompt cache 跨租户边界；立场写死"`tenant_id` 不进 kernel 签名、多租户是装配层责任、内核零改动"。新增全文对照英文版 `docs/deployment-scaling.en.md`，顶部双向互链，基线升 v0.9.0。
+- **多租户 / 水平扩展部署指南增强并首次英文化（#41）**：`docs/guides/deployment-scaling.md` 把 scope 明确为"租户内会话 / 专员边界"，新增跨不可信企业的硬隔离形态（SQLite-per-tenant 目录 + 每租户独立 DEK / KMS 信封加密 + `TenantCoreFactory` + 空闲 LRU 换出 + Postgres RLS 升级路线）、九维每租户隔离矩阵与 prompt cache 跨租户边界；立场写死"`tenant_id` 不进 kernel 签名、多租户是装配层责任、内核零改动"。新增全文对照英文版 `docs/guides/deployment-scaling.en.md`，顶部双向互链，基线升 v0.9.0。
 - **测试覆盖**：补齐 `llm/openai_compat.py` 与 readiness 探针的边界分支至 100%（#37）；全量行覆盖率约 96%。
 
 ### Security
@@ -1062,7 +1062,7 @@
 - **离线演示的授权卡改为真挂起**：`shell/demo_script.py` 走到 `permission_asked` / `clarify_requested` 时不再伪造事件，而是真的 `await channel.confirm/ask` 等待界面点击——无 Key 演示里的允许/拒绝走完整权限链路，拒绝会按"用户拒绝，未执行"收尾；并补齐仓库 / 笔记 / 陪伴三段主题脚本。
 - **原生桌面端 `shell/desktop/`（PySide6 + QML）**：屏幕顶部居中的灵动岛胶囊（340×52）与员工面板（420×620）之间是**真窗口形变动画**，配系统托盘；内核与界面**同进程**（`ShellRuntime` 在专用 asyncio 线程跑 `AgentCore`，事件经 Qt 信号跨线程投递，授权/澄清由 `QtChannel` 挂起等待界面决策），不再需要本地 HTTP 端口与 SSE。动效逐条绑定真实内核事件（`strategy_selected` 涟漪、`capability_missing` 琥珀描边脉冲、`tool_discovered` 新能力飞入、`permission_asked` 自动展开授权卡、`delegate` 子员工出芽），只做小面积属性动画，不开全窗 alpha 模糊。新增 `[desktop]` 可选依赖，`python -m shell.desktop`（默认离线演示、`--live` 接真实模型）；`tests/test_desktop_runtime.py`（现已拆分为 `tests/test_desktop_workbench.py` / `test_desktop_specialist.py` / `test_desktop_pending_summary.py` 等）8 项离线测试覆盖投递/挂起兑现/忙拒绝/取消/非法挡位，未装 extra 时整体跳过、CI 四矩阵不受影响。新增讲义第 22 篇。
 - **语言中立能力清单（manifest）序列化**：`ToolSpec.to_manifest_dict()` / `from_manifest_dict()` 与 `tools/manifest.py`（批量打包 + JSON 文件读写）。composite 工作流（steps）与 code 工具（code，需宿主沙箱）作为"数据即能力"可跨进程 / 跨语言完整移植并执行；native/openapi/mcp 的 handler 不可移植，只导出能力声明。内核不另造调用通道（避免做成简化版 MCP），跨语言实际调用统一走 MCP / OpenAPI。新增 `tests/test_manifest.py`（含移植后组合工具端到端执行验证）与讲义第 21 篇。
-- **工程文档**：`docs/deployment-scaling.md`（部署 / 水平扩展 / 多租户）、`docs/multilang-interop.md`（多语言接入设计与 conformance 愿景）。
+- **工程文档**：`docs/guides/deployment-scaling.md`（部署 / 水平扩展 / 多租户）、`docs/guides/multilang-interop.md`（多语言接入设计与 conformance 愿景）。
 - **PyPI 发布就绪**：补全 classifiers / project URLs、PEP 561 `py.typed` 标记，sdist 改为显式白名单（只含库源码、测试与核心文档，排除 inbox 与过程稿）；新增 OIDC Trusted Publishing 工作流 `publish.yml`（推 `v*` tag 触发、免 API token）。
 
 ### Changed

@@ -1,4 +1,4 @@
-"""生产环境权限配置的最小可运行示例（docs/production-permissions.md 的配套实现）。
+"""生产环境权限配置的最小可运行示例（docs/guides/production-permissions.md 的配套实现）。
 
 与 serve_example 的区别：本示例显式配置权限策略（白名单 + 写操作审批 + 外发闸），
 是被 tests/test_production_defaults.py 引用的"不会文档漂移"的模板。

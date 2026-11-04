@@ -67,7 +67,7 @@ def main() -> int:
    加 `--purge-config` 才会删除。
 
 边界：本包不包含 Python 运行时/模型/Chrome；扩展商店分发、MSI 安装、自动更新
-不在本包范围。PDF 说明见仓库 `docs/browser-extension-bridge.md`。
+不在本包范围。PDF 说明见仓库 `docs/guides/browser-extension-bridge.md`。
 """,
         encoding="utf-8",
     )

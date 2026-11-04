@@ -194,7 +194,7 @@ class AgentCore:
             warnings.warn(
                 "AgentCore 正在使用 allow_all 默认权限策略（auto_approve_tools=True）："
                 "所有工具将免审批自动执行。生产 / 多用户环境请显式传入 "
-                "PermissionPolicy（见 docs/production-permissions.md），"
+                "PermissionPolicy（见 docs/guides/production-permissions.md），"
                 "或设置 auto_approve_tools=False。",
                 ProductionSafetyWarning,
                 stacklevel=2,
