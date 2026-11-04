@@ -3,7 +3,7 @@
 > 目标：不是"看懂每一行"，而是按顺序读完后，能向别人讲清楚 Core 怎么转起来，并能动手改。
 > 建议节奏：每天 1～2 站，配合运行与小练习；卡住超过 30 分钟就先跳过，在文件里留 `# Q:` 注释。
 
-> **配套逐行讲解**：`docs/walkthrough/` 里有每个源码文件逐块、逐行的解释（00 总览 → 53 宿主实时状态），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。
+> **配套逐行讲解**：[`docs/walkthrough/`](walkthrough/00-index.md) 里有每个源码文件逐块、逐行的解释（00 总览 → 56 v0.26 执行适配器），本篇负责路线，walkthrough 负责抠细节，两篇对照着看。文档全景见 [`docs/DOCUMENT_MAP.md`](DOCUMENT_MAP.md)。
 
 ## 0. 先跑起来（10 分钟）
 
@@ -16,7 +16,7 @@ cd "E:\Competition\YAI Agent Core"
 
 ## 0.5 示例宿主顺序（想直接看 examples 时）
 
-9 个宿主由浅入深（与 README 一致）：
+11 个示例宿主（含 1 个生产形态）由浅入深（与 README、IMPLEMENTATION_STATUS 口径一致）：
 
 1. `host_a_notes` —— 最小接入：普通函数自动变工具
 2. `host_c_companion` —— 换领域即换岗位（AI 陪伴 / AMBRACE 预演）
@@ -27,8 +27,10 @@ cd "E:\Competition\YAI Agent Core"
 7. `host_i_mealie` —— 适配真实第三方高 star 开源项目
 8. `host_j_actual` —— 真实记账应用 Actual Budget：发现补能力 / 派子员工
 9. `host_k_multimodal` —— 多模态：模型只选图片句柄，宿主判作用域 / 有效期 / 大小
+10. `host_l_sidecar_node` —— 跨语言：零依赖 Node 进程经 sidecar 协议接入
+11. `host_production` —— 生产形态：API Key 鉴权 / 限流 / 就绪探针的完整宿主
 
-> 目录名保留历史编号（a/c/d/e/f/g/i/j/k），不随学习顺序重排，以便与各版材料、讲义里的路径一致。
+> 目录名保留历史编号（a/c/d/e/f/g/i/j/k/l）与 `host_production`，不随学习顺序重排，以便与各版材料、讲义里的路径一致。
 
 ## 1. 推荐阅读顺序（7 站）
 
@@ -64,7 +66,7 @@ cd "E:\Competition\YAI Agent Core"
 - 调试建议：在 `_react_cycle` 每轮循环开头打印 `len(ctx.messages)`，看消息历史如何增长。
 - 读完标志：能默画出"用户任务 → 模型 → 工具调用 → 工具结果 → 模型 → 最终答案"的闭环。
 
-### 站 6：`src/yai_core/spi/` 与默认实现 —— 可替换的五个插槽
+### 站 6：`src/yai_core/spi/` 与默认实现 —— 可替换的插槽（十个 SPI 契约）
 - 解决什么：为什么 Core 不绑定模型厂商、不绑定 UI、不绑定数据库。
 - Python 知识点：`Protocol`（结构化子类型："只要长这样就能插进来"，不需要继承）、依赖注入（构造函数传入）。
 - 对照读：`llm/openai_compat.py`（真实插槽）、`channels/collect.py`（测试插槽）、`tests/test_loop.py` 里的 `ScriptedModel`（假插槽）。
@@ -91,8 +93,8 @@ spec.py 的 $ref 内联与循环保护、discovery.py 的入参合并、client.p
 
 | 术语 | 在本项目里的意思 |
 |---|---|
-| 宿主 Host | 嵌入 Core 的现有软件（`examples/` 下 9 个宿主，未来是 AMBRACE） |
-| SPI | 宿主可替换、Core 给默认实现的接口契约（Model/Channel/Memory/Policy/Discovery） |
+| 宿主 Host | 嵌入 Core 的现有软件（`examples/` 下 11 个宿主，含 1 个生产形态，未来是 AMBRACE） |
+| SPI | 宿主可替换、Core 给默认实现的接口契约（Model / Channel / Memory / Policy / Discovery / Sandbox / RouteSelector / Embedding / StorageCipher / ResourceProvider，共十个） |
 | Adaptive Router | 决定任务走哪种执行策略的组件 |
 | ReAct | 推理-调用工具-观察结果-再推理的循环 |
 | Tool Bus | 统一执行工具的通道（权限、异常、结果格式化都在这） |

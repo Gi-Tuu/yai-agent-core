@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-10-31（对应已发布版本 **v0.25.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-05（对应已发布版本 **v0.27.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -243,8 +243,26 @@
   全量测试+覆盖率 / 冒烟；`--fast` 跳过全量。
 - **能力与证据索引**：`docs/IMPLEMENTATION_STATUS.md` 分"已验证 / 未真机验证 / 不做"三档并给证据。
 - **桌面星云粒子数可配置**：`ui/nebulaParticles`（默认 260，区间 24–1200）。
-- **仓库内容整理**：部署手册迁到 `docs/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
+- **仓库内容整理**：部署手册迁到 `docs/guides/demo-deployment.md`、白皮书配图迁到 `docs/figs/`；验证端点更名为
   `/.well-known/yai-verification.json`。
+
+### v0.24.0 — 把"可信"做进三个层面（tag 2026-10-27）
+
+- **成本**：Anthropic 适配层启用提示缓存（`cache_control: ephemeral`），契约不变。
+- **注入**：工具输出按不可信数据处理（`tool_output_guard`，默认开）；新增离线注入回归集
+  （假设模型完全照注入的话去做，验证策略 / 闸门 / 审批仍能拦住）。
+- **审计**：执行收据哈希链 + `verify_receipt_chain()`；`unknown` 可由宿主 `postcondition`
+  确认副作用；**新增第 21 类事件 `PERMISSION_DENIED`**（拒绝成为可见决策，参数按声明脱敏）。
+- **长会话**：`CompactionPolicy(parallel=N)` 并行摘要；任务锚点在原任务被裁掉后自动补回。
+
+### v0.25.0 — Production Readiness（tag 2026-10-31，已完成）
+
+- 复审 8 类加固（收据链熔断载体 / 单一参数快照 / 外发结构化记录与 IDNA、userinfo / 限尾伪协议 / 路由学习限尾标记）
+- 外发来源闸边界（紧粘 CJK 截断、路径大小写不敏感、非 ASCII 主机崩溃修复、嵌入形态与并发隔离测试）
+- 生产安全默认值（ProductionSafetyWarning + 生产权限指南与可运行示例）
+- sidecar 会话级 Subject 绑定 + ADR 0002（运行时认证边界）
+- AgentDojo 重复采样 / 多攻击循环 / 四分类指标 + ADR 0003（ACC 边界）
+- 生产宿主集成示例（examples/host_production/）
 
 ### v0.26.0 — 执行能力与可验证结果（tag 2026-11-03，已完成）
 
@@ -258,33 +276,50 @@
 - **Outcome Verification**：`Evidence` / `VerificationResult` / `OutcomeVerifier`，
   执行收据与任务验收分离；DONE 事件与 `RunResult.verification` 携带结论（ADR 0005）。
 - **浏览器扩展宿主 + Native Messaging Bridge**：MV3 Side Panel + 独立 Bridge（不改 Sidecar
-  协议）；扩展已在真实 Chrome / Edge 加载出 MV3 service worker；侧边栏与 native host 注册待人工验收（ADR 0004）。
+  协议）；扩展已在真实 Chrome / Edge 加载出 MV3 service worker（后续于 v0.26/v0.27 完成注册、
+  真实任务与真机状态恢复验收，见 `docs/guides/browser-extension-bridge.md`）。
 - **记忆质量基准**：Recall@5 / MRR / 延迟 / 降级一致性；本机真实 bge-m3 实测
-  Recall@5 1.000 / MRR 0.917 / P50 12.27 ms。
+  Recall@5 1.000 / MRR 0.917 / P50 12.27 ms（**18 条 / 12 query，v0.26 时点快照**；v0.27
+  扩量到 114 条 / 60 query 后现行口径为 Recall@5 0.899 / MRR@5 0.896 / P50 28.9 ms，见
+  `docs/evaluations/memory-evaluation.md`）。
 
-### v0.25.0 — Production Readiness（tag 2026-10-31，已完成）
+### v0.27.0 — 真机可信批次落地（tag 2026-11-03，已完成）
 
-- 复审 8 类加固（收据链熔断载体 / 单一参数快照 / 外发结构化记录与 IDNA、userinfo / 限尾伪协议 / 路由学习限尾标记）
-- 外发来源闸边界（紧粘 CJK 截断、路径大小写不敏感、非 ASCII 主机崩溃修复、嵌入形态与并发隔离测试）
-- 生产安全默认值（ProductionSafetyWarning + 生产权限指南与可运行示例）
-- sidecar 会话级 Subject 绑定 + ADR 0002（运行时认证边界）
-- AgentDojo 重复采样 / 多攻击循环 / 四分类指标 + ADR 0003（ACC 边界）
-- 生产宿主集成示例（examples/host_production/）
+- **受控浏览器真实任务 E2E**：真实 Playwright Chromium 完成 open → observe → type →
+  重新观察 → click → observe，3 次审批、收据链完整，基于页面真实文本验证
+  `verified_success`（`docs/evaluations/browser-task-e2e.md`）。
+- **当前标签页受限写操作（opt-in）**：`current_tab_action` 仅 click/type + CSS selector +
+  逐次审批，默认关闭；协议级全链路回归已过。
+- **桌面下拉选择与 Windows 真实应用验证**：`desktop_select` + UIA ComboBox 语义优先；
+  字符映射表冒烟 12/12（含下拉回读）。
+- **记忆评测扩量**：114 条 / 60 query，全样本 P50/P95、冷/热分离；真实 BGE-M3
+  Recall@5 0.899 / MRR@5 0.896 / P50 28.9 ms（CPU）。
+- **Windows 安装器与固定扩展 ID**：便携安装 / 卸载 / 升级快照回滚 + `status` 动作；
+  `packaging/extension/keygen.py` 生成固定 ID 副本（私钥不进仓库）。
+- **MCP CDP 启动器**：9222 未监听时自动拉起独立调试 Chrome，仍失败回退 MCP 自管浏览器。
+- **侧边栏工作流折叠**：每轮 run 生成可折叠块，新 run 自动收起历史；审批区不再被顶走。
+- **浏览器执行路径边界（ADR 0006）**：扩展只承诺当前标签页只读快照；受控操作走
+  Browser Provider 或宿主显式配置的 MCP，面板明确区分只读 / 受控 / 未连接。
+- **证据契约与统一原子写**：宿主 verifier 证据套用与内核相同的条数/字节上限；
+  MemoryVault 与 Bridge 写盘共用 `fsutil.replace_with_retry`。
 
-### v0.24.0 — 把"可信"做进三个层面（tag 2026-10-27）
+### v0.27.1 — 桌面进程身份收紧（tag 2026-11-03，已完成）
 
-- **成本**：Anthropic 适配层启用提示缓存（`cache_control: ephemeral`），契约不变。
-- **注入**：工具输出按不可信数据处理（`tool_output_guard`，默认开）；新增离线注入回归集
-  （假设模型完全照注入的话去做，验证策略 / 闸门 / 审批仍能拦住）。
-- **审计**：执行收据哈希链 + `verify_receipt_chain()`；`unknown` 可由宿主 `postcondition`
-  确认副作用；**新增第 21 类事件 `PERMISSION_DENIED`**（拒绝成为可见决策，参数按声明脱敏）。
-- **长会话**：`CompactionPolicy(parallel=N)` 并行摘要；任务锚点在原任务被裁掉后自动补回。
+- **（行为 breaking）** `DesktopPolicy.allowed_processes` 由 PID **前缀**匹配改为**精确**
+  匹配（避免 PID 复用误操作别的进程窗口）；新增 `allowed_process_names`（进程映像名）与
+  `allowed_process_paths`（完整路径）两种身份白名单；`DesktopPolicy.secure(...)` 接受三者
+  任一，仅标题白名单会被拒绝。
+- **`WindowInfo` 携带进程身份**：`process_name` / `process_path` 经
+  `QueryFullProcessImageNameW` 填充；被禁窗口的进程信息不进入模型上下文。
+- **宽松策略告警扩大**：显式传入但没有进程身份的策略也发 `DesktopSecurityWarning`；
+  `is_permissive` 只看进程身份。
+- **真机验证（2026-11-03）**：`list_windows()` 在真实桌面 6/6 可见窗口取到映像名与完整
+  路径；`scripts/windows_real_apps_smoke.py` 12/12（含精确 PID 白名单）。
 
 ## 下一步
 
-### v0.23 — 候选（未排序，等维护者拍板）
+### 候选（未排序，等维护者拍板）
 
-- **开源质量分整改**：Scorecard 7.6 → Release 资产补 provenance、sidecar 补测试、刷新 CII 自证。
 - **跨实例分布式限流**：`global_per_minute` 与工具级 `rate_limit` 都只是本进程总数；多实例部署要跨实例总闸，需先解决状态共享。
 - **生产级沙箱适配器递进**：Docker 已落地（宿主侧），后续按隔离强度是 gVisor / 微 VM / 远程执行，内核零改动。
 - **组合工具的可视化编排**（宿主侧；版本管理已在 v0.13 落地内核侧）。

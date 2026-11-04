@@ -228,6 +228,7 @@ v0.11 之前消息契约是纯文本（`content: str`）；v0.12 起加上**可�
 | host_j Actual | 真实开源软件 | 对记账软件 Actual Budget 的第三方播种与子员工委派 |
 | host_k 多模态 | 原生函数 + 资源引用 | 多模态消息片段（内联图片 / 资源引用）与宿主侧作用域判定 |
 | host_l Sidecar | 语言无关宿主 | Node 进程经 stdio NDJSON + JSON-RPC 2.0 承载 Agent 会话 |
+| host_production 生产形态 | 生产宿主集成 | API Key 鉴权、全局限流、就绪探针与生产安全默认值的集成示例 |
 
 ### 5.2 纯宿主门面：零 AI 代码的销售 CRM，被灵动岛跨进程操控
 

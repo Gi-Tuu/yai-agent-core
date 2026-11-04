@@ -152,7 +152,7 @@ YAI 是进程内内核，运行在 asyncio 单线程事件循环上，并发契�
 - **接线方式**：`AgentCore(model, on_diagnostic=fn)` 一处传入，内核会把同一回调鸭子接线给内部的 `AdaptiveRouter` 与 `FallbackModelProvider`（它们暴露可写的 `on_diagnostic` 属性；宿主自建、不认识该属性的自定义组件不受影响）。不传回调时内核完全安静，行为与旧版本一致。
 - **刻意不纳入诊断的情况**：沙箱执行失败会冒泡成 `tool_result(ok=False)`、权限拒绝会发 `permission_asked`——这些本就是用户可见的业务事件，不属于"静默兜底"，因此不重复发诊断。
 
-**Metrics（运行指标，零依赖）**：`metrics.py` 的 `MetricsRecorder` 在 `astream` 唯一出口做旁路 tap——run 开始打点、逐事件累计、`finally` 按结局结算，统计 runs（started/completed/failed/cancelled，取消类与真实异常分开）、按策略计数、工具 total/errors、模型档位 standard/strong（DONE 一次性结算）、事件计数与 run 墙钟时延直方图（`monotonic` 测时）。它只用标准库（一把 `threading.Lock` 兼容跨线程抓取，`snapshot()` 深拷贝），`render_prometheus()` 直接吐 Prometheus 文本，FastAPI Battery 经 `GET /metrics`（默认文本、`?format=json` 快照）暴露，配了 API Key 时默认鉴权、`YAI_METRICS_PUBLIC=1` 可显式公开；另有 `GET /readyz` 就绪探针（并发、5s 超时、逐探针隔离，失败只摘流量不重启）。想走 OTel 指标管线时，用可选 `[otel]` extra 的 `integrations/metrics.register_otel_meter`——全部 observable 仪器、采集时才从快照 pull（run 热路径零回调），库内不初始化 MeterProvider。与 diagnostics 相同，指标回调里的任何异常都被吞掉，绝不反噬主流程。详见逐行讲义第 38 篇与 `docs/deployment-scaling.md` §7。
+**Metrics（运行指标，零依赖）**：`metrics.py` 的 `MetricsRecorder` 在 `astream` 唯一出口做旁路 tap——run 开始打点、逐事件累计、`finally` 按结局结算，统计 runs（started/completed/failed/cancelled，取消类与真实异常分开）、按策略计数、工具 total/errors、模型档位 standard/strong（DONE 一次性结算）、事件计数与 run 墙钟时延直方图（`monotonic` 测时）。它只用标准库（一把 `threading.Lock` 兼容跨线程抓取，`snapshot()` 深拷贝），`render_prometheus()` 直接吐 Prometheus 文本，FastAPI Battery 经 `GET /metrics`（默认文本、`?format=json` 快照）暴露，配了 API Key 时默认鉴权、`YAI_METRICS_PUBLIC=1` 可显式公开；另有 `GET /readyz` 就绪探针（并发、5s 超时、逐探针隔离，失败只摘流量不重启）。想走 OTel 指标管线时，用可选 `[otel]` extra 的 `integrations/metrics.register_otel_meter`——全部 observable 仪器、采集时才从快照 pull（run 热路径零回调），库内不初始化 MeterProvider。与 diagnostics 相同，指标回调里的任何异常都被吞掉，绝不反噬主流程。详见逐行讲义第 38 篇与 `docs/guides/deployment-scaling.md` §7。
 
 ### 2.8 生产加固 P1：预算熔断、落盘加密、集中配置、在线热备份
 
@@ -217,7 +217,8 @@ v0.26 在不改变内核依赖与公开契约的前提下，把"真正操作外�
 - **浏览器扩展宿主 + Native Messaging Bridge（`extension/`、`sidecar/native_bridge.py`）**：
   扩展只是 Host，通过长度帧 ↔ NDJSON 的独立 Bridge 连本地 Sidecar；不改 Sidecar 公开协议，
   扩展来源 allowlist（fail closed）、操作白名单、凭据只存在本地配置；断连后结果标 `unknown`
-  且不自动重放。**扩展未在真实浏览器加载验收**。
+  且不自动重放。**扩展已在真实 Chrome / Edge 完成加载、真实任务与真机状态恢复验收**
+  （记录见 `docs/guides/browser-extension-bridge.md`；真实鼠标点工具栏图标与安装包分发仍需人工验收）。
 - **P0 记忆与 Provider 安全**：`MemoryVault` 加载失败分类 + quarantine/read_only/raise 处置
   （绝不静默覆盖原档）+ owner 绑定；`FallbackModelProvider` 支持宿主声明的 provider 授权集合 /
   敏感等级 / 锁定 / 禁止降级，未授权后端在发请求前被筛掉（零调用）。详见
@@ -293,4 +294,4 @@ v0.3 公网演示限流（默认开启）：`ratelimit.py` 提供每 IP 滑动�
 - **内核内执行生成代码**：组合工具与沙箱代码工具均已支持，但生成代码一律在宿主提供的 `ToolSandbox` 内执行（内核不内置执行器），并经授权闸与 TTL 生命周期管理。
 - **不内置向量数据库 / 向量索引**：内核记忆不绑定任何向量库或 ANN 索引。长期记忆的语义召回（§2.9）复用可选的 `EmbeddingProvider`（本地 bge-m3 经 `[local-embed]` extra，或 OpenAI 兼容云端）对记忆内容**即时 / 懒缓存编码**后做余弦比对，规模面向单宿主的结构化记忆（默认 top-k 少量条目），不引入常驻向量数据库；需要大规模向量检索的宿主可自行实现 `MemoryStore` / 召回回调接入。
 - **内置 UI**：内核不提供任何界面；灵动岛 / 浮窗位于壳层（`shell/desktop/`），经唯一嵌入点与内核通信。
-- **coding agent 场景、队列 / 中间件、K8s**：不做无人值守编码代理，不引入消息中间件，部署不依赖 K8s（水平扩展见 `docs/deployment-scaling.md`）。
+- **coding agent 场景、队列 / 中间件、K8s**：不做无人值守编码代理，不引入消息中间件，部署不依赖 K8s（水平扩展见 `docs/guides/deployment-scaling.md`）。
