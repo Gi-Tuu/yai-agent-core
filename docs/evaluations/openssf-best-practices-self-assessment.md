@@ -58,9 +58,9 @@
 | repo_track | 记录改动内容/人/时间（MUST） | ✅ | git 历史 |
 | repo_interim | 含版本之间的中间版本，非仅最终发布（MUST） | ✅ | 主干持续 commit |
 | repo_distributed | 使用分布式 VCS（SUGGESTED） | ✅ | git |
-| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.27.1 唯一（25 个发布 tag，含里程碑 tag） |
+| version_unique | 每个面向用户的发布有唯一版本标识（MUST） | ✅ | 0.7.0 → 0.27.1 唯一（24 个发布 tag） |
 | version_semver | 使用 SemVer / CalVer（SUGGESTED） | ✅ | SemVer（当前 `0.27.1`） |
-| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.27.1`（含 `v0.8.1`），另有里程碑 tag `v0.5.0-hangzhou` |
+| version_tags | 在 VCS 中标记发布（SUGGESTED） | ✅ | tags `v0.7.0` … `v0.27.1`（含 `v0.8.1`） |
 | release_notes | 每版有人可读发布说明，非 git log（MUST，Met URL） | ✅ | `CHANGELOG.md` |
 | release_notes_vulns | 列出本版修复的、已分配 CVE 的公开运行时漏洞（MUST，可 N/A） | ➖ | **N/A 理由**："项目成果自身无已分配 CVE 的公开漏洞；故无此类条目。" |
 | report_process | 提供提交 bug 的流程（MUST，Met URL） | ✅ | GitHub Issues + `.github/ISSUE_TEMPLATE/` |
@@ -148,7 +148,7 @@
 | 测试规模 | ~1 584 项 | **2 075 项**（2 070 通过 + 5 跳过），exit 0 |
 | 行覆盖率 | 约 92.6% | **95.65%**（8 029 语句 / 349 未覆盖；CI 门禁 90） |
 | 讲义规模 | `docs/walkthrough/00–27` | `00–56`（56 篇逐行讲义 + 00-index） |
-| 发布 tag | v0.7.0、v0.8.0 | **21 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.25.0（含 v0.8.1） |
+| 发布 tag | v0.7.0、v0.8.0 | **21 个 tag**：v0.7.0 … v0.25.0（含 v0.8.1，另含 1 个当时保留、现已移除的里程碑 tag） |
 | 动态分析（SUGGESTED） | ⚠ Unmet：未部署 fuzzer/DAST | ✅ Met：atheris fuzzing 4 个 target + CI `fuzz` job（Ubuntu/py3.12，每个 target 限时 45 秒）；已有 fuzz 撞出缺陷并修复的实例 |
 | 提交活跃度 | 建库 2026-09-09 | **414 次提交**，2026-10-25 仍有合并；GitHub 开放 issue/PR 计数 0 |
 
@@ -169,7 +169,7 @@
 | 自评基线 | main v0.25.0 | main v0.27.1 |
 | 测试规模 | 2 075 项（2 070 通过 + 5 跳过） | **2 386 项**（全量离线通过，5 项环境跳过），exit 0 |
 | 行覆盖率 | 95.65%（2026-10-25 全项目语句口径） | **93.12%**（内核行覆盖率口径，CI 门禁 90；全项目口径以 CI coverage job 输出为准） |
-| 发布 tag | 21 个 tag：v0.5.0-hangzhou、v0.7.0 … v0.25.0 | **25 个 tag**：v0.5.0-hangzhou、v0.7.0 … v0.27.1 |
+| 发布 tag | 21 个 tag（含 1 个当时保留、现已移除的里程碑 tag）：v0.7.0 … v0.25.0 | **24 个 tag**：v0.7.0 … v0.27.1 |
 | 提交活跃度 | 414 次提交 | **539 次提交**（截至 2026-11-05）；GitHub 开放 issue/PR 计数 0 |
 
 判定与徽章状态不变（Passing）；平台侧记录本轮未重新提交，最新数字以本表与

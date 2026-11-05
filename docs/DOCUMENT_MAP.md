@@ -96,7 +96,7 @@ v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿
 | 目录 | 内容 | 是否随包 |
 |---|---|---|
 | `docs/assets/` | README / 讲义引用的截图与配图 | ✅ 随 sdist |
-| `docs/figs/` | 白皮书与赛事材料配图（`scripts/draw_figs.py` 产物） | ✅ 随 sdist |
+| `docs/figs/` | 白皮书配图（`scripts/draw_figs.py` 产物） | ✅ 随 sdist |
 | `docs/exports/` | 讲义 Word / PDF 构建产物（`scripts/build_walkthrough_docx.py`） | ❌ 已被 `.gitignore` 排除，不进仓库也不进包 |
 
 ## 十一、仅本机存在的过程稿（不随仓库分发，克隆者不可见）
@@ -110,6 +110,5 @@ v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿
   `docs/工具管理永久保留-落地方案.md`、`docs/检查点A-架构审查-通用能力与ACC.md`
 - **素材 / 内部**：`docs/内部-主张与证据对照.md`、`docs/宣传视频-代码生成提示词.md`、
   `docs/终端工艺视觉-设计系统与改造任务书.md`
-- **赛事过程材料**：`docs/competitions/`（报名 / 邮件 / 录制 / 脚本，可能含私密信息，已排除）
 - **工具过程文件**：`.zcode/`（其它 AI 协作者的计划 / 会话草稿，已排除）
 - **根目录**：`AGENTS.md`（AI 协作约定，刻意只留本地）、`YAI开源增长方案-修订版.md`
