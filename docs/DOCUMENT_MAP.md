@@ -72,8 +72,8 @@
 
 ## 八、docs/releases/ —— GitHub Release 正文源稿（21 篇）
 
-v0.6.0–v0.27.1 的人话版 Release 稿；唯一入口是 [CHANGELOG.md](../CHANGELOG.md) 头部的
-`docs/releases/` 链接，逐条变更以 CHANGELOG 为准。
+v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿，当时未单独成稿）；
+唯一入口是 [CHANGELOG.md](../CHANGELOG.md) 头部的 `docs/releases/` 链接，逐条变更以 CHANGELOG 为准。
 
 ## 九、其它子目录 README
 
@@ -91,9 +91,17 @@ v0.6.0–v0.27.1 的人话版 Release 稿；唯一入口是 [CHANGELOG.md](../CH
 `packaging/windows/README.md`、`fuzzing/README.md`、`models/README.md`、
 `tests/fixtures/acc/SOURCE.md`（ACC 语料出处与哈希）、`.github/` 三个协作模板。
 
-## 十、仅本机存在的过程稿（不随仓库分发，克隆者不可见）
+## 十、资源与产物目录
 
-以下文件被 `.gitignore` / `.git/info/exclude` 排除，只在本机出现，不放链接、不进包：
+| 目录 | 内容 | 是否随包 |
+|---|---|---|
+| `docs/assets/` | README / 讲义引用的截图与配图 | ✅ 随 sdist |
+| `docs/figs/` | 白皮书与赛事材料配图（`scripts/draw_figs.py` 产物） | ✅ 随 sdist |
+| `docs/exports/` | 讲义 Word / PDF 构建产物（`scripts/build_walkthrough_docx.py`） | ❌ 已被 `.gitignore` 排除，不进仓库也不进包 |
+
+## 十一、仅本机存在的过程稿（不随仓库分发，克隆者不可见）
+
+以下文件与目录被 `.gitignore` / `.git/info/exclude` 排除，只在本机出现，不放链接、不进包：
 
 - **工作流水**：`docs/项目台账.md` 及 4 个归档分卷、`docs/v026-执行记录.md`
 - **方案 / 任务书**：`docs/v025-执行落地方案.md`、`docs/v025-audit-report.md`、
@@ -102,4 +110,6 @@ v0.6.0–v0.27.1 的人话版 Release 稿；唯一入口是 [CHANGELOG.md](../CH
   `docs/工具管理永久保留-落地方案.md`、`docs/检查点A-架构审查-通用能力与ACC.md`
 - **素材 / 内部**：`docs/内部-主张与证据对照.md`、`docs/宣传视频-代码生成提示词.md`、
   `docs/终端工艺视觉-设计系统与改造任务书.md`
+- **赛事过程材料**：`docs/competitions/`（报名 / 邮件 / 录制 / 脚本，可能含私密信息，已排除）
+- **工具过程文件**：`.zcode/`（其它 AI 协作者的计划 / 会话草稿，已排除）
 - **根目录**：`AGENTS.md`（AI 协作约定，刻意只留本地）、`YAI开源增长方案-修订版.md`
