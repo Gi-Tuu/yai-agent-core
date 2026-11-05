@@ -34,7 +34,7 @@ llm = ["openai>=1.40"]
 # **上界 <2**：官方 SDK 1.x→2.x 是 breaking 区间，而本项目的测试用假模块
 # （见 CONTRIBUTING.md），CI 永远发现不了真实 SDK 的 API 漂移。
 # 等真机验证过 2.x 再放开上界，届时另开版本。
-anthropic = ["anthropic>=0.40,<2"]
+anthropic = ["anthropic>=0.40,<3"]
 # FastAPI Battery：在线 API、健康端点、部署验证端点
 server = [
     "fastapi>=0.115",
