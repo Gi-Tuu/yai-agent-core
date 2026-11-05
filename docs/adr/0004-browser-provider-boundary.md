@@ -1,9 +1,9 @@
 # ADR 0004：Browser Provider 与浏览器扩展的边界
 
-- 状态：已采纳（v0.26，Unreleased）
+- 状态：已采纳（v0.26.0，2026-11-03 发布）
 - 日期：2026-11-03
 - 相关：`src/yai_core/integrations/browser/`、`src/yai_core/sidecar/native_bridge.py`、
-  `extension/`、`docs/browser-extension-bridge.md`
+  `extension/`、`docs/guides/browser-extension-bridge.md`
 
 ## 背景
 
@@ -36,3 +36,7 @@ Windows 专用 Agent。需要先回答：浏览器能力属于 Core、Integratio
   「已实现·未真机验证」，不用离线测试冒充真机通过。
 - 后续若增加 Windows Desktop Provider，复用同一套 `ToolExecutor` + 收据 +
   Outcome Verification 契约，不为平台新增第二套治理链路。
+- 后记（2026-11-05）：真实 Chromium 冒烟与受控浏览器 E2E 已完成
+  （`docs/evaluations/browser-task-e2e.md`），扩展真机验收记录见
+  `docs/guides/browser-extension-bridge.md`；真实站点多样性、嵌套 frame、下载/上传与
+  安装包分发仍未验证。

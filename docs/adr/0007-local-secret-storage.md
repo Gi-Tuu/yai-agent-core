@@ -2,7 +2,7 @@
 
 - 状态：Proposed（2026-11-03，v0.27 Batch 4）
 - 关联：`src/yai_core/sidecar/native_bridge.py`、`scripts/register_native_host.py`、
-  `scripts/configure_bridge_llm.py`、`docs/browser-extension-bridge.md`
+  `scripts/configure_bridge_llm.py`、`docs/guides/browser-extension-bridge.md`
 - 关联任务书：v0.27 §8（本地 API Key 存储安全）
 
 ## 背景

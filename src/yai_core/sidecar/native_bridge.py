@@ -24,7 +24,7 @@
 
 生命周期诚实声明：Bridge 是与一次扩展连接绑定的短期进程；连接断开时 Sidecar
 随之结束，**不提供跨进程任务恢复**。扩展重连后必须把结果视为 ``unknown``，
-不得自动重做可能已有副作用的操作（见 ``docs/browser-extension-bridge.md``）。
+不得自动重做可能已有副作用的操作（见 ``docs/guides/browser-extension-bridge.md``）。
 """
 
 from __future__ import annotations

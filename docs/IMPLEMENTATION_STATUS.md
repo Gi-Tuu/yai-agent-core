@@ -11,7 +11,7 @@
 >
 > **当前 HEAD（2026-11-03 审计整改 + v0.27.1 桌面进程身份收紧后）实测**：2 386 项收集、全量离线通过（5 项环境跳过）、
 > 内核行覆盖率 93.12%（门禁 90%）；审计整改项与验证边界见
-> [`docs/audit-remediation-2026-11.md`](audit-remediation-2026-11.md)。
+> [`docs/reports/audit-remediation-2026-11.md`](reports/audit-remediation-2026-11.md)。
 
 ## 一、内核与执行
 
@@ -48,7 +48,7 @@
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 权限策略（allowlist / 自定义 SPI） | 已验证 | `tests/test_execution_policy.py`、`test_execution_boundaries.py` | 未声明即不保护——安全语义只来自声明 |
-| 生产安全默认值（v0.25.0，B2） | 已验证 | `tests/test_production_defaults.py`、`examples/production_policy.py` | 默认 allow_all 零变化但发 ProductionSafetyWarning；生产配置模板见 docs/production-permissions.md |
+| 生产安全默认值（v0.25.0，B2） | 已验证 | `tests/test_production_defaults.py`、`examples/production_policy.py` | 默认 allow_all 零变化但发 ProductionSafetyWarning；生产配置模板见 docs/guides/production-permissions.md |
 | 参数级审批 + 审批上下文 | 已验证 | `tests/test_native_approval.py`、`test_approval_context_channel.py` | 必需审批不能被策略拒绝绕过 |
 | 能力闸（gate） | 已验证 | `tests/test_capability_gate.py` | 判不出来一律失败关闭 |
 | 资源作用域（文件前缀等） | 已验证 | `tests/test_resource_scope_gate.py`、`test_file_provider_security.py` | 作用域闸在 handler 之前生效 |
@@ -79,19 +79,19 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
-| 记忆质量基准（v0.27 扩量） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query；真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms（CPU）；假嵌入器 Recall@5 0.971 / P50 1.5ms | 假嵌入器不代表真实语义；1000 条构建 79.8s（O(n²)），10,000 条未跑通，当前实现不适合 10k 规模；详见 `docs/memory-evaluation.md` |
+| 记忆质量基准（v0.27 扩量） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query；真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms（CPU）；假嵌入器 Recall@5 0.971 / P50 1.5ms | 假嵌入器不代表真实语义；1000 条构建 79.8s（O(n²)），10,000 条未跑通，当前实现不适合 10k 规模；详见 [docs/evaluations/memory-evaluation.md](evaluations/memory-evaluation.md) |
 
 ## 五、宿主与协议
 
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
-| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 12/12）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用/进程映像解析）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 按**进程身份**（PID 精确匹配 / 映像名 / 完整路径）+ 标题附加过滤，被禁窗口只回计数；真实应用验证见 `docs/windows-real-apps.md`（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
+| Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 12/12）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用/进程映像解析）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 按**进程身份**（PID 精确匹配 / 映像名 / 完整路径）+ 标题附加过滤，被禁窗口只回计数；真实应用验证见 [docs/evaluations/windows-real-apps.md](evaluations/windows-real-apps.md)（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
 | 原子写共享重试（v0.27） | 已验证（单测） | `yai_core.fsutil.replace_with_retry`；Vault/Bridge 共用 | 仍可能因长期占用最终失败，失败会保留 dirty/诊断 |
 | 适配器安全默认值（v0.27 Batch 2 / v0.27.1 收紧） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_desktop_policy_identity.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；未传或宽松（无进程身份）均发 Warning；桌面进程身份三白名单（PID 精确 / 映像名 / 路径）；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词与窗口标题都不作为安全边界 |
-| 浏览器执行路径统一 ADR + 受控浏览器 E2E（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界）；受控端到端已验证 | `docs/adr/0006-browser-execution-unification.md`；`scripts/browser_provider_task_smoke.py`（真实 Chromium：open/observe/type/reobserve/click/observe，3 次审批，收据链完整，页面文本验证 verified_success）；`docs/browser-task-e2e.md`；面板只读/受控区分 | 受控浏览器 E2E 已过；当前标签页写操作以 opt-in `current_tab_action` 实现（默认关闭，协议级回归），但真实 Side Panel 用户手势 E2E 仍需人工验收；不得宣称当前标签页写操作已真机通过 |
-| Windows 安装/分发（v0.27 Batch 6） | 已验证（便携包 + 一键安装/卸载） | `packaging/windows/installer.py`、`build_bundle.py`、`README.md`；本机实际安装/卸载/重装通过；产物 `dist/yai-agent-core-windows-0.26.0.zip`（约 46.6MB） | 不是 MSI/商店分发；需目标机 Python 3.11+ 与 `yai-agent-core`；扩展仍需手动加载；无自动更新/回滚 |
-| 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | `docs/adr/0007-local-secret-storage.md`；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |
+| 浏览器执行路径统一 ADR + 受控浏览器 E2E（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界）；受控端到端已验证 | [docs/adr/0006-browser-execution-unification.md](adr/0006-browser-execution-unification.md)；`scripts/browser_provider_task_smoke.py`（真实 Chromium：open/observe/type/reobserve/click/observe，3 次审批，收据链完整，页面文本验证 verified_success）；[docs/evaluations/browser-task-e2e.md](evaluations/browser-task-e2e.md)；面板只读/受控区分 | 受控浏览器 E2E 已过；当前标签页写操作以 opt-in `current_tab_action` 实现（默认关闭，协议级回归），但真实 Side Panel 用户手势 E2E 仍需人工验收；不得宣称当前标签页写操作已真机通过 |
+| Windows 安装/分发（v0.27 Batch 6） | 已验证（便携包 + 一键安装/卸载） | `packaging/windows/installer.py`、`build_bundle.py`、`README.md`；本机实际安装/卸载/重装通过；产物 `dist/yai-agent-core-windows-0.26.0.zip`（约 46.6MB） | 不是 MSI/商店分发；需目标机 Python 3.11+ 与 `yai-agent-core`；扩展仍需手动加载；无自动更新（v0.27.0 起安装器含升级快照 / 回滚）；`dist/` 内 zip 文件名为构建时点版本 |
+| 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | [docs/adr/0007-local-secret-storage.md](adr/0007-local-secret-storage.md)；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
 | Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
 | Native Messaging Bridge（v0.26.0） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
@@ -134,7 +134,7 @@ MCP Server · Multi-Agent 编排 · 内置向量数据库 · 内置 UI（桌面�
    仍不覆盖嵌套 frame、下载 / 上传、CAPTCHA、真实站点多样性与视觉定位。
 - **浏览器扩展**：真实 Edge 已验证加载、侧边栏、审批/澄清、真实任务、运行中重开面板
   取消、强杀 Sidecar 自动重连、关最后一个面板重启 Bridge 并重读配置（见
-  `docs/browser-extension-bridge.md` 真机验收记录）；**真实鼠标点工具栏图标、安装包分发**
+  [docs/guides/browser-extension-bridge.md](guides/browser-extension-bridge.md) 真机验收记录）；**真实鼠标点工具栏图标、安装包分发**
   仍需人工验收，不能把"加载成功"当成"分发链路已验证"。
 - **Windows Desktop Provider**：假 pywinauto SDK 的离线回归覆盖观察/Invoke/SetValue/
   坐标点击/旧引用（进 CI）；另在本机完成一次自建 WinForms 窗口的 UIA 冒烟

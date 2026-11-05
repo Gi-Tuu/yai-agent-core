@@ -5,7 +5,7 @@
 > - 导出：`src/yai_core/integrations/tracing/__init__.py`；
 > - 可选依赖：`pyproject.toml` 的 `[otel]` extra（opentelemetry-api/sdk/exporter-otlp）；
 > - 事件来源：`src/yai_core/types.py`（`AgentEvent` / `EventType`）、`kernel/loop.py`（事件如何产生）；
-> - 门面文档：`docs/tracing.md`（中英）；
+> - 门面文档：`docs/guides/tracing.md`（中英）；
 > - 离线测试：`tests/test_tracing_otel.py`（InMemory exporter，模块 100% 覆盖）。
 >
 > 读前先读第 1（types 事件词汇表）、6（loop 事件流）、8（core 门面）。本章不改内核一行，
@@ -262,7 +262,7 @@ finally:
 
 ## G. 宿主怎么真正看到 trace（SDK 在宿主侧）
 
-库不碰 provider，宿主在进程启动处配一次（详见 `docs/tracing.md`）：
+库不碰 provider，宿主在进程启动处配一次（详见 `docs/guides/tracing.md`）：
 
 ```python
 from opentelemetry import trace

@@ -3,7 +3,7 @@
 把 YAI AgentCore 作为 AgentDojo 的一个 pipeline 跑真机评测：clean utility、
 注入下的 utility 与 ASR。
 
-> 结果报告：[docs/agentdojo-evaluation.md](../../docs/agentdojo-evaluation.md)
+> 结果报告：[docs/evaluations/agentdojo-evaluation.md](../../docs/evaluations/agentdojo-evaluation.md)
 > 本目录只放 harness；原始日志与结果 JSON 在 `benchmark_out/agentdojo/`（gitignored），
 > 不随仓库分发。
 

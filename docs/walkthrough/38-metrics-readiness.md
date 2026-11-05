@@ -404,7 +404,7 @@ run、`reader.get_metrics_data()` 触发回调，断言 `yai.agent.runs{outcome=
   走内网公开；
 - **多实例水平扩展**：每个进程的 `/metrics` 只报告**本进程**计数（per-process），
   Prometheus 按实例标签分别抓取后在查询层 `sum by (outcome)` 聚合——内核不做跨进程
-  状态共享（那会重新引入中心化依赖，违背嵌入式定位）。详见 `docs/deployment-scaling.md`。
+  状态共享（那会重新引入中心化依赖，违背嵌入式定位）。详见 `docs/guides/deployment-scaling.md`。
 
 ---
 

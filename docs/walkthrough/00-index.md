@@ -122,62 +122,62 @@
 
 ## 4. 分篇目录
 
-- 01 · `types.py`：数据词汇表
-- 02 · `spi/`：可替换插槽（model/channel/memory/policy；Discovery 见第 15 篇、Sandbox 见第 17 篇）
-- 03 · `discovery/introspect.py`：能力自发现
-- 04 · `tools/`：注册表 + 执行总线
-- 05 · `kernel/router.py` + `context.py`：决策与上下文
-- 06 · `kernel/loop.py`：主循环逐行（最重要）
-- 07 · 默认实现：memory / policy / channels
-- 08 · `llm/openai_compat.py` + `core.py`：真实模型与门面
-- 09 · `batteries/fastapi_server` + `Dockerfile`：变成在线 API 并容器化部署
-- 10 · `integrations/mcp/client.py`：MCP Client，把外部工具接进注册表
-- 11 · `memory/sqlite_store.py`：SQLite 持久化记忆（scope、迁移钩子、WAL）
-- 12 · `integrations/openapi/`：OpenAPI 发现（REST API 零适配变工具，$ref/鉴权/只读闸）
-- 13 · `memory/retention.py` + 两个 Store：历史保留策略（条数裁剪/TTL，轮边界对齐，opt-in）
-- 14 · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
-- 15 · `spi/discovery.py` + `discovery/catalog.py`：能力缺口的最小闭环（缺口 → 发现 → 注册 → 本轮可用）
-- 16 · `tools/composer.py`：组合工具（不越界地造工具：占位符解析、逐步授权、能力并集）
-- 17 · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，只定义契约，执行由宿主实现）
-- 18 · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
-- 19 · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
-- 20 · `discovery/scoring.py` + `spi/embedding.py` + `discovery/semantic.py`：双通道语义发现（词法打分 + 可选 embedding，本地 bge-m3 / 云端双后端，margin 防误召回）
-- 21 · `types.py`（ToolSpec 序列化）+ `tools/manifest.py`：能力清单交换（语言中立 manifest，composite / code 跨实例移植，治理声明随清单走但 `gate` 永不随清单走，不造调用通道）
-- 22 · `shell/desktop/`：原生桌面端（PySide6 + QML 灵动岛，内核与界面同进程，事件驱动动效与线程纪律）
-- 23 · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
-- 24 · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）
-- 25 · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
-- 26 · `discovery/remote_sources.py` + `aggregate.py`：远程动态发现源（MCP / OpenAPI 懒连接）与多源聚合去重
-- 27 · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
-- 28 · `memory/vault.py` + `core.py`：结构化长期记忆（remember/recall、去重合并、重要度加权，opt-in）
-- 29 · `evaluation/` + `scripts/eval_*.py`：端到端评测（golden 回归基线：完成率 / 工具正确性 / 越权 / 无支撑断言，非门禁 CI）
-- 30 · `discovery/scoring.py` + `remote_sources.py`：远程源按 need 筛选（双向词法 + 可选语义，保守收窄、空命中回退全量）
-- 31 · `tools/meta.py` + `loop.py`：动态重规划 replan（计划走不通显式回到规划，仅 PLAN 注册、不走授权）
-- 32 · `kernel/tiering.py` + `core.py`：成本·延迟感知选档（standard/strong 自动换挡，DONE 成本汇总）
-- 33 · `integrations/tracing/otel.py`：结构化 tracing（外侧订阅事件流 → OpenTelemetry trace，root + 工具子 span，可选 `[otel]` extra，不改内核）
-- 34 · `core.py` + `kernel/loop.py` + `diagnostics.py`：生产加固三件套（实例级任务串行锁、模型硬超时与取消传播、零依赖本地诊断 SPI，含沙箱取消即 kill）
-- 35 · `kernel/budget.py` + `spi/cipher.py` + `config.py` + `memory/sqlite_store.py`：生产加固 P1（任务级预算硬上限与熔断、vault 落盘静态加密 SPI + Fernet 电池、CoreConfig 集中校验与 from_config、SQLite 在线热备份/恢复）
-- 36 · `shell/employee/worker.py` + `delegate.py`：子员工预算兜底与跨层级共享并发闸（default_budget、budget_exceeded 回流、DelegationSupervisor 全局信号量、per-task 预算覆盖）
-- 37 · `memory/vault.py` + `kernel/loop.py` + `config.py` + `core.py`：长期记忆语义召回与任务起始主动召回（异步 arecall 词法 OR 语义、embedder 注入与向量懒缓存、失败降级纯词法、loop 任务开始自动注入 system 记忆并发 memories_recalled 事件）
-- 38 · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
-- 39 · `examples/host_j_actual/` + `examples/five_beats.py`：第三方播种端到端（记账应用 Actual Budget；五拍标准线 唤醒→长尾→缺口→补能力/派子员工→授权→完成；发现补分类与委派只读两条离线链路；整数分与官方 CLI argv 锁定；网页壳 8240）
-- 40 · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
-- 41 · `tools/executor.py` + `tools/registry.py`：上下文轻量治理（三类工具结果回灌前统一按 16000 字符"头+尾"有界收口并打 `truncated` 标记；喂模型的工具目录 / schema 按名确定性排序以稳定提示缓存前缀；内部存储顺序不变）
-- 42 · `kernel/compaction.py` + `kernel/loop.py` + `core.py`：摘要压缩省钱与水位便捷构造（C2 `compaction_model` 让摘要改走便宜小模型、`None` 完全回归主模型、不进 CoreConfig 也不计预算；C3 `CompactionPolicy.from_context_window(chars)` 按 0.6/0.4 比例算高/低水位，`from_context_window(40000)` 恰等于默认策略，字符口径不引 tokenizer）
-- 43 · `policy/redact.py` + `policy/authorize.py` + `policy/approval.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）＋ 原生参数级审批
-- 44 · `integrations/acc/` + `openapi/discovery.py` + `policy/authorize.py`：ACC v1 互操作层（零依赖声明校验器 + 声明→原生审批的翻译 + 官方 26 条参考向量 + OpenAPI 绑定按声明筛暴露面 + 能力闸与宿主注入的可信主体）
-- 45 · `llm/anthropic.py`：Claude 模型接口（system 走顶层、max_tokens 必填、tool_use/tool_result 块翻译、相邻同角色合并；同一 ModelProvider 契约，内核零改动）
-- 46 · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
-- 47 · `paths.py` + `policy/approval.py` + `batteries/filesystem.py` + `tools/executor.py`：安全加固第二批（路径语义收敛成单一真源、空前缀失败关闭、结果侧也脱敏、manifest 治理语义与版本号绑定）
-- 48 · `types.py` + `llm/anthropic.py` + `memory/sqlite_store.py`：多模态消息契约（`ChatMessage.parts` 可选扩展、图片内联/引用两条路径、落盘只存引用不存字节、摘要与降级渲染）
-- 49 · policy/approval.py + kernel/context.py + tools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
-- 50 · tools/health.py + tools/schema.py + policy/approval.py：能力接入体检与 schema 兼容性（静态检查未实现键/审批路径/频控/组合步骤；`anyOf` / `oneOf` / `$ref` 宁可跳过也不误拒；OpenAPI nullable 归一）
-- 51 · types.py + policy/authorize.py + tools/executor.py：可信变更预览（宿主生成 `ChangePreview`、审批上下文展示、确认后 token 复核，失效则拒绝执行；组合工具同规则）
-- 52 · types.py + tools/executor.py + kernel/loop.py：执行收据与进程内幂等（五种状态、retryable、宿主 idempotency_key、call_id、去重缓存与 partial/unknown 边界）
-- 53 · kernel/state.py + kernel/context.py + kernel/loop.py + core.py：宿主实时状态（`register_state_provider`、每轮瞬态 system 注入、不进历史/压缩/记忆、容量上限与失败降级、`HOST_STATE` 事件只报大小不复制内容）
-- 54 · sidecar/：语言无关宿主的会话控制协议（stdio NDJSON + JSON-RPC 2.0；initialize / run / cancel / approval / clarify / shutdown；工具面仍走 MCP/OpenAPI，不另造工具调用通道；单进程单任务与失败清理）
-- 55 · `batteries/office_text.py`：Office 文本抽取（docx/xlsx/pptx 零依赖标准库，PDF 走 [office] extra pypdf；zip 炸弹/实体/截断三闸）
-- 56 · `memory/vault.py` + `llm/routing.py` + `integrations/browser|desktop/` + `verification.py` + `sidecar/native_bridge.py`：v0.26 执行适配器与可验证结果（P0 记忆/Provider 安全、快照引用与统一治理、UIA 焦点保护与用户接管、验收契约与执行收据分离、扩展 Host 与 Bridge、记忆质量基准）
+- [01](01-types.md) · `types.py`：数据词汇表
+- [02](02-spi.md) · `spi/`：可替换插槽（model/channel/memory/policy；Discovery 见第 15 篇、Sandbox 见第 17 篇）
+- [03](03-discovery.md) · `discovery/introspect.py`：能力自发现
+- [04](04-tools.md) · `tools/`：注册表 + 执行总线
+- [05](05-router-context.md) · `kernel/router.py` + `context.py`：决策与上下文
+- [06](06-loop.md) · `kernel/loop.py`：主循环逐行（最重要）
+- [07](07-defaults.md) · 默认实现：memory / policy / channels
+- [08](08-model-and-core.md) · `llm/openai_compat.py` + `core.py`：真实模型与门面
+- [09](09-battery.md) · `batteries/fastapi_server` + `Dockerfile`：变成在线 API 并容器化部署
+- [10](10-mcp-client.md) · `integrations/mcp/client.py`：MCP Client，把外部工具接进注册表
+- [11](11-sqlite-memory.md) · `memory/sqlite_store.py`：SQLite 持久化记忆（scope、迁移钩子、WAL）
+- [12](12-openapi-discovery.md) · `integrations/openapi/`：OpenAPI 发现（REST API 零适配变工具，$ref/鉴权/只读闸）
+- [13](13-history-retention.md) · `memory/retention.py` + 两个 Store：历史保留策略（条数裁剪/TTL，轮边界对齐，opt-in）
+- [14](14-rate-limit-battery.md) · `batteries/fastapi_server/ratelimit.py`：限流 Battery（滑动窗口、429 + Retry-After、GET 放行）
+- [15](15-tool-discovery.md) · `spi/discovery.py` + `discovery/catalog.py`：能力缺口的最小闭环（缺口 → 发现 → 注册 → 本轮可用）
+- [16](16-composer.md) · `tools/composer.py`：组合工具（不越界地造工具：占位符解析、逐步授权、能力并集）
+- [17](17-sandbox.md) · `spi/sandbox.py`：第六个插槽 ToolSandbox（代码工具沙箱，只定义契约，执行由宿主实现）
+- [18](18-code-tools.md) · `tools/code_tools.py` + `meta.py` + 执行器接线：代码工具注册表、48h TTL、调用刷新、双重授权（执行仍走宿主沙箱）
+- [19](19-self-adaptive-routing.md) · `learning/` + `spi/learning.py`：自校准路由（上下文老虎机，从执行反馈学习，opt-in；附离线 benchmark 五线）
+- [20](20-semantic-discovery.md) · `discovery/scoring.py` + `spi/embedding.py` + `discovery/semantic.py`：双通道语义发现（词法打分 + 可选 embedding，本地 bge-m3 / 云端双后端，margin 防误召回）
+- [21](21-manifest-exchange.md) · `types.py`（ToolSpec 序列化）+ `tools/manifest.py`：能力清单交换（语言中立 manifest，composite / code 跨实例移植，治理声明随清单走但 `gate` 永不随清单走，不造调用通道）
+- [22](22-native-desktop.md) · `shell/desktop/`：原生桌面端（PySide6 + QML 灵动岛，内核与界面同进程，事件驱动动效与线程纪律）
+- [23](23-multi-specialist-island.md) · `shell/desktop/workbench.py` + `qml/`：多专员工作台与三态交互（球→胶囊→面板、共享循环、隔离与未读、真挂起的演示脚本）
+- [24](24-live-adaptive-showcase.md) · `learning_vault.py` + `host.py`：真机自适应全开（路由学习 × 沙箱造工具，闭包跨任务、容错读写、仓库专员样板间）
+- [25](25-context-compaction.md) · `kernel/compaction.py` + `context.py`：上下文摘要压缩（旧轮压摘要、recent 完整保留、失败回退硬裁剪）
+- [26](26-remote-discovery.md) · `discovery/remote_sources.py` + `aggregate.py`：远程动态发现源（MCP / OpenAPI 懒连接）与多源聚合去重
+- [27](27-ops-and-docker-sandbox.md) · KV TTL、响应体守卫、API Key 鉴权 + `docker_sandbox.py`：运维三件套与 Docker 生产沙箱
+- [28](28-long-memory.md) · `memory/vault.py` + `core.py`：结构化长期记忆（remember/recall、去重合并、重要度加权，opt-in）
+- [29](29-eval-harness.md) · `evaluation/` + `scripts/eval_*.py`：端到端评测（golden 回归基线：完成率 / 工具正确性 / 越权 / 无支撑断言，非门禁 CI）
+- [30](30-remote-need-filter.md) · `discovery/scoring.py` + `remote_sources.py`：远程源按 need 筛选（双向词法 + 可选语义，保守收窄、空命中回退全量）
+- [31](31-replan.md) · `tools/meta.py` + `loop.py`：动态重规划 replan（计划走不通显式回到规划，仅 PLAN 注册、不走授权）
+- [32](32-tiering.md) · `kernel/tiering.py` + `core.py`：成本·延迟感知选档（standard/strong 自动换挡，DONE 成本汇总）
+- [33](33-structured-tracing.md) · `integrations/tracing/otel.py`：结构化 tracing（外侧订阅事件流 → OpenTelemetry trace，root + 工具子 span，可选 `[otel]` extra，不改内核）
+- [34](34-production-hardening.md) · `core.py` + `kernel/loop.py` + `diagnostics.py`：生产加固三件套（实例级任务串行锁、模型硬超时与取消传播、零依赖本地诊断 SPI，含沙箱取消即 kill）
+- [35](35-production-hardening-p1.md) · `kernel/budget.py` + `spi/cipher.py` + `config.py` + `memory/sqlite_store.py`：生产加固 P1（任务级预算硬上限与熔断、vault 落盘静态加密 SPI + Fernet 电池、CoreConfig 集中校验与 from_config、SQLite 在线热备份/恢复）
+- [36](36-employee-budget-concurrency.md) · `shell/employee/worker.py` + `delegate.py`：子员工预算兜底与跨层级共享并发闸（default_budget、budget_exceeded 回流、DelegationSupervisor 全局信号量、per-task 预算覆盖）
+- [37](37-semantic-memory-recall.md) · `memory/vault.py` + `kernel/loop.py` + `config.py` + `core.py`：长期记忆语义召回与任务起始主动召回（异步 arecall 词法 OR 语义、embedder 注入与向量懒缓存、失败降级纯词法、loop 任务开始自动注入 system 记忆并发 memories_recalled 事件）
+- [38](38-metrics-readiness.md) · `metrics.py` + `batteries/fastapi_server/readiness.py` + `app.py` + `integrations/metrics/`：运行指标与就绪探针（零依赖计数器 + run 时延直方图、astream 唯一出口旁路 tap、completed/failed/cancelled 分类、`/readyz` 与 `/metrics`、OTel observable meter 采集时 pull，可选 `[otel]` extra）
+- [39](39-third-party-seeding.md) · `examples/host_j_actual/` + `examples/five_beats.py`：第三方播种端到端（记账应用 Actual Budget；五拍标准线 唤醒→长尾→缺口→补能力/派子员工→授权→完成；发现补分类与委派只读两条离线链路；整数分与官方 CLI argv 锁定；网页壳 8240）
+- [40](40-memory-scale-governance.md) · `memory/sqlite_store.py` + `memory/vault.py`：长期运行的记忆规模治理（SQLite 裁剪先 COUNT/MIN 索引聚合短路、未达阈值不取回全表；vault 词法召回改懒构建倒排索引、与全扫逐字节等价；可选 `max_notes` 容量上限默认不删；语义通道不做 ANN 的取舍）
+- [41](41-tool-result-bound-catalog-order.md) · `tools/executor.py` + `tools/registry.py`：上下文轻量治理（三类工具结果回灌前统一按 16000 字符"头+尾"有界收口并打 `truncated` 标记；喂模型的工具目录 / schema 按名确定性排序以稳定提示缓存前缀；内部存储顺序不变）
+- [42](42-compaction-model-and-window-factory.md) · `kernel/compaction.py` + `kernel/loop.py` + `core.py`：摘要压缩省钱与水位便捷构造（C2 `compaction_model` 让摘要改走便宜小模型、`None` 完全回归主模型、不进 CoreConfig 也不计预算；C3 `CompactionPolicy.from_context_window(chars)` 按 0.6/0.4 比例算高/低水位，`from_context_window(40000)` 恰等于默认策略，字符口径不引 tokenizer）
+- [43](43-governance-triad.md) · `policy/redact.py` + `policy/authorize.py` + `policy/approval.py` + `host_e tool_auth.py`：治理三件套（令牌鉴权、审批-执行-审计参数快照、声明式脱敏）＋ 原生参数级审批
+- [44](44-acc-compat.md) · `integrations/acc/` + `openapi/discovery.py` + `policy/authorize.py`：ACC v1 互操作层（零依赖声明校验器 + 声明→原生审批的翻译 + 官方 26 条参考向量 + OpenAPI 绑定按声明筛暴露面 + 能力闸与宿主注入的可信主体）
+- [45](45-anthropic-provider.md) · `llm/anthropic.py`：Claude 模型接口（system 走顶层、max_tokens 必填、tool_use/tool_result 块翻译、相邻同角色合并；同一 ModelProvider 契约，内核零改动）
+- [46](46-resource-provider.md) · `spi/resources.py` + `batteries/filesystem.py`：第 10 个 SPI 资源契约（路径策略纯函数两道闸、原子写与硬链接独占创建、`expected_sha256` 乐观并发、四个 async 工具）
+- [47](47-security-hardening-batch2.md) · `paths.py` + `policy/approval.py` + `batteries/filesystem.py` + `tools/executor.py`：安全加固第二批（路径语义收敛成单一真源、空前缀失败关闭、结果侧也脱敏、manifest 治理语义与版本号绑定）
+- [48](48-multimodal-message-contract.md) · `types.py` + `llm/anthropic.py` + `memory/sqlite_store.py`：多模态消息契约（`ChatMessage.parts` 可选扩展、图片内联/引用两条路径、落盘只存引用不存字节、摘要与降级渲染）
+- [49](49-layer1-closure.md) · policy/approval.py + kernel/context.py + tools/composer.py + spi/resources.py：第一层收口（入参 schema 子集补全、图片按真实成本计入预算、后端能力探测与自动降级、组合工具版本仓库、跨层对抗性证据、O_NOFOLLOW 关竞态窗口）
+- [50](50-capability-health.md) · tools/health.py + tools/schema.py + policy/approval.py：能力接入体检与 schema 兼容性（静态检查未实现键/审批路径/频控/组合步骤；`anyOf` / `oneOf` / `$ref` 宁可跳过也不误拒；OpenAPI nullable 归一）
+- [51](51-trusted-change-preview.md) · types.py + policy/authorize.py + tools/executor.py：可信变更预览（宿主生成 `ChangePreview`、审批上下文展示、确认后 token 复核，失效则拒绝执行；组合工具同规则）
+- [52](52-execution-receipts.md) · types.py + tools/executor.py + kernel/loop.py：执行收据与进程内幂等（五种状态、retryable、宿主 idempotency_key、call_id、去重缓存与 partial/unknown 边界）
+- [53](53-host-state-provider.md) · kernel/state.py + kernel/context.py + kernel/loop.py + core.py：宿主实时状态（`register_state_provider`、每轮瞬态 system 注入、不进历史/压缩/记忆、容量上限与失败降级、`HOST_STATE` 事件只报大小不复制内容）
+- [54](54-sidecar-protocol.md) · sidecar/：语言无关宿主的会话控制协议（stdio NDJSON + JSON-RPC 2.0；initialize / run / cancel / approval / clarify / shutdown；工具面仍走 MCP/OpenAPI，不另造工具调用通道；单进程单任务与失败清理）
+- [55](55-office-text.md) · `batteries/office_text.py`：Office 文本抽取（docx/xlsx/pptx 零依赖标准库，PDF 走 [office] extra pypdf；zip 炸弹/实体/截断三闸）
+- [56](56-v026-execution-adapters.md) · `memory/vault.py` + `llm/routing.py` + `integrations/browser|desktop/` + `verification.py` + `sidecar/native_bridge.py`：v0.26 执行适配器与可验证结果（P0 记忆/Provider 安全、快照引用与统一治理、UIA 焦点保护与用户接管、验收契约与执行收据分离、扩展 Host 与 Bridge、记忆质量基准）
 
 ## 5. 自检（读完本篇应能回答）
 

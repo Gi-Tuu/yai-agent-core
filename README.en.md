@@ -121,7 +121,8 @@ uv run pytest                         # full test suite, no API key needed
 New to the code? [`docs/reading-guide.md`](docs/reading-guide.md) is the learning path (zh-CN) and
 [`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) is the line-by-line walkthrough (zh-CN).
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) is the capability/evidence index
-(verified · implemented but not machine-verified · explicitly not done).
+(verified · implemented but not machine-verified · explicitly not done);
+[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) is the full document map.
 For architecture in English see [`docs/architecture.en.md`](docs/architecture.en.md) and
 [`docs/comparison.en.md`](docs/comparison.en.md).
 
@@ -240,7 +241,7 @@ policy**; the kernel's default policy allows everything.</p>
 ## HTTP API (optional, self-hosted)
 
 The FastAPI Battery exposes the endpoints below; deployment options (Docker / Render Blueprint /
-VPS + Caddy) are covered in [`docs/demo-deployment.md`](docs/demo-deployment.md) (in Chinese).
+VPS + Caddy) are covered in [`docs/guides/demo-deployment.md`](docs/guides/demo-deployment.md) (in Chinese).
 
 ```bash
 GET  /health                  # {"status":"ok", ...}

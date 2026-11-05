@@ -2,7 +2,7 @@
 
 **English** · [简体中文](comparison.md)
 
-> Last updated: 2026-10-24. This document states only **verifiable facts**; YAI's side is based on this
+> Last updated: 2026-11-03. This document states only **verifiable facts**; YAI's side is based on this
 > repository's code/config. To avoid restating third parties' own marketing copy, alternatives are
 > described **by category** (general framework / graph runtime / multi-agent framework / self-hosted
 > platform / hosted no-code) — no names, no slogans, no vendor metrics. Category traits reflect public

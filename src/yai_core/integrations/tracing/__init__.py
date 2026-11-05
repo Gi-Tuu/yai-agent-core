@@ -1,6 +1,6 @@
 """OpenTelemetry 结构化 tracing 集成（可选 ``otel`` extra，懒加载）。
 
-用法见 :mod:`yai_core.integrations.tracing.otel` 与 ``docs/tracing.md``：
+用法见 :mod:`yai_core.integrations.tracing.otel` 与 ``docs/guides/tracing.md``：
 
     from yai_core.integrations.tracing import traced_astream, traced_run
 

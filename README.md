@@ -108,7 +108,8 @@ uv run pytest                         # 全量测试，不需要 API Key
 ```
 
 第一次读代码：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线，[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是逐行讲解，
-[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) 是**能力与证据索引**（已验证 / 未真机验证 / 不做 三档）。
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) 是**能力与证据索引**（已验证 / 未真机验证 / 不做 三档），
+[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) 是全部文档的总索引。
 
 ## 核心能力
 
@@ -215,7 +216,7 @@ uv sync --extra desktop --extra llm
 ## HTTP API（可选，自托管）
 
 FastAPI Battery 提供以下端点；部署方式（Docker / Render Blueprint / VPS + Caddy）见
-[`docs/demo-deployment.md`](docs/demo-deployment.md)。
+[`docs/guides/demo-deployment.md`](docs/guides/demo-deployment.md)。
 
 ```bash
 GET  /health                  # {"status":"ok", ...}

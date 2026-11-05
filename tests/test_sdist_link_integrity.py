@@ -141,7 +141,7 @@ def test_sdist_internal_links_resolve() -> None:
         "docs/whitepaper.md",
         "docs/walkthrough/00-index.md",
         "docs/releases/v0.22.0.md",
-        "docs/demo-deployment.md",
+        "docs/guides/demo-deployment.md",
         "docs/figs/fig1_position.png",
     ],
 )
