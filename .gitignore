@@ -28,6 +28,8 @@ AGENTS.md
 htmlcov/
 .preview/
 .repowise/
+# 其它 AI 协作者工具的本地过程文件（计划 / 会话草稿，不入库）
+.zcode/
 
 # Editor / OS
 .idea/
