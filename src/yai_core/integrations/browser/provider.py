@@ -51,6 +51,7 @@ class BrowserProvider:
     Args:
         backend: 满足 :class:`BrowserBackend` 契约的后端（Playwright / 扩展 / 假实现）。
         policy: 来源白名单、敏感字段、审批与频率约束；默认宽松但可显式收紧。
+            未传、或传入但来源白名单为空 / 含 ``*`` 时会发 ``BrowserSecurityWarning``。
         on_diagnostic: 可选本地诊断回调（快照过期、来源拒绝等）。
     """
 
@@ -72,6 +73,14 @@ class BrowserProvider:
                 stacklevel=2,
             )
             policy = BrowserPolicy.development()
+        elif policy.origins_unrestricted:
+            warnings.warn(
+                "BrowserPolicy 没有来源白名单（allowed_origins 为空或含 '*'），"
+                "来源闸不构成安全边界；生产请用 BrowserPolicy.secure([...]) "
+                "显式列出来源。",
+                BrowserSecurityWarning,
+                stacklevel=2,
+            )
         self.backend = backend
         self.policy = policy
         # 可选后端能力：在导航/重定向阶段就拦截未授权文档请求，而不是等最终页面。

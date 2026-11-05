@@ -31,10 +31,10 @@
 4. **密钥与数据**：`.env` 已在 `.gitignore`，请勿提交真实 API Key；SQLite 访问全部
    使用参数化查询，不拼接 SQL。
 5. **可选执行适配器自带安全预设**：`BrowserProvider` / `DesktopProvider` 未显式传策略时
-   按开发/测试宽松默认工作并告警；生产必须用 `BrowserPolicy.secure(...)` /
-   `DesktopPolicy.secure(...)`。桌面侧至少声明一种进程身份——PID（精确匹配）/ 映像名 /
-   完整路径；窗口标题白名单与控件名称关键词只是过滤条件、不是安全边界，无进程身份的
-   策略同样会告警。
+   按开发/测试宽松默认工作并告警；**显式传入但边界没声明**同样告警——浏览器看来源白名单
+   为空或含 `*`（`BrowserPolicy.origins_unrestricted`），桌面看没有任何进程身份
+   （PID 精确匹配 / 映像名 / 完整路径）。窗口标题白名单与控件名称关键词只是过滤条件、
+   不是安全边界。生产必须用 `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`。
 
 ## 报告漏洞
 

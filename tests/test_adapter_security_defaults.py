@@ -72,6 +72,50 @@ def test_browser_provider_warns_on_permissive_default() -> None:
     assert not any(isinstance(item.message, BrowserSecurityWarning) for item in captured)
 
 
+def test_browser_warns_on_explicit_but_permissive_policy() -> None:
+    """显式传入但来源不受限也要告警（与桌面侧对齐）。"""
+    permissive = [
+        BrowserPolicy(),
+        BrowserPolicy.development(),
+        BrowserPolicy(allow_special_schemes=True),
+        # 只配了审批、没配来源白名单：is_permissive=False，但来源仍未受限，照样告警。
+        BrowserPolicy(require_approval_for=frozenset({"click"})),
+        BrowserPolicy(allowed_origins=frozenset({"*"})),
+    ]
+    for policy in permissive:
+        with pytest.warns(BrowserSecurityWarning, match="来源"):
+            BrowserProvider(_NoopBackend(), policy=policy)  # type: ignore[arg-type]
+
+
+def test_browser_origins_restricted_policy_does_not_warn() -> None:
+    policy = BrowserPolicy(allowed_origins=frozenset({"https://app.example.com"}))
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        provider = BrowserProvider(_NoopBackend(), policy=policy)  # type: ignore[arg-type]
+    assert not any(isinstance(item.message, BrowserSecurityWarning) for item in captured)
+    assert provider.policy.origins_unrestricted is False
+
+
+def test_browser_origins_unrestricted_is_a_different_axis_than_is_permissive() -> None:
+    """告警只认来源口径；审批配齐但来源全开时 is_permissive 仍为 False。"""
+    assert BrowserPolicy().origins_unrestricted is True
+    assert BrowserPolicy().is_permissive is True
+
+    approvals_only = BrowserPolicy(require_approval_for=frozenset({"click"}))
+    assert approvals_only.origins_unrestricted is True
+    assert approvals_only.is_permissive is False
+
+    wildcard = BrowserPolicy(
+        allowed_origins=frozenset({"*"}), require_approval_for=frozenset({"click"})
+    )
+    assert wildcard.origins_unrestricted is True
+    assert wildcard.is_permissive is False
+
+    restricted = BrowserPolicy(allowed_origins=frozenset({"https://app.example.com"}))
+    assert restricted.origins_unrestricted is False
+    assert restricted.is_permissive is False
+
+
 def test_desktop_secure_preset_requires_process_allowlist() -> None:
     with pytest.raises(ValueError):
         DesktopPolicy.secure([])
