@@ -182,11 +182,22 @@ class BrowserPolicy:
         return cls()
 
     @property
+    def origins_unrestricted(self) -> bool:
+        """来源白名单是否为空或含 ``*``——即来源闸不构成安全边界。
+
+        这是**安全告警**的口径：只要来源不受限就值得提醒，与是否配置了审批无关。
+        """
+        return not self.allowed_origins or "*" in self.allowed_origins
+
+    @property
     def is_permissive(self) -> bool:
-        """是否处于“来源全开 / 无额外审批”的宽松模式。"""
-        return (not self.allowed_origins or "*" in self.allowed_origins) and (
-            not self.require_approval_for
-        )
+        """是否处于“来源全开 **且** 未配置额外审批”的宽松模式。
+
+        与 :attr:`origins_unrestricted` 的区别：只配了审批、没配来源白名单时本属性为
+        False，但来源其实仍未受限——所以 ``BrowserProvider`` 的告警只认
+        :attr:`origins_unrestricted`，不认本属性。
+        """
+        return self.origins_unrestricted and not self.require_approval_for
 
     def allows_origin(self, url: str) -> bool:
         try:

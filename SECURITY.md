@@ -35,10 +35,12 @@
 4. **Secrets and data.** `.env` is in `.gitignore` — never commit real API keys. All SQLite access uses
    parameterized queries; SQL is never string-concatenated.
 5. **Optional execution adapters ship with secure presets.** `BrowserProvider` / `DesktopProvider`
-   default to a permissive development policy and emit a warning when used without one; production must
-   construct `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`. For Desktop, declare at least
-   one process identity — exact PID, image name, or full path. Window-title allowlists and control-name
-   keywords are filters, not security boundaries; a policy with no process identity also warns.
+   default to a permissive development policy and emit a warning when used without one; both also
+   warn when a policy is passed explicitly but leaves the boundary undeclared — for Browser an empty
+   or `*` origin allowlist (`BrowserPolicy.origins_unrestricted`), for Desktop the absence of any
+   process identity (exact PID, image name, or full path). Window-title allowlists and control-name
+   keywords are filters, not security boundaries. Production must construct
+   `BrowserPolicy.secure(...)` / `DesktopPolicy.secure(...)`.
 
 ## Reporting a vulnerability
 

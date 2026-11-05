@@ -60,7 +60,7 @@ v0.26 新增的每一项都先回答过同一个问题：**它属于 Core、Inte
 
 ## 4. Browser Provider：快照引用与"不宣称成功"
 
-`integrations/browser/provider.py` 的三条设计：
+`integrations/browser/provider.py` 的四条设计：
 
 1. **引用带版本**：每次 `observe()` 生成 `s<N>`，元素引用 `s<N>:<i>`；`_resolve()` 只接受
    最新快照，旧引用返回 `stale_ref` 并提示重新观察——避免页面重渲染后点错元素；
@@ -70,6 +70,9 @@ v0.26 新增的每一项都先回答过同一个问题：**它属于 Core、Inte
    由 `ToolExecutor` 做参数校验 / 权限 / 审批 / 收据 / 事件；来源白名单、密码框拒填、
    导航 gate 是**额外收紧**，不是替代。真实 Chromium / 系统 Chrome 已用
    `scripts/browser_smoke.py` 跑通一条完整任务（含来源闸与旧引用过期）。
+4. **来源白名单是安全边界**：未传 `policy`，或来源为空 / 含 `*`，都发
+   `BrowserSecurityWarning`（与桌面侧同口径）；`BrowserPolicy.origins_unrestricted` 只看
+   来源，`is_permissive` 还要求没配审批——告警只认前者。
 
 ## 5. Windows Desktop Provider：语义优先、焦点保护、用户接管
 

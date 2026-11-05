@@ -80,8 +80,11 @@ desktop = DesktopProvider(backend, policy=desktop_policy)
 ```
 
 - 不传 `policy` 时二者仍按开发/测试宽松默认工作，但会发出
-  `BrowserSecurityWarning` / `DesktopSecurityWarning`；桌面侧**显式传入但没有进程身份**
-  （例如只有标题白名单）同样告警——标题可被伪造或复用，不构成安全边界。生产环境必须显式配置。
+  `BrowserSecurityWarning` / `DesktopSecurityWarning`；**显式传入但边界没声明**也会告警：
+  浏览器看"来源白名单为空或含 `*`"（`BrowserPolicy.origins_unrestricted`），桌面看
+  "没有任何进程身份"（`DesktopPolicy.is_permissive`）。标题白名单、控件名称关键词都不构成
+  安全边界。另注意 `BrowserPolicy.is_permissive` 要求"来源不受限 **且** 没配审批"，所以
+  只配了审批、没配来源的策略它为 False，但来源仍未受限——告警只认来源口径。
 - 进程身份白名单是"或"关系，且 **PID 精确匹配**（`123` 不放行 `1234`，避免 PID 复用后误操作）；
   映像名与路径大小写不敏感、路径分隔符 `/` 与 `\` 等价；空值不会被当成通配。
   PID 只在本次进程生命周期内有效，长期运行建议声明映像名或完整路径。

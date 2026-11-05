@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Changed
+
+- **浏览器侧安全告警与桌面对齐**：`BrowserProvider` 现在对"显式传入但来源不受限"的策略也发
+  `BrowserSecurityWarning`（`allowed_origins` 为空或含 `*`），不再只在未传 `policy` 时告警；
+  新增 `BrowserPolicy.origins_unrestricted` 只看来源口径（`is_permissive` 保持"来源不受限 +
+  未配审批"的旧语义，文档写明两者区别）。仅告警变化，不改变执行结果或审批行为。
+
 ## [v0.27.1] - 2026-11-03
 
 ### Changed
