@@ -51,7 +51,7 @@ benchmark_out/
 models/*
 !models/README.md
 
-# ===== 本地工作过程稿（调研 / 方案 / 赛事过程，只提交核心内容，不入库）=====
+# ===== 本地工作过程稿（调研 / 方案 / 过程稿，只提交核心内容，不入库）=====
 # 给 Codex / AI 协作者的本地交接目录（工作过程）
 inbox/
 
@@ -67,9 +67,6 @@ inbox/
 /docs/宣传视频-代码生成提示词.md
 /docs/工具管理永久保留-落地方案.md
 /docs/终端工艺视觉-设计系统与改造任务书.md
-
-# 赛事过程材料（报名 / 邮件 / 录制 / 脚本，可能含私密信息，不入库）
-/docs/competitions/
 
 # Playwright MCP 本地运行产物（页面快照 / console 记录）
 .playwright-mcp/
