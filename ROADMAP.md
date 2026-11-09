@@ -345,6 +345,16 @@
 - **明确未做**：本机 IPC（发现文件 / token / HMAC grant）、常驻子核、manifest 热更新、
   每 edge 配额、预算跨核聚合、跨核事务 —— 留待 Phase 2。
 
+### v0.29.0 — 有向父子核 Phase 2（本机 IPC）（tag 2026-11-10，已完成）
+
+- **`ChildServer` / `LinkChild`（宿主层）**：loopback TCP + NDJSON JSON-RPC；发现文件（0600）+
+  握手 token；HMAC grant（密钥只在子核进程内）；`health` / `tools.list` / `tools.call`；
+  跨进程调用链注入环检测；deadline / 断连 / 非法 grant 失败关闭。
+- **示例与测试**：`examples/host_m_federation/child_app.py` + `ipc_demo.py`（双进程 demo）；
+  `tests/test_federation_ipc.py`（7 例），联邦测试合计 19 例。
+- **未做（Phase 3 起）**：manifest 热更新、常驻子核生命周期托管、每 edge 配额、
+  预算跨核聚合、跨核事务、断线自动重连。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
