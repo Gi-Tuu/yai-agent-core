@@ -24,6 +24,76 @@
 <p align="center"><b>一个浮窗，就是一个数字员工。</b> 对话为主体，思考链与工具调用折叠成“TRACE // 推理过程 N 步”；
 路由、能力缺口、新工具飞入、授权卡全部由真实内核事件驱动。截图数据均为虚构。</p>
 
+## 30 秒跑起来
+
+只装库、零 Key、离线可跑 —— 内核本体零第三方硬依赖：
+
+```bash
+pip install yai-agent-core
+```
+
+```python
+import asyncio
+from yai_core import AgentCore, ScriptedModel, ModelResponse, ToolCallRequest, build_spec
+
+def search_notes(keyword: str) -> list[str]:
+    """搜索宿主笔记库。"""            # 你自己的普通业务函数，没有任何 Agent 代码
+    return {"周报": ["Core 骨架", "工具调用"]}.get(keyword, [])
+
+# 离线确定性模型（真实上线整体换成 OpenAICompatProvider）：先调工具，再给结论
+model = ScriptedModel([
+    ModelResponse(content="", tool_calls=[ToolCallRequest(id="c1", name="search_notes",
+                 arguments={"keyword": "周报"})]),
+    ModelResponse(content="本周周报 2 条。"),
+])
+core = AgentCore(model)
+core.register_tools([build_spec(search_notes)])      # 内省 type hints / docstring 生成工具
+print(asyncio.run(core.run("搜索周报并总结")).final_text)   # 本周周报 2 条。
+```
+
+仓库里有一个更完整的版本（两个工具 + 事件流，约 100 行），能直接看到内核替你做决策：
+
+```bash
+python examples/quickstart.py
+# 工具（自动内省）： ['search_notes', 'archive_note']
+# [路由] 选定策略：react
+# [工具] search_notes({'keyword': '周报'})
+# [工具] archive_note({'title': 'Core 骨架'})
+# [完成] 本周周报 3 条，已归档「Core 骨架」。
+```
+
+接真实模型只换一行（`[llm]` extra，OpenAI 兼容 DeepSeek / 通义 / OpenAI / Agnes）：
+
+```python
+from yai_core import OpenAICompatProvider
+model = OpenAICompatProvider()      # 读 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
+```
+
+用 Claude 系列换 `[anthropic]` extra（同一套 `ModelProvider` 契约，翻译在适配器里做完）：
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # 读 ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
+```
+
+> 首次运行会看到一条 `ProductionSafetyWarning`：内核在提醒你生产环境要显式配置权限策略。
+> 示例为了 30 秒跑通保持默认（全放行），生产配置见
+> [`docs/guides/production-permissions.md`](docs/guides/production-permissions.md)。
+
+**想跑全部宿主与全部测试**（克隆仓库，离线，无需 Key）：
+
+```bash
+uv venv
+uv pip install -e ".[dev,llm,server]"
+uv run python scripts/smoke_test.py           # 同一 Core 自适应多个不同宿主
+uv run python scripts/demo_governance_loop.py # 治理闭环：请求 → 审批拦截 → 执行 → trace
+uv run python scripts/check_all.py            # 全部门禁：lint / 类型 / 测试 / 覆盖率 / 冒烟
+```
+
+第一次读代码：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线，[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是逐行讲解，
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) 是**能力与证据索引**（已验证 / 未真机验证 / 不做 三档），
+[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) 是全部文档的总索引。
+
 ## 这是什么
 
 YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 框架。它是一个**跑在你软件进程里的内核**：
@@ -52,65 +122,6 @@ YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 
 | 内核第三方硬依赖 | — | 通常较多 | **0**（全部可选、懒加载） |
 
 > 数据库类比：平台是云数据库控制台，框架是 ORM，**YAI 是 SQLite** —— 不抢主角，安静地嵌进你的程序。
-
-## 30 秒跑起来
-
-**路线 A · 只装库、零 Key 验证嵌入**（不必克隆、不必申请模型）。内核本体零第三方硬依赖：
-
-```bash
-pip install yai-agent-core
-```
-
-> 想尝鲜 main 上尚未发版的最新提交，再用源码安装：
-> `pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"`
-
-```python
-import asyncio
-from yai_core import AgentCore, ScriptedModel, ModelResponse, ToolCallRequest, build_spec
-
-def search_notes(keyword: str) -> list[str]:
-    """搜索宿主笔记库。"""                # 你自己的普通业务函数，没有任何 Agent 代码
-    return {"周报": ["Core 骨架", "工具调用"]}.get(keyword, [])
-
-# 离线确定性模型（真实上线整体换成 OpenAICompatProvider）：先调工具，再给结论
-model = ScriptedModel([
-    ModelResponse(content="", tool_calls=[ToolCallRequest(id="c1", name="search_notes",
-                 arguments={"keyword": "周报"})]),
-    ModelResponse(content="本周周报 2 条。"),
-])
-core = AgentCore(model)
-core.register_tools([build_spec(search_notes)])      # 内省 type hints / docstring 生成工具
-print(asyncio.run(core.run("搜索周报并总结")).final_text)   # 本周周报 2 条。
-```
-
-接真实模型只需换一行（`[llm]` extra，OpenAI 兼容 DeepSeek / 通义 / OpenAI / Agnes）：
-
-```python
-from yai_core import OpenAICompatProvider
-model = OpenAICompatProvider()      # 读 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
-```
-
-用 Claude 系列则换 `[anthropic]` extra（同一套 `ModelProvider` 契约，翻译在适配器里做完）：
-
-```python
-from yai_core import AnthropicProvider
-model = AnthropicProvider()         # 读 ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
-```
-
-**路线 B · 克隆仓库，跑全部宿主与测试**（离线，无需 Key）：
-
-```bash
-uv venv
-uv pip install -e ".[dev,llm,server]"
-uv run python scripts/smoke_test.py   # 同一 Core 自适应多个不同宿主
-uv run python scripts/demo_governance_loop.py  # 一条命令看完治理闭环：请求 → 审批拦截 → 执行 → trace
-uv run python scripts/check_all.py    # 一条命令跑完全部门禁：lint / 类型 / 测试 / 覆盖率 / 冒烟
-uv run pytest                         # 全量测试，不需要 API Key
-```
-
-第一次读代码：[`docs/reading-guide.md`](docs/reading-guide.md) 是学习路线，[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) 是逐行讲解，
-[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) 是**能力与证据索引**（已验证 / 未真机验证 / 不做 三档），
-[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) 是全部文档的总索引。
 
 ## 核心能力
 

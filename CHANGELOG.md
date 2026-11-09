@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **零 Key QuickStart 示例**：`examples/quickstart.py`（两个普通函数 → 工具 → 事件流，约 100 行，
+  离线可跑）；`tests/test_quickstart_example.py` 用子进程真实执行，防止 README 第一屏的承诺腐烂。
+- **README 首屏重构**：中英 README 把「30 秒跑起来」提到截图之后、能力表之前，补充
+  `python examples/quickstart.py` 的真实输出、首次运行的 `ProductionSafetyWarning` 说明与生产配置链接。
+
 ### Changed
 
 - **浏览器侧安全告警与桌面对齐**：`BrowserProvider` 现在对"显式传入但来源不受限"的策略也发
