@@ -335,6 +335,16 @@
 - **有向父子核设计**：ADR 0008 + `docs/guides/federation.md`（协议 v1：本机 loopback
   JSON-RPC、grant、治理继承、失败语义、分期）；仅设计，实现自 v0.28 起。
 
+### v0.28.0 — 有向父子核 Phase 1（进程内）（tag 2026-11-09，已完成）
+
+- **`shell/federation/`（宿主层，内核零改动）**：`CoreGrant` / `ChildCore` / `Federation` ——
+  父核把子核工具子集注册为 `<prefix>__<tool>`；子核不持有父核引用，反向调用无路可走；
+  grant 绑定子核身份 / 工具子集 / subject / 有效期；父核策略 + 子核策略双防线；
+  深度 ≤3、扇出、环检测、调用超时、失败隔离。
+- **测试与示例**：`tests/test_federation.py`（12 例）、`examples/host_m_federation/` 离线示例。
+- **明确未做**：本机 IPC（发现文件 / token / HMAC grant）、常驻子核、manifest 热更新、
+  每 edge 配额、预算跨核聚合、跨核事务 —— 留待 Phase 2。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）

@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.27.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.28.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -263,7 +263,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **v0.27.3（已完成，当前发布版本）**：文档与设计批次——文档站上线（mkdocs-material + GitHub Pages，179 页）、docs 内 23 处仓库根链接站点化、新增有向父子核设计（ADR 0008 + 协议 v1 设计稿）；内核行为无变化
+- **v0.28.0（已完成，当前发布版本）**：有向父子核 Phase 1（进程内）——父产品里的核把子产品核声明的工具注册成自己的工具，子核无路反调；grant 限定工具子集/主体/有效期，双防线治理、深度/扇出/环检测、失败隔离；新增 `examples/host_m_federation` 离线示例。内核零改动，本机 IPC 为 Phase 2
+- **v0.27.3（已完成）**：文档与设计批次——文档站上线（mkdocs-material + GitHub Pages，179 页）、docs 内 23 处仓库根链接站点化、新增有向父子核设计（ADR 0008 + 协议 v1 设计稿）；内核行为无变化
 - **v0.27.2（已完成）**：采用面批次——中英 README 首屏改为「30 秒可跑」，新增 `examples/quickstart.py` 零 Key 示例（两个工具 + 事件流，含子进程回归测试）；浏览器侧"显式但宽松"策略也发 `BrowserSecurityWarning`（`BrowserPolicy.origins_unrestricted`），与桌面侧口径对齐
 - **v0.27.1（已完成）**：安全补丁批次——桌面进程白名单由 PID 前缀匹配收紧为**精确匹配**，新增映像名 / 完整路径两种进程身份声明；仅标题白名单不再算安全边界（`secure()` 拒绝、显式宽松策略也告警）；`WindowInfo` 携带真实进程映像，被禁窗口的进程信息不进入模型上下文。全量 2386 项测试、内核覆盖率 93.12%，真机 `charmap.exe` 12/12
 - **v0.27.0（已完成）**：真实可靠性批次——MemoryVault/Bridge 并发写入 fail-closed、Browser/Desktop 安全默认值与重定向保护、浏览器执行路径 ADR 与受控 E2E、验收证据最终限幅、Windows 真实 UIA 与下拉选择、记忆评测扩量（114 条/60 query）、Windows 便携安装器/固定扩展 ID/升级回滚、MCP CDP 启动器。逐项证据与未验证边界见 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)
