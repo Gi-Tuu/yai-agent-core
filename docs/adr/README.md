@@ -11,3 +11,4 @@
 | [0005](0005-outcome-verification.md) | 执行收据与任务验收的边界 | 已采纳（v0.26.0，2026-11-03 发布） | 工具调用事实（收据）与目标达成事实（验收）分离，验收器由宿主提供 |
 | [0006](0006-browser-execution-unification.md) | 浏览器能力的两条执行路径与统一边界 | Accepted（2026-11-03，v0.27 B3） | 扩展只读快照与受控操作并存，边界明确、不宣称统一 |
 | [0007](0007-local-secret-storage.md) | 本地模型 Key 的存储边界与 SecretStore 方案 | Proposed（2026-11-03，v0.27 B4） | bridge.json 明文风险的治理方案；**加密尚未实现**，当前仍为明文落盘 |
+| [0008](0008-directed-federation.md) | 有向父子核（Directed Federation）的边界 | **Proposed（2026-11-09，设计稿）** | 父核可调子核、子核无路反调；联邦在宿主层实现，内核仍单 agent |
