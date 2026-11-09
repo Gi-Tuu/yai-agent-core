@@ -326,6 +326,15 @@
   `tests/test_quickstart_example.py`（子进程真实执行，Windows CI 强制 UTF-8）。
 - **验证**：全量门禁通过；示例输出与 README 第一屏一致。
 
+### v0.27.3 — 文档站 + 父子核设计（tag 2026-11-09，已完成）
+
+- **文档站**：mkdocs-material 从 `docs/` 构建，GitHub Pages 上线
+  （gi-tuu.github.io/yai-agent-core/）；PR 只验证构建、main 才部署；
+  新增 `tests/test_docs_site.py` 守 nav 与"docs 内链接不逃出站点根"。
+- **文档链接站点化**：docs 内指向仓库根的 23 个相对链接改为绝对 GitHub URL。
+- **有向父子核设计**：ADR 0008 + `docs/guides/federation.md`（协议 v1：本机 loopback
+  JSON-RPC、grant、治理继承、失败语义、分期）；仅设计，实现自 v0.28 起。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
