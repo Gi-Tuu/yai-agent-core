@@ -5,6 +5,18 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **父子核 Phase 1（进程内）**：新增宿主层 `shell/federation/`（`CoreGrant` / `ChildCore` /
+  `Federation`）——父核把子核声明的工具子集注册成自己的工具（`<prefix>__<tool>`），
+  子核不持有父核引用，反向调用无路可走；grant 绑定子核身份 / 工具子集 / subject / 有效期；
+  父核策略与子核策略双防线；深度 ≤3、扇出、环检测、调用超时、失败隔离。
+  新增 `tests/test_federation.py`（12 例）与 `examples/host_m_federation/` 离线示例。
+  **内核零改动**；本机 IPC（Phase 2）未实现。
+- **文档**：ADR 0008 追加后记；`docs/guides/federation.md` 补 Phase 1 实现范围与限制。
+
 ## [v0.27.3] - 2026-11-09
 
 ### Added

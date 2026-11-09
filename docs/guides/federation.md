@@ -1,8 +1,19 @@
 # 有向父子核（Directed Federation）设计稿
 
-> 状态：**Phase 0 设计稿（2026-11-09），协议 v1 待评审，尚未实现。**
+> 状态：**Phase 1（进程内）已实现；Phase 2 本机 IPC 尚未开始。**
 > 决策背景与边界见 [ADR 0008](../adr/0008-directed-federation.md)。
 > 一句话：**每个产品里嵌一个独立核；父产品里的核可以调用子产品里的核，反之无路可走。**
+
+## 0. Phase 1 已实现范围（进程内）
+
+代码入口：`shell/federation/`；示例：`examples/host_m_federation/run.py`；测试：`tests/test_federation.py`。
+
+- **已实现**：把子核工具子集注册为父核工具（`<prefix>__<tool>`）；grant 校验子核身份 / 工具子集 /
+  过期；父核策略 + 子核策略双防线；深度、扇出、环检测；单次调用超时；子核失败以工具错误回流；
+  子核事件计数回流。
+- **未实现**：本机 IPC（发现文件 / token / HMAC 签名 grant）、常驻子核生命周期、manifest 热更新、
+  每 edge 配额、预算跨核聚合、跨核事务。
+- **边界**：Phase 1 的 grant 是进程内对象；下文协议 v1 是 Phase 2 的设计，字段语义一致。
 
 ## 1. 角色与拓扑
 

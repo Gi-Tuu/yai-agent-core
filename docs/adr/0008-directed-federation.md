@@ -49,6 +49,12 @@
 | C. 复用 `shell/employee` 扩展成常驻子核 | **采用** | 治理骨架现成；只需把"短命任务级"升级为"常驻可复用 + 通讯层" |
 | D. 有向 DAG + 本机 IPC（本 ADR） | **采用** | 方向性可结构性保证；轻量；与现有 sidecar/Bridge 形状一致 |
 
+## 后记
+
+- 2026-11-09：**Phase 1（进程内）已实现** —— `shell/federation/`（`CoreGrant` / `ChildCore` /
+  `Federation`）、`tests/test_federation.py`（12 例）、`examples/host_m_federation/`。
+  本机 IPC（Phase 2）与 HMAC 签名 grant 仍未实现；正文决策不变。
+
 ## 后果
 
 - 新增宿主层模块与协议文档；内核仍然单 agent、零第三方依赖。
