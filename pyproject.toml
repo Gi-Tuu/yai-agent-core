@@ -136,9 +136,12 @@ include = [
     "/docs/comparison.md",
     "/docs/comparison.en.md",
     "/docs/whitepaper.md",
-    # 能力与证据索引 / 文档总索引：README 的"第一次读代码"段落链接到它们。
+    # 能力与证据索引 / 文档总索引 / 文档站首页：README 与站点链接到它们。
     "/docs/IMPLEMENTATION_STATUS.md",
     "/docs/DOCUMENT_MAP.md",
+    # 文档站配置：tests/test_docs_site.py 会校验它，包内跑测试需要。
+    "/mkdocs.yml",
+    "/docs/index.md",
     "/docs/evaluations",
     "/docs/guides",
     "/docs/reports",
