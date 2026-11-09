@@ -1,0 +1,125 @@
+# 文档站配置（GitHub Pages）
+#
+# 构建：pip install "mkdocs-material>=9.5" && mkdocs build
+# 站点源 = docs/。本地过程稿（台账 / 方案 / 赛事材料）与构建产物不进站：
+# 它们本来就被 .gitignore 排除，这里再用 exclude_docs 显式挡一次，避免本地构建泄漏。
+#
+# 维护约定：新增公开文档时，要么进 nav，要么加进 not_in_nav 的对应目录；
+# tests/test_docs_site.py 会校验 nav 指向的文件存在、且 docs 内相对链接不逃出站点根。
+
+site_name: YAI Agent Core
+site_description: 进程内嵌入式、自适应的 Agent 内核 —— 给每个软件一颗会思考的心脏
+site_url: https://gi-tuu.github.io/yai-agent-core/
+repo_url: https://github.com/Gi-Tuu/yai-agent-core
+repo_name: Gi-Tuu/yai-agent-core
+edit_uri: edit/main/docs/
+copyright: MIT · Gi-Tuu
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+      # 默认 slugify 会丢掉中文，中文标题的 #锚点 全变成 "26" 这类 id；
+      # 换成 pymdownx 的 unicode slugify，与 GitHub 的锚点规则一致。
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - 首页: index.md
+  - 文档总索引: DOCUMENT_MAP.md
+  - 能力与证据: IMPLEMENTATION_STATUS.md
+  - 架构设计: architecture.md
+  - 学习路线: reading-guide.md
+  - 逐行讲义:
+      - 讲义总览: walkthrough/00-index.md
+  - 指南:
+      - 生产权限: guides/production-permissions.md
+      - 部署手册: guides/demo-deployment.md
+      - 扩展与 Bridge: guides/browser-extension-bridge.md
+      - 结构化追踪: guides/tracing.md
+      - 多语言宿主: guides/multilang-interop.md
+      - 执行审计持久化: guides/execution-audit-persistence.md
+      - 水平扩展与多租户: guides/deployment-scaling.md
+  - 评测与证据:
+      - 记忆质量: evaluations/memory-evaluation.md
+      - AgentDojo 注入评测: evaluations/agentdojo-evaluation.md
+      - 浏览器真实任务 E2E: evaluations/browser-task-e2e.md
+      - Windows 真机验证: evaluations/windows-real-apps.md
+      - 生态互操作: evaluations/ecosystem-interop.md
+      - 竞品核验: evaluations/competitor-openmuse-audit.md
+      - OpenSSF 自评: evaluations/openssf-best-practices-self-assessment.md
+      - Side Panel 人工验收: evaluations/sidepanel-manual-acceptance.md
+  - 报告:
+      - 审计整改（v0.26）: reports/audit-remediation-2026-11.md
+      - v0.26 交付报告: reports/v026-交付报告.md
+  - 架构决策（ADR）: adr/README.md
+  - 白皮书: whitepaper.md
+  - 与平台/框架对比: comparison.md
+  - English:
+      - Architecture: architecture.en.md
+      - Comparison: comparison.en.md
+      - Deployment & scaling: guides/deployment-scaling.en.md
+      - Tracing: guides/tracing.en.md
+
+# 未放进 nav 但仍构建（可被正文链接直接打开）。
+not_in_nav: |
+  /walkthrough/*
+  /releases/*
+  /adr/000*.md
+
+# 本地过程稿与构建产物：即使本机存在也不进站。
+exclude_docs: |
+  competitions/
+  exports/
+  项目台账*.md
+  检查点A-*.md
+  YAI*.md
+  产品化更新方案.md
+  内部-*.md
+  宣传视频-*.md
+  工具管理永久保留-*.md
+  终端工艺视觉-*.md
+  v025-audit-report.md
+  v025-执行落地方案.md
+  v026-执行记录.md
+  v028-*.md

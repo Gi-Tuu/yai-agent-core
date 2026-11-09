@@ -7,7 +7,7 @@
 > 源代码：GitHub `Gi-Tuu/yai-agent-core`　·　Gitee `Gi-Tuu/yai-agent-core`
 > 软件包：PyPI `yai-agent-core`　·　许可证：MIT
 
-> 说明：本文是技术白皮书，最初成稿于 v0.11.0，此后随内核演进持续更新到 v0.25.0；文中标注版本的小节（如 4.12 / 4.13 自 v0.12 起生效）以对应小节为准，最新版本、能力清单与工程数字以 [README](../README.md) / [ROADMAP](../ROADMAP.md) / [CHANGELOG](../CHANGELOG.md) 为准。
+> 说明：本文是技术白皮书，最初成稿于 v0.11.0，此后随内核演进持续更新到 v0.25.0；文中标注版本的小节（如 4.12 / 4.13 自 v0.12 起生效）以对应小节为准，最新版本、能力清单与工程数字以 [README](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.md) / [ROADMAP](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) / [CHANGELOG](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) 为准。
 
 | 项目 | 说明 |
 |---|---|

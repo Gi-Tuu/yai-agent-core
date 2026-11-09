@@ -7,16 +7,20 @@
 > 维护约定：新增 / 移动 / 改名文档必须同步本表与 `pyproject.toml` 的 sdist 白名单；
 > 链接有效性由 `tests/test_sdist_link_integrity.py` 自动把关。除特别注明外，
 > 公开文档全随 sdist 分发（规则：**被 git 跟踪的公开文档全进包**）。
+>
+> **线上文档站**：https://gi-tuu.github.io/yai-agent-core/ —— 本目录由 `mkdocs.yml`
+> 构建发布到 GitHub Pages；新增公开文档时同步 nav 或 `not_in_nav`，
+> `tests/test_docs_site.py` 会校验 nav 路径与"docs 内链接不逃出站点根"。
 
 ## 一、根目录门面（中英成对维护，事实性改动必须两边同步）
 
 | 文档 | 语言 | 一句话 |
 |---|---|---|
-| [README.md](../README.md) / [README.en.md](../README.en.md) | 中 / 英 | 项目门面：定位、30 秒上手、核心能力、宿主示例 |
-| [CONTRIBUTING.md](../CONTRIBUTING.md) / [CONTRIBUTING.en.md](../CONTRIBUTING.en.md) | 中 / 英 | 贡献流程 + 维护者操作手册（发版、门禁） |
-| [SECURITY.md](../SECURITY.md) / [SECURITY.zh-CN.md](../SECURITY.zh-CN.md) | 英 / 中 | 安全政策：支持版本表、漏洞报告渠道（路径被测试钉住） |
-| [CHANGELOG.md](../CHANGELOG.md) | 中 | 逐版本变更（版本与变更事实的最终准绳） |
-| [ROADMAP.md](../ROADMAP.md) | 中 | 方向与边界：已完成各版本、候选、明确不做 |
+| [README.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.md) / [README.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.en.md) | 中 / 英 | 项目门面：定位、30 秒上手、核心能力、宿主示例 |
+| [CONTRIBUTING.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.md) / [CONTRIBUTING.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.en.md) | 中 / 英 | 贡献流程 + 维护者操作手册（发版、门禁） |
+| [SECURITY.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.md) / [SECURITY.zh-CN.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.zh-CN.md) | 英 / 中 | 安全政策：支持版本表、漏洞报告渠道（路径被测试钉住） |
+| [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) | 中 | 逐版本变更（版本与变更事实的最终准绳） |
+| [ROADMAP.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) | 中 | 方向与边界：已完成各版本、候选、明确不做 |
 
 ## 二、docs/ 根层：架构与定位
 
@@ -73,19 +77,19 @@
 ## 八、docs/releases/ —— GitHub Release 正文源稿（21 篇）
 
 v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿，当时未单独成稿）；
-唯一入口是 [CHANGELOG.md](../CHANGELOG.md) 头部的 `docs/releases/` 链接，逐条变更以 CHANGELOG 为准。
+唯一入口是 [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) 头部的 `docs/releases/` 链接，逐条变更以 CHANGELOG 为准。
 
 ## 九、其它子目录 README
 
 随包分发（可直接点）：
-[benchmarks/agentdojo](../benchmarks/agentdojo/README.md) ·
-[benchmarks/memory](../benchmarks/memory/README.md) ·
-[examples/host_g_sandbox](../examples/host_g_sandbox/README.md) ·
-[examples/host_i_mealie](../examples/host_i_mealie/README.md) ·
-[examples/host_j_actual](../examples/host_j_actual/README.md) ·
-[examples/host_k_multimodal](../examples/host_k_multimodal/README.md) ·
-[examples/host_l_sidecar_node](../examples/host_l_sidecar_node/README.md) ·
-[shell/desktop/fonts](../shell/desktop/fonts/README.md)。
+[benchmarks/agentdojo](https://github.com/Gi-Tuu/yai-agent-core/blob/main/benchmarks/agentdojo/README.md) ·
+[benchmarks/memory](https://github.com/Gi-Tuu/yai-agent-core/blob/main/benchmarks/memory/README.md) ·
+[examples/host_g_sandbox](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_g_sandbox/README.md) ·
+[examples/host_i_mealie](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_i_mealie/README.md) ·
+[examples/host_j_actual](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_j_actual/README.md) ·
+[examples/host_k_multimodal](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_k_multimodal/README.md) ·
+[examples/host_l_sidecar_node](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_l_sidecar_node/README.md) ·
+[shell/desktop/fonts](https://github.com/Gi-Tuu/yai-agent-core/blob/main/shell/desktop/fonts/README.md)。
 
 仅仓库可见（**不在 sdist 白名单，只列名字不发链接**）：`packaging/extension/README.md`、
 `packaging/windows/README.md`、`fuzzing/README.md`、`models/README.md`、
