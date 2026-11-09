@@ -9,6 +9,11 @@
 
 ### Added
 
+- **有向父子核（Directed Federation）设计稿**：新增 [ADR 0008](docs/adr/0008-directed-federation.md)
+  与 [docs/guides/federation.md](docs/guides/federation.md) —— 产品生态里父核可调用子核、
+  子核无路反调；联邦在宿主层（`shell/federation/`）实现，内核仍单 agent、零第三方依赖；
+  含协议 v1（本机 loopback JSON-RPC + 发现文件 + grant）、治理继承、失败语义与分期计划。
+  **仅设计，尚未实现**。
 - **文档站（GitHub Pages）**：`mkdocs.yml` + `docs/index.md` 落地页 + `.github/workflows/docs.yml`
   （PR 只验证构建、main 才部署）；新增 `tests/test_docs_site.py` 守 nav 路径存在与
   "docs 内相对链接不逃出站点根"；中英 README 与 `DOCUMENT_MAP` 增加文档站入口。
