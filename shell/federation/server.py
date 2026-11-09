@@ -85,27 +85,15 @@ class DiscoveryInfo:
         path = directory / f"{self.node_id}.json"
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.to_dict(), ensure_ascii=False), encoding="utf-8")
-        with os.chmod(tmp, 0o600) if os.name == "posix" else _noop_chmod(tmp):
-            pass
+        if os.name == "posix":
+            os.chmod(tmp, 0o600)
+        # Windows：chmod 语义受限，这里不做虚假承诺；文件仍在用户数据目录下。
         os.replace(tmp, path)
         return path
 
     @classmethod
     def read(cls, path: Path) -> DiscoveryInfo:
         return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
-
-
-class _noop_chmod:
-    """Windows 上 chmod 语义受限：显式空操作，避免误以为设了 0600。"""
-
-    def __init__(self, _path: Path) -> None:
-        pass
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, *exc: Any) -> None:
-        return None
 
 
 class ChildServer:
