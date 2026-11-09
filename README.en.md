@@ -26,6 +26,83 @@
 chain and tool calls collapse into "Process · N steps". Routing, capability gaps, newly discovered tools
 flying in, and approval cards are all driven by real kernel events. All data shown is fictional.</p>
 
+## Running in 30 seconds
+
+Install the package and verify embedding with zero API key — the kernel itself has zero third-party hard
+dependencies:
+
+```bash
+pip install yai-agent-core
+```
+
+```python
+import asyncio
+from yai_core import AgentCore, ScriptedModel, ModelResponse, ToolCallRequest, build_spec
+
+def search_notes(keyword: str) -> list[str]:
+    """Search the host's note database."""   # your own ordinary business function — no agent code
+    return {"weekly-report": ["Core skeleton", "tool calls"]}.get(keyword, [])
+
+# Offline deterministic model (swap for OpenAICompatProvider in production): calls the tool, then concludes.
+model = ScriptedModel([
+    ModelResponse(content="", tool_calls=[ToolCallRequest(id="c1", name="search_notes",
+                 arguments={"keyword": "weekly-report"})]),
+    ModelResponse(content="2 items in the weekly report."),
+])
+core = AgentCore(model)
+core.register_tools([build_spec(search_notes)])      # introspects type hints / docstring into a tool schema
+print(asyncio.run(core.run("Search the weekly report and summarize")).final_text)
+```
+
+A fuller version (two tools + event stream, ~100 lines) lives in the repo and shows the kernel making the
+routing decisions for you:
+
+```bash
+python examples/quickstart.py
+# tools (introspected): ['search_notes', 'archive_note']
+# [route] react
+# [tool] search_notes({'keyword': '周报'})
+# [tool] archive_note({'title': 'Core 骨架'})
+# [done] 本周周报 3 条，已归档「Core 骨架」。
+```
+
+Using a real model is a one-line change (`[llm]` extra; OpenAI-compatible DeepSeek / Qwen / OpenAI / Agnes):
+
+```python
+from yai_core import OpenAICompatProvider
+model = OpenAICompatProvider()      # reads OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
+```
+
+For Claude-family models use the `[anthropic]` extra (same `ModelProvider` contract; the Messages-API
+translation lives entirely in the adapter):
+
+```python
+from yai_core import AnthropicProvider
+model = AnthropicProvider()         # reads ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
+```
+
+> The first run prints a `ProductionSafetyWarning`: the kernel is reminding you to declare an explicit
+> permission policy in production. The example keeps the permissive default so it runs in 30 seconds; see
+> [`docs/guides/production-permissions.md`](docs/guides/production-permissions.md).
+
+**Run every host and every test** (clone the repo; offline, no key needed):
+
+```bash
+uv venv
+uv pip install -e ".[dev,llm,server]"
+uv run python scripts/smoke_test.py           # one Core adapting to several different hosts
+uv run python scripts/demo_governance_loop.py # the whole governance loop: request → approval → execute → trace
+uv run python scripts/check_all.py            # every local gate: lint / types / tests / coverage / smoke
+```
+
+New to the code? [`docs/reading-guide.md`](docs/reading-guide.md) is the learning path (zh-CN) and
+[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) is the line-by-line walkthrough (zh-CN).
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) is the capability/evidence index
+(verified · implemented but not machine-verified · explicitly not done);
+[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) is the full document map.
+For architecture in English see [`docs/architecture.en.md`](docs/architecture.en.md) and
+[`docs/comparison.en.md`](docs/comparison.en.md).
+
 ## What is this
 
 YAI is not another chatbot, nor an agent framework you assemble by following a tutorial. It is a **kernel
@@ -60,72 +137,6 @@ that runs inside your software's process**:
 
 > Database analogy: platforms are cloud database consoles, frameworks are ORMs, **YAI is SQLite** — it never
 > steals the spotlight; it quietly embeds into your program.
-
-## Running in 30 seconds
-
-**Path A · Install the package only, verify embedding with zero API key** (no clone, no model signup). The
-kernel itself has zero third-party hard dependencies:
-
-```bash
-pip install yai-agent-core
-```
-
-> To track unreleased commits on `main`, install from source instead:
-> `pip install "yai-agent-core @ git+https://github.com/Gi-Tuu/yai-agent-core.git"`
-
-```python
-import asyncio
-from yai_core import AgentCore, ScriptedModel, ModelResponse, ToolCallRequest, build_spec
-
-def search_notes(keyword: str) -> list[str]:
-    """Search the host's note database."""          # your own ordinary business function — no agent code
-    return {"weekly-report": ["Core skeleton", "tool calls"]}.get(keyword, [])
-
-# Offline deterministic model (swap the whole thing for OpenAICompatProvider in production):
-# it calls the tool first, then gives the conclusion.
-model = ScriptedModel([
-    ModelResponse(content="", tool_calls=[ToolCallRequest(id="c1", name="search_notes",
-                 arguments={"keyword": "weekly-report"})]),
-    ModelResponse(content="2 items in the weekly report."),
-])
-core = AgentCore(model)
-core.register_tools([build_spec(search_notes)])      # introspects type hints / docstring to build the tool
-print(asyncio.run(core.run("Search the weekly report and summarize")).final_text)
-```
-
-Using a real model is a one-line change (`[llm]` extra; OpenAI-compatible DeepSeek / Qwen / OpenAI / Agnes):
-
-```python
-from yai_core import OpenAICompatProvider
-model = OpenAICompatProvider()      # reads OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL
-```
-
-For Claude-family models use the `[anthropic]` extra (same `ModelProvider` contract; the
-Messages-API translation lives entirely in the adapter):
-
-```python
-from yai_core import AnthropicProvider
-model = AnthropicProvider()         # reads ANTHROPIC_API_KEY / ANTHROPIC_MODEL / ANTHROPIC_STRONG_MODEL
-```
-
-**Path B · Clone the repo and run every host and test** (offline, no key needed):
-
-```bash
-uv venv
-uv pip install -e ".[dev,llm,server]"
-uv run python scripts/smoke_test.py   # one Core adapting to several different hosts
-uv run python scripts/demo_governance_loop.py  # the whole governance loop in one command: request → approval → execute → trace
-uv run python scripts/check_all.py    # every local gate in one command: lint / types / tests / coverage / smoke
-uv run pytest                         # full test suite, no API key needed
-```
-
-New to the code? [`docs/reading-guide.md`](docs/reading-guide.md) is the learning path (zh-CN) and
-[`docs/walkthrough/00-index.md`](docs/walkthrough/00-index.md) is the line-by-line walkthrough (zh-CN).
-[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) is the capability/evidence index
-(verified · implemented but not machine-verified · explicitly not done);
-[`docs/DOCUMENT_MAP.md`](docs/DOCUMENT_MAP.md) is the full document map.
-For architecture in English see [`docs/architecture.en.md`](docs/architecture.en.md) and
-[`docs/comparison.en.md`](docs/comparison.en.md).
 
 ## Core capabilities
 
