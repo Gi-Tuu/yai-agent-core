@@ -316,6 +316,16 @@
 - **真机验证（2026-11-03）**：`list_windows()` 在真实桌面 6/6 可见窗口取到映像名与完整
   路径；`scripts/windows_real_apps_smoke.py` 12/12（含精确 PID 白名单）。
 
+### v0.27.2 — 浏览器告警对齐 + 首屏 QuickStart（tag 2026-11-09，已完成）
+
+- **浏览器侧安全告警与桌面对齐**：`BrowserProvider` 对"显式传入但来源不受限"
+  （`allowed_origins` 为空或含 `*`）的策略也发 `BrowserSecurityWarning`；新增
+  `BrowserPolicy.origins_unrestricted` 只看来源口径，`is_permissive` 保持旧语义并在文档写明区别。
+- **采用面**：中英 README 首屏改为「30 秒跑起来」（截图之后、能力表之前）；新增
+  `examples/quickstart.py`（两个普通函数 → 工具 → 事件流，零 Key）与
+  `tests/test_quickstart_example.py`（子进程真实执行，Windows CI 强制 UTF-8）。
+- **验证**：全量门禁通过；示例输出与 README 第一屏一致。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
