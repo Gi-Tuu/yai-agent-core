@@ -5,6 +5,18 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **父子核 Phase 2（本机 IPC）**：新增 `shell/federation/server.py`（`ChildServer`）与 `link.py`
+  （`LinkChild`）——loopback TCP + NDJSON JSON-RPC、发现文件（0600）+ 握手 token、
+  **HMAC grant**（密钥只在子核进程内）、`health` / `tools.list` / `tools.call`、
+  跨进程调用链注入环检测、deadline / 断连 / 非法 grant 一律失败关闭。
+  新增 `tests/test_federation_ipc.py`（7 例）与双进程 demo `examples/host_m_federation/ipc_demo.py`
+  （子核退出后父核再连必须失败）。内核零改动。
+- **文档**：`docs/guides/federation.md` 更新为 Phase 1/2 已实现范围与协议要点；ADR 0008 后记。
+
 ## [v0.28.0] - 2026-11-09
 
 ### Added

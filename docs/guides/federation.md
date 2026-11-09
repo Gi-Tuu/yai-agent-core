@@ -1,19 +1,34 @@
 # 有向父子核（Directed Federation）设计稿
 
-> 状态：**Phase 1（进程内）已实现；Phase 2 本机 IPC 尚未开始。**
+> 状态：**Phase 1（进程内）与 Phase 2（本机 IPC）已实现；Phase 3 未开始。**
 > 决策背景与边界见 [ADR 0008](../adr/0008-directed-federation.md)。
 > 一句话：**每个产品里嵌一个独立核；父产品里的核可以调用子产品里的核，反之无路可走。**
 
-## 0. Phase 1 已实现范围（进程内）
+## 0. 已实现范围（Phase 1 / Phase 2）
 
-代码入口：`shell/federation/`；示例：`examples/host_m_federation/run.py`；测试：`tests/test_federation.py`。
+代码入口：`shell/federation/`；示例：`examples/host_m_federation/`；测试：`tests/test_federation.py`、
+`tests/test_federation_ipc.py`。
 
-- **已实现**：把子核工具子集注册为父核工具（`<prefix>__<tool>`）；grant 校验子核身份 / 工具子集 /
-  过期；父核策略 + 子核策略双防线；深度、扇出、环检测；单次调用超时；子核失败以工具错误回流；
-  子核事件计数回流。
-- **未实现**：本机 IPC（发现文件 / token / HMAC 签名 grant）、常驻子核生命周期、manifest 热更新、
-  每 edge 配额、预算跨核聚合、跨核事务。
-- **边界**：Phase 1 的 grant 是进程内对象；下文协议 v1 是 Phase 2 的设计，字段语义一致。
+- **Phase 1（进程内）**：子核工具子集注册为父核工具（`<prefix>__<tool>`）；grant 校验子核身份 /
+  工具子集 / 过期；父核策略 + 子核策略双防线；深度、扇出、环检测；超时；失败以工具错误回流。
+- **Phase 2（本机 IPC）**：`ChildServer`（loopback TCP + NDJSON JSON-RPC + 发现文件 0600 + token）与
+  `LinkChild`（父核侧长连接、请求多路复用）；握手签发 **HMAC grant**（密钥只在子核进程内）；
+  支持 `health` / `tools.list` / `tools.call`；跨进程调用把调用链注入环检测；超时 / 断连 / 非法 grant
+  一律失败关闭。
+- **未实现**：manifest 热更新、常驻子核生命周期托管（目前由宿主进程负责拉起与退出）、每 edge 配额、
+  预算跨核聚合、跨核事务、断连自动重连与 grant 重签。
+- **安全前提**：同 OS 用户；发现文件 0600 + token 防同机其他用户/进程；**不防 root / 调试器 / 内存抓取**。
+
+### Phase 2 协议实现要点
+
+| 项 | 实现 |
+|---|---|
+| 传输 | `127.0.0.1` 随机端口，NDJSON 每行一条 JSON-RPC 2.0 消息，单条 ≤ 1 MiB |
+| 发现文件 | `<data>/yai-federation/<node_id>.json`：protocol / node_id / child_id / host / port / token / pid，权限 0600（Windows 上 chmod 语义受限，见 `_noop_chmod`） |
+| 握手 | `federation.handshake`：校验协议版本 + token + 父核允许列表 → 返回 manifest 子集 + HMAC grant |
+| 调用 | `federation.tools.call`：校验 grant 签名 / 过期 / 工具子集 / 子核身份；`deadline_ms` 可选 |
+| 健康 | `federation.health`：进程存活 + 子核身份 + 协议版本 + 工具数 |
+| 错误 | `grant_invalid` / `protocol_error` / `deadline_exceeded` / 连接断开 → 父核侧 `ChildUnavailable` 或工具失败回流 |
 
 ## 1. 角色与拓扑
 

@@ -85,8 +85,11 @@ class Federation:
         - ``prefix`` 默认取子核产品名，用于避免与父核自有工具重名；
         - 任何一步不满足（重名 / 未知工具 / 空子集）都整体失败，不留半注册状态。
         """
-        if not isinstance(child, ChildCore):
-            raise TypeError("child 必须是 ChildCore 实例")
+        if not isinstance(child, ChildCore) and not all(
+            callable(getattr(child, name, None))
+            for name in ("manifest", "call")
+        ):
+            raise TypeError("child 必须是 ChildCore 或同形的 IPC 子核（LinkChild）")
         prefix = (prefix or child.product or child.node_id).strip()
         if not prefix:
             raise ValueError("子核前缀不能为空")
@@ -192,6 +195,7 @@ class Federation:
                             grant=grant,
                             subject=subject,
                             call_id=call_id,
+                            chain=chain,
                         )
                 except TimeoutError:
                     raise ChildCallFailed(

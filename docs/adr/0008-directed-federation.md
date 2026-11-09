@@ -54,6 +54,9 @@
 - 2026-11-09：**Phase 1（进程内）已实现** —— `shell/federation/`（`CoreGrant` / `ChildCore` /
   `Federation`）、`tests/test_federation.py`（12 例）、`examples/host_m_federation/`。
   本机 IPC（Phase 2）与 HMAC 签名 grant 仍未实现；正文决策不变。
+- 2026-11-10：**Phase 2（本机 IPC）已实现** —— `ChildServer` / `LinkChild`、发现文件（0600）+ token、
+  HMAC grant、`health` / `tools.list` / `tools.call`、双进程 demo 与 7 例 IPC 回归；
+  manifest 热更新、每 edge 配额、预算跨核聚合、跨核事务仍未实现（Phase 3 起）。
 
 ## 后果
 
