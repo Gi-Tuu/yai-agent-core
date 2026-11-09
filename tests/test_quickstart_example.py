@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,11 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_quickstart_example_runs_offline() -> None:
+    # ``PYTHONIOENCODING`` + ``-X utf8`` + 显式 UTF-8 解码：Windows CI 的默认控制台编码是
+    # charmap，子进程直接 print 中文会 UnicodeEncodeError，与示例本身无关。
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     completed = subprocess.run(
-        [sys.executable, str(ROOT / "examples" / "quickstart.py")],
+        [sys.executable, "-X", "utf8", str(ROOT / "examples" / "quickstart.py")],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
