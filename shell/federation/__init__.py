@@ -18,15 +18,27 @@ from shell.federation.grants import (
     FederationError,
     GrantDenied,
 )
+from shell.federation.link import LinkChild
 from shell.federation.node import ChildCore
 from shell.federation.parent import Federation
+from shell.federation.server import (
+    PROTOCOL_VERSION,
+    ChildServer,
+    DiscoveryInfo,
+    FederationProtocolError,
+)
 
 __all__ = [
     "ChildCallFailed",
     "ChildCore",
+    "ChildServer",
     "ChildUnavailable",
     "CoreGrant",
+    "DiscoveryInfo",
     "Federation",
     "FederationError",
+    "FederationProtocolError",
     "GrantDenied",
+    "LinkChild",
+    "PROTOCOL_VERSION",
 ]

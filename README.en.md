@@ -247,7 +247,7 @@ policy**; the kernel's default policy allows everything.</p>
 | 8 | `host_j_actual` | Third-party seeding "five-beat" line in the Actual Budget ledger app (discover a missing tool / delegate sub-employees; web on 8240) |
 | 9 | `host_k_multimodal` | Multimodal: the model only picks an image handle; the host resolves it and enforces scope / expiry / size |
 | 10 | `host_l_sidecar_node` | Language-agnostic host: Node spawns the sidecar, exposes tools via its own OpenAPI service, and answers approval requests |
-| 11 | `host_m_federation` | Parent-child cores Phase 1: an ATM parent core asks a document child core to record a transaction (directed, no key, offline) |
+| 11 | `host_m_federation` | Parent-child cores Phase 1/2: an ATM parent core asks a document child core to record a transaction; `run.py` (in-process) + `ipc_demo.py` (two processes, local IPC, no key) |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.

@@ -63,8 +63,13 @@ class ChildCore:
         grant: CoreGrant,
         subject: Any = None,
         call_id: str = "",
+        chain: tuple[str, ...] = (),
     ) -> dict[str, Any]:
-        """按 grant 执行一个子核工具；返回结构化结果（不抛子核业务错误）。"""
+        """按 grant 执行一个子核工具；返回结构化结果（不抛子核业务错误）。
+
+        ``chain`` 只对跨进程子核有意义（IPC 端会把它注入调用链，用于环检测），
+        进程内实现忽略它。
+        """
         grant.check(self.child_id, tool)
         if not self.core.registry.has(tool):
             raise GrantDenied(f"子核 {self.node_id!r} 没有工具 {tool!r}")
