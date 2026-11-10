@@ -66,6 +66,19 @@
 （explorer.exe / msedge.exe / …）与完整路径；取不到的窗口降级为空串，不阻塞枚举。
 这也意味着生产可以用 `allowed_process_names` / `allowed_process_paths` 替代易变的 PID。
 
+## Nightly 真机回归（v0.34 起，非阻塞）
+
+`.github/workflows/nightly-real.yml` 每天 03:17 UTC 跑一次真机回归（也可 `workflow_dispatch`
+手动触发），**不参与 PR 门禁**：
+
+- `windows-desktop`（windows-2025 runner）：`windows_uia_smoke.py --json` + `windows_real_apps_smoke.py`，
+  日志写入 artifact；两步 `continue-on-error`（托管 runner 的交互桌面不保证），结果以 artifact 为准；
+- `browser-real`（ubuntu runner）：真实 Chromium 跑 `browser_smoke.py` 与 `browser_provider_task_smoke.py`，
+  失败会让该 job 变红（真实信号）。
+
+本机 2026-11-10 复验（前置真实桌面 + Chromium）：UIA `ok=true`、charmap `12/12`、
+browser smoke `11 receipts` 全绿。
+
 ## 诚实边界
 
 - 只验证了一个系统自带应用（字符映射表）；**不代表任意 Windows 应用兼容**。

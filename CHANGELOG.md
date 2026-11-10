@@ -5,6 +5,17 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **真机 nightly 回归（非阻塞）**：新增 `.github/workflows/nightly-real.yml`（每日 03:17 UTC +
+  手动触发）——`browser-real` 在真实 Chromium 上跑 `browser_smoke.py` 与
+  `browser_provider_task_smoke.py`；`windows-desktop` 在 windows-2025 runner 上跑
+  `windows_uia_smoke.py` / `windows_real_apps_smoke.py`（两步 `continue-on-error`，
+  结果以 artifact 为准）。不参与 PR 门禁。本机 2026-11-10 复验三脚本全绿
+  （UIA ok / charmap 12/12 / browser 11 receipts）。
+
 ## [v0.33.0] - 2026-11-10
 
 ### Added

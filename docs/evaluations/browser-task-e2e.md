@@ -54,6 +54,16 @@
 - 协议级回归：`tests/test_sidecar_protocol.py` 覆盖“默认不注册 / 显式开启后
   审批 + 反向 tab_action/request + 工具结果”全链路。
 
+## Nightly 真机回归（v0.34 起，非阻塞）
+
+`.github/workflows/nightly-real.yml` 的 `browser-real` job 每天 03:17 UTC 在真实 Chromium 上跑：
+
+- `scripts/browser_smoke.py --json`：导航 / 观察 / 输入 / 下拉 / 点击 / 等待 / 再观察 + 来源闸 + 旧引用过期；
+- `scripts/browser_provider_task_smoke.py`：受控浏览器真实任务 E2E（3 次审批、收据链）；
+- 报告与截图写入 artifact（`artifacts/` + `docs/exports/`）。**失败会让 job 变红**，属于真实信号。
+
+本机 2026-11-10 复验：browser smoke `11 receipts`、截图 `docs/exports/browser-smoke.png`，全绿。
+
 **真实浏览器当前标签页 E2E 限制**：`activeTab` 授权必须来自用户手势，当前
 Playwright 自动化把侧边栏作为普通标签页打开，无法模拟真实 Side Panel 的用户点击；
 因此本环境只能验证协议链路与扩展静态行为，真实点击侧边栏的端到端仍需人工按
