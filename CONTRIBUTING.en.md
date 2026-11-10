@@ -158,6 +158,25 @@ cp .env.example .env              # Windows: copy .env.example .env
   code you'd otherwise have to write) before proposing a solution. Requests that don't fit the "embedded
   self-adaptive kernel" positioning may be suggested for a Battery or a separate repository.
 
+### Claiming a good first issue
+
+> `good first issue` is only a **GitHub discovery label** (it shows up in search, the Contribute
+> recommendations and third-party aggregators); it is not a claiming mechanism. Actual "occupancy" is
+> tracked here via the `claimed` label plus the comment thread.
+
+- **Comment before you code**: leave "I'll take this" plus a one-line plan on the issue; a maintainer
+  will confirm and add the `claimed` label.
+- **What `claimed` means**: someone is already working on it. Issues without `claimed` are still
+  available, but read the comments first to avoid duplicate work.
+- **One at a time**: keep at most one `claimed` issue in progress; claim the next one after your PR lands.
+- **Timeout release**: if there is no PR or visible progress within 7 days, a maintainer removes
+  `claimed` and returns the task to the pool. If you claimed it but cannot finish, just say so in a
+  comment.
+- **No permission needed**: fork the public repo and open a PR. A maintainer has to approve the Actions
+  run once for first-time contributors (GitHub's default protection) — that is not a review of you.
+- **Reference the issue in your PR**: write `Closes #<number>` so merging auto-closes it; if someone else
+  already claimed the issue, coordinate in the comments first.
+
 ## 8. License
 
 This project is released under the MIT license. Opening a PR means you agree your contribution is
