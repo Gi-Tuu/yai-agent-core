@@ -145,3 +145,9 @@ MCP Server · Multi-Agent 编排 · 内置向量数据库 · 内置 UI（桌面�
 - **Windows 符号链接竞态**只能收窄、不能根除（POSIX 有 `O_NOFOLLOW`）；对应测试在 Windows 跳过。
 - **桌面壳只在 Windows 真机验证**；60fps 数据仅来自 2560×1600 / dpr 1.5 一次采样。
 - **演示视频为旧版录制**，界面与当前桌面壳不同（能力点一致）。
+- **静态扫描提示（exec / 沙箱）**：仓库内有两处 `exec()`，分别在
+  `examples/host_g_sandbox/_worker.py`（教学沙箱）与 `shell/desktop/_sandbox_worker.py`
+  （桌面壳的 `SubprocessSandbox` 实现），都是**宿主侧一次性子进程**（`-I -S` 启动 + exec 前
+  AST 闸门 + 受限 `__builtins__`），不是内核能力；`src/yai_core/` 内**没有任何 `exec` / `eval`**，
+  内核只定义 `ToolSandbox` 契约、不内置执行器。第三方静态扫描把这两处标成"危险代码"时，
+  按此边界解读，别把它当成内核在跑代码。
