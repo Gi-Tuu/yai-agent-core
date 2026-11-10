@@ -405,6 +405,12 @@
 - **good-first-issue 种子**：5 个（OpenAPI 3.1 示例 / smoke --json / Go MCP 示例 /
   QML 离屏测试 / CONTRIBUTING 真机章节）。
 
+### v0.36.0 — 机器可读冒烟（tag 2026-11-11，已完成）
+
+- **社区贡献**（@chaser940428-pixel，#174 / #167）：`scripts/smoke_test.py --json` 输出单个
+  `{"ok": ..., "checks": [...]}` 对象；一个宿主失败仍检查另一个，任一失败退出 1，默认文本模式不变。
+- **文档实测行修正**：`IMPLEMENTATION_STATUS.md` 更新到 v0.36.0 / 2 451 项（2 446 passed、覆盖率 93.15%）。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）

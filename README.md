@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.35.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.36.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -267,7 +267,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **v0.35.0（已完成，当前发布版本）**：灵动岛面板跨核调用可视化（`CROSS-CORE` 摘要，失败变红）+ 桌面包惰性导出（CI 无 PySide 也能测纯逻辑）+ 5 个 good-first-issue 种子
+- **v0.36.0（已完成，当前发布版本）**：`scripts/smoke_test.py --json` 机器可读两宿主冒烟（社区贡献，失败仍检查另一宿主、退出码 0/1 明确）+ 文档实测行修正
+- **v0.35.0（已完成）**：灵动岛面板跨核调用可视化（`CROSS-CORE` 摘要，失败变红）+ 桌面包惰性导出（CI 无 PySide 也能测纯逻辑）+ 5 个 good-first-issue 种子
 - **v0.34.0（已完成）**：真机可信度——非阻塞 nightly（每日 03:17 UTC）在真实 Chromium 与 Windows UIA 上跑回归；本机复验三脚本全绿（UIA ok / charmap 12/12 / browser 11 receipts）
 - **v0.33.0（已完成）**：父子核生态落地——专员对象一行接成子核（`attach_specialists`）、usage 跨核聚合与 `max_tokens` 失败关闭、两个可安装子核示例（笔记 / 计算器）+ 双进程 hub demo；联邦测试 32 例
 - **v0.32.0（已完成）**：互操作批次——OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵（未翻译构造只记 notes）、类型化 Node/TS sidecar 客户端（`clients/node/`，5 例离线测试）、GHCR 容器镜像（tag 推送自动发布，provenance + SBOM）

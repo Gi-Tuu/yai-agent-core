@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.35.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.36.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -335,7 +335,8 @@ Prebuilt self-hosted image: `ghcr.io/gi-tuu/yai-agent-core:latest` (built on tag
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
 - **v0.23.0 (done)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **v0.25.0 (done)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
-- **v0.35.0 (done, current release)**: cross-core call visualization in the island panel (a `CROSS-CORE` summary, red on failures), lazy desktop package exports (pure logic testable without PySide in CI), and 5 good-first-issue seeds
+- **v0.36.0 (done, current release)**: machine-readable smoke results via `scripts/smoke_test.py --json` (community contribution; a failing host still lets the other run, explicit exit codes) plus a docs measurement correction
+- **v0.35.0 (done)**: cross-core call visualization in the island panel (a `CROSS-CORE` summary, red on failures), lazy desktop package exports (pure logic testable without PySide in CI), and 5 good-first-issue seeds
 - **v0.34.0 (done)**: real-machine credibility — a non-blocking nightly (daily 03:17 UTC) runs regressions on real Chromium and Windows UIA; three scripts re-verified locally (UIA ok / charmap 12/12 / browser 11 receipts)
 - **v0.33.0 (done)**: federation ecosystem landing — app objects become child cores in one call (`attach_specialists`), cross-core usage aggregation with `max_tokens` failing closed, and two installable child cores (notes / calculator) plus a two-process hub demo; 32 federation tests
 - **v0.32.0 (done)**: interop batch — OpenAPI 3.1 / JSON Schema 2020-12 compatibility matrix (untranslated constructs are reported as notes), a typed Node/TS sidecar client (`clients/node/`, 5 offline tests), and a GHCR container image (published on tag pushes with provenance + SBOM)

@@ -5,12 +5,18 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.36.0] - 2026-11-11
 
 ### Added
 
-- `scripts/smoke_test.py --json` 输出单个机器可读结果对象，逐宿主记录成功或失败；
-  任一失败退出 1，默认文本输出不变，内核不增加依赖。
+- **`scripts/smoke_test.py --json`**（社区贡献 @chaser940428-pixel，#174 / #167）：stdout 只输出
+  一个 `{"ok": ..., "checks": [...]}` 对象，逐宿主记录成功/失败与 `error`；任一失败退出 1，
+  默认文本模式行为与 Core 关闭规则不变，内核不增加依赖。
+
+### Changed
+
+- **文档实测行修正**：`docs/IMPLEMENTATION_STATUS.md` 的"当前 HEAD 实测"从 v0.33.0 / 2 442 项
+  更新为 v0.36.0 / 2 451 项（2 446 passed、5 skipped、内核行覆盖率 93.15%）。
 
 ## [v0.35.0] - 2026-11-10
 
