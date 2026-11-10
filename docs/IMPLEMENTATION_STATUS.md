@@ -7,6 +7,7 @@
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
 >
 > 一条命令自查：`python scripts/check_all.py`（全量门禁，离线）
+> 两宿主冒烟的机器可读结果：`python scripts/smoke_test.py --json`，stdout 仅输出一个包含 `ok` 和逐宿主 `checks` 的 JSON 对象；成功退出 0，失败退出 1。
 > 一条命令看治理闭环：`python scripts/demo_governance_loop.py`
 >
 > **当前 HEAD（v0.33.0 发布前）实测**：2 442 项收集、全量离线通过（5 项环境跳过）、

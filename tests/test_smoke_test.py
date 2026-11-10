@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 from functools import wraps
@@ -139,3 +140,62 @@ runpy.run_path(str(smoke_test.ROOT / "scripts" / "smoke_test.py"), run_name="__m
     assert completed.returncode != 0
     assert "冒烟失败: error" in completed.stderr
     assert "冒烟测试通过" not in completed.stdout
+
+
+def test_json_success_is_one_object_and_closes_both_hosts(closed_cores, capsys):
+    assert asyncio.run(smoke_test.main(json_output=True)) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "ok": True,
+        "checks": [
+            {"name": "host_a_notes", "ok": True},
+            {"name": "host_c_companion", "ok": True},
+        ],
+    }
+    assert len(closed_cores) == 2
+
+
+def test_json_tool_failure_still_checks_the_other_host(monkeypatch, closed_cores, capsys):
+    @wraps(smoke_test.notes_app.count_notes)
+    def fail() -> int:
+        raise RuntimeError("offline tool failure")
+
+    monkeypatch.setattr(smoke_test.notes_app, "count_notes", fail)
+    assert asyncio.run(smoke_test.main(json_output=True)) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is False
+    assert report["checks"][0]["name"] == "host_a_notes"
+    assert report["checks"][0]["ok"] is False
+    assert "冒烟失败: tool_result" in report["checks"][0]["error"]
+    assert report["checks"][1] == {"name": "host_c_companion", "ok": True}
+    assert len(closed_cores) == 2
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_json_cli_stdout_and_exit_status(failed):
+    root = Path(__file__).resolve().parents[1]
+    code = """
+import runpy, sys
+from scripts import smoke_test
+async def fail(*args, **kwargs):
+    raise RuntimeError("offline model failure")
+if sys.argv[1] == "fail":
+    smoke_test.OfflineScriptedModel.achat = fail
+sys.argv = [str(smoke_test.ROOT / "scripts" / "smoke_test.py"), "--json"]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-X", "utf8", "-c", code, "fail" if failed else "pass"],
+        cwd=root,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == (1 if failed else 0), completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["ok"] is not failed
+    assert len(report["checks"]) == 2
+    assert all(check["ok"] is not failed for check in report["checks"])
+    if failed:
+        assert all("冒烟失败: error" in check["error"] for check in report["checks"])
