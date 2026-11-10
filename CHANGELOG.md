@@ -5,6 +5,18 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.35.0] - 2026-11-10
+
+### Added
+
+- **灵动岛面板跨核可视化**：`shell/desktop/federation_view.py` 把 `tool_call` / `tool_result`
+  里 `prefix__tool` 形态的调用聚合成 edge（调用 / 失败 / tokens）；工作台新增
+  `crossCoreEdges` Property 与 `crossCoreChanged` 信号，`Panel.qml` 在专员条下方显示
+  `CROSS-CORE` 摘要（失败变红，无调用不占高度）；销售演示脚本增加一次对笔记子核的委托。
+  新增 `tests/test_desktop_cross_core.py`（5 例）。
+- **桌面包惰性导出**：`shell/desktop/__init__.py` 改为 PEP 562 惰性导出，CI 未装 PySide6 时
+  `federation_view` 仍可导入（纯逻辑可测）。
+
 ## [v0.34.0] - 2026-11-10
 
 ### Added
