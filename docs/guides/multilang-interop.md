@@ -68,7 +68,7 @@ Python `inspect` 只是"生成清单"的**其中一个 provider**：
 
 > 这两条路**不要求对方是 Python**，是当前已验证的跨语言接入方式。
 
-### 3.3 经 Sidecar 会话控制（🛠 已落地 main，待发版）
+### 3.3 经 Sidecar 会话控制（✅ 已实现）
 
 非 Python 宿主想把**整个 Agent** 跑起来（而不只是接几个工具），可以拉起一个
 Python 子进程：
@@ -88,6 +88,26 @@ MCP Server（或 REST 服务），会话协议里没有 `tool/call`。这样既�
 
 可运行样例：`examples/host_l_sidecar_node/`（零依赖 Node，本地 mock 模型 +
 Node 自己的 OpenAPI 工具，真实拉起 sidecar 并走审批反向请求）。
+
+### 3.4 类型化 Node/TS 客户端（✅ v0.32 起）
+
+`clients/node/` 提供零运行时依赖的 TypeScript 客户端（Node ≥ 20），把会话面封装成
+类型化 API：`initialize` / `run` / `cancel` / `ping` / `shutdown`、事件订阅与
+`waitForEvent`、审批/澄清回调（默认**拒绝**，失败关闭）、进程退出与超时映射为
+`SidecarError`。
+
+```ts
+import { SidecarClient } from "yai-agent-core-sidecar-client";
+
+const client = SidecarClient.spawn({ onApproval: () => true });
+const init = await client.initialize({ model: { model: "deepseek-chat" } });
+await client.run("查一下订单");
+const done = await client.waitForEvent((event) => event.type === "done");
+console.log(done.data.final_text);
+```
+
+构建与测试：`cd clients/node && npm install && npm test`（离线，假 sidecar fixture）；
+CI：`.github/workflows/client-node.yml`。
 
 ---
 
@@ -135,6 +155,7 @@ Node 自己的 OpenAPI 工具，真实拉起 sidecar 并走审批反向请求）
 | `src/yai_core/integrations/openapi/{discovery,spec,client}.py` | OpenAPI 发现（JSON/YAML） |
 | `src/yai_core/tools/manifest.py` | manifest 批量导入导出 + 文件 IO |
 | `src/yai_core/sidecar/` | Sidecar 会话控制协议（stdio NDJSON JSON-RPC） |
+| `clients/node/` | 类型化 Node/TS sidecar 客户端（零运行时依赖 + 离线测试） |
 | `src/yai_core/discovery/` | Python 函数内省 |
 | `src/yai_core/spi/` | 10 个能力契约 |
 | `docs/walkthrough/10-mcp-client.md` / `12-openapi-discovery.md` | 逐行讲义 |
