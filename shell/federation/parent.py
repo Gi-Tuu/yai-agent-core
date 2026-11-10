@@ -71,6 +71,7 @@ class Federation:
         self._exposed: dict[str, set[str]] = {}
         self._grant_all: dict[str, bool] = {}
         self._max_calls: dict[str, int | None] = {}
+        self._max_tokens: dict[str, int | None] = {}
         self._stats: dict[str, dict[str, Any]] = {}
         self._semaphore = asyncio.Semaphore(max_fanout)
 
@@ -85,6 +86,7 @@ class Federation:
         subject: Any = None,
         expires_in: float | None = None,
         max_calls: int | None = None,
+        max_tokens: int | None = None,
     ) -> CoreGrant:
         """把子核的**工具子集**注册成父核工具（名字为 ``<prefix>__<tool>``）。
 
@@ -101,6 +103,10 @@ class Federation:
             isinstance(max_calls, bool) or not isinstance(max_calls, int) or max_calls < 1
         ):
             raise ValueError("max_calls 必须是 >= 1 的整数或 None")
+        if max_tokens is not None and (
+            isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1
+        ):
+            raise ValueError("max_tokens 必须是 >= 1 的整数或 None")
         prefix = (prefix or child.product or child.node_id).strip()
         if not prefix:
             raise ValueError("子核前缀不能为空")
@@ -135,10 +141,13 @@ class Federation:
         self._exposed[prefix] = {f"{prefix}__{tool}" for tool in selected}
         self._grant_all[prefix] = tools is None
         self._max_calls[prefix] = max_calls
+        self._max_tokens[prefix] = max_tokens
         self._stats[prefix] = {
             "calls": 0,
             "failures": 0,
             "total_ms": 0.0,
+            "tokens": 0,
+            "usage": {},
             "last_error": "",
         }
         self.parent.register_tools(specs)
@@ -154,6 +163,7 @@ class Federation:
         self._grants.pop(prefix, None)
         self._grant_all.pop(prefix, None)
         self._max_calls.pop(prefix, None)
+        self._max_tokens.pop(prefix, None)
         self._stats.pop(prefix, None)
         return True
 
@@ -171,6 +181,38 @@ class Federation:
             input_schema=meta["input_schema"],
             handler=self._make_handler(prefix, child, tool, grant),
         )
+
+    def _record_usage(self, prefix: str, usage: Any) -> None:
+        """聚合子核回报的 usage；超过该 edge 的 token 预算时失败关闭。"""
+        if not isinstance(usage, dict) or not usage:
+            return
+        stats = self._stats.get(prefix)
+        if stats is None:
+            return
+        totals: dict[str, float] = stats.setdefault("usage", {})
+        spent = 0.0
+        for key, value in usage.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            totals[key] = float(totals.get(key, 0.0)) + float(value)
+        tokens = usage.get("total_tokens", usage.get("tokens"))
+        if isinstance(tokens, (int, float)) and not isinstance(tokens, bool):
+            spent = float(tokens)
+        else:
+            spent = sum(
+                float(value)
+                for key, value in usage.items()
+                if isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and key.endswith("_tokens")
+            )
+        stats["tokens"] = int(stats.get("tokens", 0)) + int(spent)
+        limit = self._max_tokens.get(prefix)
+        if limit is not None and stats["tokens"] > limit:
+            raise FederationError(
+                f"edge_token_budget_exceeded：子核 {prefix!r} 已用 "
+                f"{stats['tokens']} tokens（上限 {limit}）"
+            )
 
     def _make_handler(
         self, prefix: str, child: Any, tool: str, grant: CoreGrant
@@ -285,7 +327,15 @@ class Federation:
             )
         limit = self._max_calls.get(prefix)
         stats = self._stats.setdefault(
-            prefix, {"calls": 0, "failures": 0, "total_ms": 0.0, "last_error": ""}
+            prefix,
+            {
+                "calls": 0,
+                "failures": 0,
+                "total_ms": 0.0,
+                "tokens": 0,
+                "usage": {},
+                "last_error": "",
+            },
         )
         if limit is not None and stats["calls"] >= limit:
             raise FederationError(
@@ -315,6 +365,7 @@ class Federation:
                 raise ChildCallFailed(
                     f"子核 {child.node_id!r} 未完成 {tool!r}：{detail or '无详情'}"
                 )
+            self._record_usage(prefix, result.get("usage"))
             return result
         except (ChildCallFailed, FederationError) as exc:
             stats["failures"] += 1

@@ -19,7 +19,16 @@
   `federation.tools.list` 的 `manifest_version`）；`ChildServer(edge_quota_per_minute=...)` 每 edge
   滑动窗口限流；父核 `register_child(max_calls=...)` + `edge_stats()` 统计调用/失败/耗时；
   `ManagedChild` 托管子进程（拉起 → 等发现文件 → 连接 → 重连 / 停止）。
-- **未实现**：token 级预算跨核聚合、跨核事务、守护式自动重启（进程死后需宿主决定 restart）、
+- **Phase 3 尾项**：
+  - **专员桥**：`shell/federation/specialists.py` 的 `build_specialist_child()` /
+    `attach_specialists()` 把"应用对象"（桌面灵动岛专员的形态）的公开方法内省成子核工具，
+    一行接入父核；Qt 面板本身的接线仍属宿主侧。
+  - **usage / token 预算**：子核工具结果可带 `{"usage": {...}}`，父核按 edge 聚合到
+    `edge_stats()` 的 `tokens` / `usage`；`register_child(max_tokens=...)` 超限即
+    `edge_token_budget_exceeded`（失败关闭）。
+  - **两个可安装子核示例**：`examples/child_cores/`（笔记 / 计算器），
+    `hub_demo.py` 同时托管两个进程并跨核调用。
+- **未实现**：跨核事务、守护式自动重启（进程死后需宿主决定 restart）、
   manifest 服务端主动推送（当前由父核主动 `refresh_child` 拉取）。
 - **安全前提**：同 OS 用户；发现文件 0600 + token 防同机其他用户/进程；**不防 root / 调试器 / 内存抓取**。
 

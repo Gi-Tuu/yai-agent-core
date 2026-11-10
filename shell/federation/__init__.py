@@ -28,6 +28,7 @@ from shell.federation.server import (
     DiscoveryInfo,
     FederationProtocolError,
 )
+from shell.federation.specialists import attach_specialists, build_specialist_child
 
 __all__ = [
     "ChildCallFailed",
@@ -42,5 +43,7 @@ __all__ = [
     "GrantDenied",
     "LinkChild",
     "ManagedChild",
+    "attach_specialists",
+    "build_specialist_child",
     "PROTOCOL_VERSION",
 ]
