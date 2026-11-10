@@ -21,6 +21,7 @@ from shell.federation.grants import (
 from shell.federation.link import LinkChild
 from shell.federation.node import ChildCore
 from shell.federation.parent import Federation
+from shell.federation.process import ManagedChild
 from shell.federation.server import (
     PROTOCOL_VERSION,
     ChildServer,
@@ -40,5 +41,6 @@ __all__ = [
     "FederationProtocolError",
     "GrantDenied",
     "LinkChild",
+    "ManagedChild",
     "PROTOCOL_VERSION",
 ]

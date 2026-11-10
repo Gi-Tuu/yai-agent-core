@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any
 
 from shell.federation.grants import CoreGrant, GrantDenied
@@ -51,6 +53,13 @@ class ChildCore:
                 "input_schema": spec.input_schema,
             }
         return out
+
+    def manifest_version(self) -> str:
+        """能力清单指纹（与 IPC 侧同口径：排序后的 JSON 取 SHA-256 前 16 位）。"""
+        body = json.dumps(
+            self.manifest(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()[:16]
 
     def has_tool(self, name: str) -> bool:
         return self.core.registry.has(name)

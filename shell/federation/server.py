@@ -17,6 +17,7 @@ import json
 import os
 import secrets
 import time
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,11 @@ def _canonical(payload: dict[str, Any]) -> bytes:
 
 def _sign(secret: bytes, payload: dict[str, Any]) -> str:
     return hmac.new(secret, _canonical(payload), hashlib.sha256).hexdigest()
+
+
+def manifest_version(manifest: dict[str, dict[str, Any]]) -> str:
+    """能力清单的稳定指纹：父核据此判断子核能力是否变化。"""
+    return hashlib.sha256(_canonical(manifest)).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -113,9 +119,16 @@ class ChildServer:
         discovery_dir: Path | None = None,
         parent_tools: dict[str, Iterable[str]] | None = None,
         grant_ttl: float = DEFAULT_GRANT_TTL,
+        edge_quota_per_minute: int | None = 60,
     ) -> None:
         if grant_ttl <= 0:
             raise ValueError("grant_ttl 必须为正数")
+        if edge_quota_per_minute is not None and (
+            isinstance(edge_quota_per_minute, bool)
+            or not isinstance(edge_quota_per_minute, int)
+            or edge_quota_per_minute <= 0
+        ):
+            raise ValueError("edge_quota_per_minute 必须是正整数或 None")
         self.child = child
         self.discovery_dir = discovery_dir or _default_discovery_dir()
         self._parent_tools = (
@@ -124,6 +137,8 @@ class ChildServer:
             else {key: frozenset(value) for key, value in parent_tools.items()}
         )
         self.grant_ttl = float(grant_ttl)
+        self.edge_quota_per_minute = edge_quota_per_minute
+        self._edge_hits: dict[str, deque[float]] = {}
         self._secret = secrets.token_bytes(32)
         self._token = secrets.token_urlsafe(32)
         self._server: asyncio.AbstractServer | None = None
@@ -233,6 +248,7 @@ class ChildServer:
             "child_id": self.child.child_id,
             "protocol": PROTOCOL_VERSION,
             "tools": len(self.child.manifest()),
+            "manifest_version": manifest_version(self.child.manifest()),
         }
 
     async def _handshake(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -246,18 +262,25 @@ class ChildServer:
         if not parent_id:
             raise FederationProtocolError("handshake 缺少 parent_id")
         manifest = self.child.manifest()
+        requested = params.get("tools")
+        if requested is not None and (
+            not isinstance(requested, list) or not all(isinstance(x, str) for x in requested)
+        ):
+            raise FederationProtocolError("tools 必须是字符串数组")
+        wildcard = False
         if self._parent_tools is None:
-            granted = set(manifest)
+            # 未配置父核白名单（开发/演示）：请求全集时发**通配 grant**，
+            # 这样子核热更新新增的工具无需重新握手即可被父核发现。
+            if requested is None:
+                wildcard = True
+                granted = set(manifest)
+            else:
+                granted = set(manifest) & set(requested)
         else:
             allowed = self._parent_tools.get(parent_id)
             if allowed is None:
                 raise GrantDenied(f"父核 {parent_id!r} 不在允许列表内")
-            granted = set(allowed)
-        requested = params.get("tools")
-        if requested is not None:
-            if not isinstance(requested, list) or not all(isinstance(x, str) for x in requested):
-                raise FederationProtocolError("tools 必须是字符串数组")
-            granted &= set(requested)
+            granted = set(allowed) if requested is None else set(allowed) & set(requested)
         unknown = granted - set(manifest)
         if unknown:
             raise FederationProtocolError(f"这些工具不存在：{sorted(unknown)}")
@@ -268,7 +291,7 @@ class ChildServer:
             "v": 1,
             "edge": f"{parent_id}->{self.child.node_id}",
             "child_id": self.child.child_id,
-            "tools": sorted(granted),
+            "tools": ["*"] if wildcard else sorted(granted),
             "exp": expires_at,
         }
         grant = {"payload": payload, "sig": _sign(self._secret, payload)}
@@ -277,6 +300,7 @@ class ChildServer:
             "node_id": self.child.node_id,
             "child_id": self.child.child_id,
             "product": self.child.product,
+            "manifest_version": manifest_version(manifest),
             "manifest": [
                 {
                     "name": name,
@@ -290,19 +314,31 @@ class ChildServer:
 
     def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         payload = self._verify_grant(params.get("grant"))
+        manifest = self.child.manifest()
+        wildcard = "*" in payload["tools"]
         return {
+            "manifest_version": manifest_version(manifest),
             "tools": [
-                {"name": name, "description": manifest["description"]}
-                for name, manifest in self.child.manifest().items()
-                if name in payload["tools"]
-            ]
+                {
+                    "name": name,
+                    "description": meta["description"],
+                    "input_schema": meta["input_schema"],
+                }
+                for name, meta in manifest.items()
+                if wildcard or name in payload["tools"]
+            ],
         }
 
     async def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
         payload = self._verify_grant(params.get("grant"))
         tool = str(params.get("tool") or "")
-        if tool not in payload["tools"]:
+        wildcard = "*" in payload["tools"]
+        if not wildcard and tool not in payload["tools"]:
             raise GrantDenied(f"工具 {tool!r} 不在 grant 子集内")
+        self._check_edge_quota(str(payload["edge"]))
+        manifest = self.child.manifest()
+        if tool not in manifest:
+            raise GrantDenied(f"子核当前没有工具 {tool!r}")
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
             raise FederationProtocolError("arguments 必须是对象")
@@ -313,7 +349,7 @@ class ChildServer:
         grant = CoreGrant(
             edge=str(payload["edge"]),
             child_id=str(payload["child_id"]),
-            tools=frozenset(payload["tools"]),
+            tools=frozenset(manifest) if wildcard else frozenset(payload["tools"]),
             subject=subject,
         )
         run = self._run_tool(
@@ -349,6 +385,18 @@ class ChildServer:
             )
         finally:
             _CALL_CHAIN.reset(token)
+
+    def _check_edge_quota(self, edge: str) -> None:
+        """每 edge 滑动窗口限流（1 分钟）；超限失败关闭，不排队。"""
+        if self.edge_quota_per_minute is None:
+            return
+        now = time.monotonic()
+        hits = self._edge_hits.setdefault(edge, deque())
+        while hits and now - hits[0] >= 60.0:
+            hits.popleft()
+        if len(hits) >= self.edge_quota_per_minute:
+            raise FederationProtocolError("quota_exceeded: 每 edge 调用超过每分钟上限")
+        hits.append(now)
 
     # ---------- 鉴权 ----------
 

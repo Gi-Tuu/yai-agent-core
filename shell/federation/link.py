@@ -40,6 +40,7 @@ class LinkChild:
         self.child_id = discovery.child_id
         self.product = discovery.node_id
         self._manifest: dict[str, dict[str, Any]] = {}
+        self._manifest_version = ""
         self._grant_token = ""
         self._next_id = 0
         self._pending: dict[str, asyncio.Future[Any]] = {}
@@ -97,6 +98,7 @@ class LinkChild:
             for item in result["manifest"]
         }
         link.product = str(result.get("product") or info.node_id)
+        link._manifest_version = str(result.get("manifest_version") or "")
         return link
 
     # ---------- 与 ChildCore 同形的能力面 ----------
@@ -104,8 +106,29 @@ class LinkChild:
     def manifest(self) -> dict[str, dict[str, Any]]:
         return dict(self._manifest)
 
+    def manifest_version(self) -> str:
+        return self._manifest_version
+
     def has_tool(self, name: str) -> bool:
         return name in self._manifest
+
+    async def refresh_manifest(self) -> bool:
+        """向子核拉一次当前可用工具；能力有变化时返回 True（供父核收敛）。"""
+        result = await self._request(
+            "federation.tools.list", {"grant": self._grant_token}
+        )
+        new_manifest = {
+            str(item["name"]): {
+                "description": str(item["description"]),
+                "input_schema": item["input_schema"],
+            }
+            for item in result["tools"]
+        }
+        new_version = str(result.get("manifest_version") or "")
+        changed = new_version != self._manifest_version or new_manifest != self._manifest
+        self._manifest = new_manifest
+        self._manifest_version = new_version
+        return changed
 
     async def call(
         self,

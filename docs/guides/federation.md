@@ -1,10 +1,10 @@
 # 有向父子核（Directed Federation）设计稿
 
-> 状态：**Phase 1（进程内）与 Phase 2（本机 IPC）已实现；Phase 3 未开始。**
+> 状态：**Phase 1（进程内）、Phase 2（本机 IPC）、Phase 3（生态运维）已实现。**
 > 决策背景与边界见 [ADR 0008](../adr/0008-directed-federation.md)。
 > 一句话：**每个产品里嵌一个独立核；父产品里的核可以调用子产品里的核，反之无路可走。**
 
-## 0. 已实现范围（Phase 1 / Phase 2）
+## 0. 已实现范围（Phase 1 / Phase 2 / Phase 3）
 
 代码入口：`shell/federation/`；示例：`examples/host_m_federation/`；测试：`tests/test_federation.py`、
 `tests/test_federation_ipc.py`。
@@ -15,8 +15,12 @@
   `LinkChild`（父核侧长连接、请求多路复用）；握手签发 **HMAC grant**（密钥只在子核进程内）；
   支持 `health` / `tools.list` / `tools.call`；跨进程调用把调用链注入环检测；超时 / 断连 / 非法 grant
   一律失败关闭。
-- **未实现**：manifest 热更新、常驻子核生命周期托管（目前由宿主进程负责拉起与退出）、每 edge 配额、
-  预算跨核聚合、跨核事务、断连自动重连与 grant 重签。
+- **Phase 3（生态运维）**：父核 `refresh_child()` 支持 manifest 热更新（IPC 侧配合
+  `federation.tools.list` 的 `manifest_version`）；`ChildServer(edge_quota_per_minute=...)` 每 edge
+  滑动窗口限流；父核 `register_child(max_calls=...)` + `edge_stats()` 统计调用/失败/耗时；
+  `ManagedChild` 托管子进程（拉起 → 等发现文件 → 连接 → 重连 / 停止）。
+- **未实现**：token 级预算跨核聚合、跨核事务、守护式自动重启（进程死后需宿主决定 restart）、
+  manifest 服务端主动推送（当前由父核主动 `refresh_child` 拉取）。
 - **安全前提**：同 OS 用户；发现文件 0600 + token 防同机其他用户/进程；**不防 root / 调试器 / 内存抓取**。
 
 ### Phase 2 协议实现要点

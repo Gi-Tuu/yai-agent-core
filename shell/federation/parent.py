@@ -1,7 +1,8 @@
-"""父核侧的有向联邦：把子核工具注册成自己的工具，并守住深度 / 扇出 / 环 / 超时。
+"""父核侧的有向联邦：把子核工具注册成自己的工具，并守住深度 / 扇出 / 环 / 超时 / 配额。
 
-Phase 1 是**进程内**实现：没有网络、没有发现文件、grant 是内存对象。
-协议与跨进程形态见 `docs/guides/federation.md`。
+宿主层实现（内核零改动）。Phase 1 进程内、Phase 2 本机 IPC、Phase 3 增补：
+manifest 热更新（``refresh_child``）、每 edge 调用预算与统计（``edge_stats``）、
+子核注销（``unregister_child``）。
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import asyncio
 import time
 from collections.abc import Iterable
 from contextvars import ContextVar
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from shell.federation.grants import (
@@ -64,11 +66,15 @@ class Federation:
         self.max_depth = max_depth
         self.max_fanout = max_fanout
         self.call_timeout = float(call_timeout)
-        self._children: dict[str, ChildCore] = {}
+        self._children: dict[str, Any] = {}
         self._grants: dict[str, CoreGrant] = {}
+        self._exposed: dict[str, set[str]] = {}
+        self._grant_all: dict[str, bool] = {}
+        self._max_calls: dict[str, int | None] = {}
+        self._stats: dict[str, dict[str, Any]] = {}
         self._semaphore = asyncio.Semaphore(max_fanout)
 
-    # ---------- 注册 ----------
+    # ---------- 注册 / 注销 ----------
 
     def register_child(
         self,
@@ -78,18 +84,23 @@ class Federation:
         prefix: str | None = None,
         subject: Any = None,
         expires_in: float | None = None,
+        max_calls: int | None = None,
     ) -> CoreGrant:
         """把子核的**工具子集**注册成父核工具（名字为 ``<prefix>__<tool>``）。
 
-        - ``tools=None`` 表示子核 manifest 全部工具；
+        - ``tools=None`` 表示子核 manifest 全部工具（并允许 ``refresh_child`` 跟随新增）；
         - ``prefix`` 默认取子核产品名，用于避免与父核自有工具重名；
+        - ``max_calls`` 是该 edge 的调用次数预算（None = 不限）；
         - 任何一步不满足（重名 / 未知工具 / 空子集）都整体失败，不留半注册状态。
         """
         if not isinstance(child, ChildCore) and not all(
-            callable(getattr(child, name, None))
-            for name in ("manifest", "call")
+            callable(getattr(child, name, None)) for name in ("manifest", "call")
         ):
             raise TypeError("child 必须是 ChildCore 或同形的 IPC 子核（LinkChild）")
+        if max_calls is not None and (
+            isinstance(max_calls, bool) or not isinstance(max_calls, int) or max_calls < 1
+        ):
+            raise ValueError("max_calls 必须是 >= 1 的整数或 None")
         prefix = (prefix or child.product or child.node_id).strip()
         if not prefix:
             raise ValueError("子核前缀不能为空")
@@ -118,33 +129,120 @@ class Federation:
             exposed = f"{prefix}__{tool}"
             if self.parent.registry.has(exposed):
                 raise ValueError(f"父核已有同名工具 {exposed!r}，请换一个 prefix")
-            meta = manifest[tool]
-            specs.append(
-                ToolSpec(
-                    name=exposed,
-                    description=f"[子核 {child.node_id}] {meta['description']}",
-                    input_schema=meta["input_schema"],
-                    handler=self._make_handler(child, tool, grant),
-                )
-            )
+            specs.append(self._build_spec(prefix, child, tool, grant, manifest[tool]))
         self._children[prefix] = child
         self._grants[prefix] = grant
+        self._exposed[prefix] = {f"{prefix}__{tool}" for tool in selected}
+        self._grant_all[prefix] = tools is None
+        self._max_calls[prefix] = max_calls
+        self._stats[prefix] = {
+            "calls": 0,
+            "failures": 0,
+            "total_ms": 0.0,
+            "last_error": "",
+        }
         self.parent.register_tools(specs)
         return grant
 
-    def _make_handler(self, child: ChildCore, tool: str, grant: CoreGrant):
+    def unregister_child(self, prefix: str) -> bool:
+        """注销一个子核：父核侧暴露的工具一并移除。"""
+        if prefix not in self._children:
+            return False
+        for exposed in self._exposed.pop(prefix, set()):
+            self.parent.registry.unregister(exposed)
+        self._children.pop(prefix, None)
+        self._grants.pop(prefix, None)
+        self._grant_all.pop(prefix, None)
+        self._max_calls.pop(prefix, None)
+        self._stats.pop(prefix, None)
+        return True
+
+    def _build_spec(
+        self,
+        prefix: str,
+        child: Any,
+        tool: str,
+        grant: CoreGrant,
+        meta: dict[str, Any],
+    ) -> ToolSpec:
+        return ToolSpec(
+            name=f"{prefix}__{tool}",
+            description=f"[子核 {child.node_id}] {meta['description']}",
+            input_schema=meta["input_schema"],
+            handler=self._make_handler(prefix, child, tool, grant),
+        )
+
+    def _make_handler(
+        self, prefix: str, child: Any, tool: str, grant: CoreGrant
+    ):
         async def handler(**arguments: Any) -> dict[str, Any]:
-            return await self._invoke(child, tool, arguments, grant=grant)
+            return await self._invoke(prefix, child, tool, arguments, grant=grant)
 
         return handler
 
-    # ---------- 调用 ----------
+    # ---------- manifest 热更新 ----------
 
-    def children(self) -> dict[str, ChildCore]:
+    async def refresh_child(self, prefix: str) -> dict[str, Any]:
+        """收敛一个子核的当前能力（进程内直接读、IPC 先拉 ``tools.list``）。
+
+        返回 ``{"added": [...], "removed": [...], "manifest_version": "..."}``（子核工具名口径）。
+        若注册时用的是 ``tools=None``（全集），新增工具会被自动注册；显式子集保持子集。
+        """
+        child = self._children.get(prefix)
+        grant = self._grants.get(prefix)
+        if child is None or grant is None:
+            raise FederationError(f"未注册的子核前缀：{prefix!r}")
+        refresh = getattr(child, "refresh_manifest", None)
+        if callable(refresh):
+            await refresh()
+        manifest = child.manifest()
+        if self._grant_all.get(prefix):
+            desired = set(manifest)
+        else:
+            desired = set(grant.tools) & set(manifest)
+        desired_exposed = {f"{prefix}__{tool}" for tool in desired}
+        current = self._exposed.get(prefix, set())
+        to_remove = current - desired_exposed
+        to_add = desired_exposed - current
+        for exposed in to_remove:
+            self.parent.registry.unregister(exposed)
+        specs = [
+            self._build_spec(
+                prefix,
+                child,
+                exposed[len(prefix) + 2 :],
+                replace(grant, tools=frozenset(desired)),
+                manifest[exposed[len(prefix) + 2 :]],
+            )
+            for exposed in sorted(to_add)
+        ]
+        if specs:
+            self.parent.register_tools(specs)
+        self._grants[prefix] = replace(grant, tools=frozenset(desired))
+        self._exposed[prefix] = desired_exposed
+        version = getattr(child, "manifest_version", None)
+        return {
+            "added": sorted(name[len(prefix) + 2 :] for name in to_add),
+            "removed": sorted(name[len(prefix) + 2 :] for name in to_remove),
+            "manifest_version": version() if callable(version) else "",
+        }
+
+    async def refresh_all(self) -> dict[str, dict[str, Any]]:
+        return {prefix: await self.refresh_child(prefix) for prefix in list(self._children)}
+
+    # ---------- 调用与统计 ----------
+
+    def children(self) -> dict[str, Any]:
         return dict(self._children)
 
     def grant_for(self, prefix: str) -> CoreGrant | None:
         return self._grants.get(prefix)
+
+    def edge_stats(self, prefix: str) -> dict[str, Any]:
+        return dict(self._stats.get(prefix, {}))
+
+    def stats(self) -> dict[str, dict[str, Any]]:
+        return {prefix: dict(item) for prefix, item in self._stats.items()}
 
     async def invoke(
         self,
@@ -161,12 +259,13 @@ class Federation:
         if child is None or grant is None:
             raise FederationError(f"未注册的子核前缀：{prefix!r}")
         return await self._invoke(
-            child, tool, arguments or {}, grant=grant, subject=subject, call_id=call_id
+            prefix, child, tool, arguments or {}, grant=grant, subject=subject, call_id=call_id
         )
 
     async def _invoke(
         self,
-        child: ChildCore,
+        prefix: str,
+        child: Any,
         tool: str,
         arguments: dict[str, Any],
         *,
@@ -184,6 +283,16 @@ class Federation:
             raise FederationError(
                 f"超过最大委派深度 {self.max_depth}（当前链：{' -> '.join(chain) or '-'}）"
             )
+        limit = self._max_calls.get(prefix)
+        stats = self._stats.setdefault(
+            prefix, {"calls": 0, "failures": 0, "total_ms": 0.0, "last_error": ""}
+        )
+        if limit is not None and stats["calls"] >= limit:
+            raise FederationError(
+                f"edge_budget_exceeded：子核 {prefix!r} 已达 {limit} 次调用上限"
+            )
+        started = time.perf_counter()
+        stats["calls"] += 1
         token = _CALL_CHAIN.set((*chain, self.node_id))
         try:
             async with self._semaphore:
@@ -207,5 +316,10 @@ class Federation:
                     f"子核 {child.node_id!r} 未完成 {tool!r}：{detail or '无详情'}"
                 )
             return result
+        except (ChildCallFailed, FederationError) as exc:
+            stats["failures"] += 1
+            stats["last_error"] = f"{type(exc).__name__}: {exc}"[:300]
+            raise
         finally:
+            stats["total_ms"] += (time.perf_counter() - started) * 1000.0
             _CALL_CHAIN.reset(token)

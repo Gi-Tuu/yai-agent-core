@@ -57,6 +57,10 @@
 - 2026-11-10：**Phase 2（本机 IPC）已实现** —— `ChildServer` / `LinkChild`、发现文件（0600）+ token、
   HMAC grant、`health` / `tools.list` / `tools.call`、双进程 demo 与 7 例 IPC 回归；
   manifest 热更新、每 edge 配额、预算跨核聚合、跨核事务仍未实现（Phase 3 起）。
+- 2026-11-10：**Phase 3（生态运维）已实现** —— `Federation.refresh_child()` manifest 热更新、
+  `ChildServer(edge_quota_per_minute=...)` 每 edge 限流、`register_child(max_calls=...)` +
+  `edge_stats()`、`ManagedChild` 子进程托管；新增 8 例回归。token 级预算聚合、跨核事务、
+  守护式自动重启仍未实现。
 
 ## 后果
 
