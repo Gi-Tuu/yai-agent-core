@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.31.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.32.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -264,7 +264,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **v0.31.0（已完成，当前发布版本）**：长期记忆 10k 规模——`remember_many()`/`batch()` 批量写入、增量倒排索引、去重 token 缓存与预筛；10,000 条构建 45.4s、检索 P50 17.6ms（旧实现 1,000 条就要 79.8s）
+- **v0.32.0（已完成，当前发布版本）**：互操作批次——OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵（未翻译构造只记 notes）、类型化 Node/TS sidecar 客户端（`clients/node/`，5 例离线测试）、GHCR 容器镜像（tag 推送自动发布，provenance + SBOM）
+- **v0.31.0（已完成）**：长期记忆 10k 规模——`remember_many()`/`batch()` 批量写入、增量倒排索引、去重 token 缓存与预筛；10,000 条构建 45.4s、检索 P50 17.6ms（旧实现 1,000 条就要 79.8s）
 - **v0.30.0（已完成）**：有向父子核 Phase 3（生态运维）——manifest 热更新、每 edge 配额与调用统计、子核注销、`ManagedChild` 进程托管；联邦测试 27 例。内核零改动
 - **v0.29.0（已完成）**：有向父子核 Phase 2（本机 IPC）——`ChildServer`/`LinkChild`、发现文件 + 握手 token + HMAC grant、双进程 demo 与 7 例 IPC 回归；父核与子核可在不同进程/产品里运行，子核退出后调用失败关闭。内核零改动`n- **v0.28.0（已完成）**：有向父子核 Phase 1（进程内）——父产品里的核把子产品核声明的工具注册成自己的工具，子核无路反调；grant 限定工具子集/主体/有效期，双防线治理、深度/扇出/环检测、失败隔离；新增 `examples/host_m_federation` 离线示例。内核零改动，本机 IPC 为 Phase 2
 - **v0.27.3（已完成）**：文档与设计批次——文档站上线（mkdocs-material + GitHub Pages，179 页）、docs 内 23 处仓库根链接站点化、新增有向父子核设计（ADR 0008 + 协议 v1 设计稿）；内核行为无变化
