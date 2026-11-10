@@ -381,6 +381,14 @@
   审批/澄清默认拒绝；离线假 sidecar 测试 5 例；CI `Node client` 工作流。
 - **GHCR 镜像**：tag 推送自动构建发布（semver + latest，provenance + SBOM）；PR 只验证构建。
 
+### v0.33.0 — 父子核生态落地（tag 2026-11-10，已完成）
+
+- **专员桥**：`build_specialist_child()` / `attach_specialists()` 把应用对象的公开方法内省成子核工具，
+  桌面灵动岛的专员形态一行接入父核（headless；Qt 面板接线属宿主）。
+- **usage / token 预算**：子核工具可回报 `usage`，父核按 edge 聚合；`max_tokens` 超限失败关闭。
+- **两个可安装子核**：`examples/child_cores/`（笔记 / 计算器）+ `hub_demo.py` 双进程跨核 demo。
+- 联邦测试 32 例；新增 `tests/test_federation_specialists.py`。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
