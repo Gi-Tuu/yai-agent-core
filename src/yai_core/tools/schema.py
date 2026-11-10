@@ -79,6 +79,10 @@ def sanitize_schema(schema: Any) -> Any:
             elif key == "nullable":
                 # 由下方统一转换，不把 OpenAPI 私有键喂给模型。
                 continue
+            elif key == "const":
+                # JSON Schema 2020-12 的 const 与 enum 等价；部分模型后端不认 const，
+                # 统一降级成单值 enum（语义相同、兼容面更大）。
+                cleaned["enum"] = [sanitize_schema(value)]
             elif key in _SCHEMA_KEYS:
                 cleaned[key] = sanitize_schema(value)
         if schema.get("nullable") is True:

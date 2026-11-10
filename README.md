@@ -127,7 +127,7 @@ YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 
 
 | 能力 | 一句话 |
 |---|---|
-| **能力自发现** | Python 函数 type hints + docstring 自动生成 JSON Schema；外部 **MCP** 工具经 MCP Client、**OpenAPI** REST 操作经规范解析，同构接入注册表 |
+| **能力自发现** | Python 函数 type hints + docstring 自动生成 JSON Schema；外部 **MCP** 工具经 MCP Client、**OpenAPI 3.0/3.1** REST 操作经规范解析，同构接入注册表 |
 | **自适应路由** | 任务路由到 `direct / react / plan / clarify`；LLM 分类异常自动回退规则，工具不足时发出 `capability_missing`，决策全程可审计 |
 | **自校准学习** | 上下文 bandit 从成败中学习路由，Thompson Sampling 选策略；离线 benchmark 末段 **89.6% vs 规则 73.3%（约 +16pp）**（默认关闭：`learning=None`） |
 | **按需发现闭环** | 缺口 → 向发现源要候选 → 注册 → **本轮即可调用**；词法 + 本地 bge-m3 / 云端 embedding 双通道召回，远程 MCP/OpenAPI 源也按缺口保守收窄（空命中回退全量）（默认关闭：不配置发现源就没有 `request_capability`） |

@@ -142,7 +142,7 @@ that runs inside your software's process**:
 
 | Capability | In one line |
 |---|---|
-| **Capability auto-discovery** | Python type hints + docstrings auto-generate JSON Schema; external **MCP** tools (via MCP Client) and **OpenAPI** REST operations (via spec parsing) register the same way |
+| **Capability auto-discovery** | Python type hints + docstrings auto-generate JSON Schema; external **MCP** tools (via MCP Client) and **OpenAPI 3.0/3.1** REST operations (via spec parsing) register the same way |
 | **Adaptive routing** | Tasks route to `direct / react / plan / clarify`; LLM classification falls back to rules on error; insufficient tools emit `capability_missing`; every decision is auditable |
 | **Self-calibrating learning** | A contextual bandit learns routing from success/failure and picks strategies via Thompson Sampling; offline benchmark reaches **89.6% vs 73.3% for rules (~+16pp)** in late rounds (off by default: `learning=None`) |
 | **On-demand discovery loop** | Gap → ask discovery sources for candidates → register → **callable within the same turn**; dual-channel recall (lexical + local bge-m3 / cloud embeddings), and remote MCP/OpenAPI sources are conservatively narrowed by the gap too (fall back to all on no hit) (off by default: without a discovery source there is no `request_capability`) |

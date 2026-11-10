@@ -174,6 +174,52 @@ def load_spec(config: OpenApiSpecConfig, *, transport: Any = None) -> dict:
     return raw
 
 
+def openapi_version(spec: dict) -> str:
+    """返回 ``openapi`` 版本串（如 ``3.0.3`` / ``3.1.0``）；判定已由 load_spec 完成。"""
+    return str(spec.get("openapi", ""))
+
+
+#: 3.1 / 2020-12 里**不翻译**的构造：不静默拒绝整份描述，只在 notes 里报出来。
+_UNSUPPORTED_31_KEYS = {
+    "prefixItems": "仅保留数组 type，不翻译 prefixItems 元组约束",
+    "if": "不翻译 if/then/else 条件 schema",
+    "unevaluatedProperties": "不翻译 unevaluatedProperties 收窄",
+    "dependentSchemas": "不翻译 dependentSchemas",
+    "patternProperties": "不翻译 patternProperties",
+    "contains": "不翻译 contains 约束",
+}
+
+
+def compatibility_notes(spec: dict) -> list[str]:
+    """收集"这份 spec 里有哪些构造没被翻译"的说明（只读、去重、上限 20 条）。
+
+    刻意不抛错：OpenAPI 3.1 的完整 JSON Schema 2020-12 词汇远超工具入参所需，
+    为个别未用到的关键字拒绝整份描述，会把本来可用的工具一起挡掉。
+    """
+    notes: list[str] = []
+
+    def add(note: str) -> None:
+        if note not in notes and len(notes) < 20:
+            notes.append(note)
+
+    if openapi_version(spec).startswith("3.1") and spec.get("webhooks"):
+        add("OpenAPI 3.1 webhooks 不注册为工具（只处理 paths）")
+    for path, item in (spec.get("paths") or {}).items():
+        if isinstance(item, dict) and item.get("servers"):
+            add(f"路径级 servers 不生效，仍用全局 servers：{path}")
+    stack: list[Any] = [spec.get("paths") or {}]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, message in _UNSUPPORTED_31_KEYS.items():
+                if key in node:
+                    add(f"{key}：{message}")
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return notes
+
+
 def _resolve_pointer(root: dict, pointer: str) -> Any:
     """按 JSON Pointer（#/a/b/1）在根节点里取目标。"""
     cur: Any = root

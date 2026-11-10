@@ -5,6 +5,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵**：接受 3.1 描述；`type` 联合中的 null 原样保留、
+  `const` 归一为单值 `enum`、`$ref` 兄弟键覆盖目标、数值型 `exclusiveMinimum/Maximum` 保留；
+  `prefixItems` / `if-then-else` / `patternProperties` / `webhooks` / 路径级 `servers` 等未翻译构造
+  只记 `notes`（不整份拒绝，也不喂给模型）。新增 `tests/test_openapi_31_compat.py`（10 例）与
+  `docs/guides/openapi-31-compat.md` 矩阵。
+
 ## [v0.31.0] - 2026-11-10
 
 ### Added
