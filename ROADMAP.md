@@ -373,6 +373,14 @@
 - **实测**：10,000 条构建 45.4s、检索 P50 17.6ms / P95 116ms；1,000 条从 79.8s 降到 0.59s。
 - **边界**：构建仍是"一次性建库"量级；语义通道未在 10k 基准化；超大/高频场景仍建议 SQLite/向量库。
 
+### v0.32.0 — 互操作：OpenAPI 3.1 + Node 客户端 + GHCR（tag 2026-11-10，已完成）
+
+- **OpenAPI 3.1 / JSON Schema 2020-12**：接受 3.1；const→enum、type 联合 null、$ref 兄弟键；
+  prefixItems / if-then-else / webhooks / 路径级 servers 等只记 notes，不拒绝整份描述。
+- **类型化 Node/TS 客户端**：`clients/node/`（零运行时依赖，Node ≥ 20）封装会话面；
+  审批/澄清默认拒绝；离线假 sidecar 测试 5 例；CI `Node client` 工作流。
+- **GHCR 镜像**：tag 推送自动构建发布（semver + latest，provenance + SBOM）；PR 只验证构建。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
