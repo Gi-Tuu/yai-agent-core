@@ -88,6 +88,14 @@ class ChildCore:
             subject=subject if subject is not None else grant.subject,
             call_id=call_id,
         )
+        usage = None
+        if text:
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict) and isinstance(parsed.get("usage"), dict):
+                usage = parsed["usage"]
         return {
             "ok": bool(ok),
             "status": "executed" if ok else "child_rejected",
@@ -96,4 +104,6 @@ class ChildCore:
             "tool": tool,
             "result": text,
             "events": len(events),
+            # 子核工具若在结果里带 usage（例如内部又跑了一次模型），原样回流给父核聚合。
+            "usage": usage,
         }

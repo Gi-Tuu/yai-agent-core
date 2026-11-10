@@ -87,6 +87,7 @@ v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿
 [benchmarks/agentdojo](https://github.com/Gi-Tuu/yai-agent-core/blob/main/benchmarks/agentdojo/README.md) ·
 [benchmarks/memory](https://github.com/Gi-Tuu/yai-agent-core/blob/main/benchmarks/memory/README.md) ·
 [examples/host_g_sandbox](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_g_sandbox/README.md) ·
+[examples/child_cores](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/child_cores/README.md) ·
 [examples/host_i_mealie](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_i_mealie/README.md) ·
 [examples/host_j_actual](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_j_actual/README.md) ·
 [examples/host_k_multimodal](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_k_multimodal/README.md) ·
