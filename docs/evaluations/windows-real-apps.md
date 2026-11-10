@@ -79,6 +79,11 @@
 本机 2026-11-10 复验（前置真实桌面 + Chromium）：UIA `ok=true`、charmap `12/12`、
 browser smoke `11 receipts` 全绿。
 
+**GitHub 托管 runner 实测（2026-11-10，run 42782702561）**：windows job 里两个脚本都正常跑完，
+但托管 runner **没有交互桌面**——UIA 返回 `{"ok": false, "detail": "UIA 没找到测试窗口（可能没有
+交互桌面 / UIA 不可用）"}`，charmap 也因找不到窗口失败；artifact 里是真实原因而非编码错误。
+这正是 `continue-on-error` 的原因：nightly 只做"能跑起来 + 留下证据"，不把无桌面环境伪装成通过。
+
 ## 诚实边界
 
 - 只验证了一个系统自带应用（字符映射表）；**不代表任意 Windows 应用兼容**。

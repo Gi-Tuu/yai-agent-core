@@ -1,7 +1,7 @@
 # 能力与证据索引（IMPLEMENTATION_STATUS）
 
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
-> 口径：**v0.33.0 已发布（2026-11-10）；v0.32.0 为上一版本**。v0.26 / v0.27 / v0.28 各批次
+> 口径：**v0.34.0 已发布（2026-11-10）；v0.33.0 为上一版本**。v0.26 / v0.27 / v0.28 各批次
 > （P0 安全、Browser Provider、Outcome Verification、执行适配器）已在本文件内标注，
 > 其余以证据列为准。三档状态：
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
@@ -88,7 +88,7 @@
 | 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
 | 有向父子核 Phase 1–3 + 尾项（v0.28–v0.33） | 已验证（32 例回归；双进程、进程托管、专员桥与 usage 预算实跑） | `tests/test_federation.py`（12）+ `test_federation_ipc.py`（7）+ `test_federation_ops.py`（8：manifest 热更新 / 每 edge 配额与统计 / 子核注销 / 进程托管与死亡失败关闭）+ `test_federation_specialists.py`（5：专员对象内省 / 多专员接入 / usage 聚合与 token 预算 / 两个可安装子核 demo）；`examples/host_m_federation/`、`examples/child_cores/` | **仅本机**：跨核事务 / 守护式自动重启 / 服务端推送 manifest 未实现；专员桥为 headless（Qt 面板接线属宿主）；不做对等 Multi-Agent；内核零改动 |
 | Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 12/12）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用/进程映像解析）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 按**进程身份**（PID 精确匹配 / 映像名 / 完整路径）+ 标题附加过滤，被禁窗口只回计数；真实应用验证见 [docs/evaluations/windows-real-apps.md](evaluations/windows-real-apps.md)（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
-| 真机 nightly 回归（v0.34 起，非阻塞） | 已验证（本机三脚本复跑 + CI 工作流） | `.github/workflows/nightly-real.yml`（schedule + workflow_dispatch）；`scripts/browser_smoke.py`（11 条收据）、`windows_uia_smoke.py`（ok）、`windows_real_apps_smoke.py`（12/12）；2026-11-10 本机复验全绿 | GitHub 托管 Windows runner 的交互桌面不保证，UIA 两步 `continue-on-error`（结果看 artifact）；不覆盖真实站点多样性 / CAPTCHA / UAC / 多显示器；定时任务失败不阻塞 PR |
+| 真机 nightly 回归（v0.34 起，非阻塞） | 已验证（本机三脚本复跑 + 托管 runner 两次手动触发） | `.github/workflows/nightly-real.yml`（schedule + workflow_dispatch）；本机 2026-11-10：UIA `ok`、charmap `12/12`、browser `11 receipts`；托管 runner（run 42782702561）：browser smoke + task E2E 全绿，Windows 两脚本因**无交互桌面**如实返回失败（artifact 留证，不伪装通过） | 托管 Windows runner 无交互桌面，UIA 两步 `continue-on-error`（结果看 artifact）；不覆盖真实站点多样性 / CAPTCHA / UAC / 多显示器；定时任务失败不阻塞 PR |
 | 原子写共享重试（v0.27） | 已验证（单测） | `yai_core.fsutil.replace_with_retry`；Vault/Bridge 共用 | 仍可能因长期占用最终失败，失败会保留 dirty/诊断 |
 | 适配器安全默认值（v0.27 Batch 2 / v0.27.1 桌面收紧 / v0.27.2 浏览器对齐） | 已验证（离线 + 本地 HTTP + 真实 Playwright 重定向） | `tests/test_adapter_security_defaults.py`、`tests/test_desktop_policy_identity.py`、`tests/test_browser_redirect_guard.py`；`BrowserPolicy.secure/development`、`DesktopPolicy.secure/development`；未传或宽松均发 Warning（浏览器：来源白名单空或 `*`，认 `BrowserPolicy.origins_unrestricted`；桌面：无进程身份）；桌面进程身份三白名单（PID 精确 / 映像名 / 路径）；file:/javascript:/data:/about: 默认拒绝；Playwright 路由层 abort 未授权 document 重定向 | 真实站点/真实第三方应用的完整安全矩阵仍需人工验收；控件名关键词与窗口标题都不作为安全边界 |
 | 浏览器执行路径统一 ADR + 受控浏览器 E2E（v0.27 Batch 3） | 已决策（ADR 0006，C 并存 + 明确边界）；受控端到端已验证 | [docs/adr/0006-browser-execution-unification.md](adr/0006-browser-execution-unification.md)；`scripts/browser_provider_task_smoke.py`（真实 Chromium：open/observe/type/reobserve/click/observe，3 次审批，收据链完整，页面文本验证 verified_success）；[docs/evaluations/browser-task-e2e.md](evaluations/browser-task-e2e.md)；面板只读/受控区分 | 受控浏览器 E2E 已过；当前标签页写操作以 opt-in `current_tab_action` 实现（默认关闭，协议级回归），但真实 Side Panel 用户手势 E2E 仍需人工验收；不得宣称当前标签页写操作已真机通过 |
