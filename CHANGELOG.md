@@ -5,6 +5,14 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Changed
+
+- **文档：静态扫描边界说明**：`docs/IMPLEMENTATION_STATUS.md` 的"已知边界"新增一条——
+  仓库内两处 `exec()` 都在宿主侧沙箱 worker（教学沙箱 / 桌面壳 `SubprocessSandbox` 实现），
+  `src/yai_core/` 零 `exec/eval`；第三方扫描器（如 MCP Observatory）的"危险代码"提示应据此解读。
+
 ## [v0.30.0] - 2026-11-10
 
 ### Added
