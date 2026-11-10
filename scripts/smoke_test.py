@@ -1,12 +1,17 @@
 """端到端冒烟：同一 Core 嵌入两个不同宿主，零 Agent 代码各自长出能力。
 
 运行：python scripts/smoke_test.py
+机器可读结果：python scripts/smoke_test.py --json
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import io
+import json
 import sys
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,15 +68,40 @@ async def run_host(title: str, host: object, task: str) -> None:
         await core.aclose()
 
 
-async def main() -> None:
-    await run_host("宿主 A 笔记应用", notes_app, "搜索笔记里和项目有关的内容")
-    await run_host(
-        "宿主 C AI 陪伴（AMBRACE 预演）",
-        companion_app,
-        "先查看小拥的状态，然后检索和约定有关的记忆，给出主动关怀建议",
+async def main(*, json_output: bool = False) -> int:
+    hosts = (
+        ("host_a_notes", "宿主 A 笔记应用", notes_app, "搜索笔记里和项目有关的内容"),
+        (
+            "host_c_companion",
+            "宿主 C AI 陪伴（AMBRACE 预演）",
+            companion_app,
+            "先查看小拥的状态，然后检索和约定有关的记忆，给出主动关怀建议",
+        ),
     )
+    checks: list[dict[str, object]] = []
+    for name, title, host, task in hosts:
+        try:
+            # JSON 模式只输出结果对象，不混入宿主事件；默认模式仍直接显示原有日志。
+            with redirect_stdout(io.StringIO()) if json_output else nullcontext():
+                await run_host(title, host, task)
+        except Exception as error:
+            if not json_output:
+                raise
+            checks.append({"name": name, "ok": False, "error": str(error)})
+        else:
+            checks.append({"name": name, "ok": True})
+    if json_output:
+        ok = all(check["ok"] for check in checks)
+        print(json.dumps({"ok": ok, "checks": checks}))
+        return 0 if ok else 1
     print("\n冒烟测试通过：同一内核已自适应两个不同宿主。")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--json", action="store_true", help="输出一个 JSON 结果对象，失败时退出码为 1"
+    )
+    args = parser.parse_args()
+    raise SystemExit(asyncio.run(main(json_output=args.json)))
