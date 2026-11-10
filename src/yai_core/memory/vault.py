@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,7 +42,6 @@ from yai_core.diagnostics import (
 from yai_core.discovery.scoring import (
     DEFAULT_SYNONYM_GROUPS,
     canonicalize,
-    token_similarity,
     tokenize,
 )
 from yai_core.discovery.semantic import cosine_similarity
@@ -439,6 +438,13 @@ class MemoryVault:
         self.semantic_last_error: str | None = None
         # 内存状态是否落后于磁盘（落盘失败后置位；任何一次成功落盘清零）。
         self._dirty = False
+        # 批量写入状态：>0 表示处在 batch() 内，逐条写入只标脏、不落盘。
+        self._defer_persist = 0
+        self._pending_persist = False
+        # note id 集合：contains() 不能 O(n) 扫全表（10k 规模下 remember 会退化成 O(n²)）。
+        self._ids: set[str] = set()
+        # note id -> (unigram 集, bigram 集) 缓存：召回/去重不再对同一文本反复 tokenize。
+        self._note_tokens: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
         # 我们"认为磁盘上是什么"的指纹 (st_mtime_ns, st_size)；None = 不做外部修改检测
         # （纯内存库 / 加载时文件已损坏并隔离，本实例的内存状态就是权威版本）。
         self._disk_signature: tuple[int, int] | None = None
@@ -451,6 +457,7 @@ class MemoryVault:
         # 最近一次写盘是否真的持久化成功（False = 只读/锁失败/写失败，内存变更仍保留）。
         self.last_write_persisted = False
         self._load()
+        self._rebuild_ids()
         # 宿主可能在运行一段时间后才调小上限：打开存量库时也收敛到容量内。
         # 只读降级时不做任何写操作（收敛结果留在内存里也不落盘）；收敛落盘失败
         # **不能**让构造器抛错（库仍可用，只是磁盘还没更新），记 dirty + 诊断即可。
@@ -482,7 +489,102 @@ class MemoryVault:
 
     def contains(self, note_id: str) -> bool:
         """该 id 是否仍在本库内存状态里（``remember`` 后可能已因容量上限被淘汰）。"""
-        return any(n.id == note_id for n in self._notes)
+        return note_id in self._ids
+
+    def _rebuild_ids(self) -> None:
+        self._ids = {note.id for note in self._notes}
+
+    def _token_sets(self, note: MemoryNote) -> tuple[frozenset[str], frozenset[str]]:
+        """按 note 缓存 (unigram, bigram)；写入/合并时失效，读路径只付一次 tokenize。"""
+        cached = self._note_tokens.get(note.id)
+        if cached is not None:
+            return cached
+        unigrams, bigrams = tokenize(
+            canonicalize(note.candidate_text(), DEFAULT_SYNONYM_GROUPS)
+        )
+        cached = (frozenset(unigrams), frozenset(bigrams))
+        self._note_tokens[note.id] = cached
+        return cached
+
+    @staticmethod
+    def _similarity_from_sets(
+        query_sets: tuple[frozenset[str], frozenset[str]],
+        note_sets: tuple[frozenset[str], frozenset[str]],
+    ) -> float:
+        """与 :func:`token_similarity` 完全同公式，但复用两侧已缓存的 token 集。"""
+        q_unigrams, q_bigrams = query_sets
+        c_unigrams, c_bigrams = note_sets
+        uni = len(q_unigrams & c_unigrams) / len(q_unigrams) if q_unigrams else 0.0
+        if not q_bigrams:
+            return round(uni, 4)
+        bi = len(q_bigrams & c_bigrams) / len(q_bigrams)
+        return round(0.4 * uni + 0.6 * bi, 4)
+
+    def _persist(self) -> bool:
+        """落盘；批量写入期间只标脏，退出 :meth:`batch` 时统一写一次。"""
+        if self._defer_persist > 0:
+            self._dirty = True
+            self._pending_persist = True
+            self.last_write_persisted = False
+            return False
+        return self._save()
+
+    @contextmanager
+    def batch(self) -> Iterator[MemoryVault]:
+        """批量写入上下文：期间不逐条落盘，退出最外层时统一保存一次。
+
+        内存语义与单条写入完全一致（去重 / 容量淘汰 / 倒排索引都照常维护），
+        只是把 N 次全量落盘合并成 1 次；异常退出也会尝试落盘已写入的部分。
+        """
+        self._defer_persist += 1
+        try:
+            yield self
+        finally:
+            self._defer_persist -= 1
+            if self._defer_persist == 0 and self._pending_persist:
+                self._pending_persist = False
+                self._save_safely(reason="batch_flush")
+
+    def remember_many(
+        self, entries: Iterable[Mapping[str, Any] | str]
+    ) -> list[tuple[MemoryNote, bool]]:
+        """批量写入（单次落盘）。
+
+        每项是 ``{"content": ..., "kind": ..., "tags": [...], "importance": n}``
+        或直接一个字符串；返回与 :meth:`remember` 相同的逐条结果。
+        """
+        results: list[tuple[MemoryNote, bool]] = []
+        with self.batch():
+            for entry in entries:
+                if isinstance(entry, str):
+                    results.append(self.remember(entry))
+                else:
+                    results.append(
+                        self.remember(
+                            str(entry.get("content", "")),
+                            kind=str(entry.get("kind", "note")),
+                            tags=entry.get("tags"),
+                            importance=int(entry.get("importance", 3)),
+                        )
+                    )
+        return results
+
+    def _lex_add(self, note: MemoryNote) -> None:
+        if self._lex_index is None:
+            return
+        for token in _index_tokens(note.candidate_text()):
+            self._lex_index.setdefault(token, set()).add(note.id)
+
+    def _lex_remove(self, note_id: str, tokens: set[str]) -> None:
+        if self._lex_index is None:
+            return
+        for token in tokens:
+            posting = self._lex_index.get(token)
+            if posting is None:
+                continue
+            posting.discard(note_id)
+            if not posting:
+                self._lex_index.pop(token, None)
 
 
     # ---------- 写入 ----------
@@ -509,6 +611,11 @@ class MemoryVault:
 
         duplicate = self._find_duplicate(text, norm_tags)
         if duplicate is not None:
+            old_tokens = (
+                _index_tokens(duplicate.candidate_text())
+                if self._lex_index is not None
+                else set()
+            )
             merged_tags = list(dict.fromkeys([*duplicate.tags, *norm_tags]))
             duplicate.tags = merged_tags
             duplicate.importance = max(duplicate.importance, norm_importance)
@@ -516,7 +623,10 @@ class MemoryVault:
             duplicate.last_used_at = self._clock()
             # 合并可能改变正文标签 / 重要度，旧向量失效，下次语义召回时重算。
             self._vectors.pop(duplicate.id, None)
-            self._lex_index = None  # 合并改变了该 note 的文本/标签，倒排失效。
+            self._note_tokens.pop(duplicate.id, None)  # 标签变了，token 缓存失效。
+            # 倒排增量维护：先摘旧 token，再按新状态挂回去（不必整表重建）。
+            self._lex_remove(duplicate.id, old_tokens)
+            self._lex_add(duplicate)
             merged = duplicate
             did_merge = True
         else:
@@ -529,7 +639,8 @@ class MemoryVault:
                 last_used_at=self._clock(),
             )
             self._notes.append(note)
-            self._lex_index = None  # 新增 note，倒排待重建。
+            self._ids.add(note.id)
+            self._lex_add(note)
             merged = note
             did_merge = False
 
@@ -538,7 +649,7 @@ class MemoryVault:
         # 的 id 却报成功，等于把"丢档"伪装成"写入成功"。
         self._enforce_cap()
         self.last_remember_evicted = not self.contains(merged.id)
-        self._save()
+        self._persist()
         return merged, did_merge
 
     def forget(self, note_id: str) -> bool:
@@ -546,12 +657,15 @@ class MemoryVault:
         self._ensure_writable()
         for index, note in enumerate(self._notes):
             if note.id == note_id:
+                if self._lex_index is not None:
+                    self._lex_remove(note_id, _index_tokens(note.candidate_text()))
                 del self._notes[index]
+                self._ids.discard(note_id)
                 self._vectors.pop(note_id, None)
-                self._lex_index = None
+                self._note_tokens.pop(note_id, None)
                 # 记墓碑：本次落盘前若检测到外部修改，合并时不能让磁盘版本复活它。
                 self._forgotten_ids.add(note_id)
-                self._save()
+                self._persist()
                 return True
         return False
 
@@ -720,11 +834,15 @@ class MemoryVault:
         )
         drop_count = len(self._notes) - self._max_notes
         victim_ids = {n.id for n in ordered[:drop_count]}
+        if self._lex_index is not None:
+            for victim in ordered[:drop_count]:
+                self._lex_remove(victim.id, _index_tokens(victim.candidate_text()))
         self._notes = [n for n in self._notes if n.id not in victim_ids]
+        self._ids.difference_update(victim_ids)
         for victim_id in victim_ids:
             self._vectors.pop(victim_id, None)
+            self._note_tokens.pop(victim_id, None)
             self._forgotten_ids.add(victim_id)
-        self._lex_index = None
         self._evicted_count += drop_count
         emit(
             self._on_diagnostic,
@@ -769,13 +887,17 @@ class MemoryVault:
                 posting = index.get(token)
                 if posting:
                     candidate_ids |= posting
+        query_sets = (
+            frozenset(tokenize(canonicalize(query, DEFAULT_SYNONYM_GROUPS))[0]),
+            frozenset(tokenize(canonicalize(query, DEFAULT_SYNONYM_GROUPS))[1]),
+        )
         ranked: list[tuple[MemoryNote, float]] = []
         for note in self._notes:  # 保持原遍历顺序，稳定排序的 tie-break 不变。
             if candidate_ids is not None and note.id not in candidate_ids:
                 continue
             if not self._matches_filters(note, kinds, tags):
                 continue
-            sim = token_similarity(query, note.candidate_text())
+            sim = self._similarity_from_sets(query_sets, self._token_sets(note))
             if sim > 0:
                 ranked.append((note, sim))
         return ranked
@@ -831,17 +953,36 @@ class MemoryVault:
         best_sim = 0.0
         index = self._ensure_lex_index()
         content_tokens = _index_tokens(content)
-        candidate_ids: set[str] | None = None
+        query_sets = (
+            frozenset(tokenize(canonicalize(content, DEFAULT_SYNONYM_GROUPS))[0]),
+            frozenset(tokenize(canonicalize(content, DEFAULT_SYNONYM_GROUPS))[1]),
+        )
+        candidates: list[str] | None = None
         if content_tokens:
-            candidate_ids = set()
+            # 规模治理（10k）：先按"共享 token 数"预筛。合并阈值 0.92 意味着
+            # 0.4*uni + 0.6*bi >= 0.92，可推出共享 token 数 >= 0.8 * |query_tokens|，
+            # 因此阈值取 0.75 只丢不可能的候选，不改变去重结果。
+            shared: dict[str, int] = {}
             for token in content_tokens:
-                posting = index.get(token)
-                if posting:
-                    candidate_ids |= posting
+                for note_id in index.get(token, ()):
+                    shared[note_id] = shared.get(note_id, 0) + 1
+            min_shared = max(2, int(0.75 * len(content_tokens)))
+            candidates = [
+                note_id
+                for note_id, count in shared.items()
+                if count >= min_shared
+            ]
+            if len(candidates) > 256:
+                candidates = sorted(
+                    candidates, key=lambda note_id: shared[note_id], reverse=True
+                )[:256]
         for note in self._notes:
-            if candidate_ids is not None and note.id not in candidate_ids:
-                continue
-            sim = token_similarity(content, note.candidate_text())
+            if candidates is not None:
+                if note.id not in shared:
+                    continue
+                if note.id not in candidates:
+                    continue
+            sim = self._similarity_from_sets(query_sets, self._token_sets(note))
             if sim >= DEDUP_SIMILARITY and sim > best_sim:
                 best = note
                 best_sim = sim
@@ -1269,6 +1410,8 @@ class MemoryVault:
             self._quarantine_after_external_change(status, detail)
             return
         self._notes = self._merge_notes(disk_notes)
+        self._rebuild_ids()
+        self._note_tokens.clear()
         self._lex_index = None
         live_ids = {note.id for note in self._notes}
         self._vectors = {

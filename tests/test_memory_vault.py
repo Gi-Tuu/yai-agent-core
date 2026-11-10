@@ -371,16 +371,29 @@ def test_inverted_index_respects_kinds_tags_filters() -> None:
         assert indexed == brute
 
 
-def test_lex_index_lazily_built_and_invalidated_by_writes() -> None:
+def test_lex_index_lazily_built_and_kept_consistent_by_writes() -> None:
+    """倒排索引懒构建；构建后的写入走增量维护（10k 规模下不能每次整表重建）。"""
     vault = MemoryVault(clock=TickClock())
+    assert vault._lex_index is None  # noqa: SLF001  未读未写前不建索引。
+    # 首次 remember 的去重检查会触发一次构建（空表），随后改为增量维护。
     vault.remember("用户对芒果严重过敏", kind="fact")
-    assert vault._lex_index is None  # noqa: SLF001  写入后懒失效，尚未构建。
     vault.recall("芒果过敏")
-    assert vault._lex_index is not None  # noqa: SLF001  召回触发构建。
+    assert vault._lex_index is not None  # noqa: SLF001
     note_id = next(iter(vault._lex_index.get("芒果", set())))  # noqa: SLF001
     assert note_id  # 倒排链确实挂到了对应 note。
+
+    # 新增：索引保留，新条目的 token 立即挂上。
+    vault.remember("用户喜欢草莓", kind="preference")
+    assert vault._lex_index is not None  # noqa: SLF001
+    assert vault._lex_index.get("草莓")  # noqa: SLF001
+    hits = vault.recall("草莓")
+    assert hits and hits[0]["content"] == "用户喜欢草莓"
+
+    # 删除：索引保留，只摘掉该 note 的 posting；再查不再命中。
     vault.forget(note_id)
-    assert vault._lex_index is None  # noqa: SLF001  删除后失效，下次召回重建。
+    assert vault._lex_index is not None  # noqa: SLF001
+    assert note_id not in vault._lex_index.get("芒果", set())  # noqa: SLF001
+    assert vault.recall("芒果过敏") == []
 
 
 def _brute_force_duplicate(vault: MemoryVault, content: str):

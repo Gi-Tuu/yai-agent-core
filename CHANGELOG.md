@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **长期记忆 10k 规模**：`MemoryVault` 新增 `remember_many()` / `batch()`（N 次全量落盘合并为
+  1 次）与增量倒排索引（写入不再整表重建），去重路径加 token 缓存与共享 token 预筛。
+  10,000 条批量构建 45.4s、检索 P50 17.6ms（旧实现未跑通、1000 条就要 79.8s）。
+  新增 `tests/test_memory_batch.py`；`benchmarks/memory/scale_bench.py` 支持 10k 与
+  `--single` 对照；评测口径更新到 `docs/evaluations/memory-evaluation.md`。
+
 ### Changed
 
 - **文档：静态扫描边界说明**：`docs/IMPLEMENTATION_STATUS.md` 的"已知边界"新增一条——
