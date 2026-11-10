@@ -85,7 +85,7 @@
 
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
-| 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳 | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
+| 11 个示例宿主（含 1 个生产形态）+ 原生桌面壳（含跨核调用可视化，v0.35） | 已验证 | `tests/test_host_*.py`、`tests/test_host_production.py`、`tests/test_desktop_*.py` | 桌面壳仅 Windows 真机验证；真实第三方应用行为仍由各示例自己的假后端测试界定 |
 | 有向父子核 Phase 1–3 + 尾项（v0.28–v0.33） | 已验证（32 例回归；双进程、进程托管、专员桥与 usage 预算实跑） | `tests/test_federation.py`（12）+ `test_federation_ipc.py`（7）+ `test_federation_ops.py`（8：manifest 热更新 / 每 edge 配额与统计 / 子核注销 / 进程托管与死亡失败关闭）+ `test_federation_specialists.py`（5：专员对象内省 / 多专员接入 / usage 聚合与 token 预算 / 两个可安装子核 demo）；`examples/host_m_federation/`、`examples/child_cores/` | **仅本机**：跨核事务 / 守护式自动重启 / 服务端推送 manifest 未实现；专员桥为 headless（Qt 面板接线属宿主）；不做对等 Multi-Agent；内核零改动 |
 | Windows Desktop Provider（v0.27，可选适配器） | **已验证（假 SDK 离线回归 + 真实 charmap 应用 12/12）** | `tests/test_desktop_provider.py` + `tests/test_pywinauto_backend_fake_sdk.py`（假 UIA 树覆盖观察/Invoke/SetValue/坐标点击/旧引用/进程映像解析）；`scripts/windows_uia_smoke.py`（2026-11-03 自建 WinForms → Invoke → 回调验证） | 其它真实应用、截图、UAC 提权窗口未验收；`desktop_list_windows` 按**进程身份**（PID 精确匹配 / 映像名 / 完整路径）+ 标题附加过滤，被禁窗口只回计数；真实应用验证见 [docs/evaluations/windows-real-apps.md](evaluations/windows-real-apps.md)（字符映射表 12/12，含下拉选择；第三方应用/UAC/多显示器未覆盖） |
 | 真机 nightly 回归（v0.34 起，非阻塞） | 已验证（本机三脚本复跑 + 托管 runner 两次手动触发） | `.github/workflows/nightly-real.yml`（schedule + workflow_dispatch）；本机 2026-11-10：UIA `ok`、charmap `12/12`、browser `11 receipts`；托管 runner（run 42782702561）：browser smoke + task E2E 全绿，Windows 两脚本因**无交互桌面**如实返回失败（artifact 留证，不伪装通过） | 托管 Windows runner 无交互桌面，UIA 两步 `continue-on-error`（结果看 artifact）；不覆盖真实站点多样性 / CAPTCHA / UAC / 多显示器；定时任务失败不阻塞 PR |

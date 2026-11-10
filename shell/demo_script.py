@@ -40,6 +40,12 @@ SCRIPT: Sequence[tuple[float, DemoEvent]] = [
                     preview='{"amount": 10000, "with_tax": 11300}')),
     (0.6, DemoEvent("tool_composed", tool="tax_quote_brief",
                     steps=["calc_with_tax", "add_followup"])),
+    # 父核（销售专员）把跟进记录委托给"笔记子核"：面板 CROSS-CORE 条会显示 notes·1
+    (0.4, DemoEvent("tool_call", tool="notes__add_note",
+                    arguments={"keyword": "跟进", "text": "含税报价 11300 元"})),
+    (0.5, DemoEvent("tool_result", tool="notes__add_note", ok=True,
+                    preview='{"keyword": "跟进", "count": 1}',
+                    usage={"total_tokens": 18})),
     (0.8, DemoEvent("model_message",
                     text="已按 13% 税率算出含税金额 11300 元，并归档为跟进记录。")),
     (0.6, DemoEvent("done", strategy="react", final_text="含税金额 11300 元，已归档。")),
