@@ -1,0 +1,55 @@
+name: Good first task
+description: 一个边界清晰、可离线验证、适合首次贡献者的任务（维护者使用）
+title: "feat: "
+labels: ["good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **认领方式**：在 issue 下评论"我来做 + 一句话计划"，维护者确认后会加 `claimed` 标签。
+        > `good first issue` 只是发现标签，`claimed` 才表示已有人在做。详见 `CONTRIBUTING.md` §7。
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 为什么这个任务存在、现状缺什么（2–4 句即可）
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: 任务
+      description: 具体要改哪些文件 / 新增什么，越具体越好
+      placeholder: |
+        - 修改 scripts/xxx.py ...
+        - 新增 examples/xxx/ ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 可被维护者逐条勾选的检查项（命令 + 期望结果）
+      placeholder: |
+        - `python scripts/xxx.py --json` 输出可被 json.tool 解析，退出码 0
+        - 新增离线 pytest 覆盖失败分支
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: 参考文件与提示
+      description: 相关源码 / 测试 / 文档链接，帮助新人少走弯路
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 维护者自检
+      options:
+        - label: 不引入新依赖（内核 `dependencies = []` 是红线）
+          required: true
+        - label: 可在离线环境验证（不依赖网络 / API Key）
+          required: true
+        - label: 不触碰"不做"清单（MCP Server / Multi-Agent / 内置向量记忆 / 内置 UI）
+          required: true
