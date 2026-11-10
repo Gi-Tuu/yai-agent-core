@@ -50,3 +50,17 @@ The `notes` returned by `plan_operations()` carry this information, so the host 
 .\.venv\Scripts\python.exe -m pytest tests\test_openapi_31_compat.py -q
 .\.venv\Scripts\python.exe -m pytest tests\test_schema_compatibility.py tests\test_schema_sanitize.py -q
 ```
+
+## 5. Runnable offline example
+
+After installing the `[openapi]` extra, run from the repository root:
+
+```bash
+python examples/host_n_openapi31/run.py
+```
+
+The [example guide](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_n_openapi31/README.en.md) explains the sanitized registered
+tool: `note` keeps `["string", "null"]`, `mode` converts `const` into `enum`, and the sibling keys
+beside `limit`'s `$ref` override its maximum from 50 to 3. No model, key or network is needed.
+The example neither invokes tools nor starts an HTTP server; an in-memory mock transport also
+rejects accidental requests.

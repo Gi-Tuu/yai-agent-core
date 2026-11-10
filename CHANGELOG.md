@@ -5,6 +5,14 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- 离线示例 `examples/host_n_openapi31/`：展示 OpenAPI 3.1 的 null 联合类型、
+  `const` 转 `enum` 和 `$ref` 兄弟键覆盖，注册工具并打印清洗后的 schema，
+  不需要模型、Key 或网络；附中英说明与离线回归测试。
+
 ## [v0.36.0] - 2026-11-11
 
 ### Added
