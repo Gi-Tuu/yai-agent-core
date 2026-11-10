@@ -129,6 +129,18 @@ cp .env.example .env              # Windows: copy .env.example .env
   （GitHub 对首贡献者的默认保护），不是对你的审核。
 - **PR 里写 `Closes #编号`**：合并后自动关闭 issue；如果发现 issue 已被别人认领，先评论协调。
 
+### 双语文档（走向国际）
+
+- **国际面文档必须成对**：`README` / `CONTRIBUTING` / `SECURITY` / `docs/index` /
+  `IMPLEMENTATION_STATUS` / `docs/guides` 的主要指南 / ADR 0008 中英各一份；英文放同名
+  `.en.md`，两篇顶部互相链接。
+- **中文是权威版本**：英文可以滞后；两边事实冲突时以中文为准，但**事实性改动（版本号、
+  测试数、能力清单、命令）必须同一个 PR 同步两边**。
+- **明确不翻译**：`docs/walkthrough/`（逐行讲义，强中文语境）与内部过程稿（台账 / 方案 / 报告）；
+  完整清单、Phase 2 计划与新增规则见 [`docs/BILINGUAL.md`](docs/BILINGUAL.md)。
+- **新增文档时**：国际面文档在 PR 里同时提交 `.en.md`；`tests/test_bilingual_docs.py` 会检查
+  配对、顶部互链、翻译声明与 mkdocs 导航。
+
 ## 8. 许可证
 
 本项目采用 MIT 许可证，提交 PR 即表示你同意你的贡献以 MIT 许可发布。

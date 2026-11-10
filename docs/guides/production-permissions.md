@@ -1,5 +1,7 @@
 # 生产环境权限配置指南
 
+[English](production-permissions.en.md) · **简体中文**
+
 > 对应 v0.25 审计 D-1：`AgentCore` 的 `auto_approve_tools=True` 默认值是**开发形态**
 > （等价于 `AllowlistPolicy(mode="allow_all")`，所有工具免审批自动执行）。
 > 生产 / 多用户环境必须显式配置权限策略。本页所有代码可在

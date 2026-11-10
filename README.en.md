@@ -1,6 +1,6 @@
 # YAI Agent Core
 
-**English** · [简体中文](README.md) · [Documentation site](https://gi-tuu.github.io/yai-agent-core/)
+**English** · [简体中文](README.md) · [Documentation site](https://gi-tuu.github.io/yai-agent-core/) · [English docs](https://gi-tuu.github.io/yai-agent-core/index.en/)
 
 [![CI](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Gi-Tuu/yai-agent-core/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Gi-Tuu/yai-agent-core/badge)](https://scorecard.dev/viewer/?uri=github.com/Gi-Tuu/yai-agent-core)

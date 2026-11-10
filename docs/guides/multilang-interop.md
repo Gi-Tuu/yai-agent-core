@@ -1,5 +1,7 @@
 # 多语言接入设计（Multilang Interop）
 
+[English](multilang-interop.en.md) · **简体中文**
+
 > 事实基线：yai-agent-core **v0.15.0**，最后核实 **2026-10-24**。
 
 ## 0. 先回答：能实现，还是已经实现？

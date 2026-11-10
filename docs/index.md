@@ -1,5 +1,7 @@
 # YAI Agent Core
 
+[English](index.en.md) · **简体中文**
+
 > 进程内嵌入式、**自适应**的 Agent 内核 —— **Agent 世界的 SQLite**。
 > 不必部署智能体平台，也不必写 Agent Loop / Planner / 工具选择代码：把内核 `import`
 > 进你**已有的软件**，宿主只声明"我有什么能力"，Core 自动发现能力、选策略、调工具、完成任务。

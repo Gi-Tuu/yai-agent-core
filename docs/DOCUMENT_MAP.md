@@ -31,6 +31,7 @@
 | [whitepaper.md](whitepaper.md) | 技术白皮书（**v0.25.0 发布快照口径**，现值以 IMPLEMENTATION_STATUS 为准） |
 | [comparison.md](comparison.md) / [comparison.en.md](comparison.en.md) | 与五类同类产品的诚实对比（按类别、不点名，中英） |
 | [reading-guide.md](reading-guide.md) | 代码学习路线（7 站 + 小练习），与 walkthrough 配套 |
+| [BILINGUAL.md](BILINGUAL.md) | **双语文档覆盖与规则**：哪些文档有英文版、哪些按约定不翻译、新增翻译的步骤 |
 | DOCUMENT_MAP.md | 本文件：全部文档的总索引 |
 
 ## 三、docs/evaluations/ —— 评测与证据（8 篇）

@@ -98,10 +98,21 @@ nav:
   - 白皮书: whitepaper.md
   - 与平台/框架对比: comparison.md
   - English:
+      - Overview: index.en.md
+      - Bilingual coverage: BILINGUAL.md
+      - Implementation status: IMPLEMENTATION_STATUS.en.md
       - Architecture: architecture.en.md
       - Comparison: comparison.en.md
-      - Deployment & scaling: guides/deployment-scaling.en.md
-      - Tracing: guides/tracing.en.md
+      - Guides:
+          - Production permissions: guides/production-permissions.en.md
+          - Execution audit persistence: guides/execution-audit-persistence.en.md
+          - OpenAPI 3.1 compatibility: guides/openapi-31-compat.en.md
+          - Directed federation: guides/federation.en.md
+          - Multi-language hosts: guides/multilang-interop.en.md
+          - Deployment guide: guides/demo-deployment.en.md
+          - Tracing: guides/tracing.en.md
+          - Deployment & scaling: guides/deployment-scaling.en.md
+      - ADR 0008 (directed federation): adr/0008-directed-federation.en.md
 
 # 未放进 nav 但仍构建（可被正文链接直接打开）。
 not_in_nav: |

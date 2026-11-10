@@ -142,6 +142,10 @@ include = [
     # 文档站配置：tests/test_docs_site.py 会校验它，包内跑测试需要。
     "/mkdocs.yml",
     "/docs/index.md",
+    # v0.37 双语补齐：首页 / 能力索引的英文版与双语覆盖规则也随包分发。
+    "/docs/index.en.md",
+    "/docs/IMPLEMENTATION_STATUS.en.md",
+    "/docs/BILINGUAL.md",
     "/docs/evaluations",
     "/docs/guides",
     "/docs/reports",

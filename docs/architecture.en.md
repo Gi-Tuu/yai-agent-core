@@ -1,3 +1,5 @@
+> English translation of [中文](architecture.md) · The Chinese version is canonical; if they disagree, the Chinese wins.
+
 # YAI Agent Core — Architecture
 
 [English](architecture.en.md) · [简体中文](architecture.md)

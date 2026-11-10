@@ -1,5 +1,7 @@
 # 能力与证据索引（IMPLEMENTATION_STATUS）
 
+[English](IMPLEMENTATION_STATUS.en.md) · **简体中文**
+
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
 > 口径：**v0.36.0 已发布（2026-11-11）；v0.35.0 为上一版本**。v0.26 / v0.27 / v0.28 各批次
 > （P0 安全、Browser Provider、Outcome Verification、执行适配器）已在本文件内标注，

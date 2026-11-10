@@ -1,3 +1,5 @@
+> English translation of [中文](tracing.md) · The Chinese version is canonical; if they disagree, the Chinese wins.
+
 # Structured Tracing (OpenTelemetry)
 
 **English** · [简体中文](tracing.md)

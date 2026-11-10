@@ -1,3 +1,5 @@
+> English translation of [中文](deployment-scaling.md) · The Chinese version is canonical; if they disagree, the Chinese wins.
+
 # Deployment, Horizontal Scaling, and Multi-Tenancy Guide
 
 > 中文：[deployment-scaling.md](deployment-scaling.md)
