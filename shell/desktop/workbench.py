@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
+from shell.desktop.federation_view import CrossCoreView
 from shell.desktop.specialist import (
     PERMISSION_MODES,
     SpecialistRuntime,
@@ -124,6 +125,8 @@ class WorkbenchRuntime(QObject):
     stateChanged = Signal()
     #: (专员 id, 事件类型, JSON 负载)
     specialistEvent = Signal(str, str, str)
+    #: 跨核 edge 汇总变化（父核 → 子核调用 / 失败 / tokens）
+    crossCoreChanged = Signal()
     noticeRaised = Signal(str)
     quitRequested = Signal()
     #: 当前专员的代码工具仓库刷新（payload = status JSON 字符串）
@@ -162,6 +165,8 @@ class WorkbenchRuntime(QObject):
             self._settings.value("ui/nebulaParticles", DEFAULT_NEBULA_PARTICLES)
         )
         self._specialists: dict[str, SpecialistRuntime] = {}
+        # 跨核调用可视化：从事件流聚合 edge（不依赖 Qt，可离线测试）。
+        self._cross_core = CrossCoreView()
         self._order: list[str] = []
         self._active_id = active_id or specs[0].id
         self._lock = threading.Lock()
@@ -223,9 +228,11 @@ class WorkbenchRuntime(QObject):
         return self._specialists[sid]
 
     def _relay(self, sid: str, name: str, payload: str) -> None:
-        """专员事件统一出口：当前专员上屏，其余只记未读。"""
+        """专员事件统一出口：当前专员上屏，其余只记未读；同时喂跨核视图。"""
         if sid != self._active_id:
             self._specialists[sid].mark_unread_if_idle(name)
+        if self._cross_core.observe(name, payload):
+            self.crossCoreChanged.emit()
         self.specialistEvent.emit(sid, name, payload)
 
     def _on_state(self, sid: str) -> None:
@@ -261,6 +268,9 @@ class WorkbenchRuntime(QObject):
 
     def _get_can_retry(self) -> bool:
         return self._active().can_retry
+
+    def _get_cross_core_edges(self) -> list[dict[str, object]]:
+        return self._cross_core.edges()
 
     def _get_name(self) -> str:
         return self._active().spec.name
@@ -300,6 +310,8 @@ class WorkbenchRuntime(QObject):
     activePermissionMode = Property(str, _get_permission_mode, notify=stateChanged)
     activeRunMode = Property(str, _get_run_mode, notify=stateChanged)
     activeCanRetry = Property(bool, _get_can_retry, notify=stateChanged)
+    #: 跨核调用 edge 行（prefix / calls / failures / tokens）；QML 只读。
+    crossCoreEdges = Property("QVariantList", _get_cross_core_edges, notify=crossCoreChanged)
     activeName = Property(str, _get_name, notify=stateChanged)
     activeGlyph = Property(str, _get_glyph, notify=stateChanged)
     unreadTotal = Property(int, _get_unread_total, notify=stateChanged)

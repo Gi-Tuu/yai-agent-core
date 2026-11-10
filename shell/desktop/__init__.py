@@ -7,17 +7,16 @@
 - ``app``：QML 窗口入口（球 ⇄ 胶囊  面板 + 拖动 + 系统托盘）。
 
 依赖只进 ``[desktop]`` 可选 extra；内核 ``src/yai_core`` 仍零第三方硬依赖。
+
+本包**惰性导出**：``shell.desktop.federation_view``（纯 Python 的跨核聚合）不依赖 PySide6，
+CI 里没装 ``[desktop]`` 也能直接 import；只有真正取 ``QtChannel`` / ``WorkbenchRuntime``
+等符号时才加载 Qt 模块。
 """
 
 from __future__ import annotations
 
-from shell.desktop.channel import PROMPT_TIMEOUT_SECONDS, QtChannel
-from shell.desktop.specialist import (
-    PERMISSION_MODES,
-    SpecialistRuntime,
-    SpecialistSpec,
-)
-from shell.desktop.workbench import SpecialistListModel, WorkbenchRuntime
+import importlib
+from typing import Any
 
 __all__ = [
     "PERMISSION_MODES",
@@ -28,3 +27,23 @@ __all__ = [
     "SpecialistSpec",
     "WorkbenchRuntime",
 ]
+
+_EXPORTS = {
+    "PROMPT_TIMEOUT_SECONDS": "channel",
+    "QtChannel": "channel",
+    "PERMISSION_MODES": "specialist",
+    "SpecialistRuntime": "specialist",
+    "SpecialistSpec": "specialist",
+    "SpecialistListModel": "workbench",
+    "WorkbenchRuntime": "workbench",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f"{__name__}.{module_name}")
+    value = getattr(module, name)
+    globals()[name] = value  # 缓存，后续访问不再走 __getattr__
+    return value

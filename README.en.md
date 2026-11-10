@@ -203,7 +203,10 @@ embedded in each app (no local port).
 - **Offline / live dual entry**: desktop shortcuts start either the offline demo or the live-model employee;
 - **Multi-specialist switching**: one island manages several **isolated** specialists — sales / warehouse /
   notes / companion — without losing timelines. The island is only the front desk / switchboard, **not a
-  super-agent**.
+  super-agent**;
+- **Cross-core call visualization**: when a specialist acts as a parent core calling a child core (tool
+  names of the form `prefix__tool`), the panel shows a `CROSS-CORE` summary (calls / failures / tokens)
+  below the specialist bar, turning red on failures; the aggregation is Qt-free and unit-tested offline.
 
 ```bash
 uv sync --extra desktop --extra llm

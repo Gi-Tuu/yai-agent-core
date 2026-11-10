@@ -218,6 +218,37 @@ Item {
             }
         }
 
+        // ---------- 跨核调用：父核 → 子核的 edge 摘要（有调用才显示） ----------
+        Row {
+            objectName: "crossCoreStrip"
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? 16 : 0
+            spacing: 8
+            visible: workbench.crossCoreEdges.length > 0
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "CROSS-CORE"
+                color: Theme.dim
+                font.family: Theme.fontMono
+                font.pixelSize: 9
+                font.letterSpacing: 1
+            }
+            Repeater {
+                model: workbench.crossCoreEdges
+                delegate: Text {
+                    required property var modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.prefix + "·" + modelData.calls
+                          + (modelData.tokens > 0 ? " " + modelData.tokens + "t" : "")
+                          + (modelData.failures > 0 ? " ✕" + modelData.failures : "")
+                    color: modelData.failures > 0 ? Theme.bad : Theme.text
+                    font.family: Theme.fontMono
+                    font.pixelSize: 10
+                }
+            }
+        }
+
         // ---------- 授权 / 澄清卡 ----------
         Rectangle {
             id: pendingCard
