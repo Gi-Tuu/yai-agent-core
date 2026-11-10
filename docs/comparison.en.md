@@ -1,3 +1,5 @@
+> English translation of [中文](comparison.md) · The Chinese version is canonical; if they disagree, the Chinese wins.
+
 # YAI Agent Core vs. Alternatives (an honest comparison)
 
 **English** · [简体中文](comparison.md)

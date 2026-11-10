@@ -177,6 +177,21 @@ cp .env.example .env              # Windows: copy .env.example .env
 - **Reference the issue in your PR**: write `Closes #<number>` so merging auto-closes it; if someone else
   already claimed the issue, coordinate in the comments first.
 
+### Bilingual documentation (going international)
+
+- **International-facing docs are paired**: `README`, `CONTRIBUTING`, `SECURITY`, `docs/index`,
+  `IMPLEMENTATION_STATUS`, the main `docs/guides` pages and ADR 0008 each have a Chinese and an
+  English copy; English lives next to the Chinese file as `.en.md`, and each pair links to the other
+  at the top.
+- **Chinese is canonical**: English may lag; when they disagree the Chinese wins, but **factual
+  changes (version numbers, test counts, capability lists, commands) must update both sides in the
+  same PR**.
+- **Deliberately not translated**: `docs/walkthrough/` (line-by-line learning material) and internal
+  process docs (ledgers / plans / reports). See [`docs/BILINGUAL.md`](docs/BILINGUAL.md) for the full
+  list, the Phase 2 backlog and the rules for adding a translation.
+- **When adding a doc**: submit the `.en.md` counterpart in the same PR; `tests/test_bilingual_docs.py`
+  checks pairing, cross-links, translation notices and mkdocs navigation.
+
 ## 8. License
 
 This project is released under the MIT license. Opening a PR means you agree your contribution is

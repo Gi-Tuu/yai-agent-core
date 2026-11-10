@@ -1,5 +1,7 @@
 # 有向父子核（Directed Federation）设计稿
 
+[English](federation.en.md) · **简体中文**
+
 > 状态：**Phase 1（进程内）、Phase 2（本机 IPC）、Phase 3（生态运维）已实现。**
 > 决策背景与边界见 [ADR 0008](../adr/0008-directed-federation.md)。
 > 一句话：**每个产品里嵌一个独立核；父产品里的核可以调用子产品里的核，反之无路可走。**

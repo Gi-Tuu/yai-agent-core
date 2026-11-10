@@ -1,6 +1,8 @@
 # ADR 0008：有向父子核（Directed Federation）的边界
 
-- 状态：Proposed（2026-11-09，待 Phase 0 评审；实现未开始）
+[English](0008-directed-federation.en.md) · **简体中文**
+
+- 状态：**Accepted（2026-11-10）** —— Phase 1（进程内）/ Phase 2（本机 IPC）/ Phase 3（生态运维）已实现；正文决策不变，实现记录见文末“后记”
 - 关联：`docs/guides/federation.md`（协议设计稿）、`shell/employee/`（现有层级委派骨架）、
   `src/yai_core/sidecar/`（JSON-RPC 与发现文件形状）、`src/yai_core/integrations/`（manifest / MCP / OpenAPI）、
   `docs/architecture.md`（并发与多实例契约）、`docs/IMPLEMENTATION_STATUS.md`

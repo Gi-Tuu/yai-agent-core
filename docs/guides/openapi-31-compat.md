@@ -1,5 +1,7 @@
 # OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵
 
+[English](openapi-31-compat.en.md) · **简体中文**
+
 > 状态：**v0.32 起支持**（证据：`tests/test_openapi_31_compat.py`，10 例）。
 > 本页只讲"工具入参 schema 的翻译边界"：OpenAPI 全量 JSON Schema 2020-12 词汇里，只有
 > 工具调用需要的子集被翻译；**未翻译的构造只记 notes，不因此拒绝整份描述**。
