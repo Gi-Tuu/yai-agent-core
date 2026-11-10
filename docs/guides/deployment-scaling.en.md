@@ -2,6 +2,8 @@
 
 # Deployment, Horizontal Scaling, and Multi-Tenancy Guide
 
+**English** · [简体中文](deployment-scaling.md)
+
 > 中文：[deployment-scaling.md](deployment-scaling.md)
 
 > Baseline of fact: yai-agent-core **v0.11.0**, last verified **2026-10-16** (against the local repository).

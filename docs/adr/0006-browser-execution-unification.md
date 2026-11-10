@@ -1,5 +1,7 @@
 # ADR 0006：浏览器能力的两条执行路径与统一边界
 
+[English](0006-browser-execution-unification.en.md) · **简体中文**
+
 - 状态：Accepted（2026-11-03，v0.27 Batch 3）
 - 关联：`src/yai_core/integrations/browser/`、`extension/`、`src/yai_core/sidecar/native_bridge.py`、
   `docs/guides/browser-extension-bridge.md`、`docs/IMPLEMENTATION_STATUS.md`

@@ -1,5 +1,7 @@
 # 记忆检索评测报告（v0.27 Batch 6）
 
+[English](memory-evaluation.en.md) · **简体中文**
+
 > 数据集：`benchmarks/memory/dataset.py`（114 条记忆 / 60 个 query，中英混合 + 同义 +
 > 词法零重叠 + 相似不相关 + 冲突/更新/删除/标签/多用户语义）。
 > 评测：`benchmarks/memory/run_bench.py`（Recall@5 / MRR@5 / 无关召回率 / P50 / P95）。

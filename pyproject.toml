@@ -133,6 +133,7 @@ include = [
     "/docs/architecture.md",
     "/docs/architecture.en.md",
     "/docs/reading-guide.md",
+    "/docs/reading-guide.en.md",
     "/docs/comparison.md",
     "/docs/comparison.en.md",
     "/docs/whitepaper.md",

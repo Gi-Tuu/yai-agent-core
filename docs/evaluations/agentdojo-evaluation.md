@@ -1,5 +1,7 @@
 # AgentDojo 真机评测报告
 
+[English](agentdojo-evaluation.en.md) · **简体中文**
+
 > 评测对象：**YAI Agent Core 0.24.0**（tag `13649db`，main `3d8f2a6`）
 > 评测框架：**AgentDojo 0.1.35**，benchmark `v1.2.2`
 > 模型：`deepseek-v4.1-flash-1017`（第三方 OpenAI 兼容端点，API 返回 `deepseek-v4-1-flash-261017`）

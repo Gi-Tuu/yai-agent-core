@@ -1,5 +1,7 @@
 # OpenSSF Best Practices Badge（原 CII）自评清单 —— YAI Agent Core
 
+[English](openssf-best-practices-self-assessment.en.md) · **简体中文**
+
 > 对照 OpenSSF Best Practices **Passing** 级官方标准（https://www.bestpractices.dev/en/criteria/passing ）
 > 逐条评估本仓库当前 main（**v0.27.1**，2026-11-05 复核）。状态：**Met 已满足 / Unmet 不满足（附理由）/ N/A 不适用（附理由）**。
 > 复核要点见文末「八、复核记录（2026-10-25）」；仓库内文本与**平台记录**已于

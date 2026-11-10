@@ -1,5 +1,7 @@
 # Windows Desktop Provider 真实第三方应用验证（v0.27 Batch 5）
 
+[English](windows-real-apps.en.md) · **简体中文**
+
 > 环境：Windows 11 + 真实系统自带应用 `charmap.exe`（字符映射表），
 > Python 3.13 / pywinauto 0.6.9。脚本：`scripts/windows_real_apps_smoke.py`。
 > 不使用用户文档、不保存文件；测试结束关闭应用。

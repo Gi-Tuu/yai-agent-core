@@ -1,5 +1,7 @@
 # 部署、水平扩展与多租户指南
 
+[English](deployment-scaling.en.md) · **简体中文**
+
 > English: [deployment-scaling.en.md](deployment-scaling.en.md)
 
 > 事实基线：yai-agent-core **v0.11.0**，最后核实 **2026-10-16**（本地仓库实测）。

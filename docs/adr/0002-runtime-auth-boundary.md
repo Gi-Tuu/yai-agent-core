@@ -1,5 +1,7 @@
 # ADR 0002 · Runtime 的认证与授权边界（sidecar + FastAPI Battery）
 
+[English](0002-runtime-auth-boundary.en.md) · **简体中文**
+
 - 状态：已接受（2026-10-31，B3 批次）
 - 关联：v0.25 审计 C-1（sidecar 零认证）/ D-1（默认权限）/ 挂起决策"线上 `/v1/agent/run` 无鉴权"
 
