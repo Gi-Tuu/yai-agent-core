@@ -2990,7 +2990,7 @@ wheels = [
 
 [[package]]
 name = "yai-agent-core"
-version = "0.30.0"
+version = "0.31.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
