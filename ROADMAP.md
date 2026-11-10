@@ -397,6 +397,14 @@
   Windows 两脚本按"无桌面"失败并留 artifact（不伪装通过）。
 - 修复托管 runner cp1252 控制台导致的中文 JSON `UnicodeEncodeError`（脚本固定 UTF-8 + env）。
 
+### v0.35.0 — 灵动岛跨核可视化（tag 2026-11-10，已完成）
+
+- **CROSS-CORE 摘要**：工作台聚合 `prefix__tool` 跨核调用（调用 / 失败 / tokens），
+  `Panel.qml` 在专员条下方显示；失败变红，无调用不占高度。
+- **桌面包惰性导出**：`shell.desktop.federation_view` 纯 Python，CI 未装 PySide6 也能测聚合逻辑。
+- **good-first-issue 种子**：5 个（OpenAPI 3.1 示例 / smoke --json / Go MCP 示例 /
+  QML 离屏测试 / CONTRIBUTING 真机章节）。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）
