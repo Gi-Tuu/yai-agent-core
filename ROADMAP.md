@@ -389,6 +389,14 @@
 - **两个可安装子核**：`examples/child_cores/`（笔记 / 计算器）+ `hub_demo.py` 双进程跨核 demo。
 - 联邦测试 32 例；新增 `tests/test_federation_specialists.py`。
 
+### v0.34.0 — 真机可信度（tag 2026-11-10，已完成）
+
+- **nightly 非阻塞**：`.github/workflows/nightly-real.yml` 每日 03:17 UTC + 手动触发；
+  browser 真机 job 失败即红，Windows UIA job `continue-on-error`（托管 runner 无交互桌面）。
+- **实测**：本机 UIA ok / charmap 12/12 / browser 11 receipts；托管 runner browser 全绿，
+  Windows 两脚本按"无桌面"失败并留 artifact（不伪装通过）。
+- 修复托管 runner cp1252 控制台导致的中文 JSON `UnicodeEncodeError`（脚本固定 UTF-8 + env）。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）

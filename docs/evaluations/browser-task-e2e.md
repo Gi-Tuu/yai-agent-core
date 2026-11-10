@@ -64,6 +64,9 @@
 
 本机 2026-11-10 复验：browser smoke `11 receipts`、截图 `docs/exports/browser-smoke.png`，全绿。
 
+**GitHub 托管 runner 实测（2026-11-10，run 42782702561）**：`browser-smoke.json` 11 条收据、
+`browser-task-e2e.json` `ok: true`，截图 artifact 一并上传——托管 ubuntu runner 上这条链路是真实可用的。
+
 **真实浏览器当前标签页 E2E 限制**：`activeTab` 授权必须来自用户手势，当前
 Playwright 自动化把侧边栏作为普通标签页打开，无法模拟真实 Side Panel 的用户点击；
 因此本环境只能验证协议链路与扩展静态行为，真实点击侧边栏的端到端仍需人工按
