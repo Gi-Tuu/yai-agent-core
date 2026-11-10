@@ -48,8 +48,8 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 
 1. Read the Chinese source and write `<name>.en.md` in the same directory (full translation;
    tables/commands/versions unchanged).
-2. Add at the top:
-   `> English translation of [中文](<name>.md) · The Chinese version is canonical; if they disagree, the Chinese wins.`
+2. Add the standard top notice linking back to the Chinese file (copy the first line of any existing
+   `.en.md` file in this repo; it states that the Chinese version is canonical).
 3. Add an `English:` link to the top of the Chinese file.
 4. Add the English file to the `English:` section of `mkdocs.yml`.
 5. If it is international-facing, add the pair to `REQUIRED_PAIRS` in `tests/test_bilingual_docs.py`.
