@@ -48,3 +48,16 @@ OpenAPI 3.1 允许完整的 JSON Schema 2020-12，而工具入参只需要其中
 .\.venv\Scripts\python.exe -m pytest tests\test_openapi_31_compat.py -q
 .\.venv\Scripts\python.exe -m pytest tests\test_schema_compatibility.py tests\test_schema_sanitize.py -q
 ```
+
+## 5. 可运行的离线示例
+
+安装 `[openapi]` 可选依赖后，在仓库根目录运行：
+
+```bash
+python examples/host_n_openapi31/run.py
+```
+
+[示例说明](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_n_openapi31/README.md)展示工具注册后的清洗结果：
+`note` 保留 `["string", "null"]`，`mode` 的 `const` 转为 `enum`，`limit` 的 `$ref`
+兄弟键将最大值从 50 覆盖为 3。全程无需模型、Key 或网络；不执行工具或启动 HTTP 服务，
+误发的请求也会被内存中的 mock transport 拒绝。
