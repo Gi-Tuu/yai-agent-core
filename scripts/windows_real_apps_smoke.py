@@ -212,6 +212,9 @@ async def _run() -> dict[str, Any]:
 
 
 def main() -> int:
+    # 同上：输出固定 UTF-8，避免托管 runner 的 cp1252 把中文 JSON 打崩。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if sys.platform != "win32":
         print(json.dumps({"ok": False, "skipped": "windows-only"}))
         return 2
