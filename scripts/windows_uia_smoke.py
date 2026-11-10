@@ -85,6 +85,10 @@ async def _run_smoke(marker: Path) -> tuple[bool, str]:
 
 
 def main() -> int:
+    # Windows 控制台默认 codepage（cp1252/cp936）会把中文 JSON 打成 UnicodeEncodeError；
+    # 固定 UTF-8 输出，CI 与本地控制台行为一致。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Windows UIA 真机冒烟")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出结果")
     args = parser.parse_args()
