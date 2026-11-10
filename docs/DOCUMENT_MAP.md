@@ -46,7 +46,7 @@
 | [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) | 竞品 OpenMuse-Win 只读源码核验 |
 | [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) | OpenSSF Best Practices Passing 自评清单（2026-11-05 复核） |
 
-## 四、docs/guides/ —— 宿主与运维指南（10 篇）
+## 四、docs/guides/ —— 宿主与运维指南（11 篇）
 
 | 文档 | 一句话 |
 |---|---|
@@ -58,6 +58,7 @@
 | [browser-extension-bridge.md](guides/browser-extension-bridge.md) | 浏览器扩展（MV3）与 Native Bridge：设计、安装、排障、真机验收记录 |
 | [execution-audit-persistence.md](guides/execution-audit-persistence.md) | 执行审计持久化边界（宿主接入指南） |
 | [federation.md](guides/federation.md) | **有向父子核设计稿**：产品生态里父核调子核、子核不可反调；协议 v1 / grant / 治理继承 |
+| [openapi-31-compat.md](guides/openapi-31-compat.md) | **OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵**：翻译规则、未翻译构造的 notes 与边界 |
 
 ## 五、docs/reports/ —— 时点报告（2 篇）
 

@@ -16,6 +16,7 @@ from yai_core.integrations.openapi.spec import (
     _HTTP_METHODS,
     _READ_ONLY_METHODS,
     OpenApiSpecConfig,
+    compatibility_notes,
 )
 from yai_core.tools.schema import EMPTY_OBJECT_SCHEMA, sanitize_schema
 from yai_core.types import ToolGovernance
@@ -357,6 +358,7 @@ def plan_operations(
     """遍历 paths，产出操作计划列表与 notes（read_only 过滤、ACC 跳过、截断都在这里）。"""
     notes: list[str] = []
     notes.extend(misplaced_declarations(spec))
+    notes.extend(compatibility_notes(spec))
     plans: list[OperationPlan] = []
     used_names: set[str] = set()
 
