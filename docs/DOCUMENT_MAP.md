@@ -95,7 +95,8 @@ v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿
 
 仅仓库可见（**不在 sdist 白名单，只列名字不发链接**）：`packaging/extension/README.md`、
 `packaging/windows/README.md`、`fuzzing/README.md`、`models/README.md`、
-`tests/fixtures/acc/SOURCE.md`（ACC 语料出处与哈希）、`.github/` 三个协作模板。
+`clients/node/README.md`（TS sidecar 客户端）、`tests/fixtures/acc/SOURCE.md`（ACC 语料出处与哈希）、
+`.github/` 三个协作模板。
 
 ## 十、资源与产物目录
 

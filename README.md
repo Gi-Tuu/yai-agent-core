@@ -136,7 +136,7 @@ YAI 不是又一个聊天机器人，也不是让你照着教程拼装的 Agent 
 | **成本感知选档** | 默认走便宜快档 standard，仅规划 / 工具失败纠偏 / 后段卡住才升 strong；选档是确定性规则、不额外花钱，DONE 汇总各档调用数，`cost_aware=False` 可关 |
 | **结构化长期记忆** | `remember` / `recall` 主动把事实 / 偏好 / 画像存档并召回；高相似去重合并、重要度加权、落盘 JSON；**批量写入 + 增量倒排，10k 级构建已跑通**；不内置向量记忆，语义召回走 Embedding SPI（默认关闭：`long_memory=False`） |
 | **宿主实时状态（现状锚）** | 宿主注册只读快照回调，每次模型调用前注入"此刻"的界面/业务状态（瞬态 system 块）：不进对话历史、不进压缩与长期记忆；单条 / 总量有上限，provider 失败只降级并记诊断 |
-| **语言无关宿主（Sidecar）** | `python -m yai_core.sidecar` 用 stdio NDJSON + JSON-RPC 2.0 承载 Agent 会话：初始化、运行、取消、审批/澄清与事件流；宿主工具仍经 MCP/OpenAPI 接入，不新增工具调用通道 |
+| **语言无关宿主（Sidecar）** | `python -m yai_core.sidecar` 用 stdio NDJSON + JSON-RPC 2.0 承载 Agent 会话：初始化、运行、取消、审批/澄清与事件流；宿主工具仍经 MCP/OpenAPI 接入，不新增工具调用通道；附**类型化 Node/TS 客户端**（`clients/node/`） |
 | **多模态消息（可选）** | `ChatMessage.parts` 支持文本 / 图片 / 资源引用片段：**默认关闭**（纯文本消息输出逐字不变）；图片内联才"模型看得见"，引用一律渲染成"明说看不到"的占位（绝不静默丢图），落盘只存引用不存图片字节 |
 | **安全边界** | 权限三档（全部 / 部分 / 无需审批）；**参数级审批**（宿主写数据就能要"超过这条线要人确认"）；组合工具只编排已注册工具、不执行生成代码；代码生成仅定义 `ToolSandbox` 契约、沙箱由宿主提供 |
 | **声明即约束** | 外部能力契约里的执行提示**真的被执行**：调用超时、频率上限（超限不进 handler）、可信主体要求（无主体即拒）都由执行器强制；治理数据只来自注册时的声明，模型参数改不动 |
@@ -239,6 +239,7 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 ```
 
 可选环境变量（持久化记忆、历史裁剪 / TTL、限流等）见 [`.env.example`](.env.example) 与 [`docs/architecture.md`](docs/architecture.md)。
+可选自托管镜像：`ghcr.io/gi-tuu/yai-agent-core:latest`（tag 推送自动构建，见 [`docs/guides/demo-deployment.md`](docs/guides/demo-deployment.md)）。
 
 ## 版本路线
 

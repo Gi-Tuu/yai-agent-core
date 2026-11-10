@@ -94,7 +94,7 @@
 | Windows 安装/分发（v0.27 Batch 6） | 已验证（便携包 + 一键安装/卸载） | `packaging/windows/installer.py`、`build_bundle.py`、`README.md`；本机实际安装/卸载/重装通过；产物 `dist/yai-agent-core-windows-0.26.0.zip`（约 46.6MB） | 不是 MSI/商店分发；需目标机 Python 3.11+ 与 `yai-agent-core`；扩展仍需手动加载；无自动更新（v0.27.0 起安装器含升级快照 / 回滚）；`dist/` 内 zip 文件名为构建时点版本 |
 | 本地 Key 存储方案（v0.27 Batch 4） | 方案已定，加密未实现 | [docs/adr/0007-local-secret-storage.md](adr/0007-local-secret-storage.md)；`bridge.json`/`.bak` 明文风险与 ACL、轮换、SecretStore SPI 草案 | 当前仍为明文落盘；不能宣传为加密存储；DPAPI/Credential Manager 入选后续可选模块 |
 | 两个真实开源软件零改造接入 | 已验证 | `tests/test_host_i_mealie.py`、`test_host_j_actual.py` | 走假后端，不连真实实例 |
-| Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证 | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py` | 只承载会话面，工具面仍走 MCP / OpenAPI |
+| Sidecar 协议（stdio NDJSON + JSON-RPC 2.0） | 已验证（Python 协议 + 类型化 TS 客户端） | `tests/test_sidecar_protocol.py`、`test_sidecar_server.py`；`clients/node/test/`（5 例，假 sidecar）、`.github/workflows/client-node.yml` | 只承载会话面，工具面仍走 MCP / OpenAPI；TS 客户端只覆盖会话面 |
 | Native Messaging Bridge（v0.26.0） | **已验证（真实进程 + 真实 Sidecar + 真实 Edge 端到端）** | `scripts/register_native_host.py`（HKCU 注册，可逆）；`scripts/bridge_smoke.py --executable`（冻结 exe + 未授权退出码 2 + hello/status/shutdown）；真实 Edge 侧边栏显示"协议握手完成（bridge v1）"，`bridge.log` 记录 frozen=True / exit ok | 未在 Chrome 品牌版做端到端（同一注册表/同一 exe，Edge 已证）；未跑真实任务（需模型凭据环境）；Bridge 与一次扩展连接绑定，不提供跨进程任务恢复 |
 | Bridge 配置锁（v0.27，fail-closed） | 已验证 | `tests/test_bridge_llm_config.py`（双进程改不同字段不丢、持锁超时拒绝读改写、残留锁复用不删除） | OS 级跨进程锁（msvcrt/fcntl）；锁忙返回 `config_lock_busy`，原子替换 + `.bak` 与 Key 脱敏不变 |
 | 浏览器扩展宿主（v0.26.0，MV3 Side Panel） | **已验证：加载/侧边栏/点击行为/真实任务 + 真机状态恢复** | `scripts/extension_smoke.py`（MV3 SW、sidepanel.html、`openPanelOnActionClick=true`）；`tests/test_extension_assets.py` 静态契约；真实 Edge 端到端任务「打开百度」经 Bridge→Sidecar→MCP 返回标题；**2026-11-03 真机验收：运行中关/开面板恢复"运行中"并可取消、强杀 Sidecar 后 SW 自动重连且新任务成功、关最后一个面板后 Bridge 重启并重读配置**（截图 `docs/exports/accept-reopen-cancel.png`、`accept-reopen-idle.png`，本地产物） | 真实鼠标点工具栏图标、安装包分发仍未自动化；真实站点的多标签/下载/上传/CAPTCHA 未验证 |
@@ -117,6 +117,8 @@
 |---|---|---|---|
 | 版本串一致（pyproject / `__version__` / lock / 双 README） | 已验证 | `tests/test_version_consistency.py` | 发版必跑 |
 | sdist 链接完整 + 包内可跑测试 | 已验证 | `tests/test_sdist_link_integrity.py`（19 例）；CI `sdist` job 构建→解包→包内 pytest；本机 2026-11-03 复验 `uv build --sdist` → 解包 → 包内全量 pytest exit 0 | 仅带已跟踪的公开内容 |
+| 容器镜像发布（GHCR） | 已验证（PR 构建 + Dockerfile HEALTHCHECK；本机 Docker daemon 未启动，未本地复验） | `.github/workflows/docker.yml`、`Dockerfile`（基础镜像 digest 锁定）；tag `v*` 自动发布 semver + latest（provenance + SBOM） | 仅 tag 推送发布；不含 `[desktop]` / `[browser]` / `[windows]` 依赖；镜像体积未做多阶段优化；本机未跑 Docker
+
 | SLSA provenance + cosign 签名 | 已验证 | v0.25.0 Release 15 个资产，含 `slsa-provenance.intoto.jsonl` | 第三方扫描识别有延迟 |
 | OpenSSF 徽章 / Scorecard | 外部评分 | CII Passing（#15360）；Scorecard 7.7/10（2026-10-28 复扫，Signed-Releases 9/10） | 以第三方复扫为准 |
 

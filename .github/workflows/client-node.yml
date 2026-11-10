@@ -1,0 +1,37 @@
+name: Node client
+
+# TS sidecar 客户端：构建 + 用假 sidecar fixture 跑协议测试（离线、零 Key）。
+# 真实 sidecar 的协议语义由 Python 侧 tests/test_sidecar_protocol.py 钉住。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "clients/node/**"
+      - ".github/workflows/client-node.yml"
+  pull_request:
+    paths:
+      - "clients/node/**"
+      - ".github/workflows/client-node.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: clients/node
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Build + test
+        run: npm test

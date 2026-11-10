@@ -114,6 +114,19 @@ YAI_GIT_COMMIT=$(git rev-parse HEAD) \
 ```
 重新构建后 /health 的 commit 自动变成新版本——**每次重新部署，记录里的 commit 也要同步更新**。
 
+### 3.5 GHCR 预构建镜像（可选，不想在 VPS 上构建时）
+
+tag `v*` 推送会自动构建并发布镜像到 GHCR（`.github/workflows/docker.yml`，含 provenance 与 SBOM）：
+
+```bash
+docker pull ghcr.io/gi-tuu/yai-agent-core:latest
+docker run --rm -p 8000:8000 --env-file .env ghcr.io/gi-tuu/yai-agent-core:latest
+```
+
+- 镜像内装 `[server,llm,mcp,openapi]` 四组可选依赖，CMD 与 Dockerfile 一致；
+- 不包含 `[desktop]` / `[browser]` / `[windows]` 等宿主机专属依赖；
+- 公开包首次拉取可能需要 `docker login ghcr.io`（私有仓库场景）；版本可用 `:0.32` / `:0.32.0` 固定。
+
 ## 4. 部署后验证清单（在自己电脑上跑）
 
 ```bash

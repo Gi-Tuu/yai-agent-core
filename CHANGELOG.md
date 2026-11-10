@@ -9,6 +9,15 @@
 
 ### Added
 
+- **GHCR 容器镜像**：`.github/workflows/docker.yml` 在 tag `v*` 推送时构建并发布
+  `ghcr.io/gi-tuu/yai-agent-core`（semver + latest，含 provenance 与 SBOM）；PR 只验证构建。
+  镜像与 Dockerfile 一致（`[server,llm,mcp,openapi]`），不含宿主机专属依赖。
+
+- **类型化 Node/TS sidecar 客户端**（`clients/node/`，零运行时依赖，Node ≥ 20）：
+  封装 `initialize` / `run` / `cancel` / `ping` / `shutdown`、事件订阅与 `waitForEvent`、
+  审批/澄清回调（默认拒绝，失败关闭）、退出/超时映射为 `SidecarError`；
+  附带离线假 sidecar fixture 的 5 项 `node --test` 与 `.github/workflows/client-node.yml`。
+
 - **OpenAPI 3.1 / JSON Schema 2020-12 兼容矩阵**：接受 3.1 描述；`type` 联合中的 null 原样保留、
   `const` 归一为单值 `enum`、`$ref` 兄弟键覆盖目标、数值型 `exclusiveMinimum/Maximum` 保留；
   `prefixItems` / `if-then-else` / `patternProperties` / `webhooks` / 路径级 `servers` 等未翻译构造
