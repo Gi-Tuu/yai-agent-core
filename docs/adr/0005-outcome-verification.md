@@ -1,5 +1,7 @@
 # ADR 0005：执行收据与任务验收的边界
 
+[English](0005-outcome-verification.en.md) · **简体中文**
+
 - 状态：已采纳（v0.26.0，2026-11-03 发布）
 - 日期：2026-11-03
 - 相关：`src/yai_core/verification.py`、`src/yai_core/types.py`（`Evidence` /

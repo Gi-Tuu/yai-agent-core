@@ -1,5 +1,7 @@
 # YAI 侧边栏真实 Side Panel 人工验收清单（v0.27）
 
+[English](sidepanel-manual-acceptance.en.md) · **简体中文**
+
 > 自动化无法授予 `activeTab`（必须真实用户手势），以下步骤必须在**真实 Chrome/Edge
 > 侧边栏**中人工完成；截图/事件流/日志作为证据，不能只看最终回答。
 

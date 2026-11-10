@@ -1,5 +1,7 @@
 # Browser Provider 真实任务 E2E（v0.27 Batch 3）
 
+[English](browser-task-e2e.en.md) · **简体中文**
+
 > 脚本：`scripts/browser_provider_task_smoke.py`
 > 环境：真实 Playwright Chromium（headless）+ 本地真实 HTTP 页面；**受控浏览器**，
 > 不是用户当前标签页。

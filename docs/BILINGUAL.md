@@ -19,12 +19,12 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 | Facade | [`README.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.md) · [`CONTRIBUTING.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.md) · [`SECURITY.zh-CN.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.zh-CN.md) | [`README.en.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.en.md) · [`CONTRIBUTING.en.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.en.md) · [`SECURITY.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.md) |
 | Site home | [index.md](index.md) | [index.en.md](index.en.md) |
 | Capability evidence | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | [IMPLEMENTATION_STATUS.en.md](IMPLEMENTATION_STATUS.en.md) |
-| Architecture | [architecture.md](architecture.md) | [architecture.en.md](architecture.en.md) |
-| Comparison | [comparison.md](comparison.md) | [comparison.en.md](comparison.en.md) |
-| Guides | [production-permissions.md](guides/production-permissions.md) · [execution-audit-persistence.md](guides/execution-audit-persistence.md) · [openapi-31-compat.md](guides/openapi-31-compat.md) | [production-permissions.en.md](guides/production-permissions.en.md) · [execution-audit-persistence.en.md](guides/execution-audit-persistence.en.md) · [openapi-31-compat.en.md](guides/openapi-31-compat.en.md) |
-| Guides | [federation.md](guides/federation.md) · [multilang-interop.md](guides/multilang-interop.md) · [demo-deployment.md](guides/demo-deployment.md) | [federation.en.md](guides/federation.en.md) · [multilang-interop.en.md](guides/multilang-interop.en.md) · [demo-deployment.en.md](guides/demo-deployment.en.md) |
-| Guides (already) | [tracing.md](guides/tracing.md) · [deployment-scaling.md](guides/deployment-scaling.md) | [tracing.en.md](guides/tracing.en.md) · [deployment-scaling.en.md](guides/deployment-scaling.en.md) |
-| ADR | [0008-directed-federation.md](adr/0008-directed-federation.md) | [0008-directed-federation.en.md](adr/0008-directed-federation.en.md) |
+| Architecture / comparison | [architecture.md](architecture.md) · [comparison.md](comparison.md) | [architecture.en.md](architecture.en.md) · [comparison.en.md](comparison.en.md) |
+| Reading guide | [reading-guide.md](reading-guide.md) | [reading-guide.en.md](reading-guide.en.md) |
+| Guides | [production-permissions.md](guides/production-permissions.md) · [demo-deployment.md](guides/demo-deployment.md) · [browser-extension-bridge.md](guides/browser-extension-bridge.md) · [tracing.md](guides/tracing.md) | [production-permissions.en.md](guides/production-permissions.en.md) · [demo-deployment.en.md](guides/demo-deployment.en.md) · [browser-extension-bridge.en.md](guides/browser-extension-bridge.en.md) · [tracing.en.md](guides/tracing.en.md) |
+| Guides | [multilang-interop.md](guides/multilang-interop.md) · [execution-audit-persistence.md](guides/execution-audit-persistence.md) · [deployment-scaling.md](guides/deployment-scaling.md) · [federation.md](guides/federation.md) · [openapi-31-compat.md](guides/openapi-31-compat.md) | [multilang-interop.en.md](guides/multilang-interop.en.md) · [execution-audit-persistence.en.md](guides/execution-audit-persistence.en.md) · [deployment-scaling.en.md](guides/deployment-scaling.en.md) · [federation.en.md](guides/federation.en.md) · [openapi-31-compat.en.md](guides/openapi-31-compat.en.md) |
+| Evaluations (8) | [memory-evaluation.md](evaluations/memory-evaluation.md) · [browser-task-e2e.md](evaluations/browser-task-e2e.md) · [windows-real-apps.md](evaluations/windows-real-apps.md) · [agentdojo-evaluation.md](evaluations/agentdojo-evaluation.md) · [ecosystem-interop.md](evaluations/ecosystem-interop.md) · [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) · [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) · [sidepanel-manual-acceptance.md](evaluations/sidepanel-manual-acceptance.md) | same filenames with `.en.md` |
+| ADR | [README.md](adr/README.md) · [0002](adr/0002-runtime-auth-boundary.md)–[0008](adr/0008-directed-federation.md) | [README.en.md](adr/README.en.md) · [0002.en](adr/0002-runtime-auth-boundary.en.md)–[0008.en](adr/0008-directed-federation.en.md) |
 
 ## 2. Intentionally Chinese-only
 
@@ -36,13 +36,13 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 | Internal plans / ledgers / reports | `docs/项目台账*`, `docs/产品化更新方案.md`, `docs/v025-*`, `docs/v026-*`, `docs/v028-*`, `docs/YAI项目全景分析与发展规划.md`, `docs/YAI员工薄壳-落地方案.md`, `docs/YAI灵动岛多专员-落地方案.md`, `docs/终端工艺视觉-*`, `docs/检查点A-*`, `docs/内部-主张与证据对照.md`, `docs/工具管理永久保留-落地方案.md`, `docs/宣传视频-代码生成提示词.md`, `docs/reports/` — internal process material. |
 | `CHANGELOG.md` / `ROADMAP.md` | Long-running Chinese ledgers; GitHub Releases and README carry the English-facing summary. |
 
-## 3. Phase 2 backlog (not yet translated)
+## 3. Remaining backlog (not yet translated)
 
-- `docs/guides/browser-extension-bridge.md` (long; niche)
-- `docs/evaluations/*` (8 evidence reports)
-- `docs/adr/0002`–`0007`, `docs/adr/README.md`
-- `docs/whitepaper.md`, `docs/reading-guide.md`
-- `ROADMAP.en.md` (concise English roadmap)
+- `docs/whitepaper.md` (47 KB technical whitepaper)
+- `ROADMAP.en.md` (concise English roadmap; the Chinese roadmap is canonical)
+- `CHANGELOG.en.md` and historical `docs/releases/*` (GitHub Releases carry the English summary;
+  new release notes add a short English section at the top)
+- `docs/DOCUMENT_MAP.md` (internal index)
 
 ## 4. Adding a translated doc
 

@@ -103,16 +103,35 @@ nav:
       - Implementation status: IMPLEMENTATION_STATUS.en.md
       - Architecture: architecture.en.md
       - Comparison: comparison.en.md
+      - Reading guide: reading-guide.en.md
       - Guides:
           - Production permissions: guides/production-permissions.en.md
-          - Execution audit persistence: guides/execution-audit-persistence.en.md
-          - OpenAPI 3.1 compatibility: guides/openapi-31-compat.en.md
-          - Directed federation: guides/federation.en.md
-          - Multi-language hosts: guides/multilang-interop.en.md
           - Deployment guide: guides/demo-deployment.en.md
+          - Browser extension & Bridge: guides/browser-extension-bridge.en.md
           - Tracing: guides/tracing.en.md
+          - Multi-language hosts: guides/multilang-interop.en.md
+          - Execution audit persistence: guides/execution-audit-persistence.en.md
           - Deployment & scaling: guides/deployment-scaling.en.md
-      - ADR 0008 (directed federation): adr/0008-directed-federation.en.md
+          - Directed federation: guides/federation.en.md
+          - OpenAPI 3.1 compatibility: guides/openapi-31-compat.en.md
+      - Evaluations and evidence:
+          - Memory evaluation: evaluations/memory-evaluation.en.md
+          - Browser task E2E: evaluations/browser-task-e2e.en.md
+          - Windows real apps: evaluations/windows-real-apps.en.md
+          - AgentDojo evaluation: evaluations/agentdojo-evaluation.en.md
+          - Ecosystem interop: evaluations/ecosystem-interop.en.md
+          - Competitor audit: evaluations/competitor-openmuse-audit.en.md
+          - OpenSSF self-assessment: evaluations/openssf-best-practices-self-assessment.en.md
+          - Side panel manual acceptance: evaluations/sidepanel-manual-acceptance.en.md
+      - ADR:
+          - ADR index: adr/README.en.md
+          - 0002 runtime auth boundary: adr/0002-runtime-auth-boundary.en.md
+          - 0003 ACC boundary: adr/0003-acc-boundary.en.md
+          - 0004 browser provider boundary: adr/0004-browser-provider-boundary.en.md
+          - 0005 outcome verification: adr/0005-outcome-verification.en.md
+          - 0006 browser execution unification: adr/0006-browser-execution-unification.en.md
+          - 0007 local secret storage: adr/0007-local-secret-storage.en.md
+          - 0008 directed federation: adr/0008-directed-federation.en.md
 
 # 未放进 nav 但仍构建（可被正文链接直接打开）。
 not_in_nav: |

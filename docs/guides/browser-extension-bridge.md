@@ -1,5 +1,7 @@
 # YAI Agent Core 浏览器扩展（MV3 · Side Panel）与 Native Bridge
 
+[English](browser-extension-bridge.en.md) · **简体中文**
+
 > 状态（2026-11-03 本机真机验收）：**扩展已在真实 Chrome 156 / Edge 156 中加载成功**
 > （`scripts/extension_smoke.py`：`--pack-extension` 通过、MV3 service worker 出现在 CDP targets）；
 > **Bridge 已与真实 Sidecar 端到端验证**（`scripts/bridge_smoke.py`）。

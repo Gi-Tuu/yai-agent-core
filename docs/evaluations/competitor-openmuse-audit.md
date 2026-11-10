@@ -1,5 +1,7 @@
 # 竞品源码核验：OpenMuse-Win（2026-11-03，只读）
 
+[English](competitor-openmuse-audit.en.md) · **简体中文**
+
 > 仓库：<https://github.com/wojiadexiaoming-copy/openmuse-win>
 > 核验 commit：`2385664a1c754b1e9a8a15a0f4a88d64b04ea4b8`（2026-10-29，没有更新的 main）
 > 核验方式：直接读取 GitHub raw 源码与仓库树（未克隆、未执行、未修改竞品仓库）。

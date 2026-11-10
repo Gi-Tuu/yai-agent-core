@@ -1,5 +1,7 @@
 # ADR 0007：本地模型 Key 的存储边界与 SecretStore 方案
 
+[English](0007-local-secret-storage.en.md) · **简体中文**
+
 - 状态：Proposed（2026-11-03，v0.27 Batch 4）
 - 关联：`src/yai_core/sidecar/native_bridge.py`、`scripts/register_native_host.py`、
   `scripts/configure_bridge_llm.py`、`docs/guides/browser-extension-bridge.md`
