@@ -6,7 +6,8 @@
 用法::
 
     python benchmarks/memory/scale_bench.py --sizes 100 1000
-    python benchmarks/memory/scale_bench.py --sizes 10000 --queries 5
+    python benchmarks/memory/scale_bench.py --sizes 10000 --queries 10
+    python benchmarks/memory/scale_bench.py --sizes 1000 --single   # 逐条落盘（旧路径对照）
 """
 
 from __future__ import annotations
@@ -38,19 +39,30 @@ def _unique_phrase(index: int, prefix: str) -> str:
     return f"{prefix} {index} " + " ".join(words) + f" 编号{digest[:6].hex()}"
 
 
-def _measure(size: int, queries: int) -> dict[str, object]:
+def _entries(size: int):
+    for index in range(size):
+        token = hashlib.sha1(f"scale-{index}".encode()).hexdigest()[:12]
+        yield {
+            "content": _unique_phrase(index, "合成记忆"),
+            "kind": "note",
+            "tags": [f"tag{index % 13}", token],
+        }
+
+
+def _measure(size: int, queries: int, *, single: bool = False) -> dict[str, object]:
     vault = MemoryVault()
 
     started = time.perf_counter()
     note_ids: list[str] = []
-    for index in range(size):
-        token = hashlib.sha1(f"scale-{index}".encode()).hexdigest()[:12]
-        note, _ = vault.remember(
-            _unique_phrase(index, "合成记忆"),
-            kind="note",
-            tags=[f"tag{index % 13}", token],
-        )
-        note_ids.append(note.id)
+    if single:
+        for entry in _entries(size):
+            note, _ = vault.remember(
+                entry["content"], kind=entry["kind"], tags=entry["tags"]
+            )
+            note_ids.append(note.id)
+    else:
+        for note, _ in vault.remember_many(_entries(size)):
+            note_ids.append(note.id)
     build_ms = (time.perf_counter() - started) * 1000
 
     latencies: list[float] = []
@@ -75,6 +87,7 @@ def _measure(size: int, queries: int) -> dict[str, object]:
     return {
         "notes": size,
         "queries": queries,
+        "build_mode": "single" if single else "batch",
         "build_ms": round(build_ms, 2),
         "retrieval_p50_ms": round(ordered[len(ordered) // 2], 3),
         "retrieval_p95_ms": round(ordered[min(len(ordered) - 1, int(0.95 * len(ordered)))], 3),
@@ -96,14 +109,19 @@ def main() -> int:
         type=int,
         nargs="+",
         default=[100],
-        help="默认只跑 100；1000/10000 需显式指定（当前 remember 去重是 O(n^2)，会很慢）",
+        help="默认只跑 100；1000/10000 需显式指定（10k 走批量写入）",
     )
     parser.add_argument("--queries", type=int, default=20)
+    parser.add_argument(
+        "--single",
+        action="store_true",
+        help="逐条 remember（每条落盘，旧路径对照；10k 会很慢）",
+    )
     args = parser.parse_args()
     results = []
     for size in args.sizes:
         started = time.perf_counter()
-        row = _measure(size, args.queries)
+        row = _measure(size, args.queries, single=args.single)
         row["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
         results.append(row)
         print(json.dumps(row, ensure_ascii=False))

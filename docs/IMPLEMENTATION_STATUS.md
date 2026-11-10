@@ -79,7 +79,7 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
-| 记忆质量基准（v0.27 扩量） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query；真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms / P95 38.7ms（CPU）；假嵌入器 Recall@5 0.971 / P50 1.5ms | 假嵌入器不代表真实语义；1000 条构建 79.8s（O(n²)），10,000 条未跑通，当前实现不适合 10k 规模；详见 [docs/evaluations/memory-evaluation.md](evaluations/memory-evaluation.md) |
+| 记忆质量基准与 10k 规模（v0.27 扩量 / v0.31 批量写入） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`tests/test_memory_batch.py`、`test_memory_metrics.py`、`test_memory_scale.py`；114 条 / 60 query（真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms）；**10,000 条批量构建 45.4s、检索 P50 17.6ms / P95 116ms**（纯词法，本机） | 语义通道未在 10k 规模基准化；逐条 `remember`（每条全量落盘）仍慢；超大/高频场景仍建议 `SqliteStore` 或宿主向量库；详见 [docs/evaluations/memory-evaluation.md](evaluations/memory-evaluation.md) |
 
 ## 五、宿主与协议
 

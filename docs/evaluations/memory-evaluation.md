@@ -28,18 +28,20 @@
 
 ## 规模测试（`benchmarks/memory/scale_bench.py`）
 
-合成记忆、纯词法；`remember` 内部仍做去重（O(n²)），因此数字反映当前实现边界：
+合成记忆、纯词法。v0.31 起支持**批量写入**（`remember_many()` / `batch()`
+把 N 次全量落盘合并成 1 次）与**增量倒排索引**（写入不再整表重建），数字如下：
 
-| 记忆数 | 构建 | 检索 P50 | 检索 P95 | 更新（10%） | 实际入库 |
+| 记忆数 | 构建（批量） | 检索 P50 | 检索 P95 | 更新（10%） | 实际入库 |
 |---:|---:|---:|---:|---:|---:|
-| 100 | 776 ms | 8.5 ms | 14.7 ms | 147 ms | 90 |
-| 1,000 | 79.8 s | 86.6 ms | 152.5 ms | 14.95 s | 900 |
-| 10,000 | **未跑通**（按 O(n²) 外推约 2 小时；不适合在 CI/本机冒烟） | — | — | — | — |
+| 100 | 33 ms | 0.2 ms | 0.3 ms | 4 ms | 90 |
+| 1,000 | 0.59 s | 1.0 ms | 43 ms | 76 ms | 900 |
+| 5,000 | 10.8 s | 7.4 ms | 106 ms | 1.58 s | 4,497 |
+| 10,000 | **45.4 s** | 17.6 ms | 116 ms | 6.44 s | 8,989 |
 
 **结论与边界**：
 
-- 当前 `MemoryVault` 适合小规模（约 100–1,000 条）个人长期记忆；**不适合 10,000 条
-  规模**，主要瓶颈是 `remember()` 的 O(n²) 去重与全量 JSON 重写。
+- 10,000 条**已跑通**（批量写入 + 增量倒排）；检索 P50 17.6 ms，构建 45.4 s 属"一次性
+  建库"量级，仍不适合交互级批量导入；逐条 `remember`（每条全量落盘）在 10k 规模下依然很慢。
 - 这不是“检索质量差”，而是**存储/索引实现**的规模边界；生产大规模场景应使用
   `SqliteStore` 或宿主自己的向量库，不应把本基准的 100 条满分宣传为生产检索质量。
 - 假嵌入器只证明通道接线；真实 BGE-M3 的 Recall@5 0.899 / P50 28.9ms 才是本机参考。
@@ -51,4 +53,5 @@
 .\.venv\Scripts\python.exe benchmarks\memory\run_bench.py --real-embed
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 100
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 1000 --queries 20
+.\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 10000 --queries 10
 ```
