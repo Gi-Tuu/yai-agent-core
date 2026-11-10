@@ -355,6 +355,17 @@
 - **未做（Phase 3 起）**：manifest 热更新、常驻子核生命周期托管、每 edge 配额、
   预算跨核聚合、跨核事务、断线自动重连。
 
+### v0.30.0 — 有向父子核 Phase 3（生态运维）（tag 2026-11-10，已完成）
+
+- **manifest 热更新**：`handshake` / `tools.list` 带 `manifest_version`；父核 `refresh_child()`
+  收敛子核新增/移除的工具；未配置父核白名单时发通配 grant，子核热更新无需重新握手。
+- **每 edge 配额与统计**：`ChildServer(edge_quota_per_minute=...)` 滑动窗口限流；
+  `register_child(max_calls=...)`、`edge_stats()` / `stats()`。
+- **生命周期与注销**：`ManagedChild` 托管子进程（拉起 / 重连 / 停止 / 死亡失败关闭）；
+  `unregister_child()` 同步移除父核暴露工具。
+- **测试**：`tests/test_federation_ops.py`（8 例），联邦测试合计 27 例。
+- **未做**：token 级预算跨核聚合、跨核事务、守护式自动重启、服务端主动推送 manifest。
+
 ## 下一步
 
 ### 候选（未排序，等维护者拍板）

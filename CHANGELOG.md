@@ -5,6 +5,20 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.30.0] - 2026-11-10
+
+### Added
+
+- **父子核 Phase 3（生态运维）**：`Federation.refresh_child()` manifest 热更新（`handshake` /
+  `tools.list` 带 `manifest_version`；未配置父核白名单时发通配 grant，子核热更新无需重新握手）；
+  `ChildServer(edge_quota_per_minute=...)` 每 edge 滑动窗口限流；父核
+  `register_child(max_calls=...)` + `edge_stats()` / `stats()` 统计调用、失败与耗时；
+  `unregister_child()` 同步移除父核暴露工具；`ManagedChild` 托管子进程
+  （拉起 → 等发现文件 → 连接 → 重连 / 停止 / 进程死亡失败关闭）。
+  新增 `tests/test_federation_ops.py`（8 例），联邦测试合计 27 例。内核零改动。
+- **文档**：`docs/guides/federation.md` 更新为 Phase 1/2/3 范围；ADR 0008 后记；
+  IMPLEMENTATION_STATUS、README 能力行（中英）同步。
+
 ## [v0.29.0] - 2026-11-10
 
 ### Added
