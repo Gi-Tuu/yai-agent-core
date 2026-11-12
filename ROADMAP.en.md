@@ -78,4 +78,4 @@ with a stable SPI compatibility promise and semantic versioning.
 - `main` stays green: full tests + ruff + mypy on Ubuntu 3.11/3.12/3.13 and Windows 3.13, plus
   CodeQL, Scorecard, fuzzing, routing benchmark and offline evaluation.
 - Small PRs with Conventional Commits; behavior changes update tests and the walkthrough.
-- Bilingual facade and international-facing docs are kept in pairs; see [`docs/BILINGUAL.md`](BILINGUAL.md).
+- Bilingual facade and international-facing docs are kept in pairs; see [`docs/BILINGUAL.md`](docs/BILINGUAL.md).
