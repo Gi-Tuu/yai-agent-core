@@ -5,13 +5,24 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
-## [Unreleased]
+## [v0.37.0] - 2026-11-13
 
 ### Added
 
-- 离线示例 `examples/host_n_openapi31/`：展示 OpenAPI 3.1 的 null 联合类型、
-  `const` 转 `enum` 和 `$ref` 兄弟键覆盖，注册工具并打印清洗后的 schema，
-  不需要模型、Key 或网络；附中英说明与离线回归测试。
+- **good first issue 认领流程**：仓库新增 `claimed` 标签与 `good_first_task.yml` issue 模板；
+  `CONTRIBUTING.md` / `.en.md` 明确"先评论认领 → 维护者加 `claimed` → 7 天无进展释放"，
+  用标签替代外部贡献者无法被 assign 的限制。
+- **国际面双语文档（30 对）**：新增 `docs/index.en.md`、`IMPLEMENTATION_STATUS.en.md` 及
+  guides / evaluations / ADR 全量英文版；`docs/BILINGUAL.md` 记录覆盖范围与不翻译清单；
+  `tests/test_bilingual_docs.py` 强制配对、顶部互链、翻译声明与 mkdocs English 导航。
+- **OpenAPI 3.1 离线示例**（社区贡献 @chaser940428-pixel，#179 / #166）：
+  `examples/host_n_openapi31/` 展示 null 联合类型、`const`→`enum`、`$ref` 兄弟键覆盖，
+  全离线、无 Key、无网络；附中英 README 与 2 项回归测试。
+
+### Changed
+
+- **文档实测行更新**：`IMPLEMENTATION_STATUS.md` 更新到 2 457 项收集 / 2 452 passed / 5 skipped、
+  覆盖率 93.17%；`ROADMAP.md` 头部与版本记录更新到 v0.37.0。
 
 ## [v0.36.0] - 2026-11-11
 
