@@ -21,6 +21,7 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 | Capability evidence | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | [IMPLEMENTATION_STATUS.en.md](IMPLEMENTATION_STATUS.en.md) |
 | Architecture / comparison | [architecture.md](architecture.md) · [comparison.md](comparison.md) | [architecture.en.md](architecture.en.md) · [comparison.en.md](comparison.en.md) |
 | Reading guide | [reading-guide.md](reading-guide.md) | [reading-guide.en.md](reading-guide.en.md) |
+| Whitepaper / roadmap | [whitepaper.md](whitepaper.md) · [ROADMAP.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) | [whitepaper.en.md](whitepaper.en.md) · [ROADMAP.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.en.md) |
 | Guides | [production-permissions.md](guides/production-permissions.md) · [demo-deployment.md](guides/demo-deployment.md) · [browser-extension-bridge.md](guides/browser-extension-bridge.md) · [tracing.md](guides/tracing.md) | [production-permissions.en.md](guides/production-permissions.en.md) · [demo-deployment.en.md](guides/demo-deployment.en.md) · [browser-extension-bridge.en.md](guides/browser-extension-bridge.en.md) · [tracing.en.md](guides/tracing.en.md) |
 | Guides | [multilang-interop.md](guides/multilang-interop.md) · [execution-audit-persistence.md](guides/execution-audit-persistence.md) · [deployment-scaling.md](guides/deployment-scaling.md) · [federation.md](guides/federation.md) · [openapi-31-compat.md](guides/openapi-31-compat.md) | [multilang-interop.en.md](guides/multilang-interop.en.md) · [execution-audit-persistence.en.md](guides/execution-audit-persistence.en.md) · [deployment-scaling.en.md](guides/deployment-scaling.en.md) · [federation.en.md](guides/federation.en.md) · [openapi-31-compat.en.md](guides/openapi-31-compat.en.md) |
 | Evaluations (8) | [memory-evaluation.md](evaluations/memory-evaluation.md) · [browser-task-e2e.md](evaluations/browser-task-e2e.md) · [windows-real-apps.md](evaluations/windows-real-apps.md) · [agentdojo-evaluation.md](evaluations/agentdojo-evaluation.md) · [ecosystem-interop.md](evaluations/ecosystem-interop.md) · [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) · [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) · [sidepanel-manual-acceptance.md](evaluations/sidepanel-manual-acceptance.md) | same filenames with `.en.md` |
@@ -38,8 +39,6 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 
 ## 3. Remaining backlog (not yet translated)
 
-- `docs/whitepaper.md` (47 KB technical whitepaper)
-- `ROADMAP.en.md` (concise English roadmap; the Chinese roadmap is canonical)
 - `CHANGELOG.en.md` and historical `docs/releases/*` (GitHub Releases carry the English summary;
   new release notes add a short English section at the top)
 - `docs/DOCUMENT_MAP.md` (internal index)

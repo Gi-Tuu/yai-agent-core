@@ -1,5 +1,7 @@
 # YAI Agent Core
 
+[English](whitepaper.en.md) · **简体中文**
+
 > 进程内嵌入式、自适应的 Agent 内核——技术白皮书
 
 > 作者：Gi-Tuu（单人开源项目 **YAI**）
