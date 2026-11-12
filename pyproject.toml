@@ -123,6 +123,7 @@ include = [
     "/LICENSE",
     # ROADMAP.md：白皮书链接到它；不带上则包内那处链接是死链。
     "/ROADMAP.md",
+    "/ROADMAP.en.md",
     # uv.lock：tests/test_version_consistency.py 会读它核对版本串。
     "/uv.lock",
     # 核心文档（README 里的相对链接在 sdist 内也要可达）。
@@ -137,6 +138,7 @@ include = [
     "/docs/comparison.md",
     "/docs/comparison.en.md",
     "/docs/whitepaper.md",
+    "/docs/whitepaper.en.md",
     # 能力与证据索引 / 文档总索引 / 文档站首页：README 与站点链接到它们。
     "/docs/IMPLEMENTATION_STATUS.md",
     "/docs/DOCUMENT_MAP.md",

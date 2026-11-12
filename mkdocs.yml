@@ -101,6 +101,7 @@ nav:
       - Overview: index.en.md
       - Bilingual coverage: BILINGUAL.md
       - Implementation status: IMPLEMENTATION_STATUS.en.md
+      - Whitepaper: whitepaper.en.md
       - Architecture: architecture.en.md
       - Comparison: comparison.en.md
       - Reading guide: reading-guide.en.md

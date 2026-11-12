@@ -20,7 +20,7 @@
 | [CONTRIBUTING.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.md) / [CONTRIBUTING.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.en.md) | 中 / 英 | 贡献流程 + 维护者操作手册（发版、门禁） |
 | [SECURITY.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.md) / [SECURITY.zh-CN.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.zh-CN.md) | 英 / 中 | 安全政策：支持版本表、漏洞报告渠道（路径被测试钉住） |
 | [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) | 中 | 逐版本变更（版本与变更事实的最终准绳） |
-| [ROADMAP.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) | 中 | 方向与边界：已完成各版本、候选、明确不做 |
+| [ROADMAP.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) / [ROADMAP.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.en.md) | 中 / 英 | 方向与边界：已完成各版本、候选、明确不做（英文为摘要版） |
 
 ## 二、docs/ 根层：架构与定位
 
@@ -28,7 +28,7 @@
 |---|---|
 | [architecture.md](architecture.md) / [architecture.en.md](architecture.en.md) | 架构总纲：分层、数据流、SPI、治理模型（中英） |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | **能力与证据索引**：已验证 / 未真机验证 / 不做 三档，证据落到测试文件 |
-| [whitepaper.md](whitepaper.md) | 技术白皮书（**v0.25.0 发布快照口径**，现值以 IMPLEMENTATION_STATUS 为准） |
+| [whitepaper.md](whitepaper.md) / [whitepaper.en.md](whitepaper.en.md) | 技术白皮书（**v0.25.0 发布快照口径**，现值以 IMPLEMENTATION_STATUS 为准；中英） |
 | [comparison.md](comparison.md) / [comparison.en.md](comparison.en.md) | 与五类同类产品的诚实对比（按类别、不点名，中英） |
 | [reading-guide.md](reading-guide.md) | 代码学习路线（7 站 + 小练习），与 walkthrough 配套 |
 | [BILINGUAL.md](BILINGUAL.md) | **双语文档覆盖与规则**：哪些文档有英文版、哪些按约定不翻译、新增翻译的步骤 |

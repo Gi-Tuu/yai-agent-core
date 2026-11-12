@@ -17,6 +17,7 @@ CONFIG = ROOT / "mkdocs.yml"
 REQUIRED_PAIRS = (
     "index.md",
     "IMPLEMENTATION_STATUS.md",
+    "whitepaper.md",
     "reading-guide.md",
     "architecture.md",
     "comparison.md",
@@ -46,6 +47,9 @@ REQUIRED_PAIRS = (
     "adr/0007-local-secret-storage.md",
     "adr/0008-directed-federation.md",
 )
+#: 仓库根目录的中英对（不在 docs/ 下，单独校验）。
+ROOT_PAIRS = (("ROADMAP.md", "ROADMAP.en.md"),)
+
 NAV_START = "nav:\n"
 NAV_END = "not_in_nav:"
 
@@ -101,6 +105,19 @@ def test_pairs_link_to_each_other_and_state_canonical() -> None:
         if "canonical" not in head:
             problems.append(f"{en_name} 顶部缺少 canonical（中文权威）说明")
     assert not problems, "\n".join(problems)
+
+
+def test_root_pairs_exist_and_cross_link() -> None:
+    for chinese, english in ROOT_PAIRS:
+        zh, en = ROOT / chinese, ROOT / english
+        assert zh.is_file() and en.is_file(), f"缺少根目录英文版：{english}"
+        zh_text = zh.read_text(encoding="utf-8")
+        en_text = en.read_text(encoding="utf-8")
+        assert english in zh_text, f"{chinese} 顶部没有指向 {english} 的 English 链接"
+        assert chinese in en_text, f"{english} 顶部没有指回 {chinese} 的链接"
+        head = en_text[:1200]
+        assert "English translation" in head, f"{english} 缺少翻译声明"
+        assert "canonical" in head, f"{english} 缺少 canonical 说明"
 
 
 def test_english_docs_are_in_nav() -> None:
