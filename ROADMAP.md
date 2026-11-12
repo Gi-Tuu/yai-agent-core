@@ -1,6 +1,6 @@
 # 路线图（Roadmap）
 
-> 最后更新：2026-11-05（对应已发布版本 **v0.27.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-13（对应已发布版本 **v0.37.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -410,6 +410,12 @@
 - **社区贡献**（@chaser940428-pixel，#174 / #167）：`scripts/smoke_test.py --json` 输出单个
   `{"ok": ..., "checks": [...]}` 对象；一个宿主失败仍检查另一个，任一失败退出 1，默认文本模式不变。
 - **文档实测行修正**：`IMPLEMENTATION_STATUS.md` 更新到 v0.36.0 / 2 451 项（2 446 passed、覆盖率 93.15%）。
+
+### v0.37.0 — 双语 / 认领流程 / 社区示例（tag 2026-11-13，已完成）
+
+- **good-first 认领流程**：`claimed` 标签 + issue 模板 + CONTRIBUTING 规则。
+- **国际面双语文档 30 对**：首页 / 能力索引 / guides / evaluations / ADR；防回退测试与英文导航。
+- **OpenAPI 3.1 离线示例**（社区贡献）：null 联合、const→enum、$ref 兄弟键覆盖，全离线可跑。
 
 ## 下一步
 
