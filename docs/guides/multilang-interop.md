@@ -60,6 +60,8 @@ Python `inspect` 只是"生成清单"的**其中一个 provider**：
 ### 3.1 经 MCP（让对方语言起一个 MCP Server）
 
 - Core 作为 **MCP Client**，支持 **stdio 子进程**与 **Streamable HTTP** 两种传输；
+- 兼容 MCP **2026-07-28 无会话规范**（SDK v2.2+，`protocol_mode="auto"` 默认先 discover）；
+  URL 形态支持 `headers` / `token_env` 鉴权头，远程工具描述会先做不可信文本净化；
 - 任何语言的 MCP Server 暴露的工具都会被注册进 `ToolRegistry`；
 - 配置（见 `.env.example`）：`MCP_SERVER_URL=<http形态>` 或 `MCP_SERVER_COMMAND=<stdio形态>`。
 

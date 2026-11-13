@@ -63,6 +63,9 @@ Python's `inspect` is merely **one of the providers** that "generate the manifes
 ### 3.1 Via MCP (have the other language start an MCP Server)
 
 - Core acts as an **MCP Client** and supports two transports: an **stdio subprocess** and **Streamable HTTP**;
+- It speaks the **MCP 2026-07-28 stateless spec** (SDK v2.2+; `protocol_mode="auto"` discovers first);
+  URL targets support `headers` / `token_env` authentication, and remote tool descriptions pass through
+  untrusted-text sanitization first;
 - Tools exposed by an MCP Server written in any language are registered into the `ToolRegistry`;
 - Configuration (see `.env.example`): `MCP_SERVER_URL=<http form>` or `MCP_SERVER_COMMAND=<stdio form>`.
 

@@ -17,6 +17,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from yai_core.tools.hygiene import sanitize_untrusted_text
 from yai_core.tools.schema import EMPTY_OBJECT_SCHEMA, sanitize_schema
 from yai_core.types import ToolSpec
 
@@ -41,6 +42,55 @@ class McpServerConfig:
     env: dict[str, str] | None = None
     prefix: str = ""
     server: Any | None = None
+    #: URL 形式专用的 HTTP 头（如 ``{"X-Api-Key": "..."}``）；stdio / 内存 Server 不允许。
+    headers: dict[str, str] | None = None
+    #: 从环境变量读取 Bearer token（URL 形式）；与 headers 合并，显式 Authorization 优先。
+    token_env: str | None = None
+    #: MCP 协议模式：``"auto"``（默认，SDK 先 discover，失败回退 initialize）、
+    #: ``"legacy"``（强制旧握手）或 ``"2026-07-28"``（强制无会话规范）。
+    protocol_mode: str = "auto"
+    #: 是否把远端工具描述放进给模型看的 ToolSpec；False 时只保留工具名。
+    trust_tool_descriptions: bool = True
+    #: 远端工具描述截断上限（字符）。
+    max_description_chars: int = 1000
+
+    def __post_init__(self) -> None:
+        if self.token_env is not None and (
+            not isinstance(self.token_env, str) or not self.token_env.strip()
+        ):
+            raise ValueError("token_env 必须是非空环境变量名或 None")
+        if self.headers is not None:
+            for key, value in self.headers.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError("headers 的键必须是非空字符串")
+                if not isinstance(value, str) or any(ch in value for ch in "\r\n"):
+                    raise ValueError(f"headers[{key!r}] 的值必须是无换行的字符串")
+        if (self.headers or self.token_env) and self.url is None:
+            raise ValueError("headers / token_env 只适用于 url 形式的 MCP Server")
+        if not isinstance(self.protocol_mode, str) or not self.protocol_mode.strip():
+            raise ValueError("protocol_mode 必须是非空字符串")
+        if (
+            isinstance(self.max_description_chars, bool)
+            or not isinstance(self.max_description_chars, int)
+            or self.max_description_chars < 32
+        ):
+            raise ValueError("max_description_chars 必须是 >= 32 的整数")
+        self._resolved_header_cache = self._build_headers()
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = {str(key): str(value) for key, value in (self.headers or {}).items()}
+        if self.token_env:
+            token = os.environ.get(self.token_env)
+            if not token:
+                raise ValueError(
+                    f"MCP 鉴权：环境变量 {self.token_env} 未设置（URL 形式需要 Bearer token）"
+                )
+            headers.setdefault("Authorization", f"Bearer {token}")
+        return headers
+
+    def resolved_headers(self) -> dict[str, str]:
+        """返回实际使用的 HTTP 头（含 token_env 解析结果）。"""
+        return dict(self._resolved_header_cache)
 
 
 def config_from_env(
@@ -123,7 +173,10 @@ class McpToolBridge:
                 "MCP 集成需要可选依赖：uv sync --extra mcp（或 pip install 'yai-agent-core[mcp]'）"
             ) from exc
 
-        self._client = Client(self._build_target(StdioServerParameters))
+        self._client = Client(
+            self._build_target(StdioServerParameters),
+            mode=self.config.protocol_mode,
+        )
         await self._client.__aenter__()
         listed = await self._client.list_tools()
         self._specs = [self._to_spec(tool) for tool in listed.tools]
@@ -136,10 +189,34 @@ class McpToolBridge:
         if chosen != 1:
             raise ValueError("McpServerConfig 必须且只能提供 url / command / server 之一")
         if c.url is not None:
-            return c.url
+            headers = c.resolved_headers()
+            if not headers:
+                return c.url
+            return self._http_transport(c.url, headers)
         if c.server is not None:
             return c.server
         return stdio_params_cls(command=c.command, args=c.args, env=c.env)
+
+    @staticmethod
+    def _http_transport(url: str, headers: dict[str, str]) -> Any:
+        """URL + 自定义头的 Streamable HTTP 传输（httpx client 由 mcp 管理生命周期）。"""
+        from contextlib import asynccontextmanager
+
+        from mcp.client.streamable_http import (
+            create_mcp_http_client,
+            streamable_http_client,
+        )
+
+        @asynccontextmanager
+        async def transport():
+            client = create_mcp_http_client(headers=headers)
+            try:
+                async with streamable_http_client(url, http_client=client) as streams:
+                    yield streams
+            finally:
+                await client.aclose()
+
+        return transport()
 
     def _to_spec(self, tool: Any) -> ToolSpec:
         """一个 MCP Tool 描述 → 一个统一 ToolSpec。"""
@@ -152,9 +229,19 @@ class McpToolBridge:
             result = await self._client.call_tool(remote_name, kwargs)
             return _flatten_call_result(result)
 
+        raw_description = getattr(tool, "description", "") or ""
+        if self.config.trust_tool_descriptions:
+            description = (
+                sanitize_untrusted_text(
+                    raw_description, max_chars=self.config.max_description_chars
+                )
+                or remote_name
+            )
+        else:
+            description = f"{remote_name} (remote description hidden by policy)"
         return ToolSpec(
             name=local_name,
-            description=getattr(tool, "description", "") or remote_name,
+            description=description,
             input_schema=schema,
             handler=handler,
             source="mcp",

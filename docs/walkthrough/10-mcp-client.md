@@ -303,6 +303,31 @@ app = create_app(core, lifespan=app_lifespan)
 这条链路（本服务 → LLM 规划 → Streamable HTTP MCP → 结果回灌 → 模型总结）
 就是"MCP 产品化"最硬的证据，且可用 curl 复现。
 
+## 块 11 · 2026 安全边界：无会话协议与工具描述投毒（新增）
+
+MCP 2026-07-28 规范移除了 `initialize` 握手与 `Mcp-Session-Id`，Streamable HTTP 变成
+无状态 HTTP 工作负载。SDK v2.2 起用 `mode=` 区分：`auto`（默认，先 discover，失败回退
+旧握手）、`legacy`、或具体版本串（如 `"2026-07-28"`）。本桥把它暴露成
+`McpServerConfig.protocol_mode`，默认 `auto`，不改变既有行为：
+
+```python
+McpServerConfig(alias="remote", url="https://example.com/mcp",
+                protocol_mode="2026-07-28")   # 强制无会话
+```
+
+**URL 鉴权**：`headers={...}` 直接加 HTTP 头；`token_env="BOX_TOKEN"` 会自动拼
+`Authorization: Bearer <token>`（显式 Authorization 优先，缺环境变量报可操作错误）。
+注意：stdio 形态不接受 headers/token_env（配置期直接报错）。
+
+**工具描述属于不可信输入**：恶意 MCP Server 可以在 `description` 里塞入提示注入、零宽
+字符或双向覆盖符（OWASP "MCP Tool Poisoning"）。`_to_spec()` 现在会：
+
+- 用 `sanitize_untrusted_text()` 去控制/零宽/双向字符、折叠空白、按
+  `max_description_chars`（默认 1000）截断；
+- `trust_tool_descriptions=False` 时**完全不把远端描述喂给模型**，只保留工具名与
+  schema（高风险环境用）；
+- 只做字符层净化，**不做"指令检测"**——语义检测误报高、也挡不住改写，边界要写进宿主策略。
+
 ## 测试策略（`tests/test_mcp_bridge.py` + `tests/test_battery_api.py`）
 - 文件首行 `pytest.importorskip("mcp")`：最小安装（无 mcp extra）的环境整文件跳过，
   内核老测试照常全绿；CI 矩阵统一加装 `--extra mcp` 后这些用例才真正执行。
