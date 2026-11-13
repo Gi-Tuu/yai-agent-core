@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-13（对应已发布版本 **v0.38.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-13（对应已发布版本 **v0.39.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -426,6 +426,13 @@
 - **工具描述投毒防护**：远端 `description` 注册前净化（控制/零宽/双向字符、长度上限）；
   `trust_tool_descriptions=False` 可完全隐藏远端描述。
 - mcp extra 提升到 `>=2.2`；新增 `test_mcp_security.py` / `test_tool_hygiene.py`。
+
+### v0.39.0 — AG-UI 1.0 适配器（tag 2026-11-13，已完成）
+
+- **事件流 → 标准前端协议**：`AgUiTranslator` 映射 RUN/TEXT/TOOL/CUSTOM；SSE 单帧编码；
+  其余 YAI 事件保留为 `CUSTOM`，不丢信息。
+- **FastAPI 示例**：`examples/host_ag_ui_sse/` 离线可跑；中英指南 `docs/guides/ag-ui.md`。
+- 边界：非 token 流式、tool result 为受限 preview、approval/clarify 未接 interrupt。
 
 ## 下一步
 
