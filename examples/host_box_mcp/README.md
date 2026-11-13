@@ -43,7 +43,24 @@ browser       : Page: Example Domain (https://example.com/)
 `computer_act` / `gui_plan` 等 37 个工具——宿主（AgentCore）看到的只是统一
 `ToolSpec`，和本地函数没有区别。
 
-## 3. 诚实边界
+## 3. 完整电脑操作验收
+
+```bash
+uv run python examples/host_box_mcp/acceptance.py
+```
+
+本机实测（2026-11-14）全部 PASS：
+
+- **A 读**：`box_status` running（`sbxdesk:v22`）+ `computer_state` 读到 Xfce 窗口；
+- **B GUI 写**：`computer_act` 在 Box 终端键入 `echo box-gui-ok > /workspace/gui-proof.txt`，
+  再用 `read_file` 读到 `box-gui-ok`（屏幕输入 → 文件内容）；
+- **C 浏览器写**：本地表单 → `browser_navigate` → `browser_type` / `browser_click` →
+  `browser_read` 读出 `hello YAI`；
+- **D 清理**：`shell` 删除验收文件。
+
+> 浏览器窗口按 MCP 会话隔离：C 的所有动作必须在同一个 `McpToolBridge` 连接内。
+
+## 4. 诚实边界
 
 - 个人 key 只存本地 `.env.local`，不提交、不回显；泄露就回 Access 页 **Revoke**；
 - Box Free 账户显示 `0 credits left`：本示例只用 box 的 shell/Chrome（不调 Box 的模型），

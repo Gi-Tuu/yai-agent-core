@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **Box 电脑操作验收脚本**（`examples/host_box_mcp/acceptance.py`）：A 读屏 / B GUI 键入
+  （`computer_act` → `read_file` 验证）/ C 浏览器写（`browser_type` + `browser_click` →
+  `browser_read` 输出 `hello YAI`）/ D 清理；本机全部 PASS。中英 README 与
+  sidepanel 验收文档同步。
+
 ## [v0.42.0] - 2026-11-14
 
 ### Added

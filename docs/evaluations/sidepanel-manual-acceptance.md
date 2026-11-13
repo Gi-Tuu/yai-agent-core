@@ -83,6 +83,20 @@
 边界：Box Free 显示 `0 credits left`，本冒烟只用 box 的 shell/Chrome（YAI 用自己的模型）；
 未做完整 Side Panel 桌面 GUI 验收；key 泄露请在 Access 页 Revoke。
 
+## Box 电脑操作验收 A–D（2026-11-14，全部 PASS）
+
+在 Box 云桌面上用 MCP 工具完成「读屏 → GUI 输入 → 浏览器写 → 清理」：
+
+- **A 读**：`box_status` = running（`sbxdesk:v22`）；`computer_state` 读到 Xfce 窗口；
+- **B GUI 写**：`computer_act` 启动终端并键入 `echo box-gui-ok > /workspace/gui-proof.txt`，
+  `read_file` 读回 `box-gui-ok`；
+- **C 浏览器写**：本地表单 → `browser_navigate` → `browser_type` / `browser_click` →
+  `browser_read` 输出 `hello YAI`；
+- **D 清理**：`shell` 删除验收文件；真实脚本 `examples/host_box_mcp/acceptance.py` 可复现。
+
+边界：这是「YAI 作为 MCP Client 驱动 Box 云桌面」的验收，**不是 Side Panel 扩展**的验收；
+浏览器窗口按 MCP 会话隔离，C 必须同一连接完成。
+
 ## 记录模板
 
 ```text
