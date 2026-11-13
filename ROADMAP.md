@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-13（对应已发布版本 **v0.37.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-13（对应已发布版本 **v0.38.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -418,6 +418,14 @@
 - **good-first 认领流程**：`claimed` 标签 + issue 模板 + CONTRIBUTING 规则。
 - **国际面双语文档 30 对**：首页 / 能力索引 / guides / evaluations / ADR；防回退测试与英文导航。
 - **OpenAPI 3.1 离线示例**（社区贡献）：null 联合、const→enum、$ref 兄弟键覆盖，全离线可跑。
+
+### v0.38.0 — MCP 2026 安全边界（tag 2026-11-13，已完成）
+
+- **MCP 2026-07-28 无会话兼容**：`protocol_mode` 透传 SDK，`auto` 先 discover；
+  URL 形态支持 `headers` / `token_env` 鉴权（真实本地 stateless HTTP 回归）。
+- **工具描述投毒防护**：远端 `description` 注册前净化（控制/零宽/双向字符、长度上限）；
+  `trust_tool_descriptions=False` 可完全隐藏远端描述。
+- mcp extra 提升到 `>=2.2`；新增 `test_mcp_security.py` / `test_tool_hygiene.py`。
 
 ## 下一步
 
