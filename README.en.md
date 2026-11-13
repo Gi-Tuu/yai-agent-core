@@ -254,6 +254,7 @@ policy**; the kernel's default policy allows everything.</p>
 | 12 | `child_cores` | Two installable child cores (notes / calculator) + `hub_demo.py`: one parent supervises both child processes and calls across them |
 | 13 | `host_ag_ui_sse` | AG-UI 1.0 SSE host: FastAPI translates YAI's event stream into the standard frontend protocol |
 | 14 | `host_ag_ui_copilotkit` | Real CopilotKit v2 frontend: CopilotKit Runtime → HttpAgent → YAI `/agent` (verified end-to-end locally) |
+| 15 | `host_box_mcp` | Box by Simular cloud desktop: MCP exposes 36 shell/browser/computer tools (real-machine smoke) |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
