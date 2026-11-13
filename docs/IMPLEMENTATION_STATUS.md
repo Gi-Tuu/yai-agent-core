@@ -36,7 +36,7 @@
 
 | 能力 | 状态 | 证据 | 边界 |
 |---|---|---|---|
-| native 函数 / OpenAPI 3（含 3.1）/ MCP 三源统一 | 已验证 | `tests/test_openapi_bridge.py`、`test_openapi_31_compat.py`（3.1 / 2020-12 子集 10 例）、`test_mcp_bridge.py` | MCP 需安装 `[mcp]` extra；2020-12 只翻译工具入参子集，未翻译构造记 notes 不拒整份描述（[兼容矩阵](guides/openapi-31-compat.md)） |
+| native 函数 / OpenAPI 3（含 3.1）/ MCP 三源统一 | 已验证（含 MCP 2026-07 安全边界） | `tests/test_openapi_bridge.py`、`test_openapi_31_compat.py`（3.1 / 2020-12 子集 10 例）、`test_mcp_bridge.py`、`test_mcp_security.py`（描述清洗 / trust 开关 / headers / token_env / protocol_mode）、`test_tool_hygiene.py` | MCP 需 `[mcp]>=2.2` extra；2020-12 只翻译工具入参子集，未翻译构造记 notes；MCP 工具描述只做字符层净化（不做语义指令检测），高风险用 `trust_tool_descriptions=False`（见 walkthrough 10） |
 | 浏览器 MCP 扩展端到端（v0.26，扩展宿主） | 已验证（本机真实 Edge；含 CDP 模式） | `scripts/register_native_host.py --browser-mcp playwright [--cdp-endpoint]` + 侧边栏任务「打开百度」；CDP 模式经 `scripts/chrome_cdp.py` 启动的 Chrome 验证（`/json/list` 当前页 = baidu） | 属于宿主扩展能力：MCP 可选、懒加载，内核 `dependencies` 仍为空；CDP 连接的是 chrome_cdp 启动的独立 profile Chrome，不能接管已有默认窗口 |
 | 本地 LLM 配置（v0.26，扩展宿主） | 已验证（面板入口 + CLI + 单测） | 侧边栏“LLM 设置”读取/保存（Key 只显示末4位、不存浏览器）；`scripts/configure_bridge_llm.py`；`tests/test_bridge_llm_config.py`、`tests/test_native_bridge.py` configure/get_config | Key 只写本地 bridge.json、读回永远脱敏；保存后需重开侧边栏生效；CLI 与面板共用同一配置文件 |
 | 能力缺口自发现 + 远程发现源 | 已验证 | `tests/test_discovery*.py`、`test_remote_discovery.py` | 发现不等于授权，仍走统一策略 |

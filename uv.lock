@@ -3061,7 +3061,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'openapi'", specifier = ">=0.27" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", marker = "extra == 'local-embed'", specifier = ">=1.26" },
     { name = "onnxruntime", marker = "extra == 'local-embed'", specifier = ">=1.17" },
