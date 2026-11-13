@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-13（对应已发布版本 **v0.40.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.41.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -441,6 +441,13 @@
 - **可复现**：`locomo_bench.py --download` 校验 SHA-256；数据集不随包分发；
   `tests/test_locomo_bench.py` 合成 fixture 回归。
 - 边界：纯词法基线，不可与 Mem0/Zep 的语义分数直接比较。
+
+### v0.41.0 — 真实 CopilotKit 前端（tag 2026-11-14，已完成）
+
+- **端到端**：浏览器 CopilotChat → CopilotKit Runtime → HttpAgent → YAI FastAPI `/agent`（AG-UI SSE）。
+- **实测**：`/api/copilotkit/info` mode=sse；发消息得到回复；事件面板 RUN/TEXT 事件；
+  截图 `docs/assets/copilotkit-demo.png`。
+- 边界：单用户本地 demo、ScriptedModel、未接 Copilot Cloud / 生产鉴权。
 
 ## 下一步
 
