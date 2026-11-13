@@ -228,7 +228,7 @@ uv sync --extra desktop --extra llm
 | 11 | `host_m_federation` | 父子核 Phase 1/2：ATM 父核调用文档子核写流水；进程内 `run.py` + 双进程 `ipc_demo.py`（有向、无 Key） |
 | 12 | `child_cores` | 两个可安装子核（笔记 / 计算器）+ `hub_demo.py`：父核同时托管两个子进程并跨核调用 |
 | 13 | `host_ag_ui_sse` | AG-UI 1.0 SSE 宿主：FastAPI 把 YAI 事件流翻译成标准前端协议 |
-| 14 | `host_ag_ui_copilotkit` | 真实 CopilotKit v2 前端：CopilotKit Runtime → HttpAgent → YAI `/agent`（本机端到端验证） |
+| 14 | `host_ag_ui_copilotkit` | 真实 CopilotKit v2 前端：Runtime → HttpAgent → YAI `/agent`（含 tool call + npm build CI） |
 | 15 | `host_box_mcp` | Box by Simular 云桌面：MCP 接 36 个 shell/browser/computer 工具（真机冒烟） |
 
 > 目录名保留历史编号（a/c/d/e/f/g/i/j/k/l），不随学习顺序重排，以便与各版材料、讲义路径一致。

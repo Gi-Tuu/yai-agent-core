@@ -1,0 +1,33 @@
+name: CopilotKit demo
+
+on:
+  push:
+    paths:
+      - "examples/host_ag_ui_copilotkit/**"
+      - ".github/workflows/copilotkit-demo.yml"
+  pull_request:
+    paths:
+      - "examples/host_ag_ui_copilotkit/**"
+      - ".github/workflows/copilotkit-demo.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: npm ci + build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: examples/host_ag_ui_copilotkit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: examples/host_ag_ui_copilotkit/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Check build output
+        run: test -f dist/index.html

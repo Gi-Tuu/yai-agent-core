@@ -35,7 +35,8 @@ npm start          # http://127.0.0.1:4000
 ```
 
 Open <http://127.0.0.1:4000>, send a message, and watch CopilotChat reply while the
-`AG-UI events` panel shows `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`.
+`AG-UI events` panel shows `RUN_STARTED / TOOL_CALL_* / TEXT_MESSAGE_* / RUN_FINISHED`
+(the example really calls a local `demo_fact` tool once).
 
 Development mode (Vite HMR):
 

@@ -33,7 +33,8 @@ npm start          # http://127.0.0.1:4000
 ```
 
 打开 <http://127.0.0.1:4000>，输入一句话即可看到 CopilotChat 的回复，右侧
-`AG-UI events` 面板显示 `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`。
+`AG-UI events` 面板显示 `RUN_STARTED / TOOL_CALL_* / TEXT_MESSAGE_* / RUN_FINISHED`
+（示例会真实调用一次本地 `demo_fact` 工具）。
 
 开发模式（Vite HMR）：
 

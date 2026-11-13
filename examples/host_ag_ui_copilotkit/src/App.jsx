@@ -27,8 +27,14 @@ function EventLog() {
       onTextMessageEndEvent() {
         push("TEXT_MESSAGE_END");
       },
+      onToolCallStartEvent() {
+        push("TOOL_CALL_START");
+      },
       onToolCallEndEvent({ toolCallName }) {
         push(`TOOL_CALL_END: ${toolCallName}`);
+      },
+      onToolCallResultEvent() {
+        push("TOOL_CALL_RESULT");
       },
       onRunFinishedEvent() {
         push("RUN_FINISHED");

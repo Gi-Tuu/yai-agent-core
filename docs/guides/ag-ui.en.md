@@ -119,8 +119,10 @@ cd examples/host_ag_ui_copilotkit
 npm install && npm run build && npm start   # http://127.0.0.1:4000
 ```
 
-Verified locally (2026-11-14): `/api/copilotkit/info` returns `mode: sse`; sending a message renders
-the reply in CopilotChat and the event panel shows `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`.
+Verified locally (2026-11-14): `/api/copilotkit/info` returns `mode: sse`; the example really calls
+a local `demo_fact` tool once, CopilotChat renders the reply, and the event panel shows
+`RUN_STARTED / TOOL_CALL_* / TEXT_MESSAGE_* / RUN_FINISHED`. CI guards the build via
+`.github/workflows/copilotkit-demo.yml` (`npm ci` + `npm run build`).
 Boundaries: single-user local demo (pinned `identifyUser`), offline `ScriptedModel`, no Copilot
 Cloud or production auth; the frontend uses CopilotKit `@copilotkit/runtime@1.87.1` v2 APIs.
 

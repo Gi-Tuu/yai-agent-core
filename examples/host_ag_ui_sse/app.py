@@ -13,8 +13,11 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
-from yai_core import AgentCore, ModelResponse, ScriptedModel
+from yai_core import AgentCore, ScriptedModel
 from yai_core.integrations.ag_ui import AgUiTranslator, encode_sse
+from yai_core.types import ModelResponse, ToolCallRequest
+
+from . import capabilities
 
 app = FastAPI(title="YAI AG-UI SSE demo")
 
@@ -39,6 +42,25 @@ def _last_user_text(body: dict) -> str:
     return "你好"
 
 
+def _demo_model(task: str):
+    """固定两轮：先调一次本地工具，再给最终回答（离线、可复现）。"""
+    return ScriptedModel(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call-ag-ui-1",
+                        name="demo_fact",
+                        arguments={"topic": "AG-UI"},
+                    )
+                ],
+            ),
+            ModelResponse(content=f"AG-UI demo：收到「{task}」，工具返回了 AG-UI 事实。"),
+        ]
+    )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -50,7 +72,7 @@ async def agent(body: dict) -> StreamingResponse:
     run_id = str(body.get("runId") or "run-local")
     task = _last_user_text(body)
 
-    core = AgentCore(ScriptedModel([ModelResponse(content=f"AG-UI demo：收到「{task}」。")]))
+    core = AgentCore.auto(capabilities, _demo_model(task), llm_router="auto")
 
     async def events():
         translator = AgUiTranslator(thread_id=thread_id, run_id=run_id)
