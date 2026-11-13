@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.42.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.42.1-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>给每个软件，一颗会思考的心脏。</b></p>
@@ -270,7 +270,8 @@ POST /v1/agent/run            # {"task": "..."} -> 事件流 + 最终结果
 - **v0.22.1（已完成）**：审计整改第二批次——工具执行语义收紧（坏 JSON 参数拒绝、幂等重放复核权限依赖、组合超时逐步骤下发）、上下文/重规划/关闭语义修正、SQLite 备份恢复原子替换、子员工权限逐层叠加、**修掉 Python 3.11 上被 `asyncio.wait_for` 吞掉的外部取消**、sdist 包内断链 12→0；Release 起上传 provenance 资产
 - **v0.23.0（已完成）**：把「能当场验证」做进仓库——`demo_governance_loop.py` 一条命令跑完治理闭环、`check_all.py` 一条命令跑完全部门禁、`docs/IMPLEMENTATION_STATUS.md` 能力与证据索引；桌面星云粒子数可配置（`ui/nebulaParticles`，默认 260）
 - **v0.25.0（已完成）**：生产就绪批次——复审 8 类加固、外发闸边界、生产安全默认值、sidecar 身份绑定、AgentDojo 重复采样与多攻击、生产宿主示例；v0.24.0 把「可信」做进三个层面——提示缓存（Anthropic 输入成本）、工具输出按不可信数据处理 + 离线注入回归集、执行收据哈希链与**权限拒绝成为可见事件**；另加并行摘要压缩与任务锚点（长会话）
-- **v0.42.0（已完成，当前发布版本）**：**Box by Simular 真机接入**（MCP 36 工具：云 shell / Chrome / computer；`absent → running → shell → example.com` 验证）
+- **v0.42.1（已完成，当前发布版本）**：Box 电脑操作验收脚本 A–D（读屏 / GUI 键入 / 浏览器写 / 清理，真机全 PASS）
+- **v0.42.0（已完成）**：**Box by Simular 真机接入**（MCP 36 工具：云 shell / Chrome / computer；`absent → running → shell → example.com` 验证）
 - **v0.41.0（已完成）**：**真实 CopilotKit v2 前端 demo**（CopilotKit Runtime → HttpAgent → YAI `/agent`，AG-UI SSE 端到端验证 + 截图）
 - **v0.40.0（已完成）**：LoCoMo 风格离线记忆基准（10 对话 / 1,973 QA，纯词法 Recall@5 0.3482 / MRR 0.2927）+ 合成 fixture 回归；数据集不随包分发
 - **v0.39.0（已完成）**：AG-UI 1.0 适配器（事件流 → SSE 标准前端协议）+ FastAPI 示例；中英指南与 10 项离线回归
