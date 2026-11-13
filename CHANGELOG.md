@@ -5,6 +5,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **LoCoMo 风格记忆基准**（`benchmarks/memory/locomo_bench.py`）：10 段多会话对话 /
+  5,882 轮 / 1,986 QA（1,973 可评估），每段独立建库、关闭去重、纯词法召回；
+  本机 **Recall@5 0.3482 / Recall@10 0.4163 / MRR 0.2927**（含分类别）。
+  数据集不随仓库分发（`--download` 从上游拉取并校验 SHA-256；上游 NOASSERTION）。
+  新增 `tests/test_locomo_bench.py`（5 例）与 memory-evaluation 中英章节。
+
 ## [v0.39.0] - 2026-11-13
 
 ### Added

@@ -48,6 +48,35 @@
   `SqliteStore` 或宿主自己的向量库，不应把本基准的 100 条满分宣传为生产检索质量。
 - 假嵌入器只证明通道接线；真实 BGE-M3 的 Recall@5 0.899 / P50 28.9ms 才是本机参考。
 
+## LoCoMo 风格标准基准（`benchmarks/memory/locomo_bench.py`，v0.40）
+
+上游数据集 [LoCoMo](https://github.com/snap-research/locomo)：10 段多会话对话 / 5,882 轮 /
+1,986 QA（category 1 多跳、2 时序、3 开放域、4 单跳、5 对抗）。**不随仓库分发**：脚本
+`--download` 从上游拉取并校验大小 / SHA-256（2,805,274 bytes / `79fa87e9…698ff4`）。
+
+口径：每段对话独立建库，每轮一条 note（`[dia_id] speaker: text`，`tags=[dia_id]`）；
+关闭去重（基准要保证每个证据 id 可检索）；只跑同步词法召回（无 embedding / LLM / 网络）。
+1,973 / 1,986 QA 可评估（13 条证据缺失跳过）。
+
+| 指标 | 值 |
+|---|---:|
+| Recall@5 | **0.3482** |
+| Recall@10 | **0.4163** |
+| MRR | **0.2927** |
+
+| 类别 | n | R@5 | R@10 | MRR |
+|---|---:|---:|---:|---:|
+| 1 多跳 | 278 | 0.142 | 0.191 | 0.230 |
+| 2 时序 | 320 | 0.434 | 0.526 | 0.355 |
+| 3 开放域 | 89 | 0.139 | 0.167 | 0.161 |
+| 4 单跳 | 840 | 0.413 | 0.475 | 0.326 |
+| 5 对抗 | 446 | 0.335 | 0.417 | 0.251 |
+
+**诚实边界**：这是**纯词法**基线，不是 LoCoMo 排行榜意义上的语义记忆系统；与 Mem0 / Zep 等
+（embedding + LLM 判定）的数字**不可直接比较**。它回答的是"不接 embedder 时，MemoryVault 的
+词法召回在标准多会话数据上是什么水平"，用于后续加 embedder / 改索引时做回归对照。
+本机 CPU 上 ingest 30ms、retrieve 2.3s；数据集许可为上游 NOASSERTION，再分发前需自行核对。
+
 ## 复现
 
 ```powershell
@@ -56,4 +85,5 @@
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 100
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 1000 --queries 20
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 10000 --queries 10
+.\.venv\Scripts\python.exe benchmarks\memory\locomo_bench.py --download --json
 ```

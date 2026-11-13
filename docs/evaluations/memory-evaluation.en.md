@@ -55,6 +55,38 @@ table); the numbers are as follows:
 - The fake embedder only proves the channel wiring; real BGE-M3's Recall@5 0.899 / P50 28.9 ms is the reference
   for this machine.
 
+## LoCoMo-style standard benchmark (`benchmarks/memory/locomo_bench.py`, v0.40)
+
+Upstream dataset [LoCoMo](https://github.com/snap-research/locomo): 10 multi-session
+conversations / 5,882 turns / 1,986 QA (category 1 multi-hop, 2 temporal, 3 open-domain,
+4 single-hop, 5 adversarial). It is **not redistributed**: `--download` fetches it from upstream
+and verifies size / SHA-256 (2,805,274 bytes / `79fa87e9…698ff4`).
+
+Framing: one vault per conversation, one note per turn (`[dia_id] speaker: text`, `tags=[dia_id]`);
+dedupe disabled (the benchmark must keep every evidence id retrievable); synchronous lexical recall
+only (no embedding / LLM / network). 1,973 / 1,986 QA are evaluable (13 skipped for missing evidence).
+
+| Metric | Value |
+|---|---:|
+| Recall@5 | **0.3482** |
+| Recall@10 | **0.4163** |
+| MRR | **0.2927** |
+
+| Category | n | R@5 | R@10 | MRR |
+|---|---:|---:|---:|---:|
+| 1 multi-hop | 278 | 0.142 | 0.191 | 0.230 |
+| 2 temporal | 320 | 0.434 | 0.526 | 0.355 |
+| 3 open-domain | 89 | 0.139 | 0.167 | 0.161 |
+| 4 single-hop | 840 | 0.413 | 0.475 | 0.326 |
+| 5 adversarial | 446 | 0.335 | 0.417 | 0.251 |
+
+**Honest boundary**: this is a **lexical** baseline, not a semantic memory system in the LoCoMo
+leaderboard sense; its numbers are **not directly comparable** to Mem0 / Zep (embedding + LLM
+judging). It answers "what lexical recall does MemoryVault reach on standard multi-session data
+without an embedder", and serves as a regression baseline when adding embedders / changing indexes.
+On this CPU: ingest 30ms, retrieve 2.3s. The upstream license is NOASSERTION — verify it before
+redistributing the dataset.
+
 ## Reproduce
 
 ```powershell
@@ -63,4 +95,5 @@ table); the numbers are as follows:
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 100
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 1000 --queries 20
 .\.venv\Scripts\python.exe benchmarks\memory\scale_bench.py --sizes 10000 --queries 10
+.\.venv\Scripts\python.exe benchmarks\memory\locomo_bench.py --download --json
 ```
