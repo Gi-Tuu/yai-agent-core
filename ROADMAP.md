@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.41.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.42.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -448,6 +448,13 @@
 - **实测**：`/api/copilotkit/info` mode=sse；发消息得到回复；事件面板 RUN/TEXT 事件；
   截图 `docs/assets/copilotkit-demo.png`。
 - 边界：单用户本地 demo、ScriptedModel、未接 Copilot Cloud / 生产鉴权。
+
+### v0.42.0 — Box by Simular 真机接入（tag 2026-11-14，已完成）
+
+- **MCP 36 工具**：`shell` / `read_file` / `browser_*` / `computer_*` / `gui_plan` / `box_*`。
+- **真机链路**：`box_status: absent` → `box_ensure: running` → `shell`（Linux 6.8）→
+  `browser_navigate` example.com；`examples/host_box_mcp/` 一键复现。
+- 个人 key 只存本地 `.env.local`（已忽略），脚本不打印 token。
 
 ## 下一步
 
