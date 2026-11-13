@@ -30,6 +30,7 @@ REQUIRED_PAIRS = (
     "guides/deployment-scaling.md",
     "guides/federation.md",
     "guides/openapi-31-compat.md",
+    "guides/ag-ui.md",
     "evaluations/agentdojo-evaluation.md",
     "evaluations/browser-task-e2e.md",
     "evaluations/competitor-openmuse-audit.md",

@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **AG-UI 1.0 适配器**：`yai_core.integrations.ag_ui` 把唯一事件流翻译成 AG-UI SSE
+  （RUN/TEXT/TOOL/CUSTOM 映射、SSE 单帧编码、状态机）；新增 `examples/host_ag_ui_sse/`
+  FastAPI 示例与中英指南 `docs/guides/ag-ui.md`；10 项离线回归（含 TestClient 示例宿主）。
+  边界：非 token 流式、tool result 为受限 preview、approval/clarify 未接 interrupt。
+
 ## [v0.38.0] - 2026-11-13
 
 ### Security
