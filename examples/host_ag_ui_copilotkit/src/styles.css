@@ -1,0 +1,95 @@
+:root {
+  color-scheme: dark;
+  font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  background: #0f1115;
+  color: #e9ecef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 36px 24px 56px;
+}
+
+header h1 {
+  margin: 10px 0 6px;
+  font-size: 30px;
+}
+
+header p {
+  color: #9aa4b2;
+  font-size: 14px;
+}
+
+header code {
+  color: #9fd0ff;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ff6a2b;
+  color: #111;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.chat {
+  min-height: 560px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid #2a303a;
+  background: #161a21;
+}
+
+.event-log {
+  border: 1px solid #2a303a;
+  border-radius: 16px;
+  padding: 16px;
+  background: #161a21;
+  align-self: start;
+}
+
+.event-log h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.event-log .hint,
+.event-log .empty {
+  color: #8b95a5;
+  font-size: 12px;
+}
+
+.event-log ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #c7d2de;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}

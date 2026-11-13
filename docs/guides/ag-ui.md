@@ -89,6 +89,35 @@ for event in translator.finish():
 - **不发 `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT`**：YAI 的会话历史由宿主管理，适配器不复制一份。
 - 适配器只验证了「事件映射 + SSE 帧 + 示例宿主」；未在真实 CopilotKit 前端做端到端验收。
 
+
+## 7. 真实 CopilotKit 前端 demo（v0.41）
+
+示例在 [`examples/host_ag_ui_copilotkit/`](https://github.com/Gi-Tuu/yai-agent-core/tree/main/examples/host_ag_ui_copilotkit)：
+用**真实 CopilotKit v2**（`CopilotKitProvider` + `CopilotChat`）接 YAI 的 AG-UI SSE。
+
+```
+浏览器 CopilotChat
+  → CopilotKit Runtime /api/copilotkit
+  → HttpAgent
+  → YAI FastAPI /agent（本适配器输出的 SSE）
+```
+
+![CopilotKit demo](../assets/copilotkit-demo.png)
+
+```bash
+# 终端 A：YAI AG-UI SSE 宿主（离线 ScriptedModel）
+uv run uvicorn examples.host_ag_ui_sse.app:app --host 127.0.0.1 --port 8000
+
+# 终端 B：CopilotKit runtime + 前端
+cd examples/host_ag_ui_copilotkit
+npm install && npm run build && npm start   # http://127.0.0.1:4000
+```
+
+本机实测（2026-11-14）：浏览器 → `/api/copilotkit/info` 返回 `mode: sse`；发送消息后
+CopilotChat 显示回复，右侧事件面板出现 `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`。
+边界：单用户本地 demo（固定 `identifyUser`）、`ScriptedModel` 离线模型，未接 Copilot Cloud
+或生产鉴权；前端依赖 CopilotKit `@copilotkit/runtime@1.87.1` 的 v2 API。
+
 ## 6. 测试
 
 ```bash
