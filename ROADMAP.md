@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-13（对应已发布版本 **v0.39.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-13（对应已发布版本 **v0.40.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -433,6 +433,14 @@
   其余 YAI 事件保留为 `CUSTOM`，不丢信息。
 - **FastAPI 示例**：`examples/host_ag_ui_sse/` 离线可跑；中英指南 `docs/guides/ag-ui.md`。
 - 边界：非 token 流式、tool result 为受限 preview、approval/clarify 未接 interrupt。
+
+### v0.40.0 — LoCoMo 风格记忆基准（tag 2026-11-13，已完成）
+
+- **标准口径**：LoCoMo 10 段对话 / 5,882 轮 / 1,986 QA（1,973 可评估），每段独立建库、
+  关闭去重、纯词法召回；本机 Recall@5 0.3482 / Recall@10 0.4163 / MRR 0.2927。
+- **可复现**：`locomo_bench.py --download` 校验 SHA-256；数据集不随包分发；
+  `tests/test_locomo_bench.py` 合成 fixture 回归。
+- 边界：纯词法基线，不可与 Mem0/Zep 的语义分数直接比较。
 
 ## 下一步
 
