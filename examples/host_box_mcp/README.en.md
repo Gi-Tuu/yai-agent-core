@@ -45,7 +45,25 @@ The same bridge also registers `browser_snapshot` / `browser_click` / `screensho
 `computer_act` / `gui_plan` and 37 tools in total — the host (`AgentCore`) sees only uniform
 `ToolSpec`s, exactly like local functions.
 
-## 3. Honest boundaries
+## 3. Full computer-use acceptance
+
+```bash
+uv run python examples/host_box_mcp/acceptance.py
+```
+
+Verified locally (2026-11-14), all PASS:
+
+- **A read**: `box_status` running (`sbxdesk:v22`) + `computer_state` sees the Xfce windows;
+- **B GUI write**: `computer_act` types `echo box-gui-ok > /workspace/gui-proof.txt` in the Box
+  terminal, then `read_file` returns `box-gui-ok` (screen input -> file content);
+- **C browser write**: local form -> `browser_navigate` -> `browser_type` / `browser_click` ->
+  `browser_read` returns `hello YAI`;
+- **D cleanup**: `shell` removes the acceptance files.
+
+> Browser windows are scoped to the MCP session: all of C must run on one `McpToolBridge`
+> connection.
+
+## 4. Honest boundaries
 
 - The personal key lives only in local `.env.local`; it is never committed or echoed. Revoke it from
   the Access page if leaked;

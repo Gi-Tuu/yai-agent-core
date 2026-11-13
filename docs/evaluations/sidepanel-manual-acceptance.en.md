@@ -89,6 +89,21 @@ Boundaries: Box Free shows `0 credits left`; this smoke uses only the box shell/
 own model). A full Side Panel desktop-GUI acceptance is not included; revoke the key from the Access
 page if it leaks.
 
+## Box computer-use acceptance A–D (2026-11-14, all PASS)
+
+On the Box cloud desktop, via MCP tools: "read screen -> GUI input -> browser write -> cleanup":
+
+- **A read**: `box_status` = running (`sbxdesk:v22`); `computer_state` sees the Xfce windows;
+- **B GUI write**: `computer_act` launches a terminal and types
+  `echo box-gui-ok > /workspace/gui-proof.txt`; `read_file` returns `box-gui-ok`;
+- **C browser write**: local form -> `browser_navigate` -> `browser_type` / `browser_click` ->
+  `browser_read` returns `hello YAI`;
+- **D cleanup**: `shell` removes the acceptance files; reproduce with
+  `examples/host_box_mcp/acceptance.py`.
+
+Boundary: this is "YAI as an MCP client driving the Box cloud desktop", **not** Side Panel
+extension acceptance; browser windows are scoped to the MCP session, so C must run on one connection.
+
 ## Record template
 
 ```text
