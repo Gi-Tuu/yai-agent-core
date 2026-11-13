@@ -113,8 +113,10 @@ cd examples/host_ag_ui_copilotkit
 npm install && npm run build && npm start   # http://127.0.0.1:4000
 ```
 
-本机实测（2026-11-14）：浏览器 → `/api/copilotkit/info` 返回 `mode: sse`；发送消息后
-CopilotChat 显示回复，右侧事件面板出现 `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`。
+本机实测（2026-11-14）：浏览器 → `/api/copilotkit/info` 返回 `mode: sse`；示例会真实调用一次
+本地 `demo_fact` 工具，CopilotChat 显示回复，右侧事件面板出现
+`RUN_STARTED / TOOL_CALL_* / TEXT_MESSAGE_* / RUN_FINISHED`。示例构建由
+`.github/workflows/copilotkit-demo.yml`（`npm ci` + `npm run build`）守着。
 边界：单用户本地 demo（固定 `identifyUser`）、`ScriptedModel` 离线模型，未接 Copilot Cloud
 或生产鉴权；前端依赖 CopilotKit `@copilotkit/runtime@1.87.1` 的 v2 API。
 

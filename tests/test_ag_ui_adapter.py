@@ -156,8 +156,14 @@ def test_example_app_streams_ag_ui_events() -> None:
     ]
     types = [frame["type"] for frame in frames]
     assert types[0] == "RUN_STARTED"
+    assert "TOOL_CALL_START" in types
+    assert "TOOL_CALL_ARGS" in types
+    assert "TOOL_CALL_END" in types
+    assert "TOOL_CALL_RESULT" in types
     assert "TEXT_MESSAGE_START" in types
     assert "TEXT_MESSAGE_CONTENT" in types
     assert types[-1] == "RUN_FINISHED"
+    tool_start = next(frame for frame in frames if frame["type"] == "TOOL_CALL_START")
+    assert tool_start["toolCallName"] == "demo_fact"
     assert frames[-1]["threadId"] == "t-demo"
     assert frames[-1]["runId"] == "r-demo"
