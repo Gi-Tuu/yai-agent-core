@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.42.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.42.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -455,6 +455,11 @@
 - **真机链路**：`box_status: absent` → `box_ensure: running` → `shell`（Linux 6.8）→
   `browser_navigate` example.com；`examples/host_box_mcp/` 一键复现。
 - 个人 key 只存本地 `.env.local`（已忽略），脚本不打印 token。
+
+### v0.42.1 — Box 电脑操作验收（tag 2026-11-14，已完成）
+
+- `acceptance.py` A–D 全 PASS：读屏 / GUI 键入 → 文件 / 浏览器表单写入 / 清理。
+- 边界：MCP Client 驱动 Box 云桌面，不是 Side Panel 扩展验收。
 
 ## 下一步
 
