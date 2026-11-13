@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **Box by Simular 真机接入**（`examples/host_box_mcp/`）：同一 `McpToolBridge` 连 Box MCP，
+  注册 36 个 `shell` / `browser_*` / `computer_*` 工具；真机验证 `box_status: absent` →
+  `box_ensure: running` → `shell`（Linux 6.8）→ `browser_navigate` example.com。
+  个人 key 只存本地 `.env.local`（已忽略，不打印）；新增中英 README 与 `.env.example` 占位。
+
 ## [v0.41.0] - 2026-11-14
 
 ### Added

@@ -72,6 +72,23 @@ desktop (**browser / Side Panel only**; it does not replace Windows UIA acceptan
 
 > As of 2026-11-13 per the official page; the product is in beta, so pricing and quotas may change.
 
+## Box MCP real-machine smoke (2026-11-14)
+
+Verified "MCP connection + cloud desktop shell + cloud Chrome" on Box by Simular:
+
+- Personal key: <https://box.simular.ai/access> → Keys and devices → Create key (`cb_...`,
+  stored only in the ignored local `.env.local`);
+- The same `McpToolBridge` registers **36 tools** (`shell` / `read_file` / `browser_*` /
+  `computer_*` / `gui_plan` / `box_*`, etc.);
+- `box_status`: `absent` → `box_ensure`: `running` (image `sbxdesk:v22`);
+- `shell`: `hello-from-box` · `Linux 6.8.0-142-generic x86_64` · `/workspace`;
+- `browser_navigate` → `https://example.com` returns `Page: Example Domain`;
+- Reproduce: `uv sync --extra mcp && uv run python examples/host_box_mcp/smoke.py`.
+
+Boundaries: Box Free shows `0 credits left`; this smoke uses only the box shell/Chrome (YAI uses its
+own model). A full Side Panel desktop-GUI acceptance is not included; revoke the key from the Access
+page if it leaks.
+
 ## Record template
 
 ```text

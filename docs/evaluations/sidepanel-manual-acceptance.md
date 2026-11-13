@@ -67,6 +67,22 @@
 
 > 截至 2026-11-13 官方页面口径；产品处于 beta，计费与配额可能变化。
 
+## Box MCP 真机冒烟（2026-11-14）
+
+在 Box by Simular 上验证「MCP 连接 + 云桌面 shell + 云 Chrome」：
+
+- 个人 key 创建：<https://box.simular.ai/access> → Keys and devices → Create key（`cb_...`，
+  只写入本地 `.env.local`，已忽略）；
+- 同一 `McpToolBridge` 注册 **36 个工具**（`shell` / `read_file` / `browser_*` /
+  `computer_*` / `gui_plan` / `box_*` 等）；
+- `box_status`: `absent` → `box_ensure`: `running`（image `sbxdesk:v22`）；
+- `shell`: `hello-from-box` · `Linux 6.8.0-142-generic x86_64` · `/workspace`；
+- `browser_navigate` → `https://example.com` 返回 `Page: Example Domain`；
+- 复现：`uv sync --extra mcp && uv run python examples/host_box_mcp/smoke.py`。
+
+边界：Box Free 显示 `0 credits left`，本冒烟只用 box 的 shell/Chrome（YAI 用自己的模型）；
+未做完整 Side Panel 桌面 GUI 验收；key 泄露请在 Access 页 Revoke。
+
 ## 记录模板
 
 ```text
