@@ -50,6 +50,23 @@
 | D4 | 审批超时 | 按拒绝处理，不无限挂起 |
 | D5 | Bridge 断连 | 明确错误，不显示“假成功” |
 
+## 执行环境（可选）
+
+没有本机交互桌面时，可用云端 Linux 桌面执行本清单（**仅适用于浏览器 / Side Panel**，
+不能替代 Windows UIA 验收）：
+
+- **box by Simular**（<https://box.simular.ai/>）：云端 Ubuntu 桌面 + Chrome + shell，
+  通过 MCP 或 VNC 操作；每账号一台免费云桌面（官方口径，计费可能变化，以
+  <https://box.simular.ai/billing> 为准）；空闲休眠、文件保留，**连续 14 天不用会删机**；
+  不提供稳定公网端口，不能当公网服务器。
+- 接入方式：box 的 MCP 端点需要 OAuth 或个人 key（`Authorization: Bearer cb_...`）。
+  YAI 内核的 MCP 客户端目前只支持 URL/stdio，**尚不支持自定义 HTTP header**；
+  如要接进内核，需先补 `headers` / `token_env` 支持。
+- 安全：使用临时账号；不要把 Key、`.env`、GitHub token 放进 box；验收结束清理文件并撤销 key。
+- 记录时在模板"日期/浏览器/版本"里注明 `box / Ubuntu / Chrome <version>`，并附 VNC 截图。
+
+> 截至 2026-11-13 官方页面口径；产品处于 beta，计费与配额可能变化。
+
 ## 记录模板
 
 ```text

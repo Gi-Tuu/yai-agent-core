@@ -53,6 +53,25 @@
 | D4 | Approval timeout | Treated as a denial; no indefinite hanging |
 | D5 | Bridge disconnect | An explicit error; no "fake success" is shown |
 
+## Execution environment (optional)
+
+When no interactive desktop is available locally, this checklist can be executed on a cloud Linux
+desktop (**browser / Side Panel only**; it does not replace Windows UIA acceptance):
+
+- **box by Simular** (<https://box.simular.ai/>): a cloud Ubuntu desktop with Chrome and a shell,
+  driven over MCP or VNC. One free cloud desktop per account (official wording; pricing may change —
+  check <https://box.simular.ai/billing>). It sleeps when idle and keeps files, but **a box asleep for
+  14 consecutive days is deleted**. No stable public port: not a public server.
+- Access: box's MCP endpoint needs OAuth or a personal key (`Authorization: Bearer cb_...`).
+  YAI's MCP client currently supports only URL/stdio and **does not yet support custom HTTP headers**;
+  wiring it into the kernel first needs `headers` / `token_env` support.
+- Security: use a throwaway account; never put keys, `.env` or GitHub tokens on the box; clean up files
+  and revoke the key after acceptance.
+- When recording, note `box / Ubuntu / Chrome <version>` in the "Date / browser / version" field and
+  attach VNC screenshots.
+
+> As of 2026-11-13 per the official page; the product is in beta, so pricing and quotas may change.
+
 ## Record template
 
 ```text
