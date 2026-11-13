@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.42.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.42.2**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -460,6 +460,11 @@
 
 - `acceptance.py` A–D 全 PASS：读屏 / GUI 键入 → 文件 / 浏览器表单写入 / 清理。
 - 边界：MCP Client 驱动 Box 云桌面，不是 Side Panel 扩展验收。
+
+### v0.42.2 — CopilotKit demo 加固（tag 2026-11-14，已完成）
+
+- 示例真实调用本地 `demo_fact` 工具，事件面板出现 `TOOL_CALL_*`；
+- 新增 `copilotkit-demo.yml`：`npm ci` + `npm run build` + dist 检查。
 
 ## 下一步
 
