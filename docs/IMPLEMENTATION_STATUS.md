@@ -3,7 +3,7 @@
 [English](IMPLEMENTATION_STATUS.en.md) · **简体中文**
 
 > README 回答"能做什么"，本文件回答**"做到了什么程度、证据在哪、边界在哪"**。
-> 口径：**v0.41.0 已发布（2026-11-14）；v0.40.0 为上一版本**。v0.26 / v0.27 / v0.28 各批次
+> 口径：**v0.42.0 已发布（2026-11-14）；v0.41.0 为上一版本**。v0.26 / v0.27 / v0.28 各批次
 > （P0 安全、Browser Provider、Outcome Verification、执行适配器）已在本文件内标注，
 > 其余以证据列为准。三档状态：
 > **已验证**（有离线测试或实测证据） / **已实现·未真机验证**（代码在、缺真实环境） / **不做**（明确排除）。
@@ -12,7 +12,7 @@
 > 两宿主冒烟的机器可读结果：`python scripts/smoke_test.py --json`，stdout 仅输出一个包含 `ok` 和逐宿主 `checks` 的 JSON 对象；成功退出 0，失败退出 1。
 > 一条命令看治理闭环：`python scripts/demo_governance_loop.py`
 >
-> **当前 HEAD（v0.41.0 发布前）实测**：2 490 项收集、2 485 passed / 5 skipped、
+> **当前 HEAD（v0.42.0 发布前）实测**：2 490 项收集、2 485 passed / 5 skipped、
 > 内核行覆盖率 93.18%（门禁 90%）；审计整改项与验证边界见
 > [`docs/reports/audit-remediation-2026-11.md`](reports/audit-remediation-2026-11.md)。
 

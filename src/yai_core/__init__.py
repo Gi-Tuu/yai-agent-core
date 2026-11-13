@@ -101,7 +101,7 @@ from yai_core.verification import (
     verify_run,
 )
 
-__version__ = "0.41.0"
+__version__ = "0.42.0"
 
 __all__ = [
     "AgentCore",
