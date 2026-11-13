@@ -48,6 +48,18 @@ python benchmarks/memory/run_bench.py --json        # 机器可读
 - 词法零重叠、语义命中：3/12（`dark mode preference` / `mango allergy` / `budget tool`）。
 - 降级结果与纯词法完全一致；更新 / 删除后索引一致。
 
+## LoCoMo 风格标准基准（v0.40）
+
+```bash
+python benchmarks/memory/locomo_bench.py --download      # 首次从上游下载并校验
+python benchmarks/memory/locomo_bench.py --json          # 纯词法 Recall@5/10 + MRR
+```
+
+10 段对话 / 5,882 轮 / 1,986 QA；每段独立建库、关闭去重、只跑同步词法召回。
+本机结果：Recall@5 **0.3482** / Recall@10 **0.4163** / MRR **0.2927**（1,973 条可评估）。
+边界：**纯词法基线**，不可与 Mem0/Zep 等 embedding + LLM 判定的分数直接比较；数据集
+不随仓库分发（上游 NOASSERTION 许可）。
+
 ## 边界
 
 - 语料与标注规模都很小（18 / 12），只用于回归与方向性判断，不构成"生产级检索质量"结论。

@@ -1,0 +1,59 @@
+[
+  {
+    "sample_id": "mini-1",
+    "conversation": {
+      "speaker_a": "Alice",
+      "speaker_b": "Bob",
+      "session_1_date_time": "1:00 pm on 1 May, 2023",
+      "session_1": [
+        {"speaker": "Alice", "dia_id": "D1:1", "text": "Alice likes apples."},
+        {"speaker": "Bob", "dia_id": "D1:2", "text": "Bob moved to Paris in 2020."}
+      ],
+      "session_2_date_time": "2:00 pm on 2 May, 2023",
+      "session_2": [
+        {"speaker": "Alice", "dia_id": "D2:1", "text": "Alice also likes pears."},
+        {"speaker": "Bob", "dia_id": "D2:2", "text": "Bob lives in Paris today."}
+      ]
+    },
+    "qa": [
+      {
+        "question": "What fruit does Alice like?",
+        "answer": "apples",
+        "evidence": ["D1:1"],
+        "category": 4
+      },
+      {
+        "question": "Where did Bob move in 2020?",
+        "answer": "Paris",
+        "evidence": ["D1:2", "D2:2"],
+        "category": 2
+      },
+      {
+        "question": "What is Alice's phone number?",
+        "answer": "unknown",
+        "evidence": [],
+        "category": 5
+      }
+    ]
+  },
+  {
+    "sample_id": "mini-2",
+    "conversation": {
+      "speaker_a": "Carol",
+      "speaker_b": "Dave",
+      "session_1_date_time": "3:00 pm on 3 May, 2023",
+      "session_1": [
+        {"speaker": "Carol", "dia_id": "D1:1", "text": "Carol plays violin."},
+        {"speaker": "Dave", "dia_id": "D1:2", "text": "Carol lives in Rome."}
+      ]
+    },
+    "qa": [
+      {
+        "question": "Which instrument does Carol play?",
+        "answer": "violin",
+        "evidence": ["D1:1"],
+        "category": 4
+      }
+    ]
+  }
+]
