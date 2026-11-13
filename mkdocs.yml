@@ -82,6 +82,7 @@ nav:
       - 水平扩展与多租户: guides/deployment-scaling.md
       - 有向父子核（设计稿）: guides/federation.md
       - OpenAPI 3.1 兼容矩阵: guides/openapi-31-compat.md
+      - AG-UI 前端适配: guides/ag-ui.md
   - 评测与证据:
       - 记忆质量: evaluations/memory-evaluation.md
       - AgentDojo 注入评测: evaluations/agentdojo-evaluation.md
@@ -115,6 +116,7 @@ nav:
           - Deployment & scaling: guides/deployment-scaling.en.md
           - Directed federation: guides/federation.en.md
           - OpenAPI 3.1 compatibility: guides/openapi-31-compat.en.md
+          - AG-UI adapter: guides/ag-ui.en.md
       - Evaluations and evidence:
           - Memory evaluation: evaluations/memory-evaluation.en.md
           - Browser task E2E: evaluations/browser-task-e2e.en.md

@@ -252,6 +252,7 @@ policy**; the kernel's default policy allows everything.</p>
 | 10 | `host_l_sidecar_node` | Language-agnostic host: Node spawns the sidecar, exposes tools via its own OpenAPI service, and answers approval requests |
 | 11 | `host_m_federation` | Parent-child cores Phase 1/2: an ATM parent core asks a document child core to record a transaction; `run.py` (in-process) + `ipc_demo.py` (two processes, local IPC, no key) |
 | 12 | `child_cores` | Two installable child cores (notes / calculator) + `hub_demo.py`: one parent supervises both child processes and calls across them |
+| 13 | `host_ag_ui_sse` | AG-UI 1.0 SSE host: FastAPI translates YAI's event stream into the standard frontend protocol |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
