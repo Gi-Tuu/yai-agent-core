@@ -161,6 +161,7 @@ include = [
     # 含个人信息的本地材料（对接材料、更新邮件等）
     # 全都未被跟踪，绝不能进包）。
     "/docs/figs",
+    "/docs/assets",
 ]
 # hatchling 会自动包含任意目录下的 README（如 inbox/README.md），显式排除工作流目录。
 # tests/fixtures/acc：上游 Agent Capability Contract 的官方一致性语料（Apache-2.0，

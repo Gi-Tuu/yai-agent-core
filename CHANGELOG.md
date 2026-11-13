@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **真实 CopilotKit v2 前端 demo**（`examples/host_ag_ui_copilotkit/`）：CopilotKit Runtime
+  （`createCopilotEndpointExpress` + `CopilotRuntime`）→ `HttpAgent` → YAI FastAPI `/agent`；
+  `CopilotChat` 渲染 AG-UI SSE，右侧面板实时显示 RUN/TEXT 事件。本机端到端验证并留截图
+  `docs/assets/copilotkit-demo.png`；中英 README、AG-UI 指南新增章节、README 示例表第 14 行。
+
 ## [v0.40.0] - 2026-11-13
 
 ### Added

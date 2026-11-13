@@ -95,6 +95,35 @@ for event in translator.finish():
 - Verified: event mapping, SSE framing and the example host; **not** end-to-end against a real
   CopilotKit frontend.
 
+
+## 7. Real CopilotKit frontend demo (v0.41)
+
+The example lives in [`examples/host_ag_ui_copilotkit/`](https://github.com/Gi-Tuu/yai-agent-core/tree/main/examples/host_ag_ui_copilotkit):
+**real CopilotKit v2** (`CopilotKitProvider` + `CopilotChat`) consuming YAI's AG-UI SSE.
+
+```
+browser CopilotChat
+  → CopilotKit Runtime /api/copilotkit
+  → HttpAgent
+  → YAI FastAPI /agent (SSE emitted by this adapter)
+```
+
+![CopilotKit demo](../assets/copilotkit-demo.png)
+
+```bash
+# Terminal A: YAI AG-UI SSE host (offline ScriptedModel)
+uv run uvicorn examples.host_ag_ui_sse.app:app --host 127.0.0.1 --port 8000
+
+# Terminal B: CopilotKit runtime + frontend
+cd examples/host_ag_ui_copilotkit
+npm install && npm run build && npm start   # http://127.0.0.1:4000
+```
+
+Verified locally (2026-11-14): `/api/copilotkit/info` returns `mode: sse`; sending a message renders
+the reply in CopilotChat and the event panel shows `RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED`.
+Boundaries: single-user local demo (pinned `identifyUser`), offline `ScriptedModel`, no Copilot
+Cloud or production auth; the frontend uses CopilotKit `@copilotkit/runtime@1.87.1` v2 APIs.
+
 ## 6. Tests
 
 ```bash
