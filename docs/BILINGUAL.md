@@ -26,22 +26,21 @@ This page is the source of truth for **what is bilingual**. The public-facing ru
 | Guides | [multilang-interop.md](guides/multilang-interop.md) · [execution-audit-persistence.md](guides/execution-audit-persistence.md) · [deployment-scaling.md](guides/deployment-scaling.md) · [federation.md](guides/federation.md) · [openapi-31-compat.md](guides/openapi-31-compat.md) · [ag-ui.md](guides/ag-ui.md) | [multilang-interop.en.md](guides/multilang-interop.en.md) · [execution-audit-persistence.en.md](guides/execution-audit-persistence.en.md) · [deployment-scaling.en.md](guides/deployment-scaling.en.md) · [federation.en.md](guides/federation.en.md) · [openapi-31-compat.en.md](guides/openapi-31-compat.en.md) · [ag-ui.en.md](guides/ag-ui.en.md) |
 | Evaluations (8) | [memory-evaluation.md](evaluations/memory-evaluation.md) · [browser-task-e2e.md](evaluations/browser-task-e2e.md) · [windows-real-apps.md](evaluations/windows-real-apps.md) · [agentdojo-evaluation.md](evaluations/agentdojo-evaluation.md) · [ecosystem-interop.md](evaluations/ecosystem-interop.md) · [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) · [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) · [sidepanel-manual-acceptance.md](evaluations/sidepanel-manual-acceptance.md) | same filenames with `.en.md` |
 | ADR | [README.md](adr/README.md) · [0002](adr/0002-runtime-auth-boundary.md)–[0008](adr/0008-directed-federation.md) | [README.en.md](adr/README.en.md) · [0002.en](adr/0002-runtime-auth-boundary.en.md)–[0008.en](adr/0008-directed-federation.en.md) |
+| Changelog / document map | [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) · [DOCUMENT_MAP.md](DOCUMENT_MAP.md) | [CHANGELOG.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.en.md) · [DOCUMENT_MAP.en.md](DOCUMENT_MAP.en.md) |
 
 ## 2. Intentionally Chinese-only
 
 | Area | Why |
 |---|---|
 | `docs/walkthrough/` (57 chapters) | Line-by-line learning material tied to Chinese comments; repo policy keeps it Chinese-only. |
-| `docs/DOCUMENT_MAP.md` | Internal index for maintainers. |
-| `docs/releases/` (historical notes) | Historical source drafts for GitHub Releases; newest release notes carry an English summary when relevant. |
 | Internal plans / ledgers / reports | `docs/项目台账*`, `docs/产品化更新方案.md`, `docs/v025-*`, `docs/v026-*`, `docs/v028-*`, `docs/YAI项目全景分析与发展规划.md`, `docs/YAI员工薄壳-落地方案.md`, `docs/YAI灵动岛多专员-落地方案.md`, `docs/终端工艺视觉-*`, `docs/检查点A-*`, `docs/内部-主张与证据对照.md`, `docs/工具管理永久保留-落地方案.md`, `docs/宣传视频-代码生成提示词.md`, `docs/reports/` — internal process material. |
-| `CHANGELOG.md` / `ROADMAP.md` | Long-running Chinese ledgers; GitHub Releases and README carry the English-facing summary. |
+| `CHANGELOG.md` | Chinese is the authoritative ledger; [`CHANGELOG.en.md`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.en.md) is a version-level English summary. |
 
-## 3. Remaining backlog (not yet translated)
+## 3. Remaining backlog
 
-- `CHANGELOG.en.md` and historical `docs/releases/*` (GitHub Releases carry the English summary;
-  new release notes add a short English section at the top)
-- `docs/DOCUMENT_MAP.md` (internal index)
+No outstanding translation backlog: historical `docs/releases/*` carry a one-line English summary,
+`CHANGELOG.en.md` provides a version-level summary, and `DOCUMENT_MAP.en.md` covers the document map.
+Line-by-line release details remain Chinese-only by design (Chinese ledger is canonical).
 
 ## 4. Adding a translated doc
 

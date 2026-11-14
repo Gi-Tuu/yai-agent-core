@@ -31,6 +31,7 @@ REQUIRED_PAIRS = (
     "guides/federation.md",
     "guides/openapi-31-compat.md",
     "guides/ag-ui.md",
+    "DOCUMENT_MAP.md",
     "evaluations/agentdojo-evaluation.md",
     "evaluations/browser-task-e2e.md",
     "evaluations/competitor-openmuse-audit.md",
@@ -49,7 +50,7 @@ REQUIRED_PAIRS = (
     "adr/0008-directed-federation.md",
 )
 #: 仓库根目录的中英对（不在 docs/ 下，单独校验）。
-ROOT_PAIRS = (("ROADMAP.md", "ROADMAP.en.md"),)
+ROOT_PAIRS = (("ROADMAP.md", "ROADMAP.en.md"), ("CHANGELOG.md", "CHANGELOG.en.md"))
 
 NAV_START = "nav:\n"
 NAV_END = "not_in_nav:"
@@ -107,6 +108,15 @@ def test_pairs_link_to_each_other_and_state_canonical() -> None:
             problems.append(f"{en_name} 顶部缺少 canonical（中文权威）说明")
     assert not problems, "\n".join(problems)
 
+
+
+def test_historical_release_notes_have_english_summary() -> None:
+    missing = [
+        path.name
+        for path in sorted(DOCS.joinpath("releases").glob("v*.md"))
+        if "English summary" not in path.read_text(encoding="utf-8")
+    ]
+    assert not missing, f"release notes missing English summary: {missing}"
 
 def test_root_pairs_exist_and_cross_link() -> None:
     for chinese, english in ROOT_PAIRS:

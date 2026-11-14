@@ -106,6 +106,7 @@ nav:
       - Architecture: architecture.en.md
       - Comparison: comparison.en.md
       - Reading guide: reading-guide.en.md
+      - Document map: DOCUMENT_MAP.en.md
       - Guides:
           - Production permissions: guides/production-permissions.en.md
           - Deployment guide: guides/demo-deployment.en.md
