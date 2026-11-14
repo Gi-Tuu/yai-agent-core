@@ -72,7 +72,7 @@ client = A2AClient(A2AConfig(
     ),
 ))
 print(client.authorization_url("state-123"))
-client.exchange_code(code)
+client.exchange_code(code, state="state-123")  # PKCE S256 + state 校验
 
 # 2) device code：用户到 verification_uri 输入 user_code
 client = A2AClient(A2AConfig(
@@ -89,7 +89,8 @@ client.poll_device_token(flow["device_code"], interval=flow.get("interval", 5))
 ```
 
 两种流程只负责**获取并缓存 token**；浏览器/设备上的用户交互仍由宿主完成。
-Authorization URL 的 state/PKCE 校验、回调服务器、设备页面都归宿主。
+Authorization-code 默认生成 PKCE S256 challenge，`exchange_code(state=...)` 会校验 state；
+回调服务器、设备页面仍归宿主。
 
 ### Push 配置
 

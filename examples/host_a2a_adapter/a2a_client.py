@@ -17,8 +17,11 @@ Security: only HTTPS, or HTTP on loopback for local demos.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -62,8 +65,10 @@ class A2AOAuth2AuthorizationCode:
     redirect_uri: str
     client_secret_env: str | None = None
     scope: str = ""
+    #: Use PKCE (S256) by default; disable only for providers that require it.
+    use_pkce: bool = True
 
-    def build_authorization_url(self, state: str) -> str:
+    def build_authorization_url(self, state: str, *, code_challenge: str | None = None) -> str:
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -73,6 +78,9 @@ class A2AOAuth2AuthorizationCode:
             params["scope"] = self.scope
         if state:
             params["state"] = state
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
         separator = "&" if "?" in self.authorization_url else "?"
         return f"{self.authorization_url}{separator}{urlencode(params)}"
 
@@ -175,6 +183,8 @@ class A2AClient:
         self.config = config
         self._oauth_token: str | None = None
         self._oauth_expires_at = 0.0
+        self._oauth_state: str | None = None
+        self._pkce_verifier: str | None = None
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -256,22 +266,36 @@ class A2AClient:
         oauth = self.config.oauth2
         if not isinstance(oauth, A2AOAuth2AuthorizationCode):
             raise ValueError("config.oauth2 is not an authorization-code configuration")
-        return oauth.build_authorization_url(state)
+        challenge: str | None = None
+        if oauth.use_pkce:
+            self._pkce_verifier = secrets.token_urlsafe(64)
+            digest = hashlib.sha256(self._pkce_verifier.encode("ascii")).digest()
+            challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        self._oauth_state = state or None
+        return oauth.build_authorization_url(state, code_challenge=challenge)
 
-    def exchange_code(self, code: str) -> None:
+    def exchange_code(self, code: str, *, state: str | None = None) -> None:
         oauth = self.config.oauth2
         if not isinstance(oauth, A2AOAuth2AuthorizationCode):
             raise ValueError("config.oauth2 is not an authorization-code configuration")
+        if self._oauth_state is not None and state != self._oauth_state:
+            raise ValueError("OAuth state mismatch; refusing to exchange the code")
         form = {
             "grant_type": "authorization_code",
             "code": code,
             "client_id": oauth.client_id,
             "redirect_uri": oauth.redirect_uri,
         }
+        if oauth.use_pkce:
+            if not self._pkce_verifier:
+                raise ValueError("PKCE verifier missing; call authorization_url() first")
+            form["code_verifier"] = self._pkce_verifier
         secret = os.environ.get(oauth.client_secret_env) if oauth.client_secret_env else None
         if secret:
             form["client_secret"] = secret
         self._store_token(self._form_post(oauth.token_url, form))
+        self._oauth_state = None
+        self._pkce_verifier = None
 
     def start_device_flow(self) -> dict[str, Any]:
         oauth = self.config.oauth2

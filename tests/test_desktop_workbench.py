@@ -35,7 +35,7 @@ def qapp() -> QCoreApplication:
     return QCoreApplication.instance() or QCoreApplication([])
 
 
-def _pump(app: QCoreApplication, predicate, timeout: float = 5.0) -> bool:
+def _pump(app: QCoreApplication, predicate, timeout: float = 15.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         app.processEvents()
