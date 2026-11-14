@@ -31,6 +31,6 @@ install Go over the network).
 
 ## Known limits
 
-- Go is not installed on this machine, so the Go code was not compiled here; the no-Go path is
-  covered by an offline test;
+- Verified by actually running Go 1.22.12 (temporary download); the no-Go path is also covered by
+  an offline test. CI only runs `go build` / `go vet`, so no local Go is required;
 - The Go server implements only the minimal method set needed by the example.

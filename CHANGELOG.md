@@ -7,6 +7,21 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.54.1] - 2026-11-14
+
+### Fixed
+
+- **Go MCP 示例**：真实运行发现 `go run ./examples/...` 在仓库根会报
+  “cannot find main module”；改用 `go -C <example> run .`，并用 Go 1.22.12 实跑通过。
+
+### Verified
+
+- 真实 Chromium：`browser_smoke.py --json` 通过（11 receipts、origin gate、stale ref 拒绝）；
+  `browser_provider_task_smoke.py` 通过（verified_success、receipt_chain_ok）。
+- Windows UIA：`windows_uia_smoke.py --json` 通过；`windows_real_apps_smoke.py` 对
+  charmap.exe 通过 12 项（输入/按钮/下拉/接管/过期 ref/窗口白名单）。
+- API 并发冒烟：64 请求 / 16 session / 并发 16，本地假模型 P95 14.5ms（非生产压测）。
+
 ## [v0.54.0] - 2026-11-14
 
 ### Fixed

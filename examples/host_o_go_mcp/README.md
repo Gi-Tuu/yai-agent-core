@@ -28,5 +28,5 @@ uv run python examples/host_o_go_mcp/run.py
 
 ## 已知边界
 
-- 当前机器未安装 Go，Go 代码未经本机编译验证；`run.py` 的无 Go 分支已由离线测试覆盖；
+- 已用 Go 1.22.12（临时下载）实跑通过；`run.py` 的无 Go 分支也有离线测试；CI 只做 `go build`/`go vet`，不要求本机安装 Go；
 - Go Server 只实现示例所需的最小方法集，不追求完整 MCP 兼容。

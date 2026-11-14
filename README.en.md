@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.54.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.54.1-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -347,7 +347,8 @@ Prebuilt self-hosted image: `ghcr.io/gi-tuu/yai-agent-core:latest` (built on tag
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
 - **v0.23.0 (done)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **v0.25.0 (done)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
-- **v0.54.0 (done, current release)**: remaining audit items — trusted-proxy XFF, composite in-flight event, AgentCore reentry guard, sidecar broken-pipe cleanup
+- **v0.54.1 (done, current release)**: real Go run fix, plus real Chromium / Windows UIA / API concurrency evidence
+- **v0.54.0 (done)**: remaining audit items — trusted-proxy XFF, composite in-flight event, AgentCore reentry guard, sidecar broken-pipe cleanup
 - **v0.53.0 (done)**: FastAPI per-session cores (`session_id` / `core_factory`) and federation subject binding in the signed grant
 - **v0.52.0 (done)**: deep-audit hardening (registry host revalidation, tool-call ID guards, desktop shutdown/memory durability, MCP/sidecar/browser/federation/egress)
 - **v0.51.0 (done)**: A2A PKCE + state validation, and a desktop worker-loop flake fix
