@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.50.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.51.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -518,6 +518,11 @@
 - authorization-code / device-code OAuth；token 缓存；11 例离线测试。
 - Go 示例可选 `go build` / `go vet` CI（首次运行通过）。
 - Registry 签名仍等 v0 统一字段；digest pin + 钩子不变。
+
+### v0.51.0 — A2A PKCE + worker flake（tag 2026-11-14，已完成）
+
+- authorization-code 默认 PKCE S256 + state 校验；
+- desktop worker-loop 就绪等待/超时放宽；新增 3 个 good-first issue（#220–#222）。
 
 ## 下一步
 
