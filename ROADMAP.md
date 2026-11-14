@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.48.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.49.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -507,6 +507,11 @@
 
 - A2A：`stream(on_text=...)` 消费 SSE，`streaming=True` 时工具走流式聚合。
 - Registry：域名 allowlist、secret 默认值拒绝、`verify_entry` 验签钩子；CLI 默认要 allowlist。
+
+### v0.49.0 — A2A OAuth/push + Registry digest + 社区项（tag 2026-11-14，已完成）
+
+- A2A client-credentials OAuth、push 配置；Registry digest pinning；
+- #168 Go 示例、#169 离屏 QML 测试、#170 CONTRIBUTING 真机章节。
 
 ## 下一步
 
