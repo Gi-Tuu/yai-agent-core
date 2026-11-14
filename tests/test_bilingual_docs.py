@@ -31,6 +31,8 @@ REQUIRED_PAIRS = (
     "guides/federation.md",
     "guides/openapi-31-compat.md",
     "guides/ag-ui.md",
+    "guides/mcp-registry.md",
+    "guides/a2a-positioning.md",
     "DOCUMENT_MAP.md",
     "evaluations/agentdojo-evaluation.md",
     "evaluations/browser-task-e2e.md",

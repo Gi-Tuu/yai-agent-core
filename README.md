@@ -236,6 +236,7 @@ uv sync --extra desktop --extra llm
 | 13 | `host_ag_ui_sse` | AG-UI 1.0 SSE 宿主：FastAPI 把 YAI 事件流翻译成标准前端协议 |
 | 14 | `host_ag_ui_copilotkit` | 真实 CopilotKit v2 前端：Runtime → HttpAgent → YAI `/agent`（含 tool call + npm build CI） |
 | 15 | `host_box_mcp` | Box by Simular 云桌面：MCP 接 36 个 shell/browser/computer 工具（真机冒烟） |
+| 16 | `host_mcp_registry` | 官方 MCP Registry 只读发现：搜索 + 显式构建配置（不自动安装/连接） |
 
 > 目录名保留历史编号（a/c/d/e/f/g/i/j/k/l），不随学习顺序重排，以便与各版材料、讲义路径一致。
 
