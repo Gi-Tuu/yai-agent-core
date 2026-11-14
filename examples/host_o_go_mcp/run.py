@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -34,12 +33,11 @@ async def main() -> int:
         )
         return 2
 
-    os.chdir(ROOT)
     bridge = McpToolBridge(
         McpServerConfig(
             alias="go_demo",
             command=go,
-            args=["run", "./examples/host_o_go_mcp"],
+            args=["-C", str(ROOT / "examples" / "host_o_go_mcp"), "run", "."],
         )
     )
     specs = await bridge.connect()

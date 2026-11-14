@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.54.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.54.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -537,6 +537,10 @@
 ### v0.54.0 — 审计剩余四项（tag 2026-11-14，已完成）
 
 - XFF 可信代理默认关闭；composite 在途 unknown 事件；AgentCore 重入明确报错；sidecar 断管终态保护。
+
+### v0.54.1 — 真实验证（tag 2026-11-14，已完成）
+
+- Go 示例改用 `go -C` 并实跑通过；真实 Chromium/Windows UIA/API 并发证据入库。
 
 ## 下一步
 
