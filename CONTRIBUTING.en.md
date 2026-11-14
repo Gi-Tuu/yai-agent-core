@@ -126,6 +126,32 @@ cp .env.example .env              # Windows: copy .env.example .env
   one end-to-end case.
 - For a bug fix, first write a failing test that reproduces the bug, then make it pass.
 
+## 4.1 Local real-machine regression (not a PR gate)
+
+The nightly real-machine workflow ([`.github/workflows/nightly-real.yml`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/.github/workflows/nightly-real.yml))
+runs real Chromium and Windows UIA daily. Contributors can reproduce locally:
+
+### Browser (real Chromium)
+
+```bash
+uv sync --extra browser
+python -m playwright install chromium
+python scripts/browser_smoke.py --json
+python scripts/browser_provider_task_smoke.py
+```
+
+### Windows (real UIA)
+
+```bash
+uv sync --extra windows
+python scripts/windows_uia_smoke.py --json
+python scripts/windows_real_apps_smoke.py
+```
+
+**Exit codes**: `0` pass; `1` verification failed; `2` environment unavailable (browser/desktop/
+permissions missing). These scripts need a real desktop/browser and **must not join the required PR
+gate**; upload artifacts/screenshots on failure and record conclusions under `docs/evaluations/`.
+
 ## 5. Common development tasks
 
 | You want to… | Touch | Reference |

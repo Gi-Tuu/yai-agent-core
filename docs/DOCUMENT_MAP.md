@@ -98,6 +98,9 @@ v0.6.0 与 v0.10.0–v0.45.0 的人话版 Release 稿（v0.7–v0.9 无独立稿
 [examples/host_j_actual](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_j_actual/README.md) ·
 [examples/host_k_multimodal](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_k_multimodal/README.md) ·
 [examples/host_l_sidecar_node](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_l_sidecar_node/README.md) ·
+[examples/host_mcp_registry](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_mcp_registry/README.md) ·
+[examples/host_a2a_adapter](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_a2a_adapter/README.md) ·
+[examples/host_o_go_mcp](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_o_go_mcp/README.md) ·
 [shell/desktop/fonts](https://github.com/Gi-Tuu/yai-agent-core/blob/main/shell/desktop/fonts/README.md)。
 
 仅仓库可见（**不在 sdist 白名单，只列名字不发链接**）：`packaging/extension/README.md`、

@@ -51,6 +51,8 @@ config = result.servers[0].build_config(policy=policy)
 
 - **Domain allowlist**: exact or subdomain; the CLI requires `--allow-domain` by default
   (`--allow-any-host` is the explicit opt-out);
+- **Built-in digest pinning**: `pinned_digests=(('server/name', sha256),)` pins the SHA-256 of the
+  canonical raw entry; `require_pinned=True` rejects unpinned entries. This is integrity, not identity.
 - **Signature hook**: `verify_entry(entry)` receives the raw registry entry and drops it on False;
   this module ships **no crypto** (registry v0 has no stable unified signature field), so hosts can
   plug sigstore/JWS;

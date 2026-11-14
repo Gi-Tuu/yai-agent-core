@@ -220,11 +220,33 @@ Item {
 
         // ---------- 跨核调用：父核 → 子核的 edge 摘要（有调用才显示） ----------
         Row {
+            id: crossCoreStrip
             objectName: "crossCoreStrip"
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? 16 : 0
             spacing: 8
             visible: workbench.crossCoreEdges.length > 0
+
+            // 摘要/颜色只算一次：QML 侧可离屏断言，delegate 只负责渲染。
+            readonly property string crossCoreSummary: {
+                var edges = workbench.crossCoreEdges || [];
+                var parts = [];
+                for (var i = 0; i < edges.length; i++) {
+                    var edge = edges[i];
+                    parts.push(edge.prefix + "·" + edge.calls
+                        + (edge.tokens > 0 ? " " + edge.tokens + "t" : "")
+                        + (edge.failures > 0 ? " ✕" + edge.failures : ""));
+                }
+                return parts.join("  ");
+            }
+            readonly property bool crossCoreHasFailure: {
+                var edges = workbench.crossCoreEdges || [];
+                for (var i = 0; i < edges.length; i++) {
+                    if (edges[i].failures > 0) return true;
+                }
+                return false;
+            }
+            readonly property color crossCoreColor: crossCoreHasFailure ? Theme.bad : Theme.text
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter

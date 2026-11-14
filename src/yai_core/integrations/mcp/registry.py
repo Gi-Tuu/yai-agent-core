@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -158,6 +159,12 @@ class RegistryServer:
 
 
 
+def entry_digest(entry: dict[str, Any]) -> str:
+    """SHA-256 of a canonical registry entry (for host-side pinning)."""
+    canonical = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class RegistryPolicy:
     """Host-side trust policy for registry metadata.
@@ -172,6 +179,9 @@ class RegistryPolicy:
     require_repository: bool = False
     require_latest: bool = True
     require_active: bool = True
+    #: Optional host-side pins: (server name, sha256 of canonical entry).
+    pinned_digests: tuple[tuple[str, str], ...] = ()
+    require_pinned: bool = False
     #: Optional signature/provenance hook: receives the raw registry entry.
     #: Return False to drop it. This module ships no crypto implementation.
     verify_entry: Callable[[dict[str, Any]], bool] | None = None
@@ -192,6 +202,12 @@ class RegistryPolicy:
             or host.endswith("." + pattern.lower().strip("."))
             for pattern in patterns
         )
+
+    def verify_digest(self, entry: dict[str, Any], server_name: str) -> bool:
+        pins = dict(self.pinned_digests)
+        if server_name not in pins:
+            return not self.require_pinned
+        return entry_digest(entry) == pins[server_name].lower()
 
     def check_server(self, server: RegistryServer) -> None:
         if self.require_latest and not server.is_latest:
@@ -352,6 +368,8 @@ class McpRegistryClient:
             if server is None:
                 continue
             if policy is not None:
+                if not policy.verify_digest(entry, server.name):
+                    continue
                 if policy.require_latest and not server.is_latest:
                     continue
                 if policy.require_active and server.status != "active":
@@ -377,6 +395,7 @@ __all__ = [
     "RegistryHeader",
     "RegistryPackage",
     "RegistryPolicy",
+    "entry_digest",
     "RegistryRemote",
     "RegistrySearchResult",
     "RegistryServer",

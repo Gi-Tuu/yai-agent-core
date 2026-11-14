@@ -53,11 +53,19 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/a2a":
+        if self.path not in {"/a2a", "/oauth/token"}:
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
-        request = json.loads(self.rfile.read(length).decode("utf-8"))
+        raw_body = self.rfile.read(length).decode("utf-8")
+        if self.path == "/oauth/token":
+            self.server.last_oauth_form = raw_body  # type: ignore[attr-defined]
+            self._json(
+                200,
+                {"access_token": "token-123", "token_type": "Bearer", "expires_in": 3600},
+            )
+            return
+        request = json.loads(raw_body)
         request_id = request.get("id")
         method = request.get("method")
         params = request.get("params") or {}
@@ -152,6 +160,38 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"jsonrpc": "2.0", "id": request_id, "result": {"task": task}})
             return
 
+        if method == "CreateTaskPushNotificationConfig":
+            task_id = str(params.get("taskId") or "")
+            config = params.get("pushNotificationConfig") or {}
+            config_id = f"cfg-{len(self.server.push_configs) + 1}"  # type: ignore[attr-defined]
+            stored = {"id": config_id, **config}
+            self.server.push_configs[task_id] = stored  # type: ignore[attr-defined]
+            self._json(
+                200,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"pushNotificationConfig": stored},
+                },
+            )
+            return
+
+        if method == "ListTaskPushNotificationConfigs":
+            task_id = str(params.get("taskId") or "")
+            config = self.server.push_configs.get(task_id)  # type: ignore[attr-defined]
+            configs = [config] if config else []
+            self._json(
+                200,
+                {"jsonrpc": "2.0", "id": request_id, "result": {"configs": configs}},
+            )
+            return
+
+        if method == "DeleteTaskPushNotificationConfig":
+            task_id = str(params.get("taskId") or "")
+            self.server.push_configs.pop(task_id, None)  # type: ignore[attr-defined]
+            self._json(200, {"jsonrpc": "2.0", "id": request_id, "result": {}})
+            return
+
         self._json(
             200,
             {
@@ -165,6 +205,8 @@ class _Handler(BaseHTTPRequestHandler):
 def serve(port: int = 0) -> tuple[ThreadingHTTPServer, str]:
     server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
     server.last_auth = None  # type: ignore[attr-defined]
+    server.push_configs = {}  # type: ignore[attr-defined]
+    server.last_oauth_form = None  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{server.server_address[1]}"

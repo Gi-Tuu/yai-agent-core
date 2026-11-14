@@ -237,7 +237,8 @@ uv sync --extra desktop --extra llm
 | 14 | `host_ag_ui_copilotkit` | 真实 CopilotKit v2 前端：Runtime → HttpAgent → YAI `/agent`（含 tool call + npm build CI） |
 | 15 | `host_box_mcp` | Box by Simular 云桌面：MCP 接 36 个 shell/browser/computer 工具（真机冒烟） |
 | 16 | `host_mcp_registry` | 官方 MCP Registry 只读发现：搜索 + 显式接入 + 显式调用（不自动安装/连接） |
-| 17 | `host_a2a_adapter` | 宿主层 A2A 适配器：远端 Agent → ToolSpec → AgentCore（含离线假 server） |
+| 17 | `host_a2a_adapter` | 宿主层 A2A 适配器：远端 Agent → ToolSpec（SSE / OAuth / push 配置，含离线假 server） |
+| 18 | `host_o_go_mcp` | Go 宿主经 MCP：最小 Go stdio Server + Python AgentCore 调用（无 Go 时退出码 2） |
 
 > 目录名保留历史编号（a/c/d/e/f/g/i/j/k/l），不随学习顺序重排，以便与各版材料、讲义路径一致。
 

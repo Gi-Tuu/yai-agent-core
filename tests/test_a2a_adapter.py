@@ -6,7 +6,12 @@ import asyncio
 import json
 
 import pytest
-from examples.host_a2a_adapter.a2a_client import A2AClient, A2AConfig, _validate_endpoint
+from examples.host_a2a_adapter.a2a_client import (
+    A2AClient,
+    A2AConfig,
+    A2AOAuth2,
+    _validate_endpoint,
+)
 from examples.host_a2a_adapter.fake_a2a_server import serve
 
 
@@ -28,7 +33,7 @@ def test_fetch_card_and_delegate_as_tool(server) -> None:
     assert card.url.startswith("http://127.0.0.1:")
     tool = client.as_tool(name="a2a_echo")
     assert tool.name == "a2a_echo"
-    assert tool.source == "a2a"
+    assert tool.source == "native"
     result = asyncio.run(tool.handler(task="hello"))
     assert "echo: hello" in result
 
@@ -105,3 +110,37 @@ def test_streaming_config_is_used_by_tool(server) -> None:
     result = asyncio.run(tool.handler(task="hello"))
     assert "stream part 1" in result
     assert "stream part 2" in result
+
+def test_oauth_client_credentials(server, monkeypatch: pytest.MonkeyPatch) -> None:
+    srv, base = server
+    monkeypatch.setenv("A2A_CLIENT_SECRET", "s3cret")
+    client = A2AClient(
+        A2AConfig(
+            base_url=base,
+            oauth2=A2AOAuth2(
+                token_url=f"{base}/oauth/token",
+                client_id="demo",
+                client_secret_env="A2A_CLIENT_SECRET",
+                scope="a2a",
+            ),
+            poll_interval=0.01,
+            max_wait=5,
+        )
+    )
+    assert client.send("hello").text
+    assert srv.last_auth == "Bearer token-123"
+    assert "grant_type=client_credentials" in (srv.last_oauth_form or "")
+    assert "scope=a2a" in (srv.last_oauth_form or "")
+
+
+def test_push_notification_config_lifecycle(server) -> None:
+    _srv, base = server
+    client = A2AClient(A2AConfig(base_url=base, poll_interval=0.01, max_wait=5))
+    created = client.create_push_config("task-1", f"{base}/webhook", token="hook-token")
+    config = created["pushNotificationConfig"]
+    assert config["url"].endswith("/webhook")
+    assert config["token"] == "hook-token"
+    listed = client.list_push_configs("task-1")
+    assert listed["configs"][0]["id"] == config["id"]
+    client.delete_push_config("task-1", config["id"])
+    assert client.list_push_configs("task-1")["configs"] == []
