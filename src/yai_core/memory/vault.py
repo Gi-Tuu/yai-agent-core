@@ -270,6 +270,20 @@ def _empty_load_state() -> dict[str, Any]:
 
 
 
+def _normalize_note_time(value: Any) -> datetime | None:
+    """把落盘 ISO 时间统一成 aware UTC；naive 时间按 UTC 解释。
+
+    旧库/注入时钟可能留下 offset-less 时间；直接与 aware 时间排序会抛
+    ``TypeError``，让 status()/容量收敛崩溃。统一归一化比拒绝旧数据更兼容。
+    """
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 class MemoryNote:
     """一条结构化长期记忆。"""
 
@@ -330,12 +344,8 @@ class MemoryNote:
             kind=data.get("kind", "note"),
             tags=list(data.get("tags", [])),
             importance=int(data.get("importance", 3)),
-            created_at=(
-                datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
-            ),
-            last_used_at=(
-                datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None
-            ),
+            created_at=_normalize_note_time(data.get("created_at")),
+            last_used_at=_normalize_note_time(data.get("last_used_at")),
             access_count=int(data.get("access_count", 0)),
         )
 
@@ -966,7 +976,7 @@ class MemoryVault:
             for token in content_tokens:
                 for note_id in index.get(token, ()):
                     shared[note_id] = shared.get(note_id, 0) + 1
-            min_shared = max(2, int(0.75 * len(content_tokens)))
+            min_shared = max(1, int(0.75 * len(content_tokens)))
             candidates = [
                 note_id
                 for note_id, count in shared.items()
@@ -1041,6 +1051,7 @@ class MemoryVault:
             return
 
         try:
+            before = self.storage_path.stat()
             raw = self.storage_path.read_bytes()
         except OSError as exc:
             self._handle_load_problem(LOAD_UNREADABLE, f"{type(exc).__name__}: {exc}")
@@ -1079,7 +1090,9 @@ class MemoryVault:
             return
         self._notes = parsed
         self.load_state["status"] = LOAD_OK
-        self._record_disk_signature()
+        # 用读取前的 stat 作为指纹：若读窗口内被并发替换，下一次保存会检测到
+        # 变化并先合并，而不是用旧内容覆盖别人的新增。
+        self._disk_signature = (before.st_mtime_ns, before.st_size)
 
     # ---------- 内部：解密 / 解析（加载与"外部修改后重读"共用同一套分类） ----------
 
@@ -1279,7 +1292,14 @@ class MemoryVault:
             raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             if self._cipher is not None:
                 raw = self._cipher.encrypt(raw)
-            self._atomic_write(raw)
+            try:
+                self._atomic_write(raw)
+            except Exception:
+                # 写失败必须如实反映在宿主可见的 durability 信号上；异常继续
+                # 上抛给写路径，让宿主知道本次变更没有落盘。
+                self._dirty = True
+                self.last_write_persisted = False
+                raise
             # 落盘成功：脏标记清零、墓碑清零（已体现在磁盘上）、重新记录磁盘指纹。
             self._dirty = False
             self.last_write_persisted = True
@@ -1333,8 +1353,9 @@ class MemoryVault:
             return False
         try:
             return self._save()
-        except (OSError, MemoryVaultError) as exc:
+        except Exception as exc:  # noqa: BLE001 - 保存路径不允许把宿主读/启动打崩
             self._dirty = True
+            self.last_write_persisted = False
             emit(
                 self._on_diagnostic,
                 DiagnosticEvent(

@@ -43,7 +43,12 @@
 2. 控制台 **New → Blueprint**，选择 `yai-agent-core` 仓库，Render 会读取 `render.yaml`
    自动生成一个 Free 的 Docker Web Service（区域 Singapore，健康检查路径 `/health`）。
 3. Blueprint 向导会提示填写标记为 `sync: false` 的 Secret：`OPENAI_API_KEY` = DeepSeek Key，粘贴即可。
+   `YAI_API_KEY` 由 Render 自动生成；部署后在 Environment 里查看，客户端需带
+   `Authorization: Bearer <key>`（否则 `/v1/*` 返回 401）。
    其余变量（`OPENAI_BASE_URL`、`LLM_MODEL`、`YAI_PROJECT_SLUG` 等）已在 yaml 里写好。
+
+> **单实例 = 单会话**：参考 API 是一个 core 共享上下文，不等于多租户服务。
+> 不要把同一个 API Key 分发给互不信任的用户；多租户请按会话实例化独立 core。
 4. 点 **Apply / Deploy**，云端开始构建（海外环境用官方 PyPI，不需要 `INDEX_URL`）。
 5. 两个自动化约定（已在代码里处理，无需手动操作）：
    - **端口**：Render 注入 `PORT`（默认 10000），Dockerfile 的 CMD 是

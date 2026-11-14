@@ -81,7 +81,17 @@ def main() -> None:
                 }
             )
         elif method == "agent/cancel":
-            send({"jsonrpc": "2.0", "id": message_id, "result": {"cancelled": True}})
+            run_id = (message.get("params") or {}).get("run_id")
+            if not run_id:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": message_id,
+                        "result": {"cancelled": False, "reason": "missing run_id"},
+                    }
+                )
+            else:
+                send({"jsonrpc": "2.0", "id": message_id, "result": {"cancelled": True}})
         elif method == "shutdown":
             send({"jsonrpc": "2.0", "id": message_id, "result": {"ok": True}})
             return

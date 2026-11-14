@@ -1147,6 +1147,23 @@ class AgentLoop(MetaToolRuntime):
                 _set_outcome(outcome, "error", error_text)
                 return
 
+            if resp.tool_calls:
+                normalized_calls = self._normalize_tool_call_ids(
+                    resp.tool_calls, iteration
+                )
+                if normalized_calls is None:
+                    error = (
+                        "模型返回了重复的工具调用 id，已拒绝执行以避免重复副作用"
+                    )
+                    yield AgentEvent(
+                        EventType.ERROR,
+                        {"stage": "model_protocol", "error": error},
+                    )
+                    _set_outcome(outcome, "error", error)
+                    return
+                if normalized_calls != resp.tool_calls:
+                    resp = replace(resp, tool_calls=normalized_calls)
+
             if not resp.tool_calls:
                 text = resp.content.strip()
                 if _looks_like_raw_tool_call(text):
@@ -1230,6 +1247,38 @@ class AgentLoop(MetaToolRuntime):
         # 达到迭代上限：要求模型基于已有观察收尾。
         async for ev in self._finish_at_iteration_limit(ctx, tier_counts, outcome):
             yield ev
+
+    def _normalize_tool_call_ids(
+        self, calls: list[ToolCallRequest], iteration: int
+    ) -> list[ToolCallRequest] | None:
+        """保证本轮 tool_call id 非空且唯一。
+
+        空 id 合成稳定 id；重复 id 返回 None，由调用方失败关闭、不执行任何工具。
+        重复 id 若照常执行，会让有副作用的 handler 跑两次，并在下一轮生成
+        OpenAI 兼容接口拒绝的重复 tool_call_id。
+        """
+        seen: set[str] = set()
+        normalized: list[ToolCallRequest] = []
+        synthesized = False
+        for index, call in enumerate(calls):
+            call_id = (call.id or "").strip()
+            if not call_id:
+                call_id = f"call_{iteration}_{index}"
+                synthesized = True
+            if call_id in seen:
+                return None
+            seen.add(call_id)
+            normalized.append(
+                call if call_id == call.id else replace(call, id=call_id)
+            )
+        if synthesized:
+            self._diag(
+                DiagnosticKind.MODEL_ERROR,
+                "模型返回了空 tool_call id，已合成唯一 id 后继续",
+                stage="react",
+                iteration=iteration,
+            )
+        return normalized
 
     def _append_assistant_tool_calls(self, ctx: Context, resp: ModelResponse) -> None:
         """把模型本轮的 tool_calls 作为 assistant 消息加入上下文（含 JSON 参数）。"""

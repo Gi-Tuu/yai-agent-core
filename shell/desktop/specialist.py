@@ -226,10 +226,11 @@ class SpecialistRuntime(QObject):
         if self._cancel_requested:
             self._finish("cancelled", {"reason": "任务已被用户终止"})
             return
-        stream = self._factory(task_text, QtChannel(self))
+        stream = None
         ended = False
         done_seen = False
         try:
+            stream = self._factory(task_text, QtChannel(self))
             async for event in stream:
                 name = event_name(event)
                 if done_seen:
@@ -258,7 +259,13 @@ class SpecialistRuntime(QObject):
                 self._can_retry = True
                 self._finish("error", {"error": f"{type(exc).__name__}: {exc}"})
         finally:
-            await stream.aclose()
+            if stream is not None:
+                try:
+                    await stream.aclose()
+                except Exception as exc:  # noqa: BLE001 - 收尾失败也必须复位 busy
+                    self.noticeRaised.emit(
+                        f"收尾失败：{type(exc).__name__}: {exc}"
+                    )
             if not ended:
                 # 流自然结束但未显式给 done：补一个终结事件，界面才不会卡在"执行中"。
                 self.eventReceived.emit("done", "{}")

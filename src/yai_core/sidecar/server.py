@@ -454,8 +454,11 @@ class SidecarServer:
         task = self._active_run
         if task is not None and not task.done():
             task.cancel()
+            # 收尾必须给 bridge 留出可返回的预算；工具/组件不响应取消时
+            # 不能让 shutdown RPC 无限挂住，最后由 transport 的 SIGTERM 兜底。
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+                async with asyncio.timeout(2.0):
+                    await task
         self._active_run = None
         self._active_run_id = None
         for bridge in reversed(self._bridges):
@@ -509,10 +512,19 @@ class SidecarServer:
     async def _cancel_run(self, params: dict[str, Any]) -> dict[str, Any]:
         run_id = params.get("run_id")
         task = self._active_run
-        if task is None or task.done() or run_id != self._active_run_id:
+        if task is None or task.done():
+            return {"cancelled": False, "run_id": run_id}
+        # 兼容旧客户端（不传 run_id）：没有明确 id 时取消当前这次 run。
+        # 传了 id 就必须匹配，避免误取消另一条并发任务。
+        if run_id not in (None, "", self._active_run_id):
             return {"cancelled": False, "run_id": run_id}
         task.cancel()
-        return {"cancelled": True, "run_id": run_id}
+        # 给 _execute_run 的 finally 一个短暂的执行窗口，避免紧接着的
+        # agent/run 仍看到 busy（取消已返回但任务尚未清理）。
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            async with asyncio.timeout(2.0):
+                await task
+        return {"cancelled": True, "run_id": self._active_run_id or run_id}
 
     async def _execute_run(
         self, run_id: str, task: str, subject: Subject | None

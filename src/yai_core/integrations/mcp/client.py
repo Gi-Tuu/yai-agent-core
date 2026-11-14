@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -173,12 +174,24 @@ class McpToolBridge:
                 "MCP 集成需要可选依赖：uv sync --extra mcp（或 pip install 'yai-agent-core[mcp]'）"
             ) from exc
 
-        self._client = Client(
+        await self.aclose()
+        client = Client(
             self._build_target(StdioServerParameters),
             mode=self.config.protocol_mode,
         )
-        await self._client.__aenter__()
-        listed = await self._client.list_tools()
+        entered = False
+        try:
+            await client.__aenter__()
+            entered = True
+            listed = await client.list_tools()
+        except BaseException:
+            # list_tools / initialize 失败时 Client 已经被 __aenter__ 打开；
+            # 不关闭会留下 HTTP session 或 stdio 子进程，重试会累积孤儿。
+            if entered:
+                with suppress(Exception):
+                    await client.__aexit__(None, None, None)
+            raise
+        self._client = client
         self._specs = [self._to_spec(tool) for tool in listed.tools]
         return self._specs
 

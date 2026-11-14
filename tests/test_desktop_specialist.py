@@ -24,6 +24,7 @@ pytest.importorskip("PySide6.QtCore", reason="需要 PySide6（uv sync --extra d
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from shell.demo_script import DemoEvent  # noqa: E402
 from shell.desktop.specialist import SpecialistRuntime, SpecialistSpec  # noqa: E402
+from shell.desktop.workbench import WorkbenchRuntime  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -258,3 +259,24 @@ def test_channel_exposes_permission_mode(qapp, loop) -> None:
     runtime.setPermissionMode("manual")
     runtime.startTask("查一下")
     assert _pump(qapp, lambda: seen.get("mode") == "manual")
+
+
+def test_factory_exception_settles_busy_and_emits_error(qapp, loop) -> None:
+    events: list[str] = []
+
+    def boom(task, channel):
+        raise RuntimeError("factory boom")
+
+    runtime = _runtime(loop, boom)
+    runtime.eventReceived.connect(lambda name, _data: events.append(name))
+    assert runtime.startTask("hi") is True
+    assert _pump(qapp, lambda: not runtime.busy)
+    assert "error" in events
+
+
+def test_workbench_shutdown_is_idempotent(qapp, tmp_path) -> None:
+    spec = _spec(learning_path=tmp_path / "learning.json")
+    workbench = WorkbenchRuntime([spec], mode="demo")
+    workbench.shutdown()
+    workbench.shutdown()
+    workbench.openLearning()
