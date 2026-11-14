@@ -7,7 +7,7 @@
 > 进你**已有的软件**，宿主只声明"我有什么能力"，Core 自动发现能力、选策略、调工具、完成任务。
 
 - **仓库**：[github.com/Gi-Tuu/yai-agent-core](https://github.com/Gi-Tuu/yai-agent-core)（Gitee 镜像同步）
-- **安装**：`pip install yai-agent-core` · **许可**：MIT · **版本**：v0.42.3
+- **安装**：`pip install yai-agent-core` · **许可**：MIT · **版本**：v0.43.0
 - **零第三方硬依赖**：模型、MCP、OpenAPI、浏览器/桌面、OTel 全部是可选项，懒加载
 
 ## 30 秒跑起来

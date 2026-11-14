@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.42.3**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.43.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -470,6 +470,12 @@
 
 - 27 秒 / 2.2 MB：CopilotKit 聊天 + `TOOL_CALL_*` 事件 + Box 云桌面。
 - README 中英首屏与 Box 示例引用；真机截图 `docs/assets/box-desktop.png`。
+
+### v0.43.0 — LoCoMo 词法 vs BGE-M3（tag 2026-11-14，已完成）
+
+- 同一 1,973 条 QA：词法 R@5 0.3482 / MRR 0.2927；bge-m3 语义 0.5067 / 0.4081；
+  RRF 混合 0.5078 / **0.4361**。
+- 本机 CPU 8 线程 embed 96.9s；脚本 + 离线测试 + 中英文档。
 
 ## 下一步
 
