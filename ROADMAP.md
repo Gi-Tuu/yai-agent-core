@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.45.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.45.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -487,6 +487,11 @@
 
 - 时序归一化（按证据会话日期）：可回答类 F1 .3481 → .3872、EM .1932 → .2390；
 - LLM judge（同模型判语义等价）：可回答类 .4237；judge 1,973 次调用约 367s。
+
+### v0.45.1 — 英文化收尾（tag 2026-11-14，已完成）
+
+- `CHANGELOG.en.md`（47 个版本摘要）、44 篇 release notes 英文摘要、`DOCUMENT_MAP.en.md`。
+- 双语守卫覆盖 CHANGELOG / DOCUMENT_MAP / historical release notes；sdist 白名单同步。
 
 ## 下一步
 

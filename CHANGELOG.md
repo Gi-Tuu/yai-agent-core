@@ -7,6 +7,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.45.1] - 2026-11-14
+
+### Added
+
+- **英文化收尾**：新增 `CHANGELOG.en.md`（47 个版本摘要）；32 篇历史 release notes 顶部补
+  `English summary`（44 篇全覆盖）；新增 `docs/DOCUMENT_MAP.en.md`，中文地图加 English 链接
+  并校正计数。
+- 双语守卫扩展：DOCUMENT_MAP 成对、CHANGELOG 根目录成对、release notes 英文摘要测试；
+  sdist 白名单补两个英文文件；mkdocs 英文导航加 Document map。
+
 ## [v0.45.0] - 2026-11-14
 
 ### Added
