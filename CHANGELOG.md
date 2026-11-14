@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **LoCoMo 评分增强**（`benchmarks/memory/locomo_e2e_judge.py`）：时序日期归一化（按证据会话
+  日期解析相对时间）+ LLM judge（同模型判语义等价）。可回答类（n=1,527）原始 F1 0.3481 →
+  时序 F1 0.3872 / EM 0.2390；LLM judge 0.4237；judge 1,973 次调用约 367s。
+  `tests/test_locomo_e2e_judge.py` 4 例离线回归。
+
 ## [v0.44.0] - 2026-11-14
 
 ### Added

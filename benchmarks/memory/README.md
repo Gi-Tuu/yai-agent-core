@@ -79,6 +79,16 @@ bge-m3 top-5 + 真实模型（只依据片段回答），1,973 QA 无失败：
 可回答类（cat 1–4，n=1,527）Recall@5 0.5568 / F1 0.3480 / EM 0.1932；
 全部（含对抗类）0.5067 / 0.2701 / 0.1500。耗时约 6 分钟（本机 CPU + API）。
 
+## 评分增强：时序归一化 + LLM judge（v0.45）
+
+```bash
+python benchmarks/memory/locomo_e2e_judge.py --data locomo10.json \
+    --predictions predictions.jsonl --json
+```
+
+不重新生成回答，只对已有 predictions 加评分：可回答类原始 F1 0.3481 → 时序 F1 0.3872；
+LLM judge 0.4237；judge 1,973 次调用约 367s（并发 8）。
+
 ## 边界
 
 - 语料与标注规模都很小（18 / 12），只用于回归与方向性判断，不构成"生产级检索质量"结论。
