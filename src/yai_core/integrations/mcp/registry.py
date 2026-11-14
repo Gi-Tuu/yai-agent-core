@@ -88,6 +88,8 @@ class RegistryServer:
     published_at: str = ""
     is_latest: bool = False
     status: str = "active"
+    #: canonical entry SHA-256（由 registry 搜索结果填充，用于 build_config 复核）
+    entry_sha256: str = ""
 
     @property
     def safe_description(self) -> str:
@@ -113,6 +115,15 @@ class RegistryServer:
         """
         if policy is not None:
             policy.check_server(self)
+            pins = dict(policy.pinned_digests)
+            expected = pins.get(self.name)
+            if expected is None:
+                if policy.require_pinned:
+                    raise ValueError(
+                        f"{self.name}: no pinned digest for this server"
+                    )
+            elif not self.entry_sha256 or self.entry_sha256.lower() != expected.lower():
+                raise ValueError(f"{self.name}: registry entry digest mismatch")
         remotes = self.streamable_remotes()
         if not remotes:
             raise ValueError(f"{self.name}: no streamable-http remote")
@@ -137,6 +148,18 @@ class RegistryServer:
             url = url.replace("{" + name + "}", value)
         if re.search(r"\{[A-Za-z_][A-Za-z0-9_]*\}", url):
             raise ValueError(f"{self.name}: unresolved URL template: {url!r}")
+        # 变量替换后必须重新解析：模板 host 合法不代表最终 host 合法。
+        try:
+            parsed_url = urlparse(url)
+            final_host = parsed_url.hostname or ""
+        except ValueError as exc:
+            raise ValueError(f"{self.name}: invalid remote URL {url!r}") from exc
+        if parsed_url.scheme != "https" or not final_host:
+            raise ValueError(f"{self.name}: remote URL must be HTTPS with a host: {url!r}")
+        if parsed_url.username or parsed_url.password:
+            raise ValueError(f"{self.name}: remote URL must not contain credentials")
+        if policy is not None and not policy.allows_host(final_host):
+            raise ValueError(f"{self.name}: remote host {final_host!r} is not in allowed_domains")
 
         supplied_headers = {key.lower(): value for key, value in (headers or {}).items()}
         resolved_headers: dict[str, str] = {}
@@ -319,6 +342,7 @@ def _parse_server(entry: Any) -> RegistryServer | None:
         published_at=str(official.get("publishedAt") or ""),
         is_latest=bool(official.get("isLatest", True)),
         status=str(official.get("status") or "active"),
+        entry_sha256=entry_digest(entry),
     )
 
 

@@ -7,6 +7,33 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.52.0] - 2026-11-14
+
+### Fixed
+
+- **Registry**：变量替换后重新解析最终 URL 并复核 allowlist，阻止
+  `tenant=evil.com/` 把 Bearer token 送到攻击者域名；`build_config` 也执行 digest pin。
+- **Kernel**：同一响应内重复 `tool_call_id` 失败关闭（不重复执行副作用）；空 id
+  合成唯一 id 并记录诊断。
+- **Desktop**：工厂同步异常/`aclose` 异常都会 `_settle` 并发出 error；shutdown
+  幂等、阻塞 loop 不再抛 `Cannot close a running event loop`，总等待收敛到 5s。
+- **Memory**：cipher/原子写异常不再伪装成“已持久化”；`dirty/persisted` 如实反映；
+  naive/aware 时间戳归一化；单 token 去重预筛修正；读窗口竞态用读取前 stat 指纹兜底。
+- **MCP**：`connect()` 失败关闭已打开的 Client，避免子进程/HTTP session 泄漏。
+- **Sidecar**：Node 客户端 cancel 传 `run_id`；server 兼容无 `run_id` 取消当前 run
+  并短暂等待清理；cleanup 有界。
+- **Browser**：生产路径只读 `current_url`，不再二次 observe 重排 ref；`start()`
+  幂等且失败清理。
+- **Federation**：转运调用链加入自身 node_id，server 校验深度/环；子核 manifest
+  经过 description/schema 净化。
+- **Egress**：裸域名识别不再依赖固定 TLD 列表，`.xyz/.dev/.app` 等纳入；排除常见文件后缀。
+- **Deploy**：Render Blueprint 自动生成 `YAI_API_KEY`，公网 `/v1/*` 默认需要 Bearer key。
+
+### Tests
+
+- 新增工具 ID、Memory 异常路径、Desktop 生命周期、MCP 清理、Registry 绕过、
+  uncommon TLD 等回归；全量 2,536 项 / 2,531 passed / 5 skipped / 93.01%。
+
 ## [v0.51.0] - 2026-11-14
 
 ### Fixed

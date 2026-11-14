@@ -22,6 +22,8 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false # Secret：首次部署时在控制台粘贴，不入库
+      - key: YAI_API_KEY
+        generateValue: true # 公网入口强制鉴权：客户端需带 Authorization: Bearer <key>
       - key: OPENAI_BASE_URL
         value: https://api.deepseek.com
       - key: LLM_MODEL

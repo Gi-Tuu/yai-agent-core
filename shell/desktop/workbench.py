@@ -174,6 +174,7 @@ class WorkbenchRuntime(QObject):
         self._learning_json = "{}"
         self._loop = asyncio.new_event_loop()
         self._loop_ready = threading.Event()
+        self._closed = False
         self._thread = threading.Thread(
             target=self._run_loop, name="yai-workbench-loop", daemon=True
         )
@@ -422,6 +423,8 @@ class WorkbenchRuntime(QObject):
 
     def _submit_vault(self, work, *args) -> None:
         """空闲时也能开面板：读写全部排到 worker loop，与运行中的 Core 同线程串行。"""
+        if self._closed or self._loop.is_closed():
+            return
         path = self._active_storage()
         if path is None:
             return
@@ -474,6 +477,8 @@ class WorkbenchRuntime(QObject):
 
     def _submit_learning(self, work) -> None:
         """空闲也能看：读取排到 worker loop，与运行中的 Core 同线程串行。"""
+        if self._closed or self._loop.is_closed():
+            return
         path = self._active_learning_path()
         if path is None:
             return
@@ -504,6 +509,9 @@ class WorkbenchRuntime(QObject):
         直接 ``loop.stop()`` 会让正在取消的协程在对象销毁后才跑完 ``finally``，
         届时 emit 会报 "Signal source has been deleted"。
         """
+        if self._closed:
+            return
+        self._closed = True
         for item in self.specialists:
             item.cancel()
 
@@ -516,12 +524,21 @@ class WorkbenchRuntime(QObject):
                 await asyncio.gather(*pending, return_exceptions=True)
 
         try:
-            asyncio.run_coroutine_threadsafe(_drain(), self._loop).result(timeout=5)
+            asyncio.run_coroutine_threadsafe(_drain(), self._loop).result(timeout=3)
         except (TimeoutError, RuntimeError):
             pass  # 排空超时也要继续收尾，别把线程留活
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=3)
-        self._loop.close()
+        try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        except RuntimeError:
+            pass
+        self._thread.join(timeout=2)
+        # 线程仍被阻塞时绝不能 close 运行中的 loop：那会抛 RuntimeError 并让
+        # 收尾半途而废。保留 daemon 线程，让进程退出时丢弃它。
+        if not self._thread.is_alive() and not self._loop.is_running():
+            try:
+                self._loop.close()
+            except RuntimeError:
+                pass
 
 
 __all__ = ["PERMISSION_MODES", "SpecialistListModel", "WorkbenchRuntime"]

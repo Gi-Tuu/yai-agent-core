@@ -195,3 +195,33 @@ def test_no_toplevel_mcp_import_keeps_kernel_dependency_free() -> None:
             assert all(not a.name.startswith("mcp") for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert node.module is None or not node.module.startswith("mcp")
+
+
+def test_connect_failure_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    import mcp
+
+    class FakeClient:
+        entered = False
+        exited = False
+
+        def __init__(self, target, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            FakeClient.entered = True
+            return self
+
+        async def __aexit__(self, *args):
+            FakeClient.exited = True
+
+        async def list_tools(self):
+            raise RuntimeError("list failed")
+
+    monkeypatch.setattr(mcp, "Client", FakeClient)
+    bridge = McpToolBridge(McpServerConfig(alias="x", command="unused"))
+    with pytest.raises(RuntimeError, match="list failed"):
+        asyncio.run(bridge.connect())
+    assert FakeClient.entered is True
+    assert FakeClient.exited is True

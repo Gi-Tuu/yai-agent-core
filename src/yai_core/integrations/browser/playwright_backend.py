@@ -110,6 +110,8 @@ class PlaywrightBrowserBackend:
         self._origin_guard = guard
 
     async def start(self) -> None:
+        if self._browser is not None:
+            return
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:  # pragma: no cover - 仅在缺可选依赖时触发
@@ -117,16 +119,23 @@ class PlaywrightBrowserBackend:
                 "未安装 playwright；请 `pip install yai-agent-core[browser]`"
                 " 并 `playwright install chromium`"
             ) from exc
-        self._playwright = await async_playwright().start()
-        launcher = getattr(self._playwright, self.browser_name)
-        launch_kwargs: dict[str, Any] = {"headless": self.headless}
-        if self.channel is not None:
-            launch_kwargs["channel"] = self.channel
-        self._browser = await launcher.launch(**launch_kwargs)
-        self._context = await self._browser.new_context()
-        await self._context.route("**/*", self._guard_request)
-        self._page = await self._context.new_page()
-        self._page.set_default_timeout(self.timeout_ms)
+        try:
+            self._playwright = await async_playwright().start()
+            launcher = getattr(self._playwright, self.browser_name)
+            launch_kwargs: dict[str, Any] = {"headless": self.headless}
+            if self.channel is not None:
+                launch_kwargs["channel"] = self.channel
+            self._browser = await launcher.launch(**launch_kwargs)
+            self._context = await self._browser.new_context()
+            await self._context.route("**/*", self._guard_request)
+            self._page = await self._context.new_page()
+            self._page.set_default_timeout(self.timeout_ms)
+        except Exception:
+            await self.close()
+            raise
+
+    async def current_url(self) -> str:
+        return self._require_page().url
 
     async def _guard_request(self, route: Any) -> None:
         """导航/重定向守卫：未授权 document 请求在加载前 abort（不写入上下文）。"""

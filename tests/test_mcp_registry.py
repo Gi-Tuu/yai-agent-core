@@ -262,3 +262,27 @@ def test_digest_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
 
     require = reg.RegistryPolicy(allowed_domains=("good.example",), require_pinned=True)
     assert reg.McpRegistryClient().search("demo", policy=require).servers == ()
+
+
+def test_variable_substitution_cannot_escape_allowlist() -> None:
+    server = reg.RegistryServer(
+        name="acme/template",
+        title="Template",
+        description="x",
+        version="1",
+        is_latest=True,
+        remotes=(
+            reg.RegistryRemote(
+                type="streamable-http",
+                url="https://{tenant}.example.com/mcp",
+            ),
+        ),
+        repository_url="https://github.com/acme/template",
+    )
+    policy = reg.RegistryPolicy.strict("example.com")
+    with pytest.raises(ValueError, match="not in allowed_domains"):
+        server.build_config(
+            variables={"tenant": "evil.com/"},
+            token_env="MCP_TOKEN",
+            policy=policy,
+        )

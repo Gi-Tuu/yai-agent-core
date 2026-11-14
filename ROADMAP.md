@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.51.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.52.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -523,6 +523,11 @@
 
 - authorization-code 默认 PKCE S256 + state 校验；
 - desktop worker-loop 就绪等待/超时放宽；新增 3 个 good-first issue（#220–#222）。
+
+### v0.52.0 — 深度审计修复（tag 2026-11-14，已完成）
+
+- Registry 最终 URL/allowlist 复核 + digest pin；tool_call id 防重；Desktop/Memory/MCP/Sidecar/Browser/Federation/Egress 加固。
+- 仍需后续：FastAPI 每会话 core、Federation subject 绑定、XFF 可信代理、composite 超时事件。
 
 ## 下一步
 

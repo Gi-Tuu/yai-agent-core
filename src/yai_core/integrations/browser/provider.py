@@ -251,13 +251,22 @@ class BrowserProvider:
         assert self._snapshot is not None
         current_url = self._snapshot.observation.url
         if self.policy.allowed_origins:
-            # 页面可能已在两次观察之间自己跳走：动作前先确认真实落点来源，
-            # 但**不**推进快照版本（否则模型手上的引用会被这次安全检查弄过期）。
-            try:
-                peek = await self.backend.observe()
-            except BrowserError as exc:
-                return {"ok": False, "status": "backend_error", "error": str(exc)}
-            current_url = peek.url
+            # 只读取当前 URL，不做 observe：observe 会重写 data-yai-ref，
+            # 让刚通过校验的 ref 指向另一个元素（安全边界与执行目标错位）。
+            current_url_getter = getattr(self.backend, "current_url", None)
+            if callable(current_url_getter):
+                try:
+                    current_url = await current_url_getter()
+                except BrowserError as exc:
+                    return {"ok": False, "status": "backend_error", "error": str(exc)}
+            else:
+                # 自定义/旧 Backend 没有 current_url：退回观察一次。Playwright
+                # 后端已提供 current_url，因此生产路径不会触发 ref 重排。
+                try:
+                    peek = await self.backend.observe()
+                except BrowserError as exc:
+                    return {"ok": False, "status": "backend_error", "error": str(exc)}
+                current_url = peek.url
         if not self.policy.allows_origin(current_url):
             return {
                 "ok": False,

@@ -30,7 +30,9 @@ from yai_core.types import ToolSpec, validate_egress_paths
 _URL_RE = re.compile(
     r"(?:https?://|www\.)[^\s<>'\"\[\]()（），。；！？、]+"
     r"|(?<![a-z0-9_@./-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
-    r"(?:com|org|net|edu|gov|io|co|cn|example)(?![a-z0-9_-]|\.[a-z0-9])"
+    r"(?!(?:txt|text|md|json|py|js|ts|css|xml|ya?ml|toml|png|jpe?g|gif|pdf|"
+    r"docx?|xlsx?|pptx?|csv|log|zip|gz|tar|exe|dll|so|dylib)\b)"
+    r"(?:[a-z]{2,24}|xn--[a-z0-9-]{2,59})(?![a-z0-9_-]|\.[a-z0-9])"
     r"(?::[0-9]+)?(?:[/?#][^\s<>'\"\[\]()（），。；！？、]*)?",
     re.IGNORECASE,
 )

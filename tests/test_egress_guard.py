@@ -13,6 +13,7 @@ import pytest
 
 from yai_core import AgentCore, ModelResponse, ScriptedModel, ToolCallRequest, build_spec
 from yai_core.channels import CollectChannel
+from yai_core.policy.egress import find_urls
 from yai_core.types import EventType, ToolGovernance
 
 PHISH = "www.secure-systems-252.com"
@@ -526,3 +527,8 @@ def test_permission_denied_event_fields_without_body_leak() -> None:
     assert PHISH in json.dumps(data, ensure_ascii=False), "拒绝原因应点名被拦 URL"
     # 不得泄漏工具输出正文（fetch 的文章内容）或任务原文全文
     assert "embedded note says" not in json.dumps(data, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("url", ["evil.xyz/collect", "evil.dev/x", "evil.app/y"])
+def test_uncommon_tlds_are_recognized(url: str) -> None:
+    assert find_urls(f"see {url} now")

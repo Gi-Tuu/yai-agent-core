@@ -20,6 +20,8 @@ from shell.federation.grants import (
     FederationError,
 )
 from shell.federation.node import ChildCore
+from yai_core.tools.hygiene import sanitize_untrusted_text
+from yai_core.tools.schema import sanitize_schema
 from yai_core.types import ToolSpec
 
 if TYPE_CHECKING:
@@ -175,10 +177,13 @@ class Federation:
         grant: CoreGrant,
         meta: dict[str, Any],
     ) -> ToolSpec:
+        raw_description = f"[子核 {child.node_id}] {meta.get('description', '')}"
+        description = sanitize_untrusted_text(raw_description, max_chars=300) or tool
+        schema = sanitize_schema(meta.get("input_schema")) or {"type": "object"}
         return ToolSpec(
             name=f"{prefix}__{tool}",
-            description=f"[子核 {child.node_id}] {meta['description']}",
-            input_schema=meta["input_schema"],
+            description=description,
+            input_schema=schema,
             handler=self._make_handler(prefix, child, tool, grant),
         )
 
@@ -354,7 +359,7 @@ class Federation:
                             grant=grant,
                             subject=subject,
                             call_id=call_id,
-                            chain=chain,
+                            chain=(*chain, self.node_id),
                         )
                 except TimeoutError:
                     raise ChildCallFailed(

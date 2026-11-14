@@ -155,6 +155,7 @@ export class SidecarClient {
   private readonly defaultTimeout: number;
   private readonly eventBufferSize: number;
   private nextId = 1;
+  private activeRunId: string | null = null;
   private closed = false;
   private exitError: Error | undefined;
 
@@ -211,12 +212,19 @@ export class SidecarClient {
     return this.request<InitializeResult>("initialize", params, timeoutMs);
   }
 
-  run(task: string, options: { timeoutMs?: number } = {}): Promise<RunResult> {
-    return this.request<RunResult>("agent/run", { task }, options.timeoutMs);
+  async run(task: string, options: { timeoutMs?: number } = {}): Promise<RunResult> {
+    const result = await this.request<RunResult>("agent/run", { task }, options.timeoutMs);
+    this.activeRunId = result.run_id;
+    return result;
   }
 
-  cancel(): Promise<unknown> {
-    return this.request("agent/cancel", {});
+  async cancel(): Promise<unknown> {
+    // agent/run 的响应里带 run_id；server 只允许取消当前这次 run。
+    // 不传 run_id 会被判定为不匹配而返回 cancelled:false（旧实现就是这样）。
+    const params = this.activeRunId ? { run_id: this.activeRunId } : {};
+    const result = await this.request("agent/cancel", params);
+    this.activeRunId = null;
+    return result;
   }
 
   ping(): Promise<unknown> {

@@ -30,6 +30,7 @@ from shell.federation.parent import _CALL_CHAIN
 PROTOCOL_VERSION = 1
 MAX_LINE_BYTES = 1 << 20  # 单条消息上限 1 MiB
 DEFAULT_GRANT_TTL = 3600.0
+MAX_CALL_CHAIN = 16
 
 
 class FederationProtocolError(RuntimeError):
@@ -345,7 +346,16 @@ class ChildServer:
         subject = params.get("subject", payload.get("subject"))
         call_id = str(params.get("call_id") or "")
         deadline_ms = params.get("deadline_ms")
-        chain = tuple(params.get("chain") or ())
+        raw_chain = params.get("chain") or ()
+        if not isinstance(raw_chain, (list, tuple)) or not all(
+            isinstance(item, str) for item in raw_chain
+        ):
+            raise FederationProtocolError("chain 必须是字符串数组")
+        chain = tuple(raw_chain)
+        if len(chain) > MAX_CALL_CHAIN:
+            raise FederationProtocolError("call_chain_too_deep")
+        if self.child.node_id in chain:
+            raise FederationProtocolError("call_chain_cycle")
         grant = CoreGrant(
             edge=str(payload["edge"]),
             child_id=str(payload["child_id"]),
