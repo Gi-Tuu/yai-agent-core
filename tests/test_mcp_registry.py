@@ -135,3 +135,95 @@ def test_search_rejects_malformed_payload(monkeypatch: pytest.MonkeyPatch) -> No
     _monkey(monkeypatch, {"servers": "nope"})
     with pytest.raises(ValueError, match="servers"):
         reg.McpRegistryClient().search("x")
+
+def test_policy_allows_exact_and_subdomain_only() -> None:
+    policy = reg.RegistryPolicy(allowed_domains=("example.com",))
+    assert policy.allows_host("example.com")
+    assert policy.allows_host("mcp.example.com")
+    assert not policy.allows_host("evil-example.com")
+    assert not policy.allows_host("example.org")
+
+
+def test_policy_blocks_disallowed_remote() -> None:
+    server = reg.RegistryServer(
+        name="bad/demo",
+        title="Bad",
+        description="bad",
+        version="1",
+        is_latest=True,
+        remotes=(reg.RegistryRemote(type="streamable-http", url="https://evil.example/mcp"),),
+    )
+    policy = reg.RegistryPolicy(allowed_domains=("good.example",))
+    with pytest.raises(ValueError, match="not in allowed_domains"):
+        server.build_config(policy=policy)
+
+
+def test_secret_default_is_never_trusted() -> None:
+    server = reg.RegistryServer(
+        name="demo/secret",
+        title="Secret",
+        description="secret",
+        version="1",
+        is_latest=True,
+        remotes=(
+            reg.RegistryRemote(
+                type="streamable-http",
+                url="https://good.example/mcp",
+                headers=(
+                    reg.RegistryHeader(
+                        name="X-API-Key", required=True, secret=True, default="leak"
+                    ),
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="X-API-Key"):
+        server.build_config(policy=reg.RegistryPolicy(allowed_domains=("good.example",)))
+    config = server.build_config(
+        headers={"X-API-Key": "real"},
+        policy=reg.RegistryPolicy(allowed_domains=("good.example",)),
+    )
+    assert config.headers == {"X-API-Key": "real"}
+
+
+def test_search_policy_filters_and_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "servers": [
+            {
+                "server": {
+                    "name": "ok/demo",
+                    "description": "ok",
+                    "version": "1",
+                    "remotes": [{"type": "streamable-http", "url": "https://good.example/mcp"}],
+                    "repository": {"url": "https://github.com/ok/demo"},
+                },
+                "_meta": {
+                    "io.modelcontextprotocol.registry/official": {
+                        "isLatest": True,
+                        "status": "active",
+                    }
+                },
+            },
+            {
+                "server": {
+                    "name": "bad/demo",
+                    "description": "bad",
+                    "version": "1",
+                    "remotes": [{"type": "streamable-http", "url": "https://evil.example/mcp"}],
+                },
+                "_meta": {
+                    "io.modelcontextprotocol.registry/official": {
+                        "isLatest": True,
+                        "status": "active",
+                    }
+                },
+            },
+        ]
+    }
+    _monkey(monkeypatch, payload)
+    policy = reg.RegistryPolicy(
+        allowed_domains=("good.example",),
+        verify_entry=lambda entry: entry["server"]["name"] != "bad/demo",
+    )
+    result = reg.McpRegistryClient().search("demo", policy=policy)
+    assert [server.name for server in result.servers] == ["ok/demo"]

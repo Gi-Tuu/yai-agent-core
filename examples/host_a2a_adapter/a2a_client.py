@@ -48,6 +48,8 @@ class A2AConfig:
     timeout: float = 15.0
     poll_interval: float = 0.5
     max_wait: float = 60.0
+    #: Use SendStreamingMessage when the agent card advertises streaming.
+    streaming: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,8 @@ class A2AClient:
         return result
 
     def send(self, task: str, *, context_id: str | None = None) -> A2AResult:
+        if self.config.streaming:
+            return self.stream(task, context_id=context_id)
         card = self.fetch_card()
         message: dict[str, Any] = {
             "role": "user",
@@ -226,6 +230,84 @@ class A2AClient:
             time.sleep(self.config.poll_interval)
             polled = self._rpc(card.url, "GetTask", {"id": task_obj.get("id")})
             task_obj = polled.get("task") if isinstance(polled.get("task"), dict) else polled
+
+    def stream(self, task: str, *, context_id: str | None = None, on_text: Any = None) -> A2AResult:
+        """Consume ``SendStreamingMessage`` SSE frames and aggregate text.
+
+        ``on_text`` receives each text chunk as it arrives (host UI can forward it);
+        the returned ``A2AResult`` carries the full text and terminal state.
+        """
+        card = self.fetch_card()
+        message: dict[str, Any] = {
+            "role": "user",
+            "messageId": f"msg-{uuid.uuid4()}",
+            "parts": [{"text": task}],
+        }
+        if context_id:
+            message["contextId"] = context_id
+        payload = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "SendStreamingMessage",
+            "params": {"message": message},
+        }
+        headers = self._headers()
+        headers["Accept"] = "text/event-stream"
+        request = Request(
+            card.url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        chunks: list[str] = []
+        raw_events: list[dict[str, Any]] = []
+        task_id = ""
+        state = ""
+        with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
+            for raw_line in response:
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                raw_events.append(event)
+                task_obj = event.get("task")
+                if isinstance(task_obj, dict):
+                    task_id = str(task_obj.get("id") or task_id)
+                    for text in _task_text(task_obj).splitlines():
+                        if text:
+                            chunks.append(text)
+                            if on_text:
+                                on_text(text)
+                update = event.get("artifactUpdate")
+                if isinstance(update, dict):
+                    artifact = update.get("artifact")
+                    if isinstance(artifact, dict):
+                        for text in _parts_text(artifact.get("parts")):
+                            chunks.append(text)
+                            if on_text:
+                                on_text(text)
+                status = event.get("statusUpdate")
+                if isinstance(status, dict):
+                    task_id = str(status.get("taskId") or task_id)
+                    status_obj = status.get("status")
+                    if isinstance(status_obj, dict):
+                        state = _normalize_state(status_obj.get("state"))
+                        if state in TERMINAL_STATES:
+                            break
+        return A2AResult(
+            text="\n".join(chunks).strip(),
+            task_id=task_id,
+            state=state or "INCOMPLETE",
+            raw={"events": raw_events},
+        )
 
     def as_tool(self, *, name: str | None = None) -> ToolSpec:
         card = self.fetch_card()

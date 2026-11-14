@@ -21,18 +21,44 @@ uv run python examples/host_mcp_registry/search.py github --json
 ```bash
 # --name is required; by default only tools are listed, nothing is called
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --alias feeds
+    --query time --name ai.realtimeapi/mcp \
+    --allow-domain realtimeapi.ai --alias feeds
 
 # Add --call to actually invoke one explicitly
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --call list_feeds
+    --query time --name ai.realtimeapi/mcp \
+    --allow-domain realtimeapi.ai --call list_feeds
 ```
 
 Verified 2026-11-14: connected to `https://mcp.realtimeapi.ai/mcp`, listed 6 tools, and
 `list_feeds` returned the feed list. The example never picks "the first" server for you — `--name`
 is required.
 
-## 3. Code entry point
+## 3. Trust policy and signature hook
+
+```python
+from yai_core.integrations.mcp import McpRegistryClient, RegistryPolicy
+
+policy = RegistryPolicy(
+    allowed_domains=("realtimeapi.ai",),      # exact domain or subdomain
+    allowed_repository_hosts=("github.com",),
+    require_repository=True,
+    verify_entry=lambda entry: my_verify(entry),  # optional signature/provenance hook
+)
+result = McpRegistryClient().search("time", policy=policy)
+config = result.servers[0].build_config(policy=policy)
+```
+
+- **Domain allowlist**: exact or subdomain; the CLI requires `--allow-domain` by default
+  (`--allow-any-host` is the explicit opt-out);
+- **Signature hook**: `verify_entry(entry)` receives the raw registry entry and drops it on False;
+  this module ships **no crypto** (registry v0 has no stable unified signature field), so hosts can
+  plug sigstore/JWS;
+- **Secret defaults are never trusted**: registry-provided defaults for `isSecret` headers are
+  ignored; the caller must supply them;
+- **Version/status**: `isLatest` + `active` required by default, configurable.
+
+## 4. Code entry point
 
 ```python
 from yai_core.integrations.mcp import McpRegistryClient

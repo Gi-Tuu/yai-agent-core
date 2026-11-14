@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from yai_core.integrations.mcp.client import McpServerConfig
@@ -102,12 +103,15 @@ class RegistryServer:
         variables: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         token_env: str | None = None,
+        policy: RegistryPolicy | None = None,
     ) -> McpServerConfig:
         """把一个 remote 转成 ``McpServerConfig``；不发起任何网络请求。
 
         只接受 ``https`` + ``streamable-http``；模板变量和必填头必须由调用方显式提供，
         缺失直接抛 ``ValueError``，绝不猜默认值、绝不把 secret 写进代码。
         """
+        if policy is not None:
+            policy.check_server(self)
         remotes = self.streamable_remotes()
         if not remotes:
             raise ValueError(f"{self.name}: no streamable-http remote")
@@ -116,6 +120,10 @@ class RegistryServer:
         remote = remotes[remote_index]
         if not remote.is_https:
             raise ValueError(f"{self.name}: refuses non-HTTPS remote {remote.url!r}")
+        if policy is not None:
+            host = urlparse(remote.url).hostname or ""
+            if not policy.allows_host(host):
+                raise ValueError(f"{self.name}: remote host {host!r} is not in allowed_domains")
 
         supplied_variables = variables or {}
         missing_vars = [
@@ -132,7 +140,9 @@ class RegistryServer:
         supplied_headers = {key.lower(): value for key, value in (headers or {}).items()}
         resolved_headers: dict[str, str] = {}
         for header in remote.headers:
-            header_value: str | None = supplied_headers.get(header.name.lower(), header.default)
+            header_value: str | None = supplied_headers.get(header.name.lower())
+            if header_value is None and not header.secret:
+                header_value = header.default
             if header.required and not header_value:
                 raise ValueError(f"{self.name}: missing required header {header.name!r}")
             if header_value is not None:
@@ -145,6 +155,55 @@ class RegistryServer:
             headers=resolved_headers or None,
             token_env=token_env,
         )
+
+
+
+@dataclass(frozen=True)
+class RegistryPolicy:
+    """Host-side trust policy for registry metadata.
+
+    ``allowed_domains`` restricts connectable remote hosts (exact or subdomain).
+    Empty means "no host restriction" only when the policy is constructed directly;
+    use :meth:`strict` for the safe posture.
+    """
+
+    allowed_domains: tuple[str, ...] = ()
+    allowed_repository_hosts: tuple[str, ...] = ()
+    require_repository: bool = False
+    require_latest: bool = True
+    require_active: bool = True
+    #: Optional signature/provenance hook: receives the raw registry entry.
+    #: Return False to drop it. This module ships no crypto implementation.
+    verify_entry: Callable[[dict[str, Any]], bool] | None = None
+
+    @classmethod
+    def strict(cls, *domains: str) -> RegistryPolicy:
+        if not domains:
+            raise ValueError("RegistryPolicy.strict requires at least one domain")
+        return cls(allowed_domains=tuple(domains), require_repository=True)
+
+    def allows_host(self, host: str, patterns: tuple[str, ...] | None = None) -> bool:
+        host = host.lower().strip(".")
+        patterns = self.allowed_domains if patterns is None else patterns
+        if not patterns:
+            return False
+        return any(
+            host == pattern.lower().strip(".")
+            or host.endswith("." + pattern.lower().strip("."))
+            for pattern in patterns
+        )
+
+    def check_server(self, server: RegistryServer) -> None:
+        if self.require_latest and not server.is_latest:
+            raise ValueError(f"{server.name}: not the latest version")
+        if self.require_active and server.status != "active":
+            raise ValueError(f"{server.name}: registry status is {server.status!r}")
+        if self.require_repository and not server.repository_url:
+            raise ValueError(f"{server.name}: registry entry has no repository URL")
+        if self.allowed_repository_hosts:
+            host = urlparse(server.repository_url).hostname or ""
+            if not self.allows_host(host, self.allowed_repository_hosts):
+                raise ValueError(f"{server.name}: repository host {host!r} is not allowed")
 
 
 @dataclass(frozen=True)
@@ -255,7 +314,12 @@ class McpRegistryClient:
         self.timeout = timeout
 
     def search(
-        self, query: str = "", *, limit: int = 10, cursor: str | None = None
+        self,
+        query: str = "",
+        *,
+        limit: int = 10,
+        cursor: str | None = None,
+        policy: RegistryPolicy | None = None,
     ) -> RegistrySearchResult:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -279,11 +343,26 @@ class McpRegistryClient:
         data = json.loads(payload.decode("utf-8"))
         if not isinstance(data, dict) or not isinstance(data.get("servers"), list):
             raise ValueError("unexpected registry response: missing servers[]")
-        servers = tuple(
-            server
-            for entry in data["servers"]
-            if (server := _parse_server(entry)) is not None
-        )
+        servers_list: list[RegistryServer] = []
+        for entry in data["servers"]:
+            if policy is not None and policy.verify_entry is not None:
+                if not policy.verify_entry(entry):
+                    continue
+            server = _parse_server(entry)
+            if server is None:
+                continue
+            if policy is not None:
+                if policy.require_latest and not server.is_latest:
+                    continue
+                if policy.require_active and server.status != "active":
+                    continue
+                if policy.allowed_domains and not any(
+                    policy.allows_host(urlparse(remote.url).hostname or "")
+                    for remote in server.streamable_remotes()
+                ):
+                    continue
+            servers_list.append(server)
+        servers = tuple(servers_list)
         raw_metadata = data.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         return RegistrySearchResult(
@@ -297,6 +376,7 @@ __all__ = [
     "McpRegistryClient",
     "RegistryHeader",
     "RegistryPackage",
+    "RegistryPolicy",
     "RegistryRemote",
     "RegistrySearchResult",
     "RegistryServer",

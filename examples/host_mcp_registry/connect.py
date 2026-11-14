@@ -18,10 +18,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from yai_core.integrations.mcp import McpRegistryClient, McpToolBridge  # noqa: E402
+from yai_core.integrations.mcp import (  # noqa: E402
+    McpRegistryClient,
+    McpToolBridge,
+    RegistryPolicy,
+)
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if not args.allow_domain and not args.allow_any_host:
+        print(
+            "安全默认：请用 --allow-domain 指定允许的 remote 域名"
+            "（或显式 --allow-any-host）",
+            file=sys.stderr,
+        )
+        return 2
+    policy = (
+        None
+        if args.allow_any_host
+        else RegistryPolicy(
+            allowed_domains=tuple(args.allow_domain),
+            allowed_repository_hosts=tuple(args.allow_repo_host or ()),
+            require_repository=args.require_repo,
+            require_latest=not args.no_require_latest,
+        )
+    )
     result = McpRegistryClient().search(args.query, limit=args.limit)
     server = next((item for item in result.servers if item.name == args.name), None)
     if server is None:
@@ -44,6 +65,7 @@ async def _run(args: argparse.Namespace) -> int:
             ),
             headers=headers,
             token_env=args.token_env,
+            policy=policy,
         )
     except ValueError as exc:
         print(f"拒绝构建配置：{exc}", file=sys.stderr)
@@ -82,6 +104,21 @@ def main() -> int:
     parser.add_argument("--variable", action="append", help="URL 模板变量 key=value")
     parser.add_argument("--header", action="append", help="鉴权头 Name=Value")
     parser.add_argument("--token-env", default=None, help="Bearer token 的环境变量名")
+    parser.add_argument(
+        "--allow-domain",
+        action="append",
+        help="允许连接的 remote 域名（可重复；默认必须显式给出）",
+    )
+    parser.add_argument(
+        "--allow-any-host", action="store_true", help="显式关闭域名 allowlist（不推荐）"
+    )
+    parser.add_argument(
+        "--allow-repo-host", action="append", help="允许的仓库域名（可选）"
+    )
+    parser.add_argument(
+        "--require-repo", action="store_true", help="要求 registry 条目带 repository URL"
+    )
+    parser.add_argument("--no-require-latest", action="store_true")
     parser.add_argument("--call", default=None, help="显式调用某个工具")
     parser.add_argument("--args", default="{}", help="工具参数 JSON")
     args = parser.parse_args()

@@ -9,6 +9,7 @@ from yai_core.integrations.mcp.client import (
 )
 from yai_core.integrations.mcp.registry import (
     McpRegistryClient,
+    RegistryPolicy,
     RegistrySearchResult,
     RegistryServer,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "config_from_env",
     "sanitize_schema",
     "McpRegistryClient",
+    "RegistryPolicy",
     "RegistrySearchResult",
     "RegistryServer",
 ]

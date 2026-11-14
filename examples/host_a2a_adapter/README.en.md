@@ -37,9 +37,10 @@ client = A2AClient(
 core.register_tools([client.as_tool(name="a2a_research")])
 ```
 
-Supported subset: Agent Card, `SendMessage` / `GetTask` (non-streaming), text/structured parts,
-Bearer token. Not supported: streaming, push notifications, file parts, OAuth flow, Agent Card
-signature verification.
+Supported: Agent Card, `SendMessage` / `GetTask` (non-streaming), `SendStreamingMessage` (SSE),
+text/structured parts, Bearer token. Streaming: `client.stream(task, on_text=...)` receives chunks;
+with `A2AConfig(streaming=True)` the `as_tool()` path uses streaming too. Not supported: push
+notifications, file parts, OAuth flow, Agent Card signature verification.
 
 ## Boundaries
 

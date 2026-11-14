@@ -17,9 +17,9 @@ uv run python examples/host_mcp_registry/search.py github --json
 
 ```bash
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --alias feeds
+    --query time --name ai.realtimeapi/mcp --allow-domain realtimeapi.ai --alias feeds
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --call list_feeds
+    --query time --name ai.realtimeapi/mcp --allow-domain realtimeapi.ai --call list_feeds
 ```
 
 `--name` 必填；默认只列工具，`--call` 才真正调用。

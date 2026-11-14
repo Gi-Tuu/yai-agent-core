@@ -63,6 +63,49 @@ class _Handler(BaseHTTPRequestHandler):
         params = request.get("params") or {}
         self.server.last_auth = self.headers.get("Authorization")  # type: ignore[attr-defined]
 
+        if method == "SendStreamingMessage":
+            message = params.get("message") or {}
+            text = "\n".join(
+                str(part.get("text") or "")
+                for part in message.get("parts") or []
+                if isinstance(part, dict)
+            )
+            task_id = f"stream-{len(TASKS) + 1}"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            def chunk(text: str) -> dict[str, Any]:
+                return {
+                    "taskId": task_id,
+                    "contextId": "ctx-stream",
+                    "artifact": {"artifactId": "a1", "parts": [{"text": text}]},
+                }
+
+            frames = [
+                {
+                    "task": {
+                        "id": task_id,
+                        "contextId": "ctx-stream",
+                        "status": {"state": "TASK_STATE_WORKING"},
+                    }
+                },
+                {"artifactUpdate": chunk("stream part 1")},
+                {"artifactUpdate": chunk("stream part 2")},
+                {
+                    "statusUpdate": {
+                        "taskId": task_id,
+                        "contextId": "ctx-stream",
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    }
+                },
+            ]
+            for frame in frames:
+                self.wfile.write(f"data: {json.dumps(frame, ensure_ascii=False)}\n\n".encode())
+                self.wfile.flush()
+            return
+
         if method == "SendMessage":
             message = params.get("message") or {}
             text = "\n".join(

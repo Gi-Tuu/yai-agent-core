@@ -26,17 +26,41 @@ ai.getvda/elasticsearch-redis-mysql-stack-generator  (1.0.0) latest
 ```bash
 # 必须用 --name 明确指定；默认只列工具，不自动调用
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --alias feeds
+    --query time --name ai.realtimeapi/mcp \
+    --allow-domain realtimeapi.ai --alias feeds
 
 # 再加 --call 才真正调用；下面是一个只读工具
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --call list_feeds
+    --query time --name ai.realtimeapi/mcp \
+    --allow-domain realtimeapi.ai --call list_feeds
 ```
 
 实测（2026-11-14）：连接 `https://mcp.realtimeapi.ai/mcp` 列出 6 个工具，
 `list_feeds` 返回了 feed 列表。示例不会替你选"第一个"并连接——`--name` 是必填的。
 
-## 3. 代码入口
+## 3. 信任策略与签名钩子
+
+```python
+from yai_core.integrations.mcp import McpRegistryClient, RegistryPolicy
+
+policy = RegistryPolicy(
+    allowed_domains=("realtimeapi.ai",),      # 只允许这个域及其子域
+    allowed_repository_hosts=("github.com",),
+    require_repository=True,
+    verify_entry=lambda entry: my_verify(entry),  # 可选：验签/来源校验钩子
+)
+result = McpRegistryClient().search("time", policy=policy)
+config = result.servers[0].build_config(policy=policy)
+```
+
+- **域名 allowlist**：`allowed_domains` 精确匹配或子域匹配；CLI 默认必须给 `--allow-domain`，
+  不想用时必须显式 `--allow-any-host`。
+- **签名钩子**：`verify_entry(entry)` 收到 registry 原始条目，返回 False 即丢弃；
+  模块**不内置密码学实现**（Registry v0 没有稳定的统一签名字段），宿主可接 sigstore / JWS。
+- **secret 默认值不信任**：`isSecret` 头的 registry 默认值会被忽略，必须由调用方显式提供。
+- **版本/状态**：默认要求 `isLatest` + `active`；可配。
+
+## 4. 代码入口
 
 ```python
 from yai_core.integrations.mcp import McpRegistryClient
