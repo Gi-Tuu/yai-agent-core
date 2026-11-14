@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.47.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.48.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -502,6 +502,11 @@
 
 - A2A：极简 JSON-RPC 客户端 + `as_tool()`，离线假 server 走通一次 AgentCore 工具调用。
 - Registry：`connect.py` 显式 `--name` / `--call`，实测 `ai.realtimeapi/mcp` 的 `list_feeds`。
+
+### v0.48.0 — A2A 流式 + Registry 策略（tag 2026-11-14，已完成）
+
+- A2A：`stream(on_text=...)` 消费 SSE，`streaming=True` 时工具走流式聚合。
+- Registry：域名 allowlist、secret 默认值拒绝、`verify_entry` 验签钩子；CLI 默认要 allowlist。
 
 ## 下一步
 
