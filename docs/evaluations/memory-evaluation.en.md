@@ -87,6 +87,32 @@ without an embedder", and serves as a regression baseline when adding embedders 
 On this CPU: ingest 30ms, retrieve 2.3s. The upstream license is NOASSERTION — verify it before
 redistributing the dataset.
 
+### Lexical vs BGE-M3 semantic (`locomo_embedding_bench.py`, v0.43)
+
+Same 1,973 evaluable QA and evidence ids; local **bge-m3 ONNX int8** (1024-d, CLS pooling + L2),
+pure semantic via cosine top-k, hybrid via Reciprocal Rank Fusion (k=60) of lexical / semantic top-k:
+
+| Method | Recall@5 | Recall@10 | MRR |
+|---|---:|---:|---:|
+| Lexical (`recall`) | 0.3482 | 0.4163 | 0.2927 |
+| **BGE-M3 semantic (cosine)** | **0.5067** | **0.6066** | 0.4081 |
+| **RRF hybrid** | **0.5078** | 0.6064 | **0.4361** |
+
+Per category (R@5 / MRR, lexical → semantic → hybrid):
+
+| Category | n | Lexical | Semantic | Hybrid |
+|---|---:|---|---|---|
+| 1 multi-hop | 278 | .143 / .230 | .289 / .379 | .273 / .384 |
+| 2 temporal | 320 | .434 / .355 | .690 / .572 | .672 / .575 |
+| 3 open-domain | 89 | .139 / .161 | .298 / .238 | .275 / .270 |
+| 4 single-hop | 840 | .413 / .326 | .622 / .468 | .597 / .483 |
+| 5 adversarial | 446 | .335 / .251 | .335 / .230 | **.416 / .314** |
+
+**Takeaway**: the semantic channel lifts R@5 from 0.348 to 0.507 (+45%), with the largest gain on
+temporal questions; hybrid is best on MRR and adversarial questions (lexical backstops exact tokens).
+On this CPU with 8 threads: embed 96.9s, retrieve 3.2s, ingest 35ms. Boundary: retrieval metrics, not
+answer accuracy; BGE-M3 only changes the recall channel; the dataset is still not redistributed.
+
 ## Reproduce
 
 ```powershell

@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **LoCoMo 词法 vs BGE-M3 对照**（`benchmarks/memory/locomo_embedding_bench.py`）：同一 1,973
+  条 QA，纯词法 R@5 0.3482 / MRR 0.2927；bge-m3 语义 0.5067 / 0.4081；RRF 混合
+  0.5078 / **0.4361**。本地 ONNX int8、8 线程，embed 96.9s、retrieve 3.2s；
+  `tests/test_locomo_embedding_bench.py` 离线回归。
+
 ## [v0.42.3] - 2026-11-14
 
 ### Added

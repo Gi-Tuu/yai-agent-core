@@ -60,6 +60,15 @@ python benchmarks/memory/locomo_bench.py --json          # 纯词法 Recall@5/10
 边界：**纯词法基线**，不可与 Mem0/Zep 等 embedding + LLM 判定的分数直接比较；数据集
 不随仓库分发（上游 NOASSERTION 许可）。
 
+## LoCoMo 词法 vs BGE-M3 对照（v0.43）
+
+```bash
+python benchmarks/memory/locomo_embedding_bench.py --download --json --workers 8
+```
+
+同一 1,973 条 QA：词法 R@5 0.3482 / MRR 0.2927；bge-m3 语义 0.5067 / 0.4081；
+RRF 混合 0.5078 / **0.4361**。本机 CPU embed 96.9s、retrieve 3.2s。
+
 ## 边界
 
 - 语料与标注规模都很小（18 / 12），只用于回归与方向性判断，不构成"生产级检索质量"结论。
