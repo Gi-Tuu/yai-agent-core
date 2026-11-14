@@ -10,6 +10,8 @@ from examples.host_a2a_adapter.a2a_client import (
     A2AClient,
     A2AConfig,
     A2AOAuth2,
+    A2AOAuth2AuthorizationCode,
+    A2AOAuth2DeviceCode,
     _validate_endpoint,
 )
 from examples.host_a2a_adapter.fake_a2a_server import serve
@@ -144,3 +146,43 @@ def test_push_notification_config_lifecycle(server) -> None:
     assert listed["configs"][0]["id"] == config["id"]
     client.delete_push_config("task-1", config["id"])
     assert client.list_push_configs("task-1")["configs"] == []
+
+def test_authorization_code_flow(server, monkeypatch: pytest.MonkeyPatch) -> None:
+    _srv, base = server
+    client = A2AClient(
+        A2AConfig(
+            base_url=base,
+            oauth2=A2AOAuth2AuthorizationCode(
+                authorization_url=f"{base}/authorize",
+                token_url=f"{base}/oauth/token",
+                client_id="demo",
+                redirect_uri="http://127.0.0.1/callback",
+                scope="a2a",
+            ),
+        )
+    )
+    url = client.authorization_url("state-1")
+    assert "response_type=code" in url
+    assert "state=state-1" in url
+    client.exchange_code("code-1")
+    assert client.send("hello").text
+    assert client._oauth_token == "token-authcode"  # noqa: SLF001
+
+
+def test_device_code_flow(server) -> None:
+    _srv, base = server
+    client = A2AClient(
+        A2AConfig(
+            base_url=base,
+            oauth2=A2AOAuth2DeviceCode(
+                device_authorization_url=f"{base}/oauth/device",
+                token_url=f"{base}/oauth/token",
+                client_id="demo",
+            ),
+        )
+    )
+    flow = client.start_device_flow()
+    assert flow["user_code"] == "ABCD-EFGH"
+    client.poll_device_token(flow["device_code"], interval=0.01, timeout=5)
+    assert client.send("hello").text
+    assert client._oauth_token == "token-device"  # noqa: SLF001

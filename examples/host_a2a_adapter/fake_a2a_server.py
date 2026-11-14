@@ -9,6 +9,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs
 
 TASKS: dict[str, dict[str, Any]] = {}
 
@@ -53,16 +54,40 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/a2a", "/oauth/token"}:
+        if self.path not in {"/a2a", "/oauth/token", "/oauth/device"}:
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length).decode("utf-8")
-        if self.path == "/oauth/token":
-            self.server.last_oauth_form = raw_body  # type: ignore[attr-defined]
+        if self.path == "/oauth/device":
             self._json(
                 200,
-                {"access_token": "token-123", "token_type": "Bearer", "expires_in": 3600},
+                {
+                    "device_code": "device-1",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://example.com/device",
+                    "interval": 0.01,
+                    "expires_in": 60,
+                },
+            )
+            return
+        if self.path == "/oauth/token":
+            self.server.last_oauth_form = raw_body  # type: ignore[attr-defined]
+            form = parse_qs(raw_body)
+            grant = (form.get("grant_type") or [""])[0]
+            if grant == "authorization_code":
+                token = "token-authcode"
+            elif grant.startswith("urn:ietf:params:oauth:grant-type:device_code"):
+                self.server.device_polls = getattr(self.server, "device_polls", 0) + 1  # type: ignore[attr-defined]
+                if self.server.device_polls == 1:  # type: ignore[attr-defined]
+                    self._json(400, {"error": "authorization_pending"})
+                    return
+                token = "token-device"
+            else:
+                token = "token-123"
+            self._json(
+                200,
+                {"access_token": token, "token_type": "Bearer", "expires_in": 3600},
             )
             return
         request = json.loads(raw_body)

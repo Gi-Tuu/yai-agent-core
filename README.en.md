@@ -263,7 +263,7 @@ policy**; the kernel's default policy allows everything.</p>
 | 15 | `host_box_mcp` | Box by Simular cloud desktop: MCP exposes 36 shell/browser/computer tools (real-machine smoke) |
 | 16 | `host_mcp_registry` | Official MCP Registry read-only discovery: search + explicit connect + explicit call (no auto-install/connect) |
 | 17 | `host_a2a_adapter` | Host-layer A2A adapter: remote agent → ToolSpec (SSE / OAuth / push configs, with an offline fake server) |
-| 18 | `host_o_go_mcp` | Go host over MCP: minimal Go stdio server + Python AgentCore call (exit 2 without Go) |
+| 18 | `host_o_go_mcp` | Go host over MCP: minimal Go stdio server + Python AgentCore call (exit 2 without Go; optional `go build` CI) |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.

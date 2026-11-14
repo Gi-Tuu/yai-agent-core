@@ -8,9 +8,10 @@ Supported subset of A2A 1.0:
 - Agent Card at ``/.well-known/agent-card.json`` (JSON-RPC interface);
 - ``SendMessage`` and ``GetTask`` (non-streaming); task states normalized;
 - text parts in artifacts / status message;
-- optional Bearer token from an environment variable.
+- optional Bearer token / OAuth2 (client credentials, authorization code, device code).
+- streaming (SendStreamingMessage), push config methods.
 
-No streaming, push notifications, file parts, OAuth dance, or agent-card signature verification.
+No webhook receiver, file parts, or agent-card signature verification.
 Security: only HTTPS, or HTTP on loopback for local demos.
 """
 
@@ -22,6 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, cast
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -51,6 +53,42 @@ class A2AOAuth2:
 
 
 @dataclass(frozen=True)
+class A2AOAuth2AuthorizationCode:
+    """OAuth2 authorization-code configuration (browser redirect handled by host)."""
+
+    authorization_url: str
+    token_url: str
+    client_id: str
+    redirect_uri: str
+    client_secret_env: str | None = None
+    scope: str = ""
+
+    def build_authorization_url(self, state: str) -> str:
+        params = {
+            "response_type": "code",
+            "client_id": self.client_id,
+            "redirect_uri": self.redirect_uri,
+        }
+        if self.scope:
+            params["scope"] = self.scope
+        if state:
+            params["state"] = state
+        separator = "&" if "?" in self.authorization_url else "?"
+        return f"{self.authorization_url}{separator}{urlencode(params)}"
+
+
+@dataclass(frozen=True)
+class A2AOAuth2DeviceCode:
+    """OAuth2 device-code configuration (user approves on another device)."""
+
+    device_authorization_url: str
+    token_url: str
+    client_id: str
+    client_secret_env: str | None = None
+    scope: str = ""
+
+
+@dataclass(frozen=True)
 class A2AConfig:
     base_url: str
     card_path: str = "/.well-known/agent-card.json"
@@ -62,7 +100,7 @@ class A2AConfig:
     #: Use SendStreamingMessage when the agent card advertises streaming.
     streaming: bool = False
     #: Optional OAuth2 client-credentials credentials.
-    oauth2: A2AOAuth2 | None = None
+    oauth2: A2AOAuth2 | A2AOAuth2AuthorizationCode | A2AOAuth2DeviceCode | None = None
 
 
 @dataclass(frozen=True)
@@ -146,7 +184,9 @@ class A2AClient:
         }
         headers.update(self.config.headers or {})
         if self.config.oauth2 is not None:
-            headers.setdefault("Authorization", f"Bearer {self._oauth_access_token()}")
+            token = self._oauth_access_token(required=not self.config.token_env)
+            if token:
+                headers.setdefault("Authorization", f"Bearer {token}")
         if self.config.token_env:
             token = os.environ.get(self.config.token_env)
             if not token:
@@ -154,15 +194,53 @@ class A2AClient:
             headers.setdefault("Authorization", f"Bearer {token}")
         return headers
 
-    def _oauth_access_token(self) -> str:
+    def _form_post(self, url: str, form: dict[str, str]) -> dict[str, Any]:
+        _validate_endpoint(url)
+        request = Request(
+            url,
+            data=urlencode(form).encode("utf-8"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
+                raw = response.read(200_000)
+        except HTTPError as exc:
+            raw = exc.read(200_000)
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise RuntimeError("OAuth endpoint returned a non-object response")
+        return data
+
+    def _store_token(self, data: dict[str, Any]) -> str:
+        token = data.get("access_token")
+        if not token:
+            raise RuntimeError("OAuth token endpoint returned no access_token")
+        expires = float(data.get("expires_in") or 3600)
+        self._oauth_token = str(token)
+        self._oauth_expires_at = time.monotonic() + max(30.0, expires - 30.0)
+        return self._oauth_token
+
+    def _oauth_access_token(self, *, required: bool = True) -> str | None:
         oauth = self.config.oauth2
-        assert oauth is not None
+        if oauth is None:
+            return None
         if self._oauth_token and time.monotonic() < self._oauth_expires_at:
             return self._oauth_token
+        if not isinstance(oauth, A2AOAuth2):
+            if required:
+                raise RuntimeError(
+                    "OAuth authorization/device flow has no token yet; call "
+                    "authorization_url()+exchange_code() or "
+                    "start_device_flow()+poll_device_token() first"
+                )
+            return None
         secret = os.environ.get(oauth.client_secret_env)
         if not secret:
             raise ValueError(f"OAuth client secret env {oauth.client_secret_env} is not set")
-        _validate_endpoint(oauth.token_url)
         form = {
             "grant_type": "client_credentials",
             "client_id": oauth.client_id,
@@ -172,24 +250,69 @@ class A2AClient:
             form["scope"] = oauth.scope
         if oauth.audience:
             form["audience"] = oauth.audience
-        request = Request(
-            oauth.token_url,
-            data=urlencode(form).encode("utf-8"),
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            method="POST",
-        )
-        with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
-            data = json.loads(response.read(200_000).decode("utf-8"))
-        token = data.get("access_token") if isinstance(data, dict) else None
-        if not token:
-            raise RuntimeError("OAuth token endpoint returned no access_token")
-        expires = float(data.get("expires_in") or 3600)
-        self._oauth_token = str(token)
-        self._oauth_expires_at = time.monotonic() + max(30.0, expires - 30.0)
-        return self._oauth_token
+        return self._store_token(self._form_post(oauth.token_url, form))
+
+    def authorization_url(self, state: str = "") -> str:
+        oauth = self.config.oauth2
+        if not isinstance(oauth, A2AOAuth2AuthorizationCode):
+            raise ValueError("config.oauth2 is not an authorization-code configuration")
+        return oauth.build_authorization_url(state)
+
+    def exchange_code(self, code: str) -> None:
+        oauth = self.config.oauth2
+        if not isinstance(oauth, A2AOAuth2AuthorizationCode):
+            raise ValueError("config.oauth2 is not an authorization-code configuration")
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": oauth.client_id,
+            "redirect_uri": oauth.redirect_uri,
+        }
+        secret = os.environ.get(oauth.client_secret_env) if oauth.client_secret_env else None
+        if secret:
+            form["client_secret"] = secret
+        self._store_token(self._form_post(oauth.token_url, form))
+
+    def start_device_flow(self) -> dict[str, Any]:
+        oauth = self.config.oauth2
+        if not isinstance(oauth, A2AOAuth2DeviceCode):
+            raise ValueError("config.oauth2 is not a device-code configuration")
+        form = {"client_id": oauth.client_id}
+        if oauth.scope:
+            form["scope"] = oauth.scope
+        data = self._form_post(oauth.device_authorization_url, form)
+        if not data.get("device_code") or not data.get("user_code"):
+            raise RuntimeError("device authorization endpoint returned no device_code/user_code")
+        return data
+
+    def poll_device_token(
+        self, device_code: str, *, interval: float | None = None, timeout: float = 300
+    ) -> None:
+        oauth = self.config.oauth2
+        if not isinstance(oauth, A2AOAuth2DeviceCode):
+            raise ValueError("config.oauth2 is not a device-code configuration")
+        delay = interval if interval is not None else 5.0
+        deadline = time.monotonic() + timeout
+        form = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": oauth.client_id,
+        }
+        secret = os.environ.get(oauth.client_secret_env) if oauth.client_secret_env else None
+        if secret:
+            form["client_secret"] = secret
+        while time.monotonic() < deadline:
+            data = self._form_post(oauth.token_url, form)
+            if data.get("access_token"):
+                self._store_token(data)
+                return
+            error = str(data.get("error") or "")
+            if error not in {"authorization_pending", "slow_down"}:
+                raise RuntimeError(f"device token error: {error or data}")
+            time.sleep(max(0.01, delay))
+            if error == "slow_down":
+                delay += 1
+        raise TimeoutError("device authorization timed out")
 
     def fetch_card(self) -> A2AAgentCard:
         card_url = _validate_endpoint(
@@ -431,6 +554,8 @@ __all__ = [
     "A2AConfig",
     "A2AAgentCard",
     "A2AOAuth2",
+    "A2AOAuth2AuthorizationCode",
+    "A2AOAuth2DeviceCode",
     "A2AResult",
     "TERMINAL_STATES",
 ]
