@@ -126,6 +126,12 @@ def test_composite_declared_timeout_covers_the_whole_workflow() -> None:
         and e.data.get("status") == "unknown"
         for e in events
     ), "在途步骤必须留下 unknown 终态"
+    assert any(
+        e.type == EventType.TOOL_CALL
+        and e.data.get("tool") == "slow"
+        and e.data.get("timed_out") is True
+        for e in events
+    ), "在途步骤必须留下 TOOL_CALL"
 
 
 def test_composite_steps_consume_task_budget() -> None:

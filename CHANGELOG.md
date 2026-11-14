@@ -7,6 +7,22 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.57.0] - 2026-11-14
+
+### Fixed
+
+- **Sidecar 收尾**：任务吞掉 `CancelledError` 时，`asyncio.timeout/wait_for` 会等待取消
+  握手，导致 shutdown 仍无界；改用 `asyncio.wait(..., timeout=2)`。超时后返回
+  `{"stopped": True, "degraded": "active_run_still_running"}`，保留 core/bridge，
+  不把资源从仍在运行的任务脚下抽走。
+- **Composite 超时**：在途步骤现在同时留下 `TOOL_CALL`（tool/arguments/call_id/
+  composite_step/timed_out）和 `TOOL_RESULT(status="unknown")`，不再只有终态。
+
+### Tests
+
+- 新增 sidecar 不响应取消的 degraded 回归、composite 在途 TOOL_CALL 断言；
+  全量 2,550 项 / 2,545 passed / 5 skipped / 92.93%。
+
 ## [v0.56.0] - 2026-11-14
 
 ### Added

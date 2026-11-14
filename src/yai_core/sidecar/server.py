@@ -443,22 +443,39 @@ class SidecarServer:
         }
 
     async def _shutdown(self) -> dict[str, Any]:
-        await self._cleanup()
+        degraded = await self._cleanup()
         self._stopping = True
-        return {"stopped": True}
+        result: dict[str, Any] = {"stopped": True}
+        if degraded:
+            # 不假装正常关闭：任务没有响应取消，core/bridge 仍被它持有。
+            result["degraded"] = "active_run_still_running"
+        return result
 
-    async def _cleanup(self) -> None:
+    async def _cleanup(self) -> bool:
+        """收尾；返回 True 表示 active run 超时未退出（degraded）。"""
         if self._closed:
-            return
+            return False
         self._closed = True
         task = self._active_run
+        degraded = False
         if task is not None and not task.done():
             task.cancel()
-            # 收尾必须给 bridge 留出可返回的预算；工具/组件不响应取消时
-            # 不能让 shutdown RPC 无限挂住，最后由 transport 的 SIGTERM 兜底。
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                async with asyncio.timeout(2.0):
-                    await task
+            # 收尾必须给 bridge 留出可返回的预算；任务若吞掉 CancelledError，
+            # asyncio.timeout/wait_for 会继续等取消完成，反而无界。这里用
+            # asyncio.wait 只等“完成或超时”，不等待取消握手。
+            _done, pending = await asyncio.wait({task}, timeout=2.0)
+            degraded = bool(pending) and not task.done()
+            if task.done():
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    task.exception()
+        if degraded:
+            # 保留 _active_run / bridges / core：由任务自己的 finally 收尾；
+            # 进程退出时 transport 的 SIGTERM 是最终兜底。
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(RpcError(SHUTTING_DOWN, "sidecar 正在关闭"))
+            self._pending.clear()
+            return True
         self._active_run = None
         self._active_run_id = None
         for bridge in reversed(self._bridges):
@@ -475,6 +492,7 @@ class SidecarServer:
             if not future.done():
                 future.set_exception(RpcError(SHUTTING_DOWN, "sidecar 正在关闭"))
         self._pending.clear()
+        return False
 
     # ------------------------------------------------------------------ 运行
 
