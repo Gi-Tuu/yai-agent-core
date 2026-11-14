@@ -963,6 +963,13 @@ class ToolExecutor:
                                 },
                             )
                         )
+                        step_receipt = self._audit.receipt(
+                            call_id=str(progress.get("call_id") or ""),
+                            tool=str(progress["tool"]),
+                            status="unknown",
+                            started=float(progress.get("started", started)),
+                            error=message,
+                        )
                         events.append(
                             AgentEvent(
                                 EventType.TOOL_RESULT,
@@ -973,6 +980,7 @@ class ToolExecutor:
                                     "timed_out": True,
                                     "status": "unknown",
                                     "step_index": progress.get("index"),
+                                    "receipt": step_receipt.to_dict(),
                                 },
                             )
                         )
@@ -1419,6 +1427,7 @@ class ToolExecutor:
                     tool=step.tool,
                     index=index,
                     call_id=step_call_id,
+                    started=time.monotonic(),
                     arguments=redact_arguments(
                         resolved,
                         step_spec.governance.sensitive if step_spec else (),

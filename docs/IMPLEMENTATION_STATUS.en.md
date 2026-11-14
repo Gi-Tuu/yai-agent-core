@@ -6,7 +6,7 @@
 
 > The README answers "what can it do"; this file answers **"how far has it actually got, where is the evidence,
 > and where are the boundaries"**.
-> Basis: **v0.57.0 is released (2026-11-14); v0.56.0 is the previous version**. The v0.26 / v0.27 / v0.28 batches
+> Basis: **v0.58.0 is released (2026-11-14); v0.57.0 is the previous version**. The v0.26 / v0.27 / v0.28 batches
 > (P0 security, Browser Provider, Outcome Verification, execution adapters) are marked inside this file;
 > everything else follows the evidence column. Three status levels:
 > **Verified** (offline tests or measured evidence) / **Implemented · not verified on real hardware** (the code is there, the real environment is missing) / **Not doing** (explicitly excluded).

@@ -31,6 +31,7 @@ from yai_core.types import (
     RateLimitHint,
     ToolGovernance,
     ToolSpec,
+    verify_receipt_chain,
 )
 
 
@@ -132,6 +133,12 @@ def test_composite_declared_timeout_covers_the_whole_workflow() -> None:
         and e.data.get("timed_out") is True
         for e in events
     ), "在途步骤必须留下 TOOL_CALL"
+    receipts = [
+        e.data["receipt"]
+        for e in events
+        if e.type == EventType.TOOL_RESULT and "receipt" in e.data
+    ]
+    assert verify_receipt_chain(receipts) is True
 
 
 def test_composite_steps_consume_task_budget() -> None:
