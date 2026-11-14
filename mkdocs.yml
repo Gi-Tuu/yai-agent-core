@@ -83,6 +83,8 @@ nav:
       - 有向父子核（设计稿）: guides/federation.md
       - OpenAPI 3.1 兼容矩阵: guides/openapi-31-compat.md
       - AG-UI 前端适配: guides/ag-ui.md
+      - MCP Registry 发现: guides/mcp-registry.md
+      - A2A 1.0 定位: guides/a2a-positioning.md
   - 评测与证据:
       - 记忆质量: evaluations/memory-evaluation.md
       - AgentDojo 注入评测: evaluations/agentdojo-evaluation.md
@@ -118,6 +120,8 @@ nav:
           - Directed federation: guides/federation.en.md
           - OpenAPI 3.1 compatibility: guides/openapi-31-compat.en.md
           - AG-UI adapter: guides/ag-ui.en.md
+          - MCP Registry discovery: guides/mcp-registry.en.md
+          - A2A 1.0 positioning: guides/a2a-positioning.en.md
       - Evaluations and evidence:
           - Memory evaluation: evaluations/memory-evaluation.en.md
           - Browser task E2E: evaluations/browser-task-e2e.en.md

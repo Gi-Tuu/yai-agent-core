@@ -7,6 +7,17 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **MCP Registry 只读发现**（`yai_core.integrations.mcp.registry`）：搜索官方 registry
+  `/v0/servers`，展示 remote/package；`build_config()` 只接受 HTTPS + streamable-http，
+  显式校验 URL 变量与必填头，不自动安装/连接；描述经不可信文本净化。
+  `examples/host_mcp_registry/` + `tests/test_mcp_registry.py`（4 例离线）。
+- **A2A 1.0 定位文档**（`docs/guides/a2a-positioning.md` / `.en.md`）：明确 A2A 不进内核、
+  有向父子核 ≠ Multi-Agent；需要时在宿主层做适配器，并给出重访条件。
+
 ## [v0.45.1] - 2026-11-14
 
 ### Added

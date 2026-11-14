@@ -46,7 +46,7 @@
 | [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) | Read-only source audit of OpenMuse-Win |
 | [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) | OpenSSF Best Practices Passing self-assessment (reviewed 2026-11-05) |
 
-## 4. `docs/guides/` — host and operations guides (10)
+## 4. `docs/guides/` — host and operations guides (12)
 
 | Document | Purpose |
 |---|---|
@@ -60,6 +60,8 @@
 | [federation.md](guides/federation.md) | Directed federation: parent calls child, never the reverse; protocol v1 / grants |
 | [openapi-31-compat.md](guides/openapi-31-compat.md) | OpenAPI 3.1 / JSON Schema 2020-12 compatibility matrix |
 | [ag-ui.md](guides/ag-ui.md) | AG-UI 1.0 adapter: event mapping, SSE framing, FastAPI example, boundaries |
+| [mcp-registry.md](guides/mcp-registry.md) | Read-only MCP Registry discovery: search API, config builder, security boundary |
+| [a2a-positioning.md](guides/a2a-positioning.md) | A2A 1.0 positioning: directed federation ≠ Multi-Agent; host-layer adapter |
 
 ## 5. `docs/reports/` — point-in-time reports (2)
 

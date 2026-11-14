@@ -261,6 +261,7 @@ policy**; the kernel's default policy allows everything.</p>
 | 13 | `host_ag_ui_sse` | AG-UI 1.0 SSE host: FastAPI translates YAI's event stream into the standard frontend protocol |
 | 14 | `host_ag_ui_copilotkit` | Real CopilotKit v2 frontend: Runtime → HttpAgent → YAI `/agent` (with a tool call + npm build CI) |
 | 15 | `host_box_mcp` | Box by Simular cloud desktop: MCP exposes 36 shell/browser/computer tools (real-machine smoke) |
+| 16 | `host_mcp_registry` | Official MCP Registry read-only discovery: search + explicit config (no auto-install/connect) |
 
 > Directory names keep their historical letters (a/c/d/e/f/g/i/j/k/l) and are not reordered by learning
 > sequence, so they stay consistent with the docs and walkthrough paths.
