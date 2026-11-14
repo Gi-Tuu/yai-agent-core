@@ -8,6 +8,8 @@
 `shell` / `browser_*` / `computer_*` tools over MCP. This example proves **Box is just another MCP
 server**: YAI's existing `McpToolBridge` connects to it directly.
 
+![Box desktop](../../docs/assets/box-desktop.png)
+
 ## 1. Create a personal key
 
 1. Sign in at <https://box.simular.ai/>;

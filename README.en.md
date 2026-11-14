@@ -26,6 +26,12 @@
 chain and tool calls collapse into "Process · N steps". Routing, capability gaps, newly discovered tools
 flying in, and approval cards are all driven by real kernel events. All data shown is fictional.</p>
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="27-second demo: CopilotKit chat → AG-UI events → Box cloud desktop" width="760">
+</p>
+
+<p align="center"><b>27 seconds, end to end</b>: CopilotKit chat → AG-UI events (including TOOL_CALL_*) → a Box cloud desktop driven over MCP.</p>
+
 ## Running in 30 seconds
 
 Install the package and verify embedding with zero API key — the kernel itself has zero third-party hard

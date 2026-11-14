@@ -6,6 +6,8 @@
 通过 MCP 暴露 `shell` / `browser_*` / `computer_*` 等工具。本示例证明：**Box 只是
 一个普通 MCP Server**，用 YAI 已有的 `McpToolBridge` 即可直接接入。
 
+![Box desktop](../../docs/assets/box-desktop.png)
+
 ## 1. 创建个人 key
 
 1. 登录 <https://box.simular.ai/>；

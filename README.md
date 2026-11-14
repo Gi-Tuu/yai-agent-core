@@ -24,6 +24,12 @@
 <p align="center"><b>一个浮窗，就是一个数字员工。</b> 对话为主体，思考链与工具调用折叠成“TRACE // 推理过程 N 步”；
 路由、能力缺口、新工具飞入、授权卡全部由真实内核事件驱动。截图数据均为虚构。</p>
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="27 秒演示：CopilotKit 聊天 → AG-UI 事件 → Box 云桌面" width="760">
+</p>
+
+<p align="center"><b>27 秒看完整链路</b>：CopilotKit 聊天 → AG-UI 事件（含 TOOL_CALL_*）→ Box 云桌面通过 MCP 驱动。</p>
+
 ## 30 秒跑起来
 
 只装库、零 Key、离线可跑 —— 内核本体零第三方硬依赖：
