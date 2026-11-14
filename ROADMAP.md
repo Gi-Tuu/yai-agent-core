@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.42.2**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.42.3**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -465,6 +465,11 @@
 
 - 示例真实调用本地 `demo_fact` 工具，事件面板出现 `TOOL_CALL_*`；
 - 新增 `copilotkit-demo.yml`：`npm ci` + `npm run build` + dist 检查。
+
+### v0.42.3 — 演示 GIF（tag 2026-11-14，已完成）
+
+- 27 秒 / 2.2 MB：CopilotKit 聊天 + `TOOL_CALL_*` 事件 + Box 云桌面。
+- README 中英首屏与 Box 示例引用；真机截图 `docs/assets/box-desktop.png`。
 
 ## 下一步
 
