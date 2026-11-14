@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.56.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.57.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -552,6 +552,11 @@
 
 - Federation per-parent token；discovery token 负责接入、parent_token 负责身份。
 - Session 工厂按 session 独立锁，慢工厂不再串行化所有新会话。
+
+### v0.57.0 — sidecar/composite 收尾（tag 2026-11-14，已完成）
+
+- Sidecar 用 `asyncio.wait` 有界收尾；超时返回 degraded，不提前抽走资源。
+- Composite 在途步骤补 TOOL_CALL + unknown 终态。
 
 ## 下一步
 

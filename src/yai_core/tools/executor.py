@@ -950,7 +950,19 @@ class ToolExecutor:
                     message = _composite_timeout_message(spec.name, declared)
                     if progress.get("tool"):
                         # 外层 deadline 打断在途步骤时，该步骤的局部事件尚未返回；
-                        # 至少留下一个明确的 unknown 终态，避免审计链跳过它。
+                        # 先补 TOOL_CALL，再补 unknown 终态，避免审计链跳过它。
+                        events.append(
+                            AgentEvent(
+                                EventType.TOOL_CALL,
+                                {
+                                    "tool": progress["tool"],
+                                    "arguments": progress.get("arguments", {}),
+                                    "call_id": progress.get("call_id", ""),
+                                    "composite_step": progress.get("index"),
+                                    "timed_out": True,
+                                },
+                            )
+                        )
                         events.append(
                             AgentEvent(
                                 EventType.TOOL_RESULT,
@@ -1398,7 +1410,21 @@ class ToolExecutor:
                     return events, False, message
                 step_timeout = remaining
             if progress is not None:
-                progress.update(tool=step.tool, index=index)
+                step_spec = (
+                    self.registry.get(step.tool)
+                    if self.registry.has(step.tool)
+                    else None
+                )
+                progress.update(
+                    tool=step.tool,
+                    index=index,
+                    call_id=step_call_id,
+                    arguments=redact_arguments(
+                        resolved,
+                        step_spec.governance.sensitive if step_spec else (),
+                        broad=step_spec.governance.audit_sensitive if step_spec else False,
+                    ),
+                )
             try:
                 sub_events, ok, sub_text = await self.execute(
                     step.tool,

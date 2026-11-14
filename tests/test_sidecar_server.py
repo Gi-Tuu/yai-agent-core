@@ -729,3 +729,29 @@ def test_without_session_subject_params_still_accepted() -> None:
         "subject": {"subject_id": "user-7"},
     }))
     assert "error" not in response
+
+
+@async_test
+async def test_cleanup_degraded_when_active_run_ignores_cancel() -> None:
+    harness = Harness()
+    await harness.call("initialize", {"model": {}})
+    release = asyncio.Event()
+
+    async def stubborn() -> None:
+        while not release.is_set():
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                continue
+
+    task = asyncio.create_task(stubborn())
+    harness.server._active_run = task
+    harness.server._active_run_id = "stuck"
+    await asyncio.sleep(0.01)
+
+    degraded = await harness.server._cleanup()
+    assert degraded is True
+    # 不能把 core/bridge 从仍在运行的任务脚下抽走。
+    assert harness.server._active_run is task
+    release.set()
+    await task
