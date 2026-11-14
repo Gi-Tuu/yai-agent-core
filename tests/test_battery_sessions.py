@@ -175,3 +175,47 @@ def test_active_session_is_not_evicted(monkeypatch) -> None:
     first_closed, one, two = asyncio.run(run())
     assert first_closed is False
     assert (one, two) == (200, 200)
+
+
+def test_session_factories_can_run_in_parallel(monkeypatch) -> None:
+    import asyncio
+
+    import httpx
+
+    from yai_core.batteries.fastapi_server import RateLimitConfig
+
+    monkeypatch.setenv("YAI_GIT_COMMIT", "0" * 40)
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started = 0
+
+    async def factory(_session_key: str) -> AgentCore:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await release.wait()
+        return AgentCore(ScriptedModel([ModelResponse(content="ok")]))
+
+    async def run() -> tuple[int, int]:
+        base = AgentCore(ScriptedModel([ModelResponse(content="default")]))
+        app = create_app(
+            base,
+            core_factory=factory,
+            rate_limit=RateLimitConfig(enabled=False),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            first = asyncio.create_task(
+                client.post("/v1/agent/run", json={"task": "a", "session_id": "a"})
+            )
+            second = asyncio.create_task(
+                client.post("/v1/agent/run", json={"task": "b", "session_id": "b"})
+            )
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+            release.set()
+            one, two = await first, await second
+            return one.status_code, two.status_code
+
+    assert asyncio.run(run()) == (200, 200)

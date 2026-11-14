@@ -139,6 +139,7 @@ class ChildServer:
         *,
         discovery_dir: Path | None = None,
         parent_tools: dict[str, Iterable[str]] | None = None,
+        parent_tokens: dict[str, str] | None = None,
         allow_any_parent: bool = False,
         grant_ttl: float = DEFAULT_GRANT_TTL,
         edge_quota_per_minute: int | None = 60,
@@ -150,6 +151,21 @@ class ChildServer:
                 "parent_tools 不能为空：请配置允许的父核/工具白名单；"
                 "仅开发演示可显式 allow_any_parent=True"
             )
+        if parent_tokens is not None:
+            if not parent_tokens or not all(
+                isinstance(parent_id, str)
+                and parent_id.strip()
+                and isinstance(token, str)
+                and token.strip()
+                for parent_id, token in parent_tokens.items()
+            ):
+                raise ValueError("parent_tokens 必须是非空的 parent_id -> token 映射")
+            if parent_tools is not None:
+                unknown_parents = set(parent_tokens) - set(parent_tools)
+                if unknown_parents:
+                    raise ValueError(
+                        f"parent_tokens 包含 parent_tools 之外的父核：{sorted(unknown_parents)}"
+                    )
         if edge_quota_per_minute is not None and (
             isinstance(edge_quota_per_minute, bool)
             or not isinstance(edge_quota_per_minute, int)
@@ -162,6 +178,11 @@ class ChildServer:
             None
             if parent_tools is None
             else {key: frozenset(value) for key, value in parent_tools.items()}
+        )
+        self._parent_tokens = (
+            None
+            if parent_tokens is None
+            else {key: value for key, value in parent_tokens.items()}
         )
         self.grant_ttl = float(grant_ttl)
         self.edge_quota_per_minute = edge_quota_per_minute
@@ -288,6 +309,7 @@ class ChildServer:
         parent_id = str(params.get("parent_id") or "").strip()
         if not parent_id:
             raise FederationProtocolError("handshake 缺少 parent_id")
+        self._check_parent_token(parent_id, params.get("parent_token"))
         manifest = self.child.manifest()
         requested = params.get("tools")
         if requested is not None and (
@@ -442,6 +464,15 @@ class ChildServer:
         hits.append(now)
 
     # ---------- 鉴权 ----------
+
+    def _check_parent_token(self, parent_id: str, token: Any) -> None:
+        """可选的逐 parent token；未配置时只依赖共享 discovery token。"""
+        if self._parent_tokens is None:
+            return
+        expected = self._parent_tokens.get(parent_id)
+        presented = str(token or "")
+        if not expected or not hmac.compare_digest(presented, expected):
+            raise GrantDenied(f"父核 {parent_id!r} 的 parent_token 无效")
 
     def _check_token(self, params: dict[str, Any]) -> None:
         token = str(params.get("token") or "")

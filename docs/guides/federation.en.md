@@ -19,8 +19,10 @@ Code entry points: `shell/federation/`; example: `examples/host_m_federation/`; 
   `LinkChild` (parent-side long-lived connection, request multiplexing); the handshake issues an **HMAC grant** (the key lives only inside the child process);
   `health` / `tools.list` / `tools.call` are supported; cross-process calls inject the call chain into cycle detection; timeout / disconnection / invalid grant
   all fail closed. `ChildServer` now **requires** a `parent_tools` allowlist; only local demos may
-  opt into `allow_any_parent=True`. `subject` remains a signed claim; identity still depends on who
-  holds the discovery token.
+  opt into `allow_any_parent=True`. `subject` remains a signed claim; identity still depends on
+  the token. For per-parent identity, configure `parent_tokens={"atm": "..."}`; the handshake
+  must carry `parent_token` (`LinkChild.connect(..., parent_token=...)` /
+  `ManagedChild(..., parent_token=...)`).
 - **Phase 3 (ecosystem operations)**: parent-side `refresh_child()` supports hot manifest updates (on the IPC side this works together with
   `manifest_version` from `federation.tools.list`); `ChildServer(edge_quota_per_minute=...)` rate-limits per token/server with a sliding window; parent-side
   `register_child(max_calls=...)` plus `edge_stats()` track calls / failures / elapsed time;
