@@ -149,6 +149,42 @@ run; retrieval errors propagate into answers; the dataset is not redistributed; 
 in local `.env` and is never committed. Reproduce:
 `uv run python benchmarks/memory/locomo_e2e_bench.py --download --json --concurrency 8`.
 
+### Scoring upgrades: temporal normalization + LLM judge (v0.45)
+
+Raw F1/EM penalizes equivalent relative times ("Yesterday / Last year"). The new
+`locomo_e2e_judge.py` does **not regenerate answers**; it adds two scoring layers over existing
+predictions:
+
+- **temporal**: normalize relative expressions against the evidence turn's session date
+  (`session_N_date_time`) into `YYYY-MM-DD / YYYY-MM / YYYY`, then compare with gold;
+  non-temporal answers keep raw F1/EM.
+- **judge**: the same real model decides whether prediction and gold are semantically equivalent,
+  with the reference date in the prompt; outputs YES/NO.
+
+| Scope | n | Raw F1 | Temporal F1 | Raw EM | Temporal EM | LLM judge |
+|---|---:|---:|---:|---:|---:|---:|
+| All | 1,973 | 0.2701 | 0.3004 | 0.1500 | 0.1855 | 0.4070 |
+| **Answerable (cat 1–4)** | **1,527** | **0.3481** | **0.3872** | **0.1932** | **0.2390** | **0.4237** |
+
+Per category (raw F1 → temporal F1 / judge):
+
+| Category | n | Raw F1 | Temporal F1 | Judge |
+|---|---:|---:|---:|---:|
+| 1 multi-hop | 278 | .2789 | .2825 | .1906 |
+| 2 temporal | 320 | .1017 | **.2869** | .5094 |
+| 3 open-domain | 89 | .1302 | .1302 | .1461 |
+| 4 single-hop | 840 | .4878 | .4874 | .4976 |
+| 5 adversarial | 446 | .0031 | .0031 | .3498 |
+
+- Temporal normalization recognizes 92 expressions; cat 2 F1 rises from .102 to .287 (EM .016 → .231);
+- Judge scores .424 on answerable QA, above raw F1 (.348) and temporal F1 (.387); cat 5 is reported
+  separately and excluded from the aggregate;
+- Cost: 1,973 judge calls, ~**367s** at concurrency 8 (same order as answer generation); 0 failures.
+
+**Boundaries**: temporal normalization covers only parseable expressions (92/1,973); the judge is the
+same model grading itself and may prefer its own phrasing — not human ground truth; both depend on
+LoCoMo session dates and gold, so they are not directly comparable across datasets.
+
 ## Reproduce
 
 ```powershell
