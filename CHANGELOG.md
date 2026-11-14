@@ -5,6 +5,15 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **LoCoMo 端到端记忆问答**（`benchmarks/memory/locomo_e2e_bench.py`）：bge-m3 top-5 召回 +
+  真实模型（只依据片段回答）+ SQuAD F1/EM。1,973 QA 无失败；可回答类（cat 1–4，n=1,527）
+  Recall@5 0.5568 / F1 0.3480 / EM 0.1932；耗时约 6 分钟（本机 CPU + API）。
+  `tests/test_locomo_e2e_bench.py` 离线回归（假模型/假嵌入）。
+
 ## [v0.43.0] - 2026-11-14
 
 ### Added

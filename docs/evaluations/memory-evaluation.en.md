@@ -113,6 +113,42 @@ temporal questions; hybrid is best on MRR and adversarial questions (lexical bac
 On this CPU with 8 threads: embed 96.9s, retrieve 3.2s, ingest 35ms. Boundary: retrieval metrics, not
 answer accuracy; BGE-M3 only changes the recall channel; the dataset is still not redistributed.
 
+### End-to-end QA (BGE-M3 recall + real model, v0.44)
+
+This wires the v0.43 semantic recall into answer generation: one vault per conversation, bge-m3
+semantic top-5 excerpts go into the prompt, the real model answers **only from those excerpts**,
+and SQuAD-style token F1 / Exact Match scores the result.
+
+- Model: `deepseek-v4.1-flash-1017` (OpenAI-compatible, from `.env`); one run, 1,973/1,973 succeeded;
+- Retrieval: bge-m3 (same as v0.43) top-5, Recall@5 = 0.5067;
+- Time: embed 88.5s + answers 261.2s (concurrency 8) + retrieval; total 368s (local CPU + API).
+
+| Scope | n | Recall@5 | F1 | EM |
+|---|---:|---:|---:|---:|
+| All (including adversarial) | 1,973 | 0.5067 | 0.2701 | 0.1500 |
+| **Answerable (cat 1–4)** | **1,527** | **0.5568** | **0.3480** | **0.1932** |
+
+Per category (recall / F1 / EM):
+
+| Category | n | Recall@5 | F1 | EM |
+|---|---:|---:|---:|---:|
+| 1 multi-hop | 278 | .2886 | .2789 | .0647 |
+| 2 temporal | 320 | .6901 | .1017 | .0156 |
+| 3 open-domain | 89 | .2984 | .1302 | .0674 |
+| 4 single-hop | 840 | .6222 | .4878 | .3167 |
+| 5 adversarial | 446 | .3352 | .0031 | .0022 |
+
+**How to read it**: single-hop (cat 4) has the best recall and answers (F1 .488); temporal recall is
+high (.690) but F1 is low because gold answers are absolute dates while the model often says
+"Last year/Yesterday" (token F1 does not accept relative time); adversarial golds are mostly
+empty/"Not mentioned", so F1 is not meaningful there and it is **excluded from the answerable
+aggregate**.
+
+**Boundaries**: F1/EM is lexical overlap, not semantic equivalence; no LLM judge; one model and one
+run; retrieval errors propagate into answers; the dataset is not redistributed; the model key stays
+in local `.env` and is never committed. Reproduce:
+`uv run python benchmarks/memory/locomo_e2e_bench.py --download --json --concurrency 8`.
+
 ## Reproduce
 
 ```powershell

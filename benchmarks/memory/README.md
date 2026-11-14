@@ -69,6 +69,16 @@ python benchmarks/memory/locomo_embedding_bench.py --download --json --workers 8
 同一 1,973 条 QA：词法 R@5 0.3482 / MRR 0.2927；bge-m3 语义 0.5067 / 0.4081；
 RRF 混合 0.5078 / **0.4361**。本机 CPU embed 96.9s、retrieve 3.2s。
 
+## LoCoMo 端到端问答（v0.44）
+
+```bash
+python benchmarks/memory/locomo_e2e_bench.py --download --json --concurrency 8
+```
+
+bge-m3 top-5 + 真实模型（只依据片段回答），1,973 QA 无失败：
+可回答类（cat 1–4，n=1,527）Recall@5 0.5568 / F1 0.3480 / EM 0.1932；
+全部（含对抗类）0.5067 / 0.2701 / 0.1500。耗时约 6 分钟（本机 CPU + API）。
+
 ## 边界
 
 - 语料与标注规模都很小（18 / 12），只用于回归与方向性判断，不构成"生产级检索质量"结论。
