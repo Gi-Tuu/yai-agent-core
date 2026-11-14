@@ -115,6 +115,7 @@ include = [
     # .env.example：README 的安装段链接到它（只有占位符，无真实 Key）。
     "/.env.example",
     "/CHANGELOG.md",
+    "/CHANGELOG.en.md",
     "/CONTRIBUTING.md",
     "/CONTRIBUTING.en.md",
     "/SECURITY.md",
@@ -142,6 +143,7 @@ include = [
     # 能力与证据索引 / 文档总索引 / 文档站首页：README 与站点链接到它们。
     "/docs/IMPLEMENTATION_STATUS.md",
     "/docs/DOCUMENT_MAP.md",
+    "/docs/DOCUMENT_MAP.en.md",
     # 文档站配置：tests/test_docs_site.py 会校验它，包内跑测试需要。
     "/mkdocs.yml",
     "/docs/index.md",

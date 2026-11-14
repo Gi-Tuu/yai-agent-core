@@ -1,5 +1,7 @@
 # 文档总索引（Document Map）
 
+[English](DOCUMENT_MAP.en.md) · **简体中文**
+
 > 回答"这个仓库有哪些文档、各管什么、以哪份为准"。能力做到什么程度看
 > [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)；怎么读代码看
 > [`reading-guide.md`](reading-guide.md) 与 [`walkthrough/00-index.md`](walkthrough/00-index.md)。
@@ -19,7 +21,7 @@
 | [README.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.md) / [README.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/README.en.md) | 中 / 英 | 项目门面：定位、30 秒上手、核心能力、宿主示例 |
 | [CONTRIBUTING.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.md) / [CONTRIBUTING.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CONTRIBUTING.en.md) | 中 / 英 | 贡献流程 + 维护者操作手册（发版、门禁） |
 | [SECURITY.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.md) / [SECURITY.zh-CN.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/SECURITY.zh-CN.md) | 英 / 中 | 安全政策：支持版本表、漏洞报告渠道（路径被测试钉住） |
-| [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) | 中 | 逐版本变更（版本与变更事实的最终准绳） |
+| [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) / [CHANGELOG.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.en.md) | 中 / 英 | 逐版本变更（中文为最终准绳；英文为版本级摘要） |
 | [ROADMAP.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.md) / [ROADMAP.en.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/ROADMAP.en.md) | 中 / 英 | 方向与边界：已完成各版本、候选、明确不做（英文为摘要版） |
 
 ## 二、docs/ 根层：架构与定位
@@ -32,7 +34,7 @@
 | [comparison.md](comparison.md) / [comparison.en.md](comparison.en.md) | 与五类同类产品的诚实对比（按类别、不点名，中英） |
 | [reading-guide.md](reading-guide.md) | 代码学习路线（7 站 + 小练习），与 walkthrough 配套 |
 | [BILINGUAL.md](BILINGUAL.md) | **双语文档覆盖与规则**：哪些文档有英文版、哪些按约定不翻译、新增翻译的步骤 |
-| DOCUMENT_MAP.md | 本文件：全部文档的总索引 |
+| DOCUMENT_MAP.md / [DOCUMENT_MAP.en.md](DOCUMENT_MAP.en.md) | 本文件：全部文档的总索引（中英） |
 
 ## 三、docs/evaluations/ —— 评测与证据（8 篇）
 
@@ -47,7 +49,7 @@
 | [competitor-openmuse-audit.md](evaluations/competitor-openmuse-audit.md) | 竞品 OpenMuse-Win 只读源码核验 |
 | [openssf-best-practices-self-assessment.md](evaluations/openssf-best-practices-self-assessment.md) | OpenSSF Best Practices Passing 自评清单（2026-11-05 复核） |
 
-## 四、docs/guides/ —— 宿主与运维指南（12 篇）
+## 四、docs/guides/ —— 宿主与运维指南（10 篇）
 
 | 文档 | 一句话 |
 |---|---|
@@ -78,9 +80,9 @@
 [00-index.md](walkthrough/00-index.md) 是总览与分篇目录（01–56），仅中文、不翻译；
 构建 Word 讲义：`scripts/build_walkthrough_docx.py`（产物在 gitignore 的 `docs/exports/`）。
 
-## 八、docs/releases/ —— GitHub Release 正文源稿（21 篇）
+## 八、docs/releases/ —— GitHub Release 正文源稿（44 篇）
 
-v0.6.0 与 v0.10.0–v0.27.1 的人话版 Release 稿（v0.7–v0.9 无独立稿，当时未单独成稿）；
+v0.6.0 与 v0.10.0–v0.45.0 的人话版 Release 稿（v0.7–v0.9 无独立稿，当时未单独成稿）；每篇顶部带一行 **English summary**；
 唯一入口是 [CHANGELOG.md](https://github.com/Gi-Tuu/yai-agent-core/blob/main/CHANGELOG.md) 头部的 `docs/releases/` 链接，逐条变更以 CHANGELOG 为准。
 
 ## 九、其它子目录 README

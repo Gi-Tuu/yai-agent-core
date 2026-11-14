@@ -1,5 +1,7 @@
 # Changelog
 
+[English version](CHANGELOG.en.md) · **简体中文**（中文为最终准绳；英文为版本级摘要）
+
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 **内核本体始终保持零第三方硬依赖**（`pyproject.toml` 的 `dependencies = []`），真实模型、Web 服务、MCP、OpenAPI 等能力全部走可选 extras 与 SPI 契约懒加载。
 
