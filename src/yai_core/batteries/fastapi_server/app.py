@@ -9,11 +9,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 import os
+import re
+from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 try:
-    from fastapi import FastAPI
+    from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse, PlainTextResponse
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover - 仅在缺少可选依赖时触发
@@ -43,8 +49,67 @@ _LIMITED_METHOD = "POST"
 _LIMITED_PATHS = frozenset({"/v1/agent/run"})
 
 
+class _SessionCorePool:
+    """按 session_id 惰性创建 core，LRU 上限内复用；隔离历史与工具状态。"""
+
+    def __init__(self, factory: Callable[[str], Any], max_sessions: int) -> None:
+        if max_sessions <= 0:
+            raise ValueError("max_sessions 必须是正整数")
+        self._factory = factory
+        self._max_sessions = max_sessions
+        self._cores: OrderedDict[str, Any] = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _validate(session_id: str) -> str:
+        sid = (session_id or "").strip()
+        if not sid or len(sid) > 128 or not re.fullmatch(r"[A-Za-z0-9._:-]+", sid):
+            raise HTTPException(
+                status_code=400,
+                detail="session_id 必须是 1-128 位 [A-Za-z0-9._:-] 字符",
+            )
+        return sid
+
+    async def get(self, session_id: str) -> Any:
+        sid = self._validate(session_id)
+        async with self._lock:
+            if sid in self._cores:
+                self._cores.move_to_end(sid)
+                return self._cores[sid]
+            created = self._factory(sid)
+            core = await created if inspect.isawaitable(created) else created
+            self._cores[sid] = core
+            while len(self._cores) > self._max_sessions:
+                _old_sid, old_core = self._cores.popitem(last=False)
+                await self._close(old_core)
+            return core
+
+    @staticmethod
+    async def _close(core: Any) -> None:
+        closer = getattr(core, "aclose", None) or getattr(core, "close", None)
+        if callable(closer):
+            with contextlib.suppress(Exception):
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result
+        memory = getattr(core, "memory", None)
+        mem_close = getattr(memory, "close", None)
+        if callable(mem_close):
+            with contextlib.suppress(Exception):
+                mem_close()
+
+    async def close_all(self) -> None:
+        async with self._lock:
+            cores = list(self._cores.values())
+            self._cores.clear()
+        for core in cores:
+            await self._close(core)
+
+
 class RunRequest(BaseModel):
     task: str
+    #: 多会话隔离键；单 core 模式下传入会被拒绝，避免“看似隔离”。
+    session_id: str | None = None
 
 
 def create_app(
@@ -56,8 +121,31 @@ def create_app(
     guard: ResponseGuardConfig | None = None,
     readiness_probes: dict | None = None,
     readiness_timeout: float = DEFAULT_PROBE_TIMEOUT,
+    core_factory: Callable[[str], Any] | None = None,
+    max_sessions: int = 64,
 ) -> FastAPI:
-    app = FastAPI(title="YAI Agent Core API", version="0.1.0", lifespan=lifespan)
+    session_pool = (
+        _SessionCorePool(core_factory, max_sessions)
+        if core_factory is not None
+        else None
+    )
+
+    @contextlib.asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        try:
+            if lifespan is None:
+                yield
+            else:
+                async with lifespan(app):
+                    yield
+        finally:
+            if session_pool is not None:
+                await session_pool.close_all()
+
+    app = FastAPI(
+        title="YAI Agent Core API", version="0.1.0", lifespan=_lifespan
+    )
+    app.state.session_pool = session_pool
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
 
@@ -196,7 +284,21 @@ def create_app(
 
     @app.post("/v1/agent/run")
     async def run_agent(req: RunRequest) -> dict:
-        result = await core.run(req.task)
+        if session_pool is None:
+            if req.session_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="当前服务是单 core 模式；如需会话隔离，请配置 core_factory",
+                )
+            target = core
+        else:
+            if not req.session_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="多会话模式必须提供 session_id",
+                )
+            target = await session_pool.get(req.session_id)
+        result = await target.run(req.task)
         payload = {
             "strategy": result.strategy.value,
             "final_text": result.final_text,

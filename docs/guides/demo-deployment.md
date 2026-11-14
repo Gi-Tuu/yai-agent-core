@@ -141,8 +141,10 @@ BASE=https://<你的域名>
 curl $BASE/health                                 # 期望 {"status":"ok","commit":"<40位>"}
 curl $BASE/.well-known/yai-verification.json   # 期望 schemaVersion/slug/commit，commit 与上面一致
 curl $BASE/v1/tools                                # 期望工具清单
-curl -X POST $BASE/v1/agent/run -H "Content-Type: application/json" \
-  -d '{"task":"列出我的全部笔记"}'                  # 期望 strategy/events/final_text
+curl -X POST $BASE/v1/agent/run \
+  -H "Authorization: Bearer $YAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"列出我的全部笔记","session_id":"demo"}'  # 期望 strategy/events/final_text
 docker compose ps                                   # caddy 与 app 均 healthy
 ```
 四项全过 = 公网演示部署达标。

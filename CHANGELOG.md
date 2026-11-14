@@ -7,6 +7,23 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.53.0] - 2026-11-14
+
+### Added
+
+- **FastAPI 会话隔离**：`RunRequest.session_id` + `create_app(core_factory=...)`；
+  `_SessionCorePool` 惰性建 core、LRU 上限、淘汰时关闭 core/memory；示例服务按
+  session 使用独立 InMemory/SQLite(scope) 记忆，并沿用已挂载的 native/MCP/OpenAPI 工具面。
+- **Federation subject 绑定**：握手携带 `subject` 并签入 HMAC grant；`tools.call`
+  必须与 grant 的 subject 一致，未绑定 grant 拒绝带 subject 的调用；`LinkChild` /
+  `ManagedChild` 支持 subject。
+
+### Fixed
+
+- `RunRequest` 在单 core 模式下传 `session_id` 会被 400 拒绝，避免“看似隔离”的假安全；
+  非法 session_id 同样 400。
+- Federation 父核 `_invoke` 默认使用注册 grant 的 subject，拒绝同一 grant 换主体。
+
 ## [v0.52.0] - 2026-11-14
 
 ### Fixed

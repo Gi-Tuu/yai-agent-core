@@ -320,6 +320,13 @@ class Federation:
         subject: Any = None,
         call_id: str = "",
     ) -> dict[str, Any]:
+        # grant 是注册时签发的身份边界：调用方不能在同一条 grant 上换 subject。
+        if subject is None:
+            subject = grant.subject
+        elif grant.subject is not None and subject != grant.subject:
+            raise FederationError(
+                "subject 与注册 grant 绑定的主体不一致，已拒绝调用"
+            )
         chain = _CALL_CHAIN.get()
         if child.node_id in chain:
             raise FederationError(

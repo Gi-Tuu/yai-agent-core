@@ -246,3 +246,44 @@ def test_ipc_demo_runs_two_processes_offline() -> None:
     assert "[IPC] 连上子核 doc" in output
     assert "[IPC] 调用成功" in output
     assert "子核退出后调用失败（预期）" in output
+
+
+def test_subject_is_bound_to_handshake_grant(tmp_path: Path) -> None:
+    child, written = _document_child()
+
+    async def main():
+        server = _server(tmp_path, child)
+        await server.start()
+        link = await LinkChild.connect(
+            server.discovery_path,
+            parent_id="atm",
+            subject={"id": "alice"},
+        )
+        try:
+            grant = CoreGrant(
+                edge="atm->doc",
+                child_id=link.child_id,
+                tools=frozenset({"add_entry"}),
+                subject={"id": "alice"},
+            )
+            ok = await link.call(
+                "add_entry",
+                {"title": "alice 的记录"},
+                grant=grant,
+                subject={"id": "alice"},
+            )
+            with pytest.raises(GrantDenied):
+                await link.call(
+                    "add_entry",
+                    {"title": "bob 的记录"},
+                    grant=grant,
+                    subject={"id": "bob"},
+                )
+            return ok
+        finally:
+            await link.close()
+            await server.stop()
+
+    result = asyncio.run(main())
+    assert result["ok"] is True
+    assert written == [("alice 的记录", "")]
