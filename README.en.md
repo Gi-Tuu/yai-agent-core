@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.42.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.43.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -344,7 +344,8 @@ Prebuilt self-hosted image: `ghcr.io/gi-tuu/yai-agent-core:latest` (built on tag
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
 - **v0.23.0 (done)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **v0.25.0 (done)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
-- **v0.42.3 (done, current release)**: a 27-second demo GIF (CopilotKit → AG-UI events → Box cloud desktop) + a Box real-machine screenshot
+- **v0.43.0 (done, current release)**: LoCoMo lexical vs BGE-M3 semantic comparison (R@5 0.3482 → 0.5067; hybrid MRR 0.4361)
+- **v0.42.3 (done)**: a 27-second demo GIF (CopilotKit → AG-UI events → Box cloud desktop) + a Box real-machine screenshot
 - **v0.42.2 (done)**: a real tool call in the CopilotKit demo + npm build CI (`npm ci` / `npm run build`)
 - **v0.42.1 (done)**: Box computer-use acceptance A–D (read screen / GUI typing / browser write / cleanup, all PASS on real machine)
 - **v0.42.0 (done)**: **Box by Simular real-machine integration** (36 MCP tools: cloud shell / Chrome / computer; verified `absent → running → shell → example.com`)
