@@ -54,7 +54,9 @@ YAI 是**进程内嵌入式内核**：一个宿主软件 `import` 它，声明�
 - 权限、审批、审计、预算仍由 YAI 内核统一治理；
 - 子 Agent 的失败转成工具失败，走同一条 `tool_result` 与反思回灌路径。
 
-这样既保留 A2A 的互操作价值，也不破坏"内核不做 Multi-Agent"的红线。
+这样既保留 A2A 的互操作价值，也不破坏"内核不做 Multi-Agent"的红线。可运行的最小实现见
+[`examples/host_a2a_adapter/`](https://github.com/Gi-Tuu/yai-agent-core/tree/main/examples/host_a2a_adapter)：
+本地假 A2A server + `as_tool()` + `AgentCore` 一次真实工具调用。
 
 ## 5. 决策与重访条件
 

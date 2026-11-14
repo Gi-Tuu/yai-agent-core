@@ -21,7 +21,22 @@ ai.getvda/elasticsearch-redis-mysql-stack-generator  (1.0.0) latest
   remote[streamable-http] https://.../mcp  auth-headers=-
 ```
 
-## 2. 代码入口
+## 2. 接入示例（显式选择）
+
+```bash
+# 必须用 --name 明确指定；默认只列工具，不自动调用
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --alias feeds
+
+# 再加 --call 才真正调用；下面是一个只读工具
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --call list_feeds
+```
+
+实测（2026-11-14）：连接 `https://mcp.realtimeapi.ai/mcp` 列出 6 个工具，
+`list_feeds` 返回了 feed 列表。示例不会替你选"第一个"并连接——`--name` 是必填的。
+
+## 3. 代码入口
 
 ```python
 from yai_core.integrations.mcp import McpRegistryClient
