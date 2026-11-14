@@ -90,6 +90,32 @@ cp .env.example .env              # Windows: copy .env.example .env
 - 新功能必须带测试：新策略、新工具来源、新 SPI 实现至少各一条端到端用例。
 - 修 Bug 先写一个能复现该 Bug 的失败测试，再修代码让它通过。
 
+## 4.1 本地跑真机回归（非 PR 必跑）
+
+nightly 真机回归（[`.github/workflows/nightly-real.yml`](https://github.com/Gi-Tuu/yai-agent-core/blob/main/.github/workflows/nightly-real.yml)）
+每天跑真实 Chromium 与 Windows UIA；贡献者可在本地复现：
+
+### 浏览器（真实 Chromium）
+
+```bash
+uv sync --extra browser
+python -m playwright install chromium
+python scripts/browser_smoke.py --json
+python scripts/browser_provider_task_smoke.py
+```
+
+### Windows（真实 UIA）
+
+```bash
+uv sync --extra windows
+python scripts/windows_uia_smoke.py --json
+python scripts/windows_real_apps_smoke.py
+```
+
+**退出码口径**：`0` 通过；`1` 验证失败；`2` 环境不具备（缺浏览器/桌面/权限）。
+这些脚本需要真实桌面/浏览器，**不要加进 PR 必跑门禁**；失败时上传 artifacts/截图，
+结论记录到 `docs/evaluations/`。
+
 ## 5. 常见开发任务怎么做
 
 | 想做的事 | 动哪里 | 参考 |

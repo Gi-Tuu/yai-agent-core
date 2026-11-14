@@ -39,8 +39,32 @@ core.register_tools([client.as_tool(name="a2a_research")])
 
 Supported: Agent Card, `SendMessage` / `GetTask` (non-streaming), `SendStreamingMessage` (SSE),
 text/structured parts, Bearer token. Streaming: `client.stream(task, on_text=...)` receives chunks;
-with `A2AConfig(streaming=True)` the `as_tool()` path uses streaming too. Not supported: push
-notifications, file parts, OAuth flow, Agent Card signature verification.
+with `A2AConfig(streaming=True)` the `as_tool()` path uses streaming too.
+
+### OAuth2 (client credentials)
+
+```python
+from examples.host_a2a_adapter.a2a_client import A2AClient, A2AConfig, A2AOAuth2
+
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2(
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+        client_secret_env="A2A_CLIENT_SECRET",
+        scope="a2a",
+    ),
+))
+```
+
+### Push configuration
+
+`create_push_config(task_id, webhook_url, token=...)` / `list_push_configs` /
+`delete_push_config` call A2A push-config methods; **the webhook receiver is host-owned**; the
+example only registers/lists/deletes configs.
+
+Not supported: a push receiver, file parts, authorization-code/device OAuth, Agent Card signature
+verification.
 
 ## Boundaries
 

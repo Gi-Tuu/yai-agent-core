@@ -21,8 +21,8 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, cast
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from yai_core.tools.hygiene import sanitize_untrusted_text
@@ -40,6 +40,17 @@ TERMINAL_STATES = {
 
 
 @dataclass(frozen=True)
+class A2AOAuth2:
+    """OAuth2 client-credentials configuration (no browser flow)."""
+
+    token_url: str
+    client_id: str
+    client_secret_env: str
+    scope: str = ""
+    audience: str | None = None
+
+
+@dataclass(frozen=True)
 class A2AConfig:
     base_url: str
     card_path: str = "/.well-known/agent-card.json"
@@ -50,6 +61,8 @@ class A2AConfig:
     max_wait: float = 60.0
     #: Use SendStreamingMessage when the agent card advertises streaming.
     streaming: bool = False
+    #: Optional OAuth2 client-credentials credentials.
+    oauth2: A2AOAuth2 | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +135,8 @@ class A2AClient:
 
     def __init__(self, config: A2AConfig) -> None:
         self.config = config
+        self._oauth_token: str | None = None
+        self._oauth_expires_at = 0.0
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -130,12 +145,51 @@ class A2AClient:
             "A2A-Version": "1.0",
         }
         headers.update(self.config.headers or {})
+        if self.config.oauth2 is not None:
+            headers.setdefault("Authorization", f"Bearer {self._oauth_access_token()}")
         if self.config.token_env:
             token = os.environ.get(self.config.token_env)
             if not token:
                 raise ValueError(f"A2A token env {self.config.token_env} is not set")
             headers.setdefault("Authorization", f"Bearer {token}")
         return headers
+
+    def _oauth_access_token(self) -> str:
+        oauth = self.config.oauth2
+        assert oauth is not None
+        if self._oauth_token and time.monotonic() < self._oauth_expires_at:
+            return self._oauth_token
+        secret = os.environ.get(oauth.client_secret_env)
+        if not secret:
+            raise ValueError(f"OAuth client secret env {oauth.client_secret_env} is not set")
+        _validate_endpoint(oauth.token_url)
+        form = {
+            "grant_type": "client_credentials",
+            "client_id": oauth.client_id,
+            "client_secret": secret,
+        }
+        if oauth.scope:
+            form["scope"] = oauth.scope
+        if oauth.audience:
+            form["audience"] = oauth.audience
+        request = Request(
+            oauth.token_url,
+            data=urlencode(form).encode("utf-8"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
+            data = json.loads(response.read(200_000).decode("utf-8"))
+        token = data.get("access_token") if isinstance(data, dict) else None
+        if not token:
+            raise RuntimeError("OAuth token endpoint returned no access_token")
+        expires = float(data.get("expires_in") or 3600)
+        self._oauth_token = str(token)
+        self._oauth_expires_at = time.monotonic() + max(30.0, expires - 30.0)
+        return self._oauth_token
 
     def fetch_card(self) -> A2AAgentCard:
         card_url = _validate_endpoint(
@@ -200,18 +254,25 @@ class A2AClient:
             message["contextId"] = context_id
         result = self._rpc(card.url, "SendMessage", {"message": message})
 
-        if "message" in result and isinstance(result["message"], dict):
+        message_obj = result.get("message")
+        if isinstance(message_obj, dict):
             return A2AResult(
-                text="\n".join(_parts_text(result["message"].get("parts"))),
+                text="\n".join(_parts_text(message_obj.get("parts"))),
                 raw=result,
             )
 
-        task_obj = result.get("task")
-        if not isinstance(task_obj, dict):
+        raw_task = result.get("task")
+        if not isinstance(raw_task, dict):
             raise RuntimeError("A2A SendMessage result has neither task nor message")
+        task_obj: dict[str, Any] = cast(dict[str, Any], raw_task)
         deadline = time.monotonic() + self.config.max_wait
         while True:
-            status = task_obj.get("status") if isinstance(task_obj.get("status"), dict) else {}
+            raw_status = task_obj.get("status")
+            status: dict[str, Any] = (
+                cast(dict[str, Any], raw_status)
+                if isinstance(raw_status, dict)
+                else {}
+            )
             state = _normalize_state(status.get("state"))
             if state in TERMINAL_STATES:
                 return A2AResult(
@@ -229,7 +290,12 @@ class A2AClient:
                 )
             time.sleep(self.config.poll_interval)
             polled = self._rpc(card.url, "GetTask", {"id": task_obj.get("id")})
-            task_obj = polled.get("task") if isinstance(polled.get("task"), dict) else polled
+            raw_polled = polled.get("task")
+            task_obj = (
+                cast(dict[str, Any], raw_polled)
+                if isinstance(raw_polled, dict)
+                else polled
+            )
 
     def stream(self, task: str, *, context_id: str | None = None, on_text: Any = None) -> A2AResult:
         """Consume ``SendStreamingMessage`` SSE frames and aggregate text.
@@ -309,6 +375,32 @@ class A2AClient:
             raw={"events": raw_events},
         )
 
+    def create_push_config(
+        self, task_id: str, webhook_url: str, *, token: str | None = None
+    ) -> dict[str, Any]:
+        _validate_endpoint(webhook_url)
+        config: dict[str, Any] = {"url": webhook_url}
+        if token:
+            config["token"] = token
+        card = self.fetch_card()
+        return self._rpc(
+            card.url,
+            "CreateTaskPushNotificationConfig",
+            {"taskId": task_id, "pushNotificationConfig": config},
+        )
+
+    def list_push_configs(self, task_id: str) -> dict[str, Any]:
+        card = self.fetch_card()
+        return self._rpc(card.url, "ListTaskPushNotificationConfigs", {"taskId": task_id})
+
+    def delete_push_config(self, task_id: str, config_id: str) -> dict[str, Any]:
+        card = self.fetch_card()
+        return self._rpc(
+            card.url,
+            "DeleteTaskPushNotificationConfig",
+            {"taskId": task_id, "id": config_id},
+        )
+
     def as_tool(self, *, name: str | None = None) -> ToolSpec:
         card = self.fetch_card()
         tool_name = name or f"a2a_{card.name}"
@@ -330,8 +422,15 @@ class A2AClient:
                 "required": ["task"],
             },
             handler=handler,
-            source="a2a",
+            source="native",
         )
 
 
-__all__ = ["A2AClient", "A2AConfig", "A2AAgentCard", "A2AResult", "TERMINAL_STATES"]
+__all__ = [
+    "A2AClient",
+    "A2AConfig",
+    "A2AAgentCard",
+    "A2AOAuth2",
+    "A2AResult",
+    "TERMINAL_STATES",
+]

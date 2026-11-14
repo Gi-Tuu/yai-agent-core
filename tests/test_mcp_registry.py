@@ -227,3 +227,38 @@ def test_search_policy_filters_and_verifier(monkeypatch: pytest.MonkeyPatch) -> 
     )
     result = reg.McpRegistryClient().search("demo", policy=policy)
     assert [server.name for server in result.servers] == ["ok/demo"]
+
+
+def test_digest_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = {
+        "server": {
+            "name": "pinned/demo",
+            "description": "pinned",
+            "version": "1",
+            "remotes": [{"type": "streamable-http", "url": "https://good.example/mcp"}],
+        },
+        "_meta": {
+            "io.modelcontextprotocol.registry/official": {
+                "isLatest": True,
+                "status": "active",
+            }
+        },
+    }
+    payload = {"servers": [entry]}
+    _monkey(monkeypatch, payload)
+    digest = reg.entry_digest(entry)
+    policy = reg.RegistryPolicy(
+        allowed_domains=("good.example",),
+        pinned_digests=(("pinned/demo", digest),),
+    )
+    found = reg.McpRegistryClient().search("demo", policy=policy)
+    assert [server.name for server in found.servers] == ["pinned/demo"]
+
+    wrong = reg.RegistryPolicy(
+        allowed_domains=("good.example",),
+        pinned_digests=(("pinned/demo", "0" * 64),),
+    )
+    assert reg.McpRegistryClient().search("demo", policy=wrong).servers == ()
+
+    require = reg.RegistryPolicy(allowed_domains=("good.example",), require_pinned=True)
+    assert reg.McpRegistryClient().search("demo", policy=require).servers == ()

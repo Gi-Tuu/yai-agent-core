@@ -97,6 +97,9 @@ Shipped in sdist:
 [examples/host_j_actual](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_j_actual/README.md) ·
 [examples/host_k_multimodal](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_k_multimodal/README.md) ·
 [examples/host_l_sidecar_node](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_l_sidecar_node/README.md) ·
+[examples/host_mcp_registry](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_mcp_registry/README.md) ·
+[examples/host_a2a_adapter](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_a2a_adapter/README.md) ·
+[examples/host_o_go_mcp](https://github.com/Gi-Tuu/yai-agent-core/blob/main/examples/host_o_go_mcp/README.md) ·
 [shell/desktop/fonts](https://github.com/Gi-Tuu/yai-agent-core/blob/main/shell/desktop/fonts/README.md)
 
 Repository-only (not in sdist, names only): `packaging/extension/README.md`,

@@ -36,7 +36,30 @@ core.register_tools([client.as_tool(name="a2a_research")])
 
 支持：Agent Card、`SendMessage` / `GetTask`（非流式）、`SendStreamingMessage`（SSE）、文本/结构化 parts、Bearer token。
 流式：`client.stream(task, on_text=...)` 逐块回调；`A2AConfig(streaming=True)` 时 `as_tool()` 也走流式聚合。
-不支持：push notification、文件 parts、OAuth 流程、Agent Card 签名验证。
+
+### OAuth2（client credentials）
+
+```python
+from examples.host_a2a_adapter.a2a_client import A2AClient, A2AConfig, A2AOAuth2
+
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2(
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+        client_secret_env="A2A_CLIENT_SECRET",
+        scope="a2a",
+    ),
+))
+```
+
+### Push 配置
+
+`create_push_config(task_id, webhook_url, token=...)` / `list_push_configs` /
+`delete_push_config` 调用 A2A 的 push 配置方法；**webhook 接收端由宿主自己实现**，
+示例只负责注册/查询/删除配置。
+
+不支持：push 接收服务、文件 parts、authorization-code/device OAuth、Agent Card 签名验证。
 
 ## 边界
 

@@ -55,6 +55,8 @@ config = result.servers[0].build_config(policy=policy)
 
 - **域名 allowlist**：`allowed_domains` 精确匹配或子域匹配；CLI 默认必须给 `--allow-domain`，
   不想用时必须显式 `--allow-any-host`。
+- **内置 digest 固定**：`pinned_digests=(('server/name', sha256),)` 对 registry 原始条目做
+  canonical JSON 的 SHA-256 固定；`require_pinned=True` 拒绝未固定条目。这是完整性，不是身份。
 - **签名钩子**：`verify_entry(entry)` 收到 registry 原始条目，返回 False 即丢弃；
   模块**不内置密码学实现**（Registry v0 没有稳定的统一签名字段），宿主可接 sigstore / JWS。
 - **secret 默认值不信任**：`isSecret` 头的 registry 默认值会被忽略，必须由调用方显式提供。
