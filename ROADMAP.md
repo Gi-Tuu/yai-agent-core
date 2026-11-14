@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.55.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.56.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -547,6 +547,11 @@
 - API Key/session 所有权隔离；活跃 session 引用计数保护。
 - Federation 强制 parent allowlist、token 级 quota、discovery 权限加固。
 - XFF CIDR、Mermaid 渲染、文档漂移修复。
+
+### v0.56.0 — per-parent token + session 工厂并行（tag 2026-11-14，已完成）
+
+- Federation per-parent token；discovery token 负责接入、parent_token 负责身份。
+- Session 工厂按 session 独立锁，慢工厂不再串行化所有新会话。
 
 ## 下一步
 

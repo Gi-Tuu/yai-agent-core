@@ -312,3 +312,36 @@ def test_discovery_rejects_path_traversal(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="node_id"):
         info.write(tmp_path)
+
+
+def test_parent_tokens_are_required_per_parent(tmp_path: Path) -> None:
+    child, _written = _document_child()
+
+    async def main() -> None:
+        server = ChildServer(
+            child,
+            discovery_dir=tmp_path,
+            parent_tools={"p1": frozenset({"add_entry"})},
+            parent_tokens={"p1": "tok-p1"},
+        )
+        await server.start()
+        link = await LinkChild.connect(
+            server.discovery_path,
+            parent_id="p1",
+            parent_token="tok-p1",
+        )
+        await link.close()
+        with pytest.raises(GrantDenied):
+            await LinkChild.connect(
+                server.discovery_path,
+                parent_id="p1",
+                parent_token="wrong",
+            )
+        with pytest.raises(GrantDenied):
+            await LinkChild.connect(
+                server.discovery_path,
+                parent_id="p1",
+            )
+        await server.stop()
+
+    asyncio.run(main())

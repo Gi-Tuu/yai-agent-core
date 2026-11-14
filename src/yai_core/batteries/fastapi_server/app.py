@@ -14,6 +14,7 @@ import contextlib
 import inspect
 import os
 import re
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
@@ -59,6 +60,9 @@ class _SessionCorePool:
         self._max_sessions = max_sessions
         self._cores: OrderedDict[str, Any] = OrderedDict()
         self._active: dict[str, int] = {}
+        self._creating: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -89,16 +93,46 @@ class _SessionCorePool:
 
     async def acquire(self, session_key: str) -> Any:
         key = self._validate(session_key)
+        evicted: list[Any] = []
         async with self._lock:
             core = self._cores.get(key)
             if core is not None:
                 self._cores.move_to_end(key)
-            else:
+                self._active[key] = self._active.get(key, 0) + 1
+                evicted = self._pop_idle_over_limit_locked()
+        if core is not None:
+            for old_core in evicted:
+                await self._close(old_core)
+            return core
+
+        # 不同的 session 用各自的创建锁：工厂慢时只串行同一 session 的首次创建，
+        # 不会阻塞其他 session。
+        create_lock = self._creating.get(key)
+        if create_lock is None:
+            create_lock = asyncio.Lock()
+            self._creating[key] = create_lock
+        async with create_lock:
+            async with self._lock:
+                core = self._cores.get(key)
+                if core is not None:
+                    self._cores.move_to_end(key)
+                    self._active[key] = self._active.get(key, 0) + 1
+                    evicted = self._pop_idle_over_limit_locked()
+            if core is None:
                 created = self._factory(key)
                 core = await created if inspect.isawaitable(created) else created
-                self._cores[key] = core
-            self._active[key] = self._active.get(key, 0) + 1
-            evicted = self._pop_idle_over_limit_locked()
+                stale: Any = None
+                async with self._lock:
+                    existing = self._cores.get(key)
+                    if existing is not None:
+                        stale, core = core, existing
+                    else:
+                        self._cores[key] = core
+                    self._cores.move_to_end(key)
+                    self._active[key] = self._active.get(key, 0) + 1
+                    evicted = self._pop_idle_over_limit_locked()
+                if stale is not None:
+                    await self._close(stale)
         for old_core in evicted:
             await self._close(old_core)
         return core

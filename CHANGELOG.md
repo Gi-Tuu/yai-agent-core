@@ -7,6 +7,20 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.56.0] - 2026-11-14
+
+### Added
+
+- **Federation per-parent token**：`ChildServer(parent_tokens={"atm": "..."})`；
+  握手必须携带 `parent_token`（`LinkChild.connect` / `ManagedChild` 支持）；
+  共享 discovery token 仍负责传输接入，parent_token 负责父核身份。
+- **API session 工厂并发**：不同 session 使用独立创建锁；慢工厂不再串行化所有新会话。
+
+### Tests
+
+- 新增 per-parent token、session 工厂并行回归；全量 2,549 项 / 2,544 passed /
+  5 skipped / 92.95%。
+
 ## [v0.55.0] - 2026-11-14
 
 ### Security
