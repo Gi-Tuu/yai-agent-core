@@ -20,9 +20,9 @@ packages and repository URL. Verify provenance, pin the version, and keep secret
 
 ```bash
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --alias feeds
+    --query time --name ai.realtimeapi/mcp --allow-domain realtimeapi.ai --alias feeds
 uv run python examples/host_mcp_registry/connect.py \
-    --query time --name ai.realtimeapi/mcp --call list_feeds
+    --query time --name ai.realtimeapi/mcp --allow-domain realtimeapi.ai --call list_feeds
 ```
 
 `--name` is required; tools are listed by default, `--call` actually invokes one.

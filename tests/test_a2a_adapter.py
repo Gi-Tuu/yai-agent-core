@@ -86,3 +86,22 @@ def test_message_result_variant(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     result = client.send("hi")
     assert result.text == "direct message"
+
+def test_streaming_collects_artifact_chunks(server) -> None:
+    _srv, base = server
+    client = A2AClient(A2AConfig(base_url=base, timeout=5))
+    chunks: list[str] = []
+    result = client.stream("hello stream", on_text=chunks.append)
+    assert result.state == "COMPLETED"
+    assert "stream part 1" in result.text
+    assert "stream part 2" in result.text
+    assert chunks == ["stream part 1", "stream part 2"]
+
+
+def test_streaming_config_is_used_by_tool(server) -> None:
+    _srv, base = server
+    client = A2AClient(A2AConfig(base_url=base, timeout=5, streaming=True))
+    tool = client.as_tool(name="a2a_stream")
+    result = asyncio.run(tool.handler(task="hello"))
+    assert "stream part 1" in result
+    assert "stream part 2" in result

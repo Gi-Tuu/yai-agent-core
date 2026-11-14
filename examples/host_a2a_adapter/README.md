@@ -34,8 +34,9 @@ client = A2AClient(
 core.register_tools([client.as_tool(name="a2a_research")])
 ```
 
-支持的子集：Agent Card、`SendMessage` / `GetTask`（非流式）、文本/结构化 parts、Bearer token。
-不支持：流式、push notification、文件 parts、OAuth 流程、Agent Card 签名验证。
+支持：Agent Card、`SendMessage` / `GetTask`（非流式）、`SendStreamingMessage`（SSE）、文本/结构化 parts、Bearer token。
+流式：`client.stream(task, on_text=...)` 逐块回调；`A2AConfig(streaming=True)` 时 `as_tool()` 也走流式聚合。
+不支持：push notification、文件 parts、OAuth 流程、Agent Card 签名验证。
 
 ## 边界
 
