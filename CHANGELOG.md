@@ -7,6 +7,29 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.55.0] - 2026-11-14
+
+### Security
+
+- **API session 所有权**：`ApiKeyAuth` 返回稳定 principal；session 键改为
+  `principal:session_id`。不同 API Key 即使提交同一 session_id 也不再命中同一 core。
+- **Federation 默认 fail-closed**：`ChildServer` 必须配置 `parent_tools`；仅本地演示可显式
+  `allow_any_parent=True`。quota 改按 token/服务计数，轮换 parent_id 不再重置。
+- **Discovery 文件**：node_id 拒绝路径穿越；临时文件以 0600 创建，目录 0700（POSIX）。
+- **XFF**：`YAI_TRUSTED_PROXIES` 支持 CIDR；未配置时继续忽略 XFF。
+
+### Fixed
+
+- **Session 池活跃回收**：引入 in-flight 引用计数；LRU 只回收空闲 core，运行中的 core 不会被
+  `aclose`。请求结束释放引用后再淘汰。
+- **Mermaid 渲染**：`mkdocs.yml` 增加 mermaid custom fence + 本地 JS；AG-UI 时序图可在文档站渲染。
+- **文档漂移**：demo-deployment 改为“多 session，不同 Key 命名空间隔离”，补充可信代理配置说明。
+
+### Tests
+
+- 新增跨 Key session、活跃 session 不回收、Federation 强制 allowlist、discovery 路径穿越、
+  quota 轮换等回归；全量 2,547 项 / 2,542 passed / 5 skipped / 93.01%。
+
 ## [v0.54.1] - 2026-11-14
 
 ### Fixed

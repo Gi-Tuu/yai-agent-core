@@ -144,6 +144,7 @@ def test_client_ip_inputs() -> None:
     assert client_ip("1.2.3.4, 10.0.0.9", "10.0.0.1", chain_trusted) == "1.2.3.4"
     assert client_ip(" , 5.6.7.8", "10.0.0.1", trusted) == "5.6.7.8"
     assert client_ip("  ,  ", "10.0.0.1", trusted) == "10.0.0.1"
+    assert client_ip("1.2.3.4", "10.1.2.3", frozenset({"10.0.0.0/8"})) == "1.2.3.4"
     assert client_ip(None, None) == "unknown"
 
 

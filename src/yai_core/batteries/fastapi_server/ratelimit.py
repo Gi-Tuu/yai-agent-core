@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 import time
@@ -142,6 +143,23 @@ class SlidingWindowLimiter:
             return True, 0
 
 
+def _is_trusted_proxy(host: str, trusted_proxies: frozenset[str]) -> bool:
+    """精确 host 或 CIDR 命中；非 IP 条目只做字符串比较。"""
+    if host in trusted_proxies:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    for entry in trusted_proxies:
+        try:
+            if address in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def client_ip(
     x_forwarded_for: str | None,
     peer_host: str | None,
@@ -154,11 +172,11 @@ def client_ip(
     非可信地址；全链可信/为空时回退 peer。
     """
     peer = (peer_host or "").strip() or "unknown"
-    if not trusted_proxies or peer not in trusted_proxies:
+    if not trusted_proxies or not _is_trusted_proxy(peer, trusted_proxies):
         return peer
     if x_forwarded_for:
         candidates = [part.strip() for part in x_forwarded_for.split(",")]
         for candidate in reversed(candidates):
-            if candidate and candidate not in trusted_proxies:
+            if candidate and not _is_trusted_proxy(candidate, trusted_proxies):
                 return candidate
     return peer

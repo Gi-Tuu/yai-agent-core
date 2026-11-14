@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Any
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse, PlainTextResponse
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover - 仅在缺少可选依赖时触发
@@ -50,7 +50,7 @@ _LIMITED_PATHS = frozenset({"/v1/agent/run"})
 
 
 class _SessionCorePool:
-    """按 session_id 惰性创建 core，LRU 上限内复用；隔离历史与工具状态。"""
+    """按 session 键惰性创建 core；LRU 淘汰只关空闲 core，不关运行中的 core。"""
 
     def __init__(self, factory: Callable[[str], Any], max_sessions: int) -> None:
         if max_sessions <= 0:
@@ -58,31 +58,62 @@ class _SessionCorePool:
         self._factory = factory
         self._max_sessions = max_sessions
         self._cores: OrderedDict[str, Any] = OrderedDict()
+        self._active: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _validate(session_id: str) -> str:
-        sid = (session_id or "").strip()
-        if not sid or len(sid) > 128 or not re.fullmatch(r"[A-Za-z0-9._:-]+", sid):
+    def _validate(session_key: str) -> str:
+        key = (session_key or "").strip()
+        if not key or len(key) > 256 or not re.fullmatch(r"[A-Za-z0-9._:-]+", key):
             raise HTTPException(
                 status_code=400,
                 detail="session_id 必须是 1-128 位 [A-Za-z0-9._:-] 字符",
             )
-        return sid
+        return key
 
-    async def get(self, session_id: str) -> Any:
-        sid = self._validate(session_id)
+    def _pop_idle_over_limit_locked(self) -> list[Any]:
+        evicted: list[Any] = []
+        while len(self._cores) > self._max_sessions:
+            victim = next(
+                (
+                    key
+                    for key in self._cores
+                    if self._active.get(key, 0) == 0
+                ),
+                None,
+            )
+            if victim is None:
+                break
+            evicted.append(self._cores.pop(victim))
+        return evicted
+
+    async def acquire(self, session_key: str) -> Any:
+        key = self._validate(session_key)
         async with self._lock:
-            if sid in self._cores:
-                self._cores.move_to_end(sid)
-                return self._cores[sid]
-            created = self._factory(sid)
-            core = await created if inspect.isawaitable(created) else created
-            self._cores[sid] = core
-            while len(self._cores) > self._max_sessions:
-                _old_sid, old_core = self._cores.popitem(last=False)
-                await self._close(old_core)
-            return core
+            core = self._cores.get(key)
+            if core is not None:
+                self._cores.move_to_end(key)
+            else:
+                created = self._factory(key)
+                core = await created if inspect.isawaitable(created) else created
+                self._cores[key] = core
+            self._active[key] = self._active.get(key, 0) + 1
+            evicted = self._pop_idle_over_limit_locked()
+        for old_core in evicted:
+            await self._close(old_core)
+        return core
+
+    async def release(self, session_key: str) -> None:
+        key = (session_key or "").strip()
+        async with self._lock:
+            count = self._active.get(key, 0) - 1
+            if count > 0:
+                self._active[key] = count
+            else:
+                self._active.pop(key, None)
+            evicted = self._pop_idle_over_limit_locked()
+        for old_core in evicted:
+            await self._close(old_core)
 
     @staticmethod
     async def _close(core: Any) -> None:
@@ -102,6 +133,7 @@ class _SessionCorePool:
         async with self._lock:
             cores = list(self._cores.values())
             self._cores.clear()
+            self._active.clear()
         for core in cores:
             await self._close(core)
 
@@ -186,10 +218,13 @@ def create_app(
             need_auth = auth_cfg.should_protect(path) or (
                 path == "/metrics" and metrics_protected
             )
-            if need_auth and not auth_cfg.check_header(
-                request.headers.get("authorization"),
-                request.headers.get("x-api-key"),
-            ):
+            principal = None
+            if need_auth:
+                principal = auth_cfg.principal(
+                    request.headers.get("authorization"),
+                    request.headers.get("x-api-key"),
+                )
+            if need_auth and principal is None:
                 # 未授权在中间件层直接 401：不进 core，不花模型钱。
                 return JSONResponse(
                     status_code=401,
@@ -199,6 +234,8 @@ def create_app(
                     },
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            if principal is not None:
+                request.state.session_principal = principal
             return await call_next(request)
 
     # 2) 限流（外层）：最后注册 => 最外层。所有 POST /v1/agent/run（含未授权
@@ -284,7 +321,7 @@ def create_app(
         return core.list_tools()
 
     @app.post("/v1/agent/run")
-    async def run_agent(req: RunRequest) -> dict:
+    async def run_agent(req: RunRequest, request: Request) -> dict:
         if session_pool is None:
             if req.session_id:
                 raise HTTPException(
@@ -292,14 +329,20 @@ def create_app(
                     detail="当前服务是单 core 模式；如需会话隔离，请配置 core_factory",
                 )
             target = core
+            result = await target.run(req.task)
         else:
             if not req.session_id:
                 raise HTTPException(
                     status_code=400,
                     detail="多会话模式必须提供 session_id",
                 )
-            target = await session_pool.get(req.session_id)
-        result = await target.run(req.task)
+            principal = getattr(request.state, "session_principal", "anonymous")
+            session_key = f"{principal}:{req.session_id}"
+            target = await session_pool.acquire(session_key)
+            try:
+                result = await target.run(req.task)
+            finally:
+                await session_pool.release(session_key)
         payload = {
             "strategy": result.strategy.value,
             "final_text": result.final_text,

@@ -47,8 +47,12 @@
    `Authorization: Bearer <key>`（否则 `/v1/*` 返回 401）。
    其余变量（`OPENAI_BASE_URL`、`LLM_MODEL`、`YAI_PROJECT_SLUG` 等）已在 yaml 里写好。
 
-> **单实例 = 单会话**：参考 API 是一个 core 共享上下文，不等于多租户服务。
-> 不要把同一个 API Key 分发给互不信任的用户；多租户请按会话实例化独立 core。
+> **多会话**：`/v1/agent/run` 必须带 `session_id`；示例服务按 session 建独立 core。
+> 不同 API Key 的 session 命名空间相互隔离；同一个 Key 仍代表同一租户，
+> 不要把同一个 Key 分发给互不信任的用户。
+>
+> 限流默认按对端 IP；在 Render/Caddy 反代后请配置 `YAI_TRUSTED_PROXIES`（支持 CIDR），
+> 否则所有用户会共享代理 IP 的一个限流桶。
 4. 点 **Apply / Deploy**，云端开始构建（海外环境用官方 PyPI，不需要 `INDEX_URL`）。
 5. 两个自动化约定（已在代码里处理，无需手动操作）：
    - **端口**：Render 注入 `PORT`（默认 10000），Dockerfile 的 CMD 是

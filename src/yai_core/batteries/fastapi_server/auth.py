@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 from dataclasses import dataclass, field
@@ -58,10 +59,8 @@ class ApiKeyAuth:
         """只保护 /v1/ 下且不在公开白名单的路径；其余一律放行。"""
         return path.startswith(_PROTECTED_PREFIX) and path not in PUBLIC_PATHS
 
-    def check_header(
-        self, authorization: str | None, x_api_key: str | None
-    ) -> bool:
-        """校验头部中的 Key；任何形式缺失/不匹配返回 False。"""
+    @staticmethod
+    def _presented(authorization: str | None, x_api_key: str | None) -> str:
         presented = ""
         if authorization:
             parts = authorization.split(None, 1)
@@ -71,6 +70,26 @@ class ApiKeyAuth:
                 presented = parts[0].strip()
         if not presented and x_api_key:
             presented = x_api_key.strip()
+        return presented
+
+    def principal(
+        self, authorization: str | None, x_api_key: str | None
+    ) -> str | None:
+        """返回 Key 的稳定主体标识（哈希，不落原文）；不匹配返回 None。
+
+        session_id 必须按 principal 命名空间隔离：两个不同 Key 即使提交同一个
+        session_id，也不能命中同一个 core。
+        """
+        presented = self._presented(authorization, x_api_key)
         if not presented:
-            return False
-        return any(hmac.compare_digest(presented, k) for k in self.keys)
+            return None
+        for key in self.keys:
+            if hmac.compare_digest(presented, key):
+                return "key-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        return None
+
+    def check_header(
+        self, authorization: str | None, x_api_key: str | None
+    ) -> bool:
+        """校验头部中的 Key；任何形式缺失/不匹配返回 False。"""
+        return self.principal(authorization, x_api_key) is not None

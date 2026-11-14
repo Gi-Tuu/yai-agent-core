@@ -16,6 +16,7 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 import time
 from collections import deque
 from collections.abc import Iterable
@@ -88,14 +89,33 @@ class DiscoveryInfo:
         )
 
     def write(self, directory: Path) -> Path:
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{self.node_id}.json"
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), ensure_ascii=False), encoding="utf-8")
+        # node_id 是文件名的一部分：拒绝路径分隔符 / 点段，避免写出目录。
+        if (
+            not self.node_id
+            or self.node_id in {".", ".."}
+            or ".." in self.node_id
+            or any(sep in self.node_id for sep in ("/", "\\"))
+        ):
+            raise ValueError(f"非法 node_id：{self.node_id!r}")
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if os.name == "posix":
-            os.chmod(tmp, 0o600)
-        # Windows：chmod 语义受限，这里不做虚假承诺；文件仍在用户数据目录下。
-        os.replace(tmp, path)
+            os.chmod(directory, 0o700)
+        path = directory / f"{self.node_id}.json"
+        payload = json.dumps(self.to_dict(), ensure_ascii=False).encode("utf-8")
+        # 先以 0600 创建临时文件再写：避免 write_text 默认权限的读取窗口。
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(directory), prefix=f".{self.node_id}-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            if os.path.exists(tmp_name):
+                with _suppress():
+                    os.remove(tmp_name)
         return path
 
     @classmethod
@@ -119,11 +139,17 @@ class ChildServer:
         *,
         discovery_dir: Path | None = None,
         parent_tools: dict[str, Iterable[str]] | None = None,
+        allow_any_parent: bool = False,
         grant_ttl: float = DEFAULT_GRANT_TTL,
         edge_quota_per_minute: int | None = 60,
     ) -> None:
         if grant_ttl <= 0:
             raise ValueError("grant_ttl 必须为正数")
+        if parent_tools is None and not allow_any_parent:
+            raise ValueError(
+                "parent_tools 不能为空：请配置允许的父核/工具白名单；"
+                "仅开发演示可显式 allow_any_parent=True"
+            )
         if edge_quota_per_minute is not None and (
             isinstance(edge_quota_per_minute, bool)
             or not isinstance(edge_quota_per_minute, int)
@@ -337,7 +363,7 @@ class ChildServer:
         wildcard = "*" in payload["tools"]
         if not wildcard and tool not in payload["tools"]:
             raise GrantDenied(f"工具 {tool!r} 不在 grant 子集内")
-        self._check_edge_quota(str(payload["edge"]))
+        self._check_edge_quota("token:" + self._token)
         manifest = self.child.manifest()
         if tool not in manifest:
             raise GrantDenied(f"子核当前没有工具 {tool!r}")

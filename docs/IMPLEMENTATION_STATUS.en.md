@@ -6,7 +6,7 @@
 
 > The README answers "what can it do"; this file answers **"how far has it actually got, where is the evidence,
 > and where are the boundaries"**.
-> Basis: **v0.36.0 is released (2026-11-11); v0.35.0 is the previous version**. The v0.26 / v0.27 / v0.28 batches
+> Basis: **v0.55.0 is released (2026-11-14); v0.54.1 is the previous version**. The v0.26 / v0.27 / v0.28 batches
 > (P0 security, Browser Provider, Outcome Verification, execution adapters) are marked inside this file;
 > everything else follows the evidence column. Three status levels:
 > **Verified** (offline tests or measured evidence) / **Implemented · not verified on real hardware** (the code is there, the real environment is missing) / **Not doing** (explicitly excluded).
@@ -15,8 +15,8 @@
 > Machine-readable results of the two-host smoke: `python scripts/smoke_test.py --json`; stdout emits only one JSON object containing `ok` and per-host `checks`; exit 0 on success, exit 1 on failure.
 > See the governance loop with one command: `python scripts/demo_governance_loop.py`
 >
-> **Measured at the current HEAD (before the v0.36.0 release)**: 2 451 items collected, 2 446 passed / 5 skipped,
-> kernel line coverage 93.15% (gate 90%); the audit remediation items and verification boundaries are in
+> **Measured at the current HEAD (before the v0.55.0 release)**: 2 547 items collected, 2 542 passed / 5 skipped,
+> kernel line coverage 93.01% (gate 90%); the audit remediation items and verification boundaries are in
 > [`docs/reports/audit-remediation-2026-11.md`](reports/audit-remediation-2026-11.md).
 
 ## 1. Kernel and execution
