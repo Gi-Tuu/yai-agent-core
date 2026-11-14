@@ -915,6 +915,7 @@ class ToolExecutor:
 
         if spec.source == "composite" and spec.steps:
             self._record_rate_limit(name, spec.governance.rate_limit)
+            progress: dict[str, Any] = {}
             declared = spec.governance.timeout_ms
             if declared is None:
                 comp_events, ok, text = await self._execute_composite(
@@ -927,6 +928,7 @@ class ToolExecutor:
                     preview=preview,
                     call_id=call_id,
                     trace=trace,
+                    progress=progress,
                 )
             else:
                 timeout = declared / 1000.0
@@ -942,9 +944,26 @@ class ToolExecutor:
                             preview=preview,
                             call_id=call_id,
                             trace=trace,
+                            progress=progress,
                         )
                 except TimeoutError:
                     message = _composite_timeout_message(spec.name, declared)
+                    if progress.get("tool"):
+                        # 外层 deadline 打断在途步骤时，该步骤的局部事件尚未返回；
+                        # 至少留下一个明确的 unknown 终态，避免审计链跳过它。
+                        events.append(
+                            AgentEvent(
+                                EventType.TOOL_RESULT,
+                                {
+                                    "tool": progress["tool"],
+                                    "ok": False,
+                                    "error": message,
+                                    "timed_out": True,
+                                    "status": "unknown",
+                                    "step_index": progress.get("index"),
+                                },
+                            )
+                        )
                     events.append(
                         AgentEvent(
                             EventType.TOOL_RESULT,
@@ -1247,6 +1266,7 @@ class ToolExecutor:
         preview: ChangePreview | None = None,
         call_id: str = "",
         trace: list[_PermissionDependency],
+        progress: dict[str, Any] | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
         """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
 
@@ -1377,6 +1397,8 @@ class ToolExecutor:
                     )
                     return events, False, message
                 step_timeout = remaining
+            if progress is not None:
+                progress.update(tool=step.tool, index=index)
             try:
                 sub_events, ok, sub_text = await self.execute(
                     step.tool,

@@ -53,7 +53,11 @@ def make_client(model: CountingModel, config: RateLimitConfig | None) -> TestCli
 def limited_config(clock: FakeClock, per_minute: int = 2) -> RateLimitConfig:
     """小配额便于测试：per_minute 次 200，之后 429。"""
     return RateLimitConfig(
-        enabled=True, per_minute=per_minute, window_seconds=60, time_func=clock
+        enabled=True,
+        per_minute=per_minute,
+        window_seconds=60,
+        trusted_proxies=frozenset({"testclient"}),
+        time_func=clock,
     )
 
 
@@ -132,12 +136,15 @@ def test_per_ip_isolation(monkeypatch) -> None:
 # ---------- 6. client_ip() 六种输入 ----------
 
 def test_client_ip_inputs() -> None:
+    trusted = frozenset({"10.0.0.1"})
     assert client_ip(None, "10.0.0.1") == "10.0.0.1"  # 无 XFF：回退对端
-    assert client_ip("1.2.3.4", "10.0.0.1") == "1.2.3.4"  # 单级
-    assert client_ip("1.2.3.4, 5.6.7.8", "10.0.0.1") == "1.2.3.4"  # 多级取最左
-    assert client_ip(" , 5.6.7.8", "10.0.0.1") == "5.6.7.8"  # 含空段：跳过取非空
-    assert client_ip("  ,  ", "10.0.0.1") == "10.0.0.1"  # 全空：回退对端
-    assert client_ip(None, None) == "unknown"  # 双缺省
+    assert client_ip("1.2.3.4", "10.0.0.1") == "10.0.0.1"  # 未配置可信代理：忽略 XFF
+    assert client_ip("1.2.3.4", "10.0.0.1", trusted) == "1.2.3.4"  # 可信代理：单级
+    chain_trusted = frozenset({"10.0.0.1", "10.0.0.9"})
+    assert client_ip("1.2.3.4, 10.0.0.9", "10.0.0.1", chain_trusted) == "1.2.3.4"
+    assert client_ip(" , 5.6.7.8", "10.0.0.1", trusted) == "5.6.7.8"
+    assert client_ip("  ,  ", "10.0.0.1", trusted) == "10.0.0.1"
+    assert client_ip(None, None) == "unknown"
 
 
 # ---------- 7. 被限请求不触达模型 ----------

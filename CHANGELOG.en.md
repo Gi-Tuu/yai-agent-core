@@ -18,6 +18,7 @@ This file is a **version-level English summary** for international readers. Line
 | [v0.51.0](docs/releases/v0.51.0.md) | 2026-11-14 | A2A authorization-code PKCE + state validation, and a worker-loop readiness fix for the desktop flake. |
 | [v0.52.0](docs/releases/v0.52.0.md) | 2026-11-14 | Security/lifecycle hardening from the deep audit: registry host revalidation, tool-call ID guards, desktop shutdown, memory durability, MCP cleanup, sidecar cancel, browser refs, federation chain/manifest. |
 | [v0.53.0](docs/releases/v0.53.0.md) | 2026-11-14 | FastAPI per-session cores (`session_id` / `core_factory`) and federation subject binding in the signed grant. |
+| [v0.54.0](docs/releases/v0.54.0.md) | 2026-11-14 | Trusted-proxy XFF handling, composite in-flight unknown event, AgentCore reentry guard, and sidecar broken-pipe terminal safety. |
 | [v0.44.0](docs/releases/v0.44.0.md) | 2026-11-14 | LoCoMo end-to-end memory QA: BGE-M3 top-5 recall plus a real model answering only from excerpts (answerable F1 0.348). |
 | [v0.43.0](docs/releases/v0.43.0.md) | 2026-11-14 | LoCoMo lexical vs BGE-M3 retrieval comparison (R@5 0.348 → 0.507; hybrid MRR 0.436). |
 | [v0.42.3](docs/releases/v0.42.3.md) | 2026-11-14 | A 27-second / 2.2 MB demo GIF covering CopilotKit chat, AG-UI events and the Box cloud desktop. |

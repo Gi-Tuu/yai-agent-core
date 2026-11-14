@@ -2,7 +2,7 @@
 
 威胁模型（如实声明）：本模块只防"误刷"——手滑重试、爬虫、失控循环；
 **不防**蓄意伪造 X-Forwarded-For 的分布式攻击（那需要鉴权/人机验证）。
-客户端身份取 XFF 最左非空 IP（Render 边缘代理会附加 XFF），缺失回退对端地址。
+客户端身份默认取对端地址；只有 peer 在 YAI_TRUSTED_PROXIES 中时才解析 XFF（从右往左剥离可信代理）。
 
 两个维度：
 
@@ -30,6 +30,7 @@ _ENABLED_ENV = "YAI_RATE_LIMIT_ENABLED"
 _PER_MINUTE_ENV = "YAI_RATE_LIMIT_PER_MINUTE"
 _WINDOW_ENV = "YAI_RATE_LIMIT_WINDOW_SECONDS"
 _GLOBAL_ENV = "YAI_RATE_LIMIT_GLOBAL_PER_MINUTE"
+_TRUSTED_PROXIES_ENV = "YAI_TRUSTED_PROXIES"
 
 
 def _truthy_enabled(raw: str | None) -> bool:
@@ -78,6 +79,8 @@ class RateLimitConfig:
     window_seconds: int = 60
     #: 全局兜底配额（进程内跨 IP 总数）；0 = 关闭，保持旧行为。
     global_per_minute: int = 0
+    #: 可信反向代理的 peer 主机名/IP；只有 peer 在此集合内才解析 X-Forwarded-For。
+    trusted_proxies: frozenset[str] = frozenset()
     time_func: Callable[[], float] = field(default=time.monotonic)
 
     @classmethod
@@ -94,6 +97,11 @@ class RateLimitConfig:
             ),
             global_per_minute=_parse_non_negative_int(
                 environ.get(_GLOBAL_ENV), _GLOBAL_ENV, 0
+            ),
+            trusted_proxies=frozenset(
+                item.strip()
+                for item in (environ.get(_TRUSTED_PROXIES_ENV) or "").split(",")
+                if item.strip()
             ),
         )
 
@@ -134,13 +142,23 @@ class SlidingWindowLimiter:
             return True, 0
 
 
-def client_ip(x_forwarded_for: str | None, peer_host: str | None) -> str:
-    """XFF 取最左非空段；缺失回退对端地址；再缺省 "unknown"。"""
+def client_ip(
+    x_forwarded_for: str | None,
+    peer_host: str | None,
+    trusted_proxies: frozenset[str] = frozenset(),
+) -> str:
+    """解析客户端 IP；只有 peer 是可信代理时才相信 XFF。
+
+    默认忽略 XFF（攻击者可以任意伪造最左段）；部署在 Caddy/Render 等反代后，
+    必须显式配置 ``YAI_TRUSTED_PROXIES``。可信代理链从右往左剥，返回第一个
+    非可信地址；全链可信/为空时回退 peer。
+    """
+    peer = (peer_host or "").strip() or "unknown"
+    if not trusted_proxies or peer not in trusted_proxies:
+        return peer
     if x_forwarded_for:
-        for part in x_forwarded_for.split(","):
-            candidate = part.strip()
-            if candidate:
+        candidates = [part.strip() for part in x_forwarded_for.split(",")]
+        for candidate in reversed(candidates):
+            if candidate and candidate not in trusted_proxies:
                 return candidate
-    if peer_host:
-        return peer_host
-    return "unknown"
+    return peer

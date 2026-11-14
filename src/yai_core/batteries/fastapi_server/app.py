@@ -220,6 +220,7 @@ def create_app(
                 key = client_ip(
                     request.headers.get("x-forwarded-for"),
                     request.client.host if request.client else None,
+                    config.trusted_proxies,
                 )
                 # 先算全局再算每 IP：全局拒绝时不消耗该 IP 的配额。反向的代价是
                 # "全局放行但该 IP 超限"时白扣一个全局名额——宁可多拦不可漏放，
