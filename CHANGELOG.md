@@ -7,6 +7,24 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.59.0] - 2026-11-14
+
+### Changed
+
+- **巨型模块拆分（第一批）**：
+  - `types.py` 的收据契约拆到 `receipts.py`；
+  - `types.py` 的治理契约拆到 `governance.py`；
+  - `memory/vault.py` 的笔记模型/索引工具拆到 `memory/note.py`；
+  - 写锁拆到 `memory/storage_lock.py`；
+  - remember/recall 工具构造拆到 `memory/tools.py`，共享常量拆到 `memory/constants.py`。
+- 旧导入路径全部保留 re-export；行为不变，仅结构变化。
+
+### 结果
+
+- `types.py` 52.8KB → 27.5KB；
+- `memory/vault.py` 73.8KB → 64.2KB；
+- 全量 2,550 项 / 2,545 passed / 5 skipped / 92.95%。
+
 ## [v0.58.0] - 2026-11-14
 
 ### Fixed
