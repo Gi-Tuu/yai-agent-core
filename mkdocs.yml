@@ -19,6 +19,9 @@ docs_dir: docs
 site_dir: site
 use_directory_urls: true
 
+extra_javascript:
+  - javascripts/mermaid.js
+
 theme:
   name: material
   language: zh
@@ -60,7 +63,11 @@ markdown_extensions:
           case: lower
   - pymdownx.details
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
 

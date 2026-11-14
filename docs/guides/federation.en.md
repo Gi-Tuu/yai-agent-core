@@ -18,9 +18,11 @@ Code entry points: `shell/federation/`; example: `examples/host_m_federation/`; 
 - **Phase 2 (local IPC)**: `ChildServer` (loopback TCP + NDJSON JSON-RPC + 0600 discovery file + token) and
   `LinkChild` (parent-side long-lived connection, request multiplexing); the handshake issues an **HMAC grant** (the key lives only inside the child process);
   `health` / `tools.list` / `tools.call` are supported; cross-process calls inject the call chain into cycle detection; timeout / disconnection / invalid grant
-  all fail closed.
+  all fail closed. `ChildServer` now **requires** a `parent_tools` allowlist; only local demos may
+  opt into `allow_any_parent=True`. `subject` remains a signed claim; identity still depends on who
+  holds the discovery token.
 - **Phase 3 (ecosystem operations)**: parent-side `refresh_child()` supports hot manifest updates (on the IPC side this works together with
-  `manifest_version` from `federation.tools.list`); `ChildServer(edge_quota_per_minute=...)` rate-limits each edge with a sliding window; parent-side
+  `manifest_version` from `federation.tools.list`); `ChildServer(edge_quota_per_minute=...)` rate-limits per token/server with a sliding window; parent-side
   `register_child(max_calls=...)` plus `edge_stats()` track calls / failures / elapsed time;
   `ManagedChild` supervises a child process (spawn → wait for the discovery file → connect → reconnect / stop).
 - **Phase 3 closing items**:

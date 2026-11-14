@@ -16,6 +16,7 @@ from shell.federation import (
     ChildCore,
     ChildServer,
     CoreGrant,
+    DiscoveryInfo,
     Federation,
     GrantDenied,
     LinkChild,
@@ -56,7 +57,12 @@ def _document_child():
 
 def _server(tmp_path: Path, child, *, parent_tools=None) -> ChildServer:
     """parent_tools=None = 任何能出示 token 的父核都接受（仅用于测试/演示）。"""
-    return ChildServer(child, discovery_dir=tmp_path, parent_tools=parent_tools)
+    return ChildServer(
+        child,
+        discovery_dir=tmp_path,
+        parent_tools=parent_tools,
+        allow_any_parent=parent_tools is None,
+    )
 
 
 def _grant(link: LinkChild, tools) -> CoreGrant:
@@ -287,3 +293,22 @@ def test_subject_is_bound_to_handshake_grant(tmp_path: Path) -> None:
     result = asyncio.run(main())
     assert result["ok"] is True
     assert written == [("alice 的记录", "")]
+
+
+def test_child_server_requires_explicit_parent_allowlist() -> None:
+    child, _written = _document_child()
+    with pytest.raises(ValueError, match="parent_tools"):
+        ChildServer(child)
+
+
+def test_discovery_rejects_path_traversal(tmp_path: Path) -> None:
+    info = DiscoveryInfo(
+        node_id="../escape",
+        child_id="x@1",
+        host="127.0.0.1",
+        port=1,
+        token="t",
+        pid=1,
+    )
+    with pytest.raises(ValueError, match="node_id"):
+        info.write(tmp_path)

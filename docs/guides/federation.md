@@ -17,8 +17,10 @@
   `LinkChild`（父核侧长连接、请求多路复用）；握手签发 **HMAC grant**（密钥只在子核进程内）；
   支持 `health` / `tools.list` / `tools.call`；跨进程调用把调用链注入环检测；超时 / 断连 / 非法 grant
   一律失败关闭。
+  `ChildServer` 现在**必须**配置 `parent_tools` 父核/工具白名单；仅本地演示可显式
+  `allow_any_parent=True`。subject 只作为签名声明，身份认证仍依赖 discovery token 的持有者。
 - **Phase 3（生态运维）**：父核 `refresh_child()` 支持 manifest 热更新（IPC 侧配合
-  `federation.tools.list` 的 `manifest_version`）；`ChildServer(edge_quota_per_minute=...)` 每 edge
+  `federation.tools.list` 的 `manifest_version`）；`ChildServer(edge_quota_per_minute=...)` 按 token/服务
   滑动窗口限流；父核 `register_child(max_calls=...)` + `edge_stats()` 统计调用/失败/耗时；
   `ManagedChild` 托管子进程（拉起 → 等发现文件 → 连接 → 重连 / 停止）。
 - **Phase 3 尾项**：

@@ -82,7 +82,7 @@ def test_manifest_hot_update_over_ipc(tmp_path: Path) -> None:
     child = _child(add_entry)
 
     async def main():
-        server = ChildServer(child, discovery_dir=tmp_path)
+        server = ChildServer(child, discovery_dir=tmp_path, allow_any_parent=True)
         await server.start()
         link = await LinkChild.connect(server.discovery_path, parent_id="atm")
         try:
@@ -116,7 +116,12 @@ def test_server_edge_quota_fails_closed(tmp_path: Path) -> None:
     child = _child(echo)
 
     async def main():
-        server = ChildServer(child, discovery_dir=tmp_path, edge_quota_per_minute=2)
+        server = ChildServer(
+            child,
+            discovery_dir=tmp_path,
+            allow_any_parent=True,
+            edge_quota_per_minute=2,
+        )
         await server.start()
         link = await LinkChild.connect(server.discovery_path, parent_id="atm")
         try:
@@ -249,5 +254,34 @@ def test_managed_child_fails_closed_when_process_dies(tmp_path: Path) -> None:
                 await managed.ensure()
         finally:
             await managed.stop()
+
+    asyncio.run(main())
+
+
+def test_quota_cannot_be_reset_by_rotating_parent_id(tmp_path: Path) -> None:
+    def echo(text: str = "") -> str:
+        """回显。"""
+        return text
+
+    child = _child(echo)
+
+    async def main() -> None:
+        server = ChildServer(
+            child,
+            discovery_dir=tmp_path,
+            allow_any_parent=True,
+            edge_quota_per_minute=1,
+        )
+        await server.start()
+        first = await LinkChild.connect(server.discovery_path, parent_id="p1")
+        second = await LinkChild.connect(server.discovery_path, parent_id="p2")
+        try:
+            assert (await first.call("echo", {}, grant=_grant(first)))["ok"] is True
+            with pytest.raises(ChildCallFailed, match="quota"):
+                await second.call("echo", {}, grant=_grant(second))
+        finally:
+            await first.close()
+            await second.close()
+            await server.stop()
 
     asyncio.run(main())
