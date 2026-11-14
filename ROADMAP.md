@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.45.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.46.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -492,6 +492,11 @@
 
 - `CHANGELOG.en.md`（47 个版本摘要）、44 篇 release notes 英文摘要、`DOCUMENT_MAP.en.md`。
 - 双语守卫覆盖 CHANGELOG / DOCUMENT_MAP / historical release notes；sdist 白名单同步。
+
+### v0.46.0 — Registry 发现 + A2A 定位（tag 2026-11-14，已完成）
+
+- MCP Registry 只读发现：搜索 `/v0/servers`、显式构建配置（HTTPS/变量/头校验），不自动安装/连接。
+- A2A 1.0 定位：明确不进内核、有向父子核 ≠ Multi-Agent，宿主层适配器方案。
 
 ## 下一步
 

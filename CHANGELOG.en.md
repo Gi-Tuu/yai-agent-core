@@ -10,6 +10,7 @@ This file is a **version-level English summary** for international readers. Line
 |---|---|---|
 | [v0.45.0](docs/releases/v0.45.0.md) | 2026-11-14 | LoCoMo scoring upgrades: temporal date normalization and an LLM judge (answerable F1 0.387, judge 0.424). |
 | v0.45.1 | 2026-11-14 | English changelog, one-line English summaries for every historical release note, and an English document map. |
+| [v0.46.0](docs/releases/v0.46.0.md) | 2026-11-14 | Read-only MCP Registry discovery (search + explicit config, no auto-install) and an A2A 1.0 positioning document. |
 | [v0.44.0](docs/releases/v0.44.0.md) | 2026-11-14 | LoCoMo end-to-end memory QA: BGE-M3 top-5 recall plus a real model answering only from excerpts (answerable F1 0.348). |
 | [v0.43.0](docs/releases/v0.43.0.md) | 2026-11-14 | LoCoMo lexical vs BGE-M3 retrieval comparison (R@5 0.348 → 0.507; hybrid MRR 0.436). |
 | [v0.42.3](docs/releases/v0.42.3.md) | 2026-11-14 | A 27-second / 2.2 MB demo GIF covering CopilotKit chat, AG-UI events and the Box cloud desktop. |
