@@ -12,3 +12,14 @@ uv run python examples/host_mcp_registry/search.py github --json
 
 输出包含 server 名称/版本、描述（已净化）、remote（含必填鉴权头）、package 与仓库地址。
 接入前请自行确认来源、固定版本，并把 secret 放进环境变量/密钥库。
+
+### 显式接入 + 调用
+
+```bash
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --alias feeds
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --call list_feeds
+```
+
+`--name` 必填；默认只列工具，`--call` 才真正调用。

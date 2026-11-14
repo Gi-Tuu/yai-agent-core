@@ -16,7 +16,23 @@ uv run python examples/host_mcp_registry/search.py sql --limit 3
 uv run python examples/host_mcp_registry/search.py github --json
 ```
 
-## 2. Code entry point
+## 2. Connection example (explicit choice)
+
+```bash
+# --name is required; by default only tools are listed, nothing is called
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --alias feeds
+
+# Add --call to actually invoke one explicitly
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --call list_feeds
+```
+
+Verified 2026-11-14: connected to `https://mcp.realtimeapi.ai/mcp`, listed 6 tools, and
+`list_feeds` returned the feed list. The example never picks "the first" server for you — `--name`
+is required.
+
+## 3. Code entry point
 
 ```python
 from yai_core.integrations.mcp import McpRegistryClient

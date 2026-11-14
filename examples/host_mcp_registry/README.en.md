@@ -15,3 +15,14 @@ uv run python examples/host_mcp_registry/search.py github --json
 
 The output lists server name/version, sanitized description, remotes (including required auth headers),
 packages and repository URL. Verify provenance, pin the version, and keep secrets in env/secret stores.
+
+### Explicit connect + call
+
+```bash
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --alias feeds
+uv run python examples/host_mcp_registry/connect.py \
+    --query time --name ai.realtimeapi/mcp --call list_feeds
+```
+
+`--name` is required; tools are listed by default, `--call` actually invokes one.

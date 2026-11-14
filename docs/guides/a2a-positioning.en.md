@@ -63,6 +63,9 @@ remote A2A agent  ──A2A client──▶  host adapter  ──ToolSpec──�
   path as any other tool.
 
 This keeps A2A's interoperability value without breaking the "kernel does not do Multi-Agent" red line.
+A minimal runnable version lives in
+[`examples/host_a2a_adapter/`](https://github.com/Gi-Tuu/yai-agent-core/tree/main/examples/host_a2a_adapter):
+a local fake A2A server + `as_tool()` + one real tool call through `AgentCore`.
 
 ## 5. Decision and revisit conditions
 
