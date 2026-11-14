@@ -7,6 +7,20 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.49.0] - 2026-11-14
+
+### Added
+
+- **A2A OAuth2 + push**：client-credentials token 获取/缓存/Bearer 注入；push 配置
+  create/list/delete；9 例离线测试（SSE/OAuth/push）。
+- **Registry digest pinning**：`pinned_digests` 对 canonical JSON 做 SHA-256；
+  `require_pinned` 拒绝未固定条目；保留 `verify_entry` 签名钩子；9 例测试。
+- **#168 Go 宿主示例**：`examples/host_o_go_mcp/`（零依赖 Go stdio server +
+  Python AgentCore；无 Go 退出码 2）。
+- **#169 离屏 QML 测试**：子进程断言 CROSS-CORE 摘要/颜色；Panel.qml 抽
+  `crossCoreSummary` / `crossCoreHasFailure` / `crossCoreColor`。
+- **#170 CONTRIBUTING 真机章节**：浏览器/Windows 本地回归命令与退出码口径。
+
 ## [v0.48.0] - 2026-11-14
 
 ### Added
