@@ -8,7 +8,7 @@
 [![AgentRank](https://agentrank-ai.com/api/v1/badge/Gi-Tuu--yai-agent-core)](https://agentrank-ai.com/tool/Gi-Tuu--yai-agent-core/?utm_source=badge&utm_medium=readme&utm_campaign=agentrank_badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v0.46.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.47.0-blue.svg)](CHANGELOG.md)
 [![Kernel](https://img.shields.io/badge/kernel-0%20third%20party%20deps-c0392b)](pyproject.toml)
 
 <p align="center"><b>Give every piece of software a thinking heart.</b></p>
@@ -346,7 +346,8 @@ Prebuilt self-hosted image: `ghcr.io/gi-tuu/yai-agent-core:latest` (built on tag
   on Python 3.11**, and 12 → 0 broken links inside the sdist; Releases now upload provenance assets
 - **v0.23.0 (done)**: making "verifiable on the spot" part of the repo — `demo_governance_loop.py` runs the whole governance loop in one command, `check_all.py` runs every gate in one command, and `docs/IMPLEMENTATION_STATUS.md` indexes capabilities against evidence; the desktop nebula's particle count is now configurable (`ui/nebulaParticles`, default 260)
 - **v0.25.0 (done)**: production-readiness batch — 8-finding hardening, egress boundaries, secure defaults, sidecar identity pinning, AgentDojo repeat sampling & multi-attack, production host example; v0.24.0 brought trust in three layers — prompt caching (Anthropic input cost), tool output treated as untrusted data with an offline injection regression suite, execution-receipt hash chaining and **permission denials as visible events**; plus parallel compaction and a task anchor for long sessions
-- **v0.46.0 (done, current release)**: read-only MCP Registry discovery (search + explicit config) and an A2A 1.0 positioning document (no Multi-Agent in the kernel)
+- **v0.47.0 (done, current release)**: a host-layer A2A adapter example (remote agent → ToolSpec) and an explicit Registry connect/call example
+- **v0.46.0 (done)**: read-only MCP Registry discovery (search + explicit config) and an A2A 1.0 positioning document (no Multi-Agent in the kernel)
 - **v0.45.1 (done)**: English changelog, one-line English summaries for all 44 release notes, and an English document map
 - **v0.45.0 (done)**: LoCoMo scoring upgrades (temporal F1 0.387 / LLM judge 0.424)
 - **v0.44.0 (done)**: LoCoMo end-to-end memory QA (BGE-M3 + real model; answerable F1 0.348 / EM 0.193)

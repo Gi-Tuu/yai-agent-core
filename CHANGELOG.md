@@ -7,6 +7,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.47.0] - 2026-11-14
+
+### Added
+
+- **A2A 宿主适配器示例**（`examples/host_a2a_adapter/`）：极简 A2A JSON-RPC 客户端 +
+  `as_tool()` 把远端 Agent 包成 `ToolSpec`；离线假 server + `AgentCore` 真实工具调用；
+  只支持非流式文本子集，HTTPS（loopback HTTP 仅本地）。5 例离线测试。
+- **Registry 显式接入示例**（`examples/host_mcp_registry/connect.py`）：`--name` 必填，
+  默认只列工具，`--call` 才调用；已实测 `ai.realtimeapi/mcp` 的 `list_feeds`。
+
 ## [v0.46.0] - 2026-11-14
 
 ### Added
