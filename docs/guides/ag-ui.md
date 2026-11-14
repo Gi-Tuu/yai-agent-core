@@ -27,6 +27,36 @@ YAI 的事件流只有唯一出口（`AgentCore.astream`）。本适配器把这
 口径：能一一对应的走标准事件；**不能映射的 YAI 事件保留为 `CUSTOM`**，不丢信息，也不假装语义。
 `permission_asked` / `clarify_requested` 目前就是 `CUSTOM`（AG-UI 的 interrupt/resume 生命周期尚未接）。
 
+### 1.1 时序图
+
+```mermaid
+sequenceDiagram
+    participant FE as 前端 / CopilotKit
+    participant API as FastAPI /agent
+    participant T as AgUiTranslator
+    participant C as AgentCore.astream
+
+    FE->>API: POST RunAgentInput
+    API->>T: start()
+    T-->>FE: RUN_STARTED
+    API->>C: astream(task)
+    C-->>T: tool_call(name, args)
+    T-->>FE: TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END
+    C-->>T: tool_result(ok, preview)
+    T-->>FE: TOOL_CALL_RESULT
+    C-->>T: model_message(text)
+    T-->>FE: TEXT_MESSAGE_START / CONTENT / END
+    alt 无法映射的事件
+        C-->>T: permission_asked / clarify_requested
+        T-->>FE: CUSTOM(yai.<event_type>)
+    end
+    C-->>T: done
+    T-->>FE: RUN_FINISHED
+```
+
+图中 `CUSTOM` 是兜底分支：策略、计划、审批、澄清等没有 AG-UI 标准对应的事件都走这里，
+不会被丢弃。
+
 ## 2. SSE 格式
 
 AG-UI 1.0 的 HTTP+SSE binding：客户端 `POST` 一个 `RunAgentInput` JSON，响应

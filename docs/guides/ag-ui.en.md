@@ -30,6 +30,36 @@ Rule: map what maps cleanly; **everything else is preserved as `CUSTOM`** — no
 pretending of semantics. `permission_asked` / `clarify_requested` are `CUSTOM` today (AG-UI's
 interrupt/resume lifecycle is not wired yet).
 
+### 1.1 Sequence diagram
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend / CopilotKit
+    participant API as FastAPI /agent
+    participant T as AgUiTranslator
+    participant C as AgentCore.astream
+
+    FE->>API: POST RunAgentInput
+    API->>T: start()
+    T-->>FE: RUN_STARTED
+    API->>C: astream(task)
+    C-->>T: tool_call(name, args)
+    T-->>FE: TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END
+    C-->>T: tool_result(ok, preview)
+    T-->>FE: TOOL_CALL_RESULT
+    C-->>T: model_message(text)
+    T-->>FE: TEXT_MESSAGE_START / CONTENT / END
+    alt Unmapped event
+        C-->>T: permission_asked / clarify_requested
+        T-->>FE: CUSTOM(yai.<event_type>)
+    end
+    C-->>T: done
+    T-->>FE: RUN_FINISHED
+```
+
+`CUSTOM` is the fallback branch: strategies, plans, approvals and clarifications without an AG-UI
+equivalent are preserved here, not dropped.
+
 ## 2. SSE framing
 
 AG-UI 1.0 HTTP+SSE: the client `POST`s one `RunAgentInput` JSON; the response is
