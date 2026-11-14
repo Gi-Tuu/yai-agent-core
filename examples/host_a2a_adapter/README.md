@@ -53,13 +53,51 @@ client = A2AClient(A2AConfig(
 ))
 ```
 
+### Authorization Code / Device Code
+
+```python
+from examples.host_a2a_adapter.a2a_client import (
+    A2AClient, A2AConfig, A2AOAuth2AuthorizationCode, A2AOAuth2DeviceCode,
+)
+
+# 1) authorization code：宿主打开 URL、接回调拿到 code
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2AuthorizationCode(
+        authorization_url="https://auth.example.com/authorize",
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+        redirect_uri="http://127.0.0.1:8765/callback",
+        scope="a2a",
+    ),
+))
+print(client.authorization_url("state-123"))
+client.exchange_code(code)
+
+# 2) device code：用户到 verification_uri 输入 user_code
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2DeviceCode(
+        device_authorization_url="https://auth.example.com/device",
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+    ),
+))
+flow = client.start_device_flow()
+print(flow["verification_uri"], flow["user_code"])
+client.poll_device_token(flow["device_code"], interval=flow.get("interval", 5))
+```
+
+两种流程只负责**获取并缓存 token**；浏览器/设备上的用户交互仍由宿主完成。
+Authorization URL 的 state/PKCE 校验、回调服务器、设备页面都归宿主。
+
 ### Push 配置
 
 `create_push_config(task_id, webhook_url, token=...)` / `list_push_configs` /
 `delete_push_config` 调用 A2A 的 push 配置方法；**webhook 接收端由宿主自己实现**，
 示例只负责注册/查询/删除配置。
 
-不支持：push 接收服务、文件 parts、authorization-code/device OAuth、Agent Card 签名验证。
+不支持：push 接收服务、文件 parts、Agent Card 签名验证；authorization-code/device 流程只做 token 交换，不含浏览器/回调服务器。
 
 ## 边界
 

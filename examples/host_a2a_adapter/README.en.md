@@ -57,14 +57,52 @@ client = A2AClient(A2AConfig(
 ))
 ```
 
+### Authorization Code / Device Code
+
+```python
+from examples.host_a2a_adapter.a2a_client import (
+    A2AClient, A2AConfig, A2AOAuth2AuthorizationCode, A2AOAuth2DeviceCode,
+)
+
+# 1) authorization code: host opens the URL and receives the callback code
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2AuthorizationCode(
+        authorization_url="https://auth.example.com/authorize",
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+        redirect_uri="http://127.0.0.1:8765/callback",
+        scope="a2a",
+    ),
+))
+print(client.authorization_url("state-123"))
+client.exchange_code(code)
+
+# 2) device code: the user visits verification_uri and enters user_code
+client = A2AClient(A2AConfig(
+    base_url="https://agent.example.com",
+    oauth2=A2AOAuth2DeviceCode(
+        device_authorization_url="https://auth.example.com/device",
+        token_url="https://auth.example.com/oauth/token",
+        client_id="yai",
+    ),
+))
+flow = client.start_device_flow()
+print(flow["verification_uri"], flow["user_code"])
+client.poll_device_token(flow["device_code"], interval=flow.get("interval", 5))
+```
+
+Both flows only **obtain and cache a token**; user interaction (browser/device), state/PKCE
+validation, the callback server and the device page remain host-owned.
+
 ### Push configuration
 
 `create_push_config(task_id, webhook_url, token=...)` / `list_push_configs` /
 `delete_push_config` call A2A push-config methods; **the webhook receiver is host-owned**; the
 example only registers/lists/deletes configs.
 
-Not supported: a push receiver, file parts, authorization-code/device OAuth, Agent Card signature
-verification.
+Not supported: a push receiver, file parts, or Agent Card signature verification;
+authorization-code/device flows only exchange tokens (no browser/callback server).
 
 ## Boundaries
 

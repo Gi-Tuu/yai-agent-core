@@ -26,7 +26,8 @@ install Go over the network).
 
 - The Go server exposes only the MCP tool surface; tools remain ordinary `ToolSpec(source="mcp")`;
 - No new tool-call channel is introduced; routing/permissions/audit stay in Python;
-- This is an **example**, not part of the CI matrix (Go is not a project dependency).
+- This is an **example**, not part of the Python CI matrix; `.github/workflows/go-example.yml`
+  runs `go build` / `go vet` only when the example changes (optional job).
 
 ## Known limits
 

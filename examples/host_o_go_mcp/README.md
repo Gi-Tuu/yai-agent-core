@@ -23,7 +23,8 @@ uv run python examples/host_o_go_mcp/run.py
 
 - Go Server 只暴露 MCP 工具面；工具在 YAI 里仍是普通 `ToolSpec(source="mcp")`；
 - 协议里没有新的工具调用通道，Python 侧的路由/权限/审计全部照旧；
-- 这是**示例**，不加入 CI 必跑矩阵（Go 不是项目依赖）。
+- 这是**示例**，不加入 Python CI 必跑矩阵；`.github/workflows/go-example.yml` 仅在示例变更时跑
+  `go build` / `go vet`（可选 job）。
 
 ## 已知边界
 

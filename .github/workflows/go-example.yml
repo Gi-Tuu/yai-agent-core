@@ -1,0 +1,33 @@
+name: Go MCP example
+
+# Optional: compile the Go example only when it (or this workflow) changes.
+# It is not part of the required PR gate; the Python suite remains the gate.
+
+on:
+  push:
+    paths:
+      - "examples/host_o_go_mcp/**"
+      - ".github/workflows/go-example.yml"
+  pull_request:
+    paths:
+      - "examples/host_o_go_mcp/**"
+      - ".github/workflows/go-example.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: go build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: examples/host_o_go_mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.22"
+          cache: false
+      - run: go build ./...
+      - run: go vet ./...
