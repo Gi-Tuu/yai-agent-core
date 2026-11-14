@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import hashlib
 import inspect
 import json
 import threading
@@ -21,18 +20,14 @@ from yai_core.policy.approval import (
     evaluate_approval,
 )
 from yai_core.policy.authorize import (
-    approval_context,
     authorize_tool_call,
-    confirm_with_context,
-    fill_prompt,
     policy_decision,
     snapshot_arguments,
 )
 from yai_core.policy.egress import check_egress, record_tool_output
-from yai_core.policy.redact import redact_arguments
 from yai_core.spi import Channel, PermissionDecision, PermissionPolicy, ToolSandbox
 from yai_core.tools.code_tools import CodeToolManager
-from yai_core.tools.composer import resolve_args
+from yai_core.tools.composite import execute_composite
 from yai_core.tools.execution_audit import (
     ExecutionAudit,
     event_error,
@@ -62,57 +57,14 @@ DEFAULT_TOOL_RESULT_CHARS = 16_000
 #: 跨进程/多实例去重仍由宿主负责。
 IDEMPOTENCY_CACHE_LIMIT = 256
 
-
-def _fingerprint_arguments(arguments: dict) -> str:
-    """参数指纹：同一个幂等键只认同一组参数，避免撞键时返回别人的结果。"""
-    raw = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _composite_timeout_message(name: str, declared_ms: int) -> str:
-    """组合超时的统一话术：只停止等待，不承诺终止同步步骤的副作用。"""
-    return (
-        f"组合工具 {name} 超过声明的 {declared_ms}ms 未完成，已停止等待（不是强制终止）；"
-        "已完成步骤的副作用不会回滚，异步步骤会被取消，"
-        "同步步骤无法中断、可能仍在后台跑完"
-    )
-
-
-def bound_tool_result(
-    text: str, limit: int | None
-) -> tuple[str, bool, int]:
-    """把单个工具结果限制在 ``limit`` 字符内；返回 ``(text, truncated, original_chars)``。
-
-    - ``limit=None`` 或未超限时原样返回，``truncated=False``；
-    - 超限时保留"头 + 尾"，中间插入显式省略标记，让模型明确知道结果被截断
-      （与 payload_guard 的有界裁剪理念一致，绝不静默删改）；
-    - 保证返回文本长度严格不超过 ``limit``。
-    """
-    original_chars = len(text)
-    if limit is None or original_chars <= limit:
-        return text, False, original_chars
-
-    head_budget = int(limit * 0.7)
-    tail_budget = limit - head_budget
-    head = text[:head_budget]
-    tail = text[original_chars - tail_budget :]
-
-    def _join(head_part: str) -> str:
-        omitted = original_chars - len(head_part) - tail_budget
-        marker = f"\n…[工具结果过长，已省略 {omitted} 字符，以下为结尾部分]…\n"
-        return head_part + marker + tail
-
-    bounded = _join(head)
-    # marker 长度随 omitted 位数变化，必要时从头部再收紧，确保严格不越上界。
-    while len(bounded) > limit and head_budget > 0:
-        head_budget -= 1
-        head = text[:head_budget]
-        bounded = _join(head)
-    return bounded, True, original_chars
-
-
-class ToolTimeoutError(RuntimeError):
-    """工具 handler 超过 ``handler_timeout``。"""
+from yai_core.tools.result import (  # noqa: E402,F401 - re-exported for compatibility
+    ToolTimeoutError,
+    _check_timeout,
+    _composite_timeout_message,
+    _consume_abandoned_result,
+    _fingerprint_arguments,
+    bound_tool_result,
+)
 
 
 class _PreviewError(RuntimeError):
@@ -139,23 +91,6 @@ class _CacheLookup:
     key: str
     fingerprint: str
     hit: tuple[bool, str] | None = None
-
-
-def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
-    """被超时放弃的线程任务：把结果/异常取出来丢掉。
-
-    不取的话，后台线程之后抛错会留下 "exception was never retrieved" 的噪音，
-    运维看到会以为还有一个没处理的故障。
-    """
-    if not future.cancelled():
-        future.exception()
-
-
-def _check_timeout(value: Any, label: str) -> None:
-    if value is None:
-        return
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise ValueError(f"{label} 必须是正数或 None")
 
 
 def _native_approval(spec: ToolSpec, arguments: dict[str, Any]) -> GateDecision | None:
@@ -1288,201 +1223,16 @@ class ToolExecutor:
         trace: list[_PermissionDependency],
         progress: dict[str, Any] | None = None,
     ) -> tuple[list[AgentEvent], bool, str]:
-        """执行组合工具：逐步编排内部工具，每一步都递归走完整权限链路。
-
-        组合工具本身不产生新原始能力，因此不再对组合名做一次权限检查
-        （那会让用户看到一个黑盒名字）；权限精确落到每一步的内部工具上。
-
-        例外：**组合工具自己声明了审批要求**（``gate`` 或 ``approval`` 抬出来的
-        ``require_approval``）。那是宿主写明"这整条工作流开工前要问一次"，
-        不是黑盒——所以这一步真的去问，绝不静默丢掉这份保护。问的时候只走
-        :meth:`Channel.confirm`，不再跑一遍策略（策略对黑盒名字的判断仍然不做）。
-        """
-        # 由调用方传入同一个事件列表：工作流超时被取消时，已执行步骤的事件
-        # 必须仍然可见——副作用发生了，审计链不能只剩一句"超时"。
-        events = [] if events is None else events
-        steps = spec.steps
-        if not steps:
-            return events, False, f"组合工具 {spec.name} 缺少步骤"
-        # 声明超时不仅要包住整条工作流，还要下发到每个步骤：同步 handler 默认在
-        # 事件循环线程里直接跑，外包的超时在它返回前根本没机会触发。
-        declared = spec.governance.timeout_ms
-        if declared is None:
-            deadline = None
-        else:
-            deadline = asyncio.get_running_loop().time() + declared / 1000.0
-        step_names = [step.tool for step in steps]
-        # 对外副本按**组合工具自己的声明**脱敏（与 authorize 同一口径）：
-        # 宿主在清单上写了 sensitive，就不能因为这条路走了组合分支而失效。
-        # 执行用的 arguments 保持真值，脱敏只影响"别人看见什么"。
-        shown = redact_arguments(
+        return await execute_composite(
+            self,
+            spec,
             arguments,
-            spec.governance.sensitive,
-            broad=spec.governance.audit_sensitive,
+            subject,
+            decision,
+            budget=budget,
+            events=events,
+            preview=preview,
+            call_id=call_id,
+            trace=trace,
+            progress=progress,
         )
-        if decision is not None and decision.require_approval:
-            asked = redact_arguments(arguments, spec.governance.sensitive)
-            payload: dict[str, Any] = {
-                "tool": spec.name,
-                "arguments": asked,
-                "steps": step_names,
-                "approval_required": True,
-                "reason": decision.reason,
-            }
-            if decision.prompt:
-                payload["prompt"] = fill_prompt(decision.prompt, asked)
-            for key, value in (
-                ("risk", decision.risk),
-                ("scope", decision.scope),
-                ("target", decision.target),
-            ):
-                if value:
-                    payload[key] = value
-            preview_data = preview.to_dict() if preview is not None else None
-            if preview_data:
-                payload["preview"] = preview_data
-            events.append(AgentEvent(EventType.PERMISSION_ASKED, payload))
-            # 与 authorize_tool_call 同一个口径：通道声明了旗标才递第三个参数。
-            shown_for_channel = redact_arguments(arguments, spec.governance.sensitive)
-            context = approval_context(
-                spec.name,
-                require_approval=True,
-                reason=decision.reason,
-                prompt=payload.get("prompt", ""),
-                risk=decision.risk,
-                scope=decision.scope,
-                target=decision.target,
-                preview=preview_data,
-            )
-            approved = await confirm_with_context(
-                self.channel, spec.name, shown_for_channel, context
-            )
-            if not approved:
-                message = f"用户/宿主拒绝执行工具 {spec.name}"
-                events.append(
-                    self._audit.denied_event(
-                        spec, spec.name, arguments, message, "approval"
-                    )
-                )
-                return events, False, message
-            if preview is not None:
-                preview_failure, flags = await self._approved_preview_failure(
-                    spec, arguments, subject, preview
-                )
-                if preview_failure is not None:
-                    events.append(AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {"tool": spec.name, "ok": False, "error": preview_failure, **flags},
-                    ))
-                    return events, False, preview_failure
-        events.append(
-            AgentEvent(
-                EventType.TOOL_COMPOSED,
-                {"tool": spec.name, "steps": step_names, "arguments": shown},
-            )
-        )
-
-        step_results: list[Any] = []
-        context = {"input": arguments, "steps": step_results}
-        for index, step in enumerate(steps):
-            try:
-                resolved = resolve_args(step.args, context)
-            except Exception as exc:  # noqa: BLE001 - 编排错误要回灌而非崩溃
-                events.append(
-                    AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {"tool": spec.name, "ok": False,
-                         "error": f"第 {index + 1} 步参数解析失败: {exc}"},
-                    )
-                )
-                return events, False, f"组合工具 {spec.name} 第 {index + 1} 步参数解析失败: {exc}"
-
-            step_call_id = f"{call_id}:{index}" if call_id else ""
-            step_timeout = None
-            if deadline is not None:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    assert declared is not None
-                    message = _composite_timeout_message(spec.name, declared)
-                    events.append(
-                        AgentEvent(
-                            EventType.TOOL_RESULT,
-                            {
-                                "tool": spec.name,
-                                "ok": False,
-                                "error": message,
-                                "timed_out": True,
-                            },
-                        )
-                    )
-                    return events, False, message
-                step_timeout = remaining
-            if progress is not None:
-                step_spec = (
-                    self.registry.get(step.tool)
-                    if self.registry.has(step.tool)
-                    else None
-                )
-                progress.update(
-                    tool=step.tool,
-                    index=index,
-                    call_id=step_call_id,
-                    started=time.monotonic(),
-                    arguments=redact_arguments(
-                        resolved,
-                        step_spec.governance.sensitive if step_spec else (),
-                        broad=step_spec.governance.audit_sensitive if step_spec else False,
-                    ),
-                )
-            try:
-                sub_events, ok, sub_text = await self.execute(
-                    step.tool,
-                    resolved,
-                    subject=subject,
-                    budget=budget,
-                    call_id=step_call_id,
-                    _trace=trace,
-                    _timeout=step_timeout,
-                )
-            except BudgetExceeded as exc:
-                # 预算硬熔断要继续冒泡到 AgentLoop 统一收尾，但本组合已经密封的
-                # 子收据不能丢：把已积累的事件挂到异常上（组合自身的事件在前，
-                # 子步骤的部分事件在后），由 AgentLoop 在熔断收尾时补发，
-                # 否则导出的收据链会因缺环而校验失败。
-                exc.partial_events = events + list(exc.partial_events)
-                raise
-            events.extend(sub_events)
-            if not ok:
-                events.append(
-                    AgentEvent(
-                        EventType.TOOL_RESULT,
-                        {"tool": spec.name, "ok": False,
-                         "error": f"第 {index + 1} 步（{step.tool}）失败: {sub_text}"},
-                    )
-                )
-                return (
-                    events,
-                    False,
-                    f"组合工具 {spec.name} 在第 {index + 1} 步（{step.tool}）失败：{sub_text}",
-                )
-            try:
-                step_results.append(json.loads(sub_text))
-            except (json.JSONDecodeError, TypeError):
-                step_results.append(sub_text)
-
-        final = {"steps": step_results}
-        text = json.dumps(final, ensure_ascii=False, default=str)
-        text, truncated, result_chars = self._bound(text)
-        events.append(
-            AgentEvent(
-                EventType.TOOL_RESULT,
-                {
-                    "tool": spec.name,
-                    "ok": True,
-                    "preview": event_preview(spec, final, text),
-                    "truncated": truncated,
-                    "result_chars": result_chars,
-                },
-            )
-        )
-        return events, True, text
