@@ -12,6 +12,7 @@ import functools
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -170,6 +171,7 @@ class AgentCore:
         ).validate()
         # 实例级任务串行锁：astream 全程持有，保证一个 core 内任务不在 await 点交错。
         self._task_lock = asyncio.Lock()
+        self._task_lock_owner: asyncio.Task[Any] | None = None
         self.model = model
         # 诊断回调转发给验收旁路（验收失败只发诊断，不影响任务结果）。
         self.on_diagnostic = on_diagnostic
@@ -320,6 +322,22 @@ class AgentCore:
 
     # ---------- 生命周期 ----------
 
+    @asynccontextmanager
+    async def _holding_task_lock(self) -> AsyncIterator[None]:
+        """实例串行锁；同一任务重入时立即报错，而不是在锁上自死锁。"""
+        current = asyncio.current_task()
+        if current is not None and self._task_lock_owner is current:
+            raise RuntimeError(
+                "AgentCore 重入：不能在 DONE 回调 / Channel.emit / 工具 handler 内"
+                "再次调用同一个 core 的 run/astream/aclose；请改用独立 core"
+            )
+        async with self._task_lock:
+            self._task_lock_owner = current
+            try:
+                yield
+            finally:
+                self._task_lock_owner = None
+
     async def aclose(self, *, close_shared: bool = False) -> None:
         """收尾：等在跑的任务结束后，关闭可关闭的资源。幂等，重复调用无副作用。
 
@@ -346,7 +364,7 @@ class AgentCore:
                 if candidate is not None and all(candidate is not seen for seen in targets):
                     targets.append(candidate)
         failures: list[str] = []
-        async with self._task_lock:
+        async with self._holding_task_lock():
             if self._closed:
                 return
             for resource in targets:
@@ -540,7 +558,7 @@ class AgentCore:
         """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
-        async with self._task_lock:
+        async with self._holding_task_lock():
             if self._closed:
                 raise RuntimeError("AgentCore 已关闭，不能运行任务")
             # 收据链按 run 起算（Task-1 ↔ Batch 2 契约）：每个任务的首条收据

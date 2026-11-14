@@ -7,7 +7,9 @@
 import asyncio
 import time
 
-from yai_core import AgentCore, ModelResponse, ToolCallRequest, build_spec
+import pytest
+
+from yai_core import AgentCore, EventType, ModelResponse, ToolCallRequest, build_spec
 
 
 class ScriptedModel:
@@ -125,3 +127,22 @@ def test_closing_astream_early_releases_lock() -> None:
 
     result = asyncio.run(main())
     assert result.final_text
+
+
+def test_done_handler_reentry_raises_instead_of_deadlocking() -> None:
+    async def main() -> None:
+        core: AgentCore | None = None
+
+        class ReentrantChannel:
+            async def emit(self, event) -> None:
+                if event.type == EventType.DONE and core is not None:
+                    await core.run("nested")
+
+        core = AgentCore(
+            ScriptedModel([ModelResponse(content="done")]),
+            channel=ReentrantChannel(),
+        )
+        with pytest.raises(RuntimeError, match="重入"):
+            await asyncio.wait_for(core.run("root"), timeout=1.0)
+
+    asyncio.run(main())

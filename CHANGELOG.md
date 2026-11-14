@@ -7,6 +7,24 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.54.0] - 2026-11-14
+
+### Fixed
+
+- **X-Forwarded-For**：默认不再信任该头；只有 peer 命中 `YAI_TRUSTED_PROXIES`
+  才从右往左剥离可信代理。伪造 XFF 不再能绕过每 IP 限流。
+- **Composite 超时**：外层 deadline 打断在途步骤时，补一条该步骤的
+  `TOOL_RESULT(status="unknown", timed_out=True)`，审计链不再跳过它。
+- **AgentCore 重入**：同一任务在 DONE 回调/Channel.emit/工具 handler 内再次调用
+  `run/astream/aclose` 时立即抛清晰 `RuntimeError`，不再自死锁。
+- **Sidecar stdout 断开**：`agent/cancelled` / `agent/error` 发送保护，stdout 已断开
+  时任务也能正常清理 `_active_run`，不再留下未取回的 `BrokenPipeError`。
+
+### Tests
+
+- 新增 XFF 可信代理、Core 重入、Composite 在途 unknown 断言；全量 2,542 项 /
+  2,537 passed / 5 skipped / 92.99%。
+
 ## [v0.53.0] - 2026-11-14
 
 ### Added

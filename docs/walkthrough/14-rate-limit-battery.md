@@ -47,15 +47,13 @@ def check(key):
 ## C. client_ip：信任边界要写清楚
 
 ```python
-X-Forwarded-For 最左非空段 → 缺失回退 request.client.host → 再缺省 "unknown"
+默认 request.client.host → peer 命中 YAI_TRUSTED_PROXIES 时才解析 XFF（从右往左剥离可信代理）
+→ 再缺省 "unknown"
 ```
 
-Render 边缘代理会为每个请求附加 XFF，所以取 XFF 最左即真实客户端 IP；
-不依赖 uvicorn `--proxy-headers`，部署形态少一个变量。
-
-**威胁模型如实写**：这套识别防的是误刷/爬虫/失控循环；**不防**蓄意伪造 XFF 的
-分布式攻击——攻击者可以随便声明 `X-Forwarded-For: 8.8.8.8` 换桶。那要靠鉴权或
-人机验证，超出 v0.3 范围。文档里不装强，访问者反而信得过。
+默认**不信任** XFF：攻击者可以随便声明 `X-Forwarded-For: 8.8.8.8` 换桶。只有显式配置
+`YAI_TRUSTED_PROXIES=caddy,10.0.0.1` 后，peer 命中可信代理才解析 XFF；这比"取最左段"安全，
+也保留了 Render/Caddy 反代场景。
 
 ## D. 并发与生命周期：两处"防御性多虑"
 
@@ -121,12 +119,12 @@ global_limiter = (
 
 ## H. 诚实的边界
 
-1. 不防伪造 XFF 的分布式攻击（见 C 节）；
+1. 默认不信任 XFF；可信代理需显式配置（见 C 节）；
 2. 重启清零，无跨实例共享计数——**`global_per_minute` 只是本进程内的总数**，
    多实例部署时每个实例各算各的，它不是分布式限流；要做跨实例总闸得先解决状态共享
    （Redis / 一致性计数），那属于另一层工程；
 3. 全局限流兜底已实现（G 节），但默认关闭：开不开是宿主的容量决策，不由库替它定；
-4. `X-Forwarded-For` 链上只有最左段被信任，右段可能是任意代理追加的，不做校验。
+4. `X-Forwarded-For` 只在 peer 是可信代理时解析，从右往左剥离；默认不使用该头。
 
 ## 自检
 

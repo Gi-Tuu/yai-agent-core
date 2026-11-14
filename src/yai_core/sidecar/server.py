@@ -526,6 +526,13 @@ class SidecarServer:
                 await task
         return {"cancelled": True, "run_id": self._active_run_id or run_id}
 
+    async def _send_terminal(self, message: dict[str, Any]) -> None:
+        """终态通知尽力送达；stdout 已断开时不能让任务以裸异常结束。"""
+        try:
+            await self._send(message)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
     async def _execute_run(
         self, run_id: str, task: str, subject: Subject | None
     ) -> None:
@@ -546,12 +553,12 @@ class SidecarServer:
                 )
                 seq += 1
         except asyncio.CancelledError:
-            await self._send(
+            await self._send_terminal(
                 notification("agent/cancelled", {"run_id": run_id, "reason": "cancelled"})
             )
             raise
         except Exception as exc:  # noqa: BLE001 - 运行失败以通知返回，不杀进程
-            await self._send(
+            await self._send_terminal(
                 notification(
                     "agent/error",
                     {
