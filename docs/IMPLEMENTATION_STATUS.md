@@ -83,7 +83,7 @@
 | 并行摘要压缩 | 已验证 | `tests/test_context_compaction.py`（分段铺满 / 段首对齐 / 并发墙钟 / 事件字段） | 只影响墙钟；保留策略与消息结构不变，默认 1 |
 | 任务锚点（上下文腐化防护） | 已验证 | `tests/test_context_compaction.py` 两例 | 仅在原任务已不在上下文时注入，不重复花 token |
 | 嵌入召回（可选） | 已验证（假实现） | `tests/test_integrations_embedding.py` | 本地 ONNX 真机用例需自备模型文件，CI 跳过 |
-| 记忆质量基准 / 10k 规模 / LoCoMo（v0.27 扩量 / v0.31 批量写入 / v0.40 LoCoMo） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`locomo_bench.py`、`tests/test_memory_batch.py`、`test_memory_metrics.py`、`test_memory_scale.py`、`test_locomo_bench.py`；114 条 / 60 query（真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms）；**10,000 条批量构建 45.4s、检索 P50 17.6ms / P95 116ms**；**LoCoMo（10 对话 / 1,973 QA，纯词法）：Recall@5 0.3482 / Recall@10 0.4163 / MRR 0.2927** | 语义通道未在 10k 规模基准化；逐条 `remember`（每条全量落盘）仍慢；LoCoMo 是**纯词法基线**，不可与 Mem0/Zep 等 embedding + LLM 判定分数直接比较，数据集不随包分发（上游 NOASSERTION）；详见 [docs/evaluations/memory-evaluation.md](evaluations/memory-evaluation.md) |
+| 记忆质量基准 / 10k 规模 / LoCoMo（v0.27 扩量 / v0.31 批量写入 / v0.40 LoCoMo） | 已验证（离线脚本 + 回归） | `benchmarks/memory/run_bench.py`、`scale_bench.py`、`locomo_bench.py`、`tests/test_memory_batch.py`、`test_memory_metrics.py`、`test_memory_scale.py`、`test_locomo_bench.py`；114 条 / 60 query（真实 BGE-M3 Recall@5 0.899 / MRR@5 0.896 / P50 28.9ms）；**10,000 条批量构建 45.4s、检索 P50 17.6ms / P95 116ms**；**LoCoMo（10 对话 / 1,973 QA）：词法 R@5 0.3482 / MRR 0.2927；BGE-M3 语义 0.5067 / 0.4081；RRF 混合 0.5078 / 0.4361** | 语义通道未在 10k 规模基准化；逐条 `remember`（每条全量落盘）仍慢；LoCoMo 是**纯词法基线**，不可与 Mem0/Zep 等 embedding + LLM 判定分数直接比较，数据集不随包分发（上游 NOASSERTION）；详见 [docs/evaluations/memory-evaluation.md](evaluations/memory-evaluation.md) |
 
 ## 五、宿主与协议
 
