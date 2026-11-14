@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 
@@ -83,7 +84,7 @@ print(f"验证端点 commit：{os.environ['YAI_GIT_COMMIT']}")
 _retention = retention_from_env()
 _sqlite_store = SqliteStore.from_env(retention=_retention)
 if _sqlite_store is not None:
-    _store = _sqlite_store
+    _store: Any = _sqlite_store
 else:
     _store = InMemoryStore(max_messages=_retention[0], ttl_seconds=_retention[1])
 if _retention != (None, None):
@@ -92,6 +93,36 @@ if _retention != (None, None):
         "（opt-in，按轮对齐裁剪；SQLite 构造时已自动 prune 一次）"
     )
 core = AgentCore.auto(capabilities, _model, llm_router="auto", memory=_store)
+
+
+def _session_core(session_id: str) -> AgentCore:
+    """每个 session 一个 core + 独立记忆；工具面沿用启动后已挂载的 native/MCP/OpenAPI。
+
+    多租户隔离的是会话历史与 Core 实例级状态；远程 bridge 仍由进程共享并在
+    lifespan 中关闭。SQLite 模式下用 scope 复用同一个数据库文件。
+    """
+    db_path = (os.environ.get("YAI_DB_PATH") or "").strip()
+    if db_path:
+        store: Any = SqliteStore(
+            db_path,
+            scope=session_id,
+            max_messages=_retention[0],
+            ttl_seconds=_retention[1],
+        )
+    else:
+        store = InMemoryStore(
+            max_messages=_retention[0],
+            ttl_seconds=_retention[1],
+        )
+    session_core = AgentCore.auto(
+        capabilities, _model, llm_router="auto", memory=store
+    )
+    existing = {spec.name for spec in session_core.registry.all()}
+    for spec in core.registry.all():
+        if spec.name not in existing:
+            with contextlib.suppress(Exception):
+                session_core.registry.register(spec)
+    return session_core
 
 
 @contextlib.asynccontextmanager
@@ -156,4 +187,9 @@ print(
     f"，global_per_minute={_rate_limit.global_per_minute}"
     "（仅 POST /v1/agent/run；GET 验证端点不受限；global=0 表示未启用总闸）"
 )
-app = create_app(core, lifespan=app_lifespan, rate_limit=_rate_limit)
+app = create_app(
+    core,
+    lifespan=app_lifespan,
+    rate_limit=_rate_limit,
+    core_factory=_session_core,
+)

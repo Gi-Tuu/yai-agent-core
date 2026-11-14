@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.52.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.53.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -528,6 +528,11 @@
 
 - Registry 最终 URL/allowlist 复核 + digest pin；tool_call id 防重；Desktop/Memory/MCP/Sidecar/Browser/Federation/Egress 加固。
 - 仍需后续：FastAPI 每会话 core、Federation subject 绑定、XFF 可信代理、composite 超时事件。
+
+### v0.53.0 — FastAPI 会话隔离 + Federation subject（tag 2026-11-14，已完成）
+
+- `/v1/agent/run` 按 session_id 使用独立 core；示例服务用独立记忆并复制已挂载工具面。
+- Federation 握手 subject 签入 grant；调用必须一致。
 
 ## 下一步
 

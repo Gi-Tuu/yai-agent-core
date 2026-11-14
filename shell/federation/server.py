@@ -293,6 +293,7 @@ class ChildServer:
             "edge": f"{parent_id}->{self.child.node_id}",
             "child_id": self.child.child_id,
             "tools": ["*"] if wildcard else sorted(granted),
+            "subject": params.get("subject"),
             "exp": expires_at,
         }
         grant = {"payload": payload, "sig": _sign(self._secret, payload)}
@@ -343,7 +344,13 @@ class ChildServer:
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
             raise FederationProtocolError("arguments 必须是对象")
-        subject = params.get("subject", payload.get("subject"))
+        bound_subject = payload.get("subject")
+        subject = params.get("subject")
+        if bound_subject is None:
+            if subject is not None:
+                raise GrantDenied("grant 未绑定 subject，拒绝携带 subject 的调用")
+        elif subject != bound_subject:
+            raise GrantDenied("调用 subject 与 grant 绑定的 subject 不一致")
         call_id = str(params.get("call_id") or "")
         deadline_ms = params.get("deadline_ms")
         raw_chain = params.get("chain") or ()

@@ -43,7 +43,8 @@ Code entry points: `shell/federation/`; example: `examples/host_m_federation/`; 
 | Transport | `127.0.0.1` random port, NDJSON with one JSON-RPC 2.0 message per line, a single message ≤ 1 MiB |
 | Discovery file | `<data>/yai-federation/<node_id>.json`: protocol / node_id / child_id / host / port / token / pid, permissions 0600 (chmod semantics are limited on Windows, see `_noop_chmod`) |
 | Handshake | `federation.handshake`: validates the protocol version + token + parent allowlist → returns the manifest subset + HMAC grant |
-| Call | `federation.tools.call`: validates grant signature / expiry / tool subset / child-core identity; `deadline_ms` is optional |
+| Call | `federation.tools.call`: validates grant signature / expiry / tool subset / child-core identity / bound subject; `deadline_ms` is optional |
+| Subject | Handshake carries `subject` and signs it into the grant; calls must match. Grants without a subject reject subject-bearing calls |
 | Health | `federation.health`: process alive + child-core identity + protocol version + tool count |
 | Errors | `grant_invalid` / `protocol_error` / `deadline_exceeded` / connection dropped → parent-side `ChildUnavailable` or tool failure flow-back |
 

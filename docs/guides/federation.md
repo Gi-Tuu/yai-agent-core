@@ -41,7 +41,8 @@
 | 传输 | `127.0.0.1` 随机端口，NDJSON 每行一条 JSON-RPC 2.0 消息，单条 ≤ 1 MiB |
 | 发现文件 | `<data>/yai-federation/<node_id>.json`：protocol / node_id / child_id / host / port / token / pid，权限 0600（Windows 上 chmod 语义受限，见 `_noop_chmod`） |
 | 握手 | `federation.handshake`：校验协议版本 + token + 父核允许列表 → 返回 manifest 子集 + HMAC grant |
-| 调用 | `federation.tools.call`：校验 grant 签名 / 过期 / 工具子集 / 子核身份；`deadline_ms` 可选 |
+| 调用 | `federation.tools.call`：校验 grant 签名 / 过期 / 工具子集 / 子核身份 / 绑定 subject；`deadline_ms` 可选 |
+| Subject | 握手携带 `subject` 并签入 grant；调用时必须一致。未绑定 subject 的 grant 拒绝携带 subject 的调用 |
 | 健康 | `federation.health`：进程存活 + 子核身份 + 协议版本 + 工具数 |
 | 错误 | `grant_invalid` / `protocol_error` / `deadline_exceeded` / 连接断开 → 父核侧 `ChildUnavailable` 或工具失败回流 |
 

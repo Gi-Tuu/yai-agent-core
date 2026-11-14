@@ -143,8 +143,10 @@ BASE=https://<your-domain>
 curl $BASE/health                              # expect {"status":"ok","commit":"<40-char>"}
 curl $BASE/.well-known/yai-verification.json   # expect schemaVersion/slug/commit, with the same commit as above
 curl $BASE/v1/tools                            # expect the tool list
-curl -X POST $BASE/v1/agent/run -H "Content-Type: application/json" \
-  -d '{"task":"list all my notes"}'            # expect strategy/events/final_text
+curl -X POST $BASE/v1/agent/run \
+  -H "Authorization: Bearer $YAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"list all my notes","session_id":"demo"}'  # expect strategy/events/final_text
 docker compose ps                              # both caddy and app are healthy
 ```
 All four passing = the public demo deployment meets the bar.

@@ -38,6 +38,7 @@ class ManagedChild:
         node_id: str,
         parent_id: str = "root",
         tools: Iterable[str] | None = None,
+        subject: Any = None,
         connect_timeout: float = 20.0,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -48,6 +49,7 @@ class ManagedChild:
         self.node_id = node_id
         self.parent_id = parent_id
         self.tools = list(tools) if tools is not None else None
+        self.subject = subject
         self.connect_timeout = float(connect_timeout)
         self.env = {
             **os.environ,
@@ -118,6 +120,7 @@ class ManagedChild:
                         self.discovery_path,
                         parent_id=self.parent_id,
                         tools=self.tools,
+                        subject=self.subject,
                     )
                     return self.link
                 except Exception as exc:  # noqa: BLE001 - 启动期握手失败可重试

@@ -56,6 +56,7 @@ class LinkChild:
         *,
         parent_id: str,
         tools: Iterable[str] | None = None,
+        subject: Any = None,
         request_timeout: float = 30.0,
     ) -> LinkChild:
         path = Path(discovery_path)
@@ -84,6 +85,7 @@ class LinkChild:
                     "parent_id": parent_id,
                     "token": info.token,
                     "tools": list(tools) if tools is not None else None,
+                    "subject": subject,
                 },
             )
         except Exception:
