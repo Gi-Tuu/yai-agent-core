@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.58.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.59.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -562,6 +562,11 @@
 
 - Composite 在途步骤补 ExecutionReceipt；收据链可校验。
 - Sidecar 明确“协程不可强杀，进程级 SIGTERM/KILL 才是最终兜底”。
+
+### v0.59.0 — 巨型模块拆分第一批（tag 2026-11-14，已完成）
+
+- types → receipts + governance；vault → note/storage_lock/tools/constants。
+- 旧导入路径全部 re-export；行为不变。
 
 ## 下一步
 
