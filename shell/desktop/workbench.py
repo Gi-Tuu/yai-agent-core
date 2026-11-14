@@ -173,6 +173,7 @@ class WorkbenchRuntime(QObject):
         self._vault_json = "{}"
         self._learning_json = "{}"
         self._loop = asyncio.new_event_loop()
+        self._loop_ready = threading.Event()
         self._thread = threading.Thread(
             target=self._run_loop, name="yai-workbench-loop", daemon=True
         )
@@ -185,6 +186,7 @@ class WorkbenchRuntime(QObject):
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
+        self._loop_ready.set()
         self._loop.run_forever()
 
     def add_specialist(
@@ -427,6 +429,7 @@ class WorkbenchRuntime(QObject):
         async def _coro() -> None:
             work(path, *args)
 
+        self._loop_ready.wait(timeout=2.0)
         asyncio.run_coroutine_threadsafe(_coro(), self._loop)
 
     def _emit_vault(self, data: dict) -> None:
@@ -478,6 +481,7 @@ class WorkbenchRuntime(QObject):
         async def _coro() -> None:
             work(path)
 
+        self._loop_ready.wait(timeout=2.0)
         asyncio.run_coroutine_threadsafe(_coro(), self._loop)
 
     def _emit_learning(self, data: dict) -> None:
@@ -512,7 +516,7 @@ class WorkbenchRuntime(QObject):
                 await asyncio.gather(*pending, return_exceptions=True)
 
         try:
-            asyncio.run_coroutine_threadsafe(_drain(), self._loop).result(timeout=3)
+            asyncio.run_coroutine_threadsafe(_drain(), self._loop).result(timeout=5)
         except (TimeoutError, RuntimeError):
             pass  # 排空超时也要继续收尾，别把线程留活
         self._loop.call_soon_threadsafe(self._loop.stop)

@@ -164,7 +164,11 @@ def test_authorization_code_flow(server, monkeypatch: pytest.MonkeyPatch) -> Non
     url = client.authorization_url("state-1")
     assert "response_type=code" in url
     assert "state=state-1" in url
-    client.exchange_code("code-1")
+    assert "code_challenge=" in url
+    assert "code_challenge_method=S256" in url
+    with pytest.raises(ValueError, match="state mismatch"):
+        client.exchange_code("code-1", state="wrong")
+    client.exchange_code("code-1", state="state-1")
     assert client.send("hello").text
     assert client._oauth_token == "token-authcode"  # noqa: SLF001
 

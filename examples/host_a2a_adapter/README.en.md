@@ -76,7 +76,7 @@ client = A2AClient(A2AConfig(
     ),
 ))
 print(client.authorization_url("state-123"))
-client.exchange_code(code)
+client.exchange_code(code, state="state-123")  # PKCE S256 + state check
 
 # 2) device code: the user visits verification_uri and enters user_code
 client = A2AClient(A2AConfig(
@@ -92,8 +92,9 @@ print(flow["verification_uri"], flow["user_code"])
 client.poll_device_token(flow["device_code"], interval=flow.get("interval", 5))
 ```
 
-Both flows only **obtain and cache a token**; user interaction (browser/device), state/PKCE
-validation, the callback server and the device page remain host-owned.
+Both flows only **obtain and cache a token**; user interaction (browser/device) remains host-owned.
+The authorization-code flow generates a PKCE S256 challenge and `exchange_code(state=...)` validates
+state; the callback server and device page remain host-owned.
 
 ### Push configuration
 
