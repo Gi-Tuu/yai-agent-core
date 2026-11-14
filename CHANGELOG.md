@@ -7,6 +7,20 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.58.0] - 2026-11-14
+
+### Fixed
+
+- **Composite 在途收据**：外层 deadline 打断在途步骤时，除 `TOOL_CALL` + `unknown`
+  结果外，补一条该步骤的 ExecutionReceipt；导出事件里的收据链可继续通过
+  `verify_receipt_chain`。
+
+### Documented
+
+- **Sidecar 强制终止边界**：Python 无法从任务外部强行杀死一个协程；`CancelledError`
+  被吞掉时只能进程级 SIGTERM/SIGKILL。当前 degraded 关闭保留 core/bridge，由宿主
+  transport 在预算耗尽后 kill 子进程；不再假装“任务已被强制结束”。
+
 ## [v0.57.0] - 2026-11-14
 
 ### Fixed
