@@ -7,6 +7,17 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.48.0] - 2026-11-14
+
+### Added
+
+- **A2A SSE 流式**：`A2AClient.stream(task, on_text=...)` 消费 `SendStreamingMessage` 的
+  task/artifactUpdate/statusUpdate 帧；`A2AConfig(streaming=True)` 时 `as_tool()` 走流式聚合。
+  假 server 支持 SSE；7 例离线测试。
+- **Registry 信任策略**：`RegistryPolicy`（域名 allowlist、repository host、latest/active、
+  `verify_entry` 签名/来源钩子）；`isSecret` 默认值不再被信任；CLI 默认要求 `--allow-domain`。
+  8 例离线测试。
+
 ## [v0.47.0] - 2026-11-14
 
 ### Added
