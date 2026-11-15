@@ -18,6 +18,7 @@ from yai_core.integrations.openapi.spec import (
     resolve_base_url,
     resolve_refs,
 )
+from yai_core.run_context import current_call_id, current_run_id
 from yai_core.types import ToolGovernance, ToolSpec
 
 _SUPPORTED_SECURITY = {"http", "apiKey"}
@@ -193,6 +194,12 @@ class OpenApiToolBridge:
 
             url = self._base_url.rstrip("/") + path
             request_headers = dict(auth_headers)
+            rid = current_run_id()
+            cid = current_call_id()
+            if rid:
+                request_headers["X-Agent-Run-Id"] = rid
+            if cid:
+                request_headers["X-Agent-Call-Id"] = cid
             if body is not None:
                 request_headers.setdefault("Content-Type", "application/json")
 

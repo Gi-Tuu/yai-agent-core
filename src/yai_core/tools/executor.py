@@ -21,6 +21,7 @@ from yai_core.policy.authorize import (
     snapshot_arguments,
 )
 from yai_core.policy.egress import record_tool_output
+from yai_core.run_context import reset_call_id, set_call_id
 from yai_core.spi import Channel, PermissionDecision, PermissionPolicy, ToolSandbox
 from yai_core.tools.admission import _native_approval, _tighten, check_admission
 from yai_core.tools.cache_lookup import _CacheLookup, lookup_cache
@@ -298,7 +299,7 @@ class ToolExecutor:
         """任务边界：重置收据链根，让单次 run 的收据链可独立校验。
 
         由 ``AgentCore.astream`` 在获得实例锁后调用；不清理幂等缓存
-        （幂等缓存跨任务复用是刻意行为）。
+        （幂等缓存跨任务复用是刻意行为）。run 上下文由 AgentCore 设置。
         """
         self._audit.begin_run()
 
@@ -325,21 +326,27 @@ class ToolExecutor:
         # 验证全部作用于同一份副本——调用方的字典从此不被改写，验证的也是
         # "实际执行的那组参数"而不是调用方稍后可能改掉的对象。
         arguments = snapshot_arguments(arguments)
-        events, ok, text = await self._execute_impl(
-            name,
-            arguments,
-            subject=subject,
-            budget=budget,
-            call_id=call_id,
-            _trace=_trace,
-            _timeout=_timeout,
-        )
-        if not ok:
-            ok, text = await self._audit.apply_postcondition(name, arguments, events, ok, text)
-            # 失败文案（错误消息）里也可能带 URL；成功路径已在 _execute_impl
-            # 按结构化结果记录，不再用 JSON 转义后的文本重复记录。
-            record_tool_output(text)
-        return events, ok, text
+        token = set_call_id(call_id or None)
+        try:
+            events, ok, text = await self._execute_impl(
+                name,
+                arguments,
+                subject=subject,
+                budget=budget,
+                call_id=call_id,
+                _trace=_trace,
+                _timeout=_timeout,
+            )
+            if not ok:
+                ok, text = await self._audit.apply_postcondition(
+                    name, arguments, events, ok, text
+                )
+                # 失败文案（错误消息）里也可能带 URL；成功路径已在 _execute_impl
+                # 按结构化结果记录，不再用 JSON 转义后的文本重复记录。
+                record_tool_output(text)
+            return events, ok, text
+        finally:
+            reset_call_id(token)
 
     def _check_admission(
         self,

@@ -40,6 +40,7 @@ from yai_core.memory import InMemoryStore, MemoryVault, build_memory_tools
 from yai_core.metrics import MetricsRecorder
 from yai_core.policy import AllowlistPolicy
 from yai_core.policy.egress import egress_scope
+from yai_core.run_context import reset_run_id, set_run_id
 from yai_core.spi import (
     Channel,
     EmbeddingProvider,
@@ -529,7 +530,11 @@ class AgentCore:
     # ---------- 运行 ----------
 
     async def astream(
-        self, task: str, *, subject: Subject | None = None
+        self,
+        task: str,
+        *,
+        subject: Subject | None = None,
+        run_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """运行一个任务并流式产出事件。
 
@@ -558,6 +563,7 @@ class AgentCore:
         """
         # 流式宿主（网页/终端）也走这里，因此反馈闭环必须在 astream 收尾闭合，
         # 而不能只放在 run() 里——否则只消费事件流的宿主永远不会回灌学习。
+        run_token = set_run_id(run_id)
         async with self._holding_task_lock():
             if self._closed:
                 raise RuntimeError("AgentCore 已关闭，不能运行任务")
@@ -681,6 +687,7 @@ class AgentCore:
                 run_error = exc
                 raise
             finally:
+                reset_run_id(run_token)
                 self._task_subject = None
                 self._metrics_finish(run_error)
                 # 仅在任务正常跑完时回灌；被取消（GeneratorExit/CancelledError）或
@@ -725,14 +732,20 @@ class AgentCore:
             ),
         ]
 
-    async def run(self, task: str, *, subject: Subject | None = None) -> RunResult:
+    async def run(
+        self,
+        task: str,
+        *,
+        subject: Subject | None = None,
+        run_id: str | None = None,
+    ) -> RunResult:
         events: list[AgentEvent] = []
         final_text = ""
         strategy: Strategy | None = None
         verification: VerificationResult | None = None
         status = "ok"
         error: str | None = None
-        async for event in self.astream(task, subject=subject):
+        async for event in self.astream(task, subject=subject, run_id=run_id):
             events.append(event)
             data = event.data
             if "strategy" in data:
