@@ -6,7 +6,7 @@ import inspect
 import json
 import threading
 import time
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -35,6 +35,7 @@ from yai_core.tools.execution_audit import (
     infer_status,
     replay_preview,
 )
+from yai_core.tools.idempotency import IdempotencyCache, _PermissionDependency
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import (
     AgentEvent,
@@ -73,15 +74,6 @@ class _PreviewError(RuntimeError):
 
 class _IdempotencyError(RuntimeError):
     """宿主声明的幂等键生成器失败；不能假装这次调用可去重。"""
-
-
-@dataclass(frozen=True)
-class _PermissionDependency:
-    """仅存于进程内缓存的权限依据，不进入事件、收据或模型正文。"""
-
-    name: str
-    spec: ToolSpec
-    arguments: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -180,10 +172,7 @@ class ToolExecutor:
         self._rate_lock = threading.Lock()
         # 每条结果同时绑定参数指纹和首次调用的权限依赖（含嵌套子调用）。
         # 依赖随同一 LRU 条目淘汰，不另建无界缓存。
-        self._idempotent_cache: OrderedDict[
-            tuple[str, str],
-            tuple[bool, str, ReceiptStatus, str, str, tuple[_PermissionDependency, ...]],
-        ] = OrderedDict()
+        self._idempotency = IdempotencyCache(IDEMPOTENCY_CACHE_LIMIT)
 
     def _effective_timeout(self, spec: ToolSpec) -> float | None:
         """这次调用的实际上墙超时：全局 ``handler_timeout`` 与工具自声明的更严一档。
@@ -325,42 +314,6 @@ class ToolExecutor:
         if not isinstance(value, str) or not value.strip():
             raise _IdempotencyError("幂等键必须是非空字符串（或 None）")
         return value.strip()
-
-    def _cache_get(
-        self, tool: str, key: str, fingerprint: str
-    ) -> tuple[
-        tuple[bool, str, ReceiptStatus, str, tuple[_PermissionDependency, ...]], bool
-    ] | None:
-        """返回 (缓存结果及权限依赖, 参数是否与首次执行一致)。"""
-        if not key:
-            return None
-        cached = self._idempotent_cache.pop((tool, key), None)
-        if cached is None:
-            return None
-        self._idempotent_cache[(tool, key)] = cached
-        ok, text, status, error, cached_fingerprint, dependencies = cached
-        return (ok, text, status, error, dependencies), cached_fingerprint == fingerprint
-
-    def _cache_put(
-        self,
-        tool: str,
-        key: str,
-        fingerprint: str,
-        *,
-        ok: bool,
-        text: str,
-        status: ReceiptStatus,
-        error: str = "",
-        dependencies: list[_PermissionDependency],
-    ) -> None:
-        if not key or status == "not_started":
-            return
-        self._idempotent_cache.pop((tool, key), None)
-        self._idempotent_cache[(tool, key)] = (
-            ok, text, status, error, fingerprint, tuple(dependencies)
-        )
-        while len(self._idempotent_cache) > IDEMPOTENCY_CACHE_LIMIT:
-            self._idempotent_cache.popitem(last=False)
 
     async def _replay_dependency_rejection(
         self, dependencies: tuple[_PermissionDependency, ...], subject: Any
@@ -584,7 +537,7 @@ class ToolExecutor:
             return _CacheLookup("", "", (False, message))
 
         fingerprint = _fingerprint_arguments(arguments) if idempotency_key else ""
-        cached = self._cache_get(name, idempotency_key, fingerprint)
+        cached = self._idempotency.get(name, idempotency_key, fingerprint)
         if cached is None:
             return _CacheLookup(idempotency_key, fingerprint)
 
@@ -769,7 +722,7 @@ class ToolExecutor:
             key=key, error=error,
         ))
         if status != "not_started":
-            self._cache_put(
+            self._idempotency.put(
                 name, key, fingerprint, dependencies=dependencies,
                 ok=ok, text=text, status=status, error=error,
             )

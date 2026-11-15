@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-15（对应已发布版本 **v0.62.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-15（对应已发布版本 **v0.62.1**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -581,6 +581,11 @@
 ### v0.62.0 — AgentLoop 规划拆分（tag 2026-11-15，已完成）
 
 - 规划/发现/schema 聚焦拆到 PlanningMixin；loop 68.0→58.9KB。
+
+### v0.62.1 — ReAct/幂等状态对象（tag 2026-11-15，已完成）
+
+- ReActState + run_react_cycle；IdempotencyCache。
+- 版本策略：后续结构重构走 0.62.X patch 线，不再连续抬 minor。
 
 ## 下一步
 
