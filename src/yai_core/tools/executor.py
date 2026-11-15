@@ -13,18 +13,16 @@ from typing import Any
 
 from yai_core.kernel.budget import BudgetExceeded
 from yai_core.policy.approval import (
-    DECISION_APPROVAL_REQUIRED,
-    DECISION_REJECT_INVALID_ARGUMENTS,
     argument_errors,
-    evaluate_approval,
 )
 from yai_core.policy.authorize import (
     authorize_tool_call,
     policy_decision,
     snapshot_arguments,
 )
-from yai_core.policy.egress import check_egress, record_tool_output
+from yai_core.policy.egress import record_tool_output
 from yai_core.spi import Channel, PermissionDecision, PermissionPolicy, ToolSandbox
+from yai_core.tools.admission import _native_approval, _tighten, check_admission
 from yai_core.tools.cache_lookup import _CacheLookup, lookup_cache
 from yai_core.tools.code_tools import CodeToolManager
 from yai_core.tools.composite import execute_composite
@@ -34,6 +32,12 @@ from yai_core.tools.execution_audit import (
     infer_status,
 )
 from yai_core.tools.idempotency import IdempotencyCache, _IdempotencyError, _PermissionDependency
+from yai_core.tools.preview import (
+    _PreviewError,
+    approved_preview_failure,
+    preview_or_reject,
+    recheck_approved_preview,
+)
 from yai_core.tools.registry import ToolRegistry
 from yai_core.types import (
     AgentEvent,
@@ -64,55 +68,6 @@ from yai_core.tools.result import (  # noqa: E402,F401 - re-exported for compati
     _fingerprint_arguments,
     bound_tool_result,
 )
-
-
-class _PreviewError(RuntimeError):
-    """宿主声明的变更预览无法生成；审批不能建立在未知变更上。"""
-
-
-def _native_approval(spec: ToolSpec, arguments: dict[str, Any]) -> GateDecision | None:
-    """宿主只写了数据（``governance.approval``）时，由内核自己判一次要不要问人。
-
-    没声明审批就返回 ``None``（"这层没意见"），事件形状与加了这块功能之前一字不差；
-    ``allow`` 同样折回 ``None``，不让"声明了但没命中"污染审计载荷。
-    """
-    policy = spec.governance.approval
-    if policy is None:
-        return None
-    outcome = evaluate_approval(policy, arguments, spec.input_schema)
-    if outcome.decision == DECISION_REJECT_INVALID_ARGUMENTS:
-        return GateDecision(reject=f"调用被审批闸拒绝：{outcome.reason}", reason=outcome.reason)
-    if outcome.decision == DECISION_APPROVAL_REQUIRED:
-        return GateDecision(
-            require_approval=True, reason=outcome.reason, prompt=outcome.prompt
-        )
-    return None
-
-
-def _tighten(
-    gate: GateDecision | None, native: GateDecision | None
-) -> GateDecision | None:
-    """合并同一工具的函数级闸（``gate``）与数据级闸（``approval``），**取更严的那个**。
-
-    两个来源都可能同时存在：``gate`` 由宿主/集成层现场算，``approval`` 是随清单走的声明。
-    谁都不比谁弱，所以不能"有 gate 就当 approval 不存在"——那等于声明了的保护内核没做。
-    合并只会让闸门更严：拒绝取并、要问人取或、话术与描述性字段先到先得。
-    """
-    if gate is None:
-        return native
-    if native is None:
-        return gate
-    rejects = [text for text in (gate.reject, native.reject) if text]
-    reasons = [text for text in (gate.reason, native.reason) if text]
-    return GateDecision(
-        reject="；".join(dict.fromkeys(rejects)),
-        require_approval=gate.require_approval or native.require_approval,
-        reason="；".join(dict.fromkeys(reasons)),
-        prompt=gate.prompt or native.prompt,
-        risk=gate.risk or native.risk,
-        scope=gate.scope or native.scope,
-        target=gate.target or native.target,
-    )
 
 
 class ToolExecutor:
@@ -396,87 +351,9 @@ class ToolExecutor:
         started: float,
         call_id: str,
     ) -> tuple[GateDecision | None, str | None]:
-        """工具自带闸、外发来源、参数校验三道前置闸。
-
-        频率上限不在这里判定：它必须在授权通过之后才扣配额，否则被策略
-        拒绝的调用也能耗尽配额（多租户 DoS）。
-        """
-        gate_fn = spec.governance.gate
-        try:
-            decision = gate_fn(arguments, subject) if gate_fn is not None else None
-            decision = _tighten(decision, _native_approval(spec, arguments))
-        except Exception as exc:  # noqa: BLE001 - 宿主回调异常必须失败关闭
-            reason = f"工具 {name} 的准入闸异常，已失败关闭：{type(exc).__name__}"
-            events.append(self._audit.denied_event(spec, name, arguments, reason, "gate"))
-            self._audit.fail(
-                events, spec=spec, name=name, call_id=call_id,
-                started=started, message=reason,
-            )
-            return None, reason
-        if decision is not None and decision.reject:
-            events.append(
-                self._audit.denied_event(spec, name, arguments, decision.reject, "gate")
-            )
-            self._audit.fail(
-                events, spec=spec, name=name, call_id=call_id,
-                started=started, message=decision.reject,
-            )
-            return decision, decision.reject
-
-        egress_reason = check_egress(spec, arguments)
-        if egress_reason is not None:
-            events.append(
-                self._audit.denied_event(spec, name, arguments, egress_reason, "egress")
-            )
-            self._audit.fail(
-                events, spec=spec, name=name, call_id=call_id,
-                started=started, message=egress_reason,
-            )
-            return decision, egress_reason
-
-        errors = argument_errors(arguments, spec.input_schema)
-        if errors:
-            message = f"工具 {name} 的调用参数不合法：" + "；".join(errors)
-            self._audit.fail(
-                events,
-                spec=spec,
-                name=name,
-                call_id=call_id,
-                started=started,
-                message=message,
-                flags={"invalid_arguments": True},
-            )
-            return decision, message
-
-        # 频率上限先"只查不扣"：真正扣配额要等授权通过（否则被策略拒绝的调用
-        # 也能耗尽配额）。这里只判定本次是否已满，满则直接失败关闭。
-        rate_hint = spec.governance.rate_limit
-        if rate_hint is not None and self._rate_limit_full(name, rate_hint):
-            message = (
-                f"工具 {name} 超出调用频率上限"
-                f"（{rate_hint.count} 次 / {rate_hint.window}），本次未执行"
-            )
-            events.append(
-                AgentEvent(
-                    EventType.TOOL_RESULT,
-                    {"tool": name, "ok": False, "error": message, "rate_limited": True},
-                )
-            )
-            events.append(
-                self._audit.denied_event(spec, name, arguments, message, "rate_limit")
-            )
-            self._audit.attach(
-                events,
-                self._audit.receipt(
-                    call_id=call_id,
-                    tool=name,
-                    status="not_started",
-                    started=started,
-                    error=message,
-                ),
-            )
-            return decision, message
-        return decision, None
+        return check_admission(
+            self, spec, name, arguments, subject, events, started, call_id
+        )
 
     def _record_rate_limit(self, name: str, hint: Any) -> None:
         """授权通过后扣一次配额（与 _rate_limit_full 共用同一滑动窗口）。"""
@@ -529,22 +406,9 @@ class ToolExecutor:
         call_id: str,
         key: str,
     ) -> tuple[ChangePreview | None, str | None]:
-        """生成审批预览；失败时按失败关闭返回拒绝原因。"""
-        try:
-            return await self._generate_preview(spec, arguments, subject), None
-        except _PreviewError as exc:
-            message = str(exc)
-            self._audit.fail(
-                events,
-                spec=spec,
-                name=name,
-                call_id=call_id,
-                started=started,
-                key=key,
-                message=message,
-                flags={"preview_failed": True},
-            )
-            return None, message
+        return await preview_or_reject(
+            self, spec, name, arguments, subject, events, started, call_id, key
+        )
 
     async def _recheck_approved_preview(
         self,
@@ -559,20 +423,19 @@ class ToolExecutor:
         call_id: str,
         key: str,
     ) -> str | None:
-        """审批后复核预览 token：目标或参数变了就不能执行。"""
-        if preview is None or not any(
-            event.type == EventType.PERMISSION_ASKED for event in auth_events
-        ):
-            return None
-        message, flags = await self._approved_preview_failure(
-            spec, arguments, subject, preview
+        return await recheck_approved_preview(
+            self,
+            spec,
+            name,
+            arguments,
+            subject,
+            preview,
+            auth_events,
+            events,
+            started,
+            call_id,
+            key,
         )
-        if message is not None:
-            self._audit.fail(
-                events, spec=spec, name=name, call_id=call_id,
-                started=started, key=key, message=message, flags=flags,
-            )
-        return message
 
     async def _approved_preview_failure(
         self,
@@ -581,19 +444,7 @@ class ToolExecutor:
         subject: Any,
         preview: ChangePreview,
     ) -> tuple[str | None, dict[str, Any]]:
-        """只复核并返回原因和标记；事件与收据归调用方所有。"""
-        try:
-            current_preview = await self._generate_preview(spec, arguments, subject)
-        except _PreviewError as exc:
-            return str(exc), {"preview_failed": True}
-        assert current_preview is not None
-        if current_preview.token != preview.token:
-            return (
-                "审批所依据的变更预览已失效（确认后目标或参数发生了变化），"
-                "本次未执行；请重新发起以查看最新预览并再次确认",
-                {"preview_stale": True},
-            )
-        return None, {}
+        return await approved_preview_failure(self, spec, arguments, subject, preview)
 
     def _finalize_execution(
         self,
