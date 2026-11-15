@@ -7,6 +7,20 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.61.0] - 2026-11-14
+
+### Changed
+
+- **Native Bridge 拆分**：
+  - `bridge_errors.py`：`BridgeError` / `BridgeOriginError`；
+  - `framing.py`：Native Messaging 帧编解码、超帧截断常量与函数；
+  - `native_bridge.py` 50.1KB → 44.9KB；旧导入路径 re-export。
+- 行为不变；帧格式/截断策略未改。
+
+### Tests
+
+- 全量 2,550 项 / 2,545 passed / 5 skipped / 92.96%。
+
 ## [v0.60.0] - 2026-11-14
 
 ### Changed
