@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-14（对应已发布版本 **v0.60.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-14（对应已发布版本 **v0.61.0**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -572,6 +572,11 @@
 
 - loop protocol / executor result / composite 执行拆出。
 - loop 与 executor 剩余耦合部分留给第三批。
+
+### v0.61.0 — Native Bridge 拆分（tag 2026-11-14，已完成）
+
+- bridge_errors / framing 拆出；旧导入 re-export。
+- 下一步：loop 的 planning/react 状态对象抽取。
 
 ## 下一步
 
