@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · **简体中文**
 
-> 最后更新：2026-11-15（对应已发布版本 **v0.62.2**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
+> 最后更新：2026-11-15（对应已发布版本 **v0.62.3**）。本路线图只记录**方向与边界**，不承诺具体日期；每个版本的实际范围以 [`CHANGELOG.md`](CHANGELOG.md) 与 GitHub Release 为准，逐行实现细节见 `docs/walkthrough/`。
 
 ## 愿景
 
@@ -590,6 +590,11 @@
 ### v0.62.2 — astream 状态对象（tag 2026-11-15，已完成）
 
 - AstStreamState + run_astream；loop 48.0→37.6KB。
+- 继续 0.62.X patch 线。
+
+### v0.62.3 — 幂等重放拆分（tag 2026-11-15，已完成）
+
+- `_lookup_cache` / `_CacheLookup` → `tools/cache_lookup.py`；executor 50.7→47.8KB。
 - 继续 0.62.X patch 线。
 
 ## 下一步
