@@ -157,7 +157,8 @@ async def app_lifespan(_app):
                     print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{type(exc).__name__}: {exc}")
 
         # OpenAPI 发现（opt-in）：配置 OPENAPI_SPEC_URL/PATH 才挂载。
-        # 安全默认：OpenAPI 只注册只读工具；AMBRACE 集成需显式 OPENAPI_ALLOW_WRITES=true 才暴露写工具。
+        # 安全默认：OpenAPI 只注册只读工具；
+        # AMBRACE 集成需显式 OPENAPI_ALLOW_WRITES=true 才暴露写工具。
         openapi_config = openapi_config_from_env(alias="rest")
         if openapi_config is not None:
             if not _truthy(os.environ.get("OPENAPI_ALLOW_WRITES")):
