@@ -23,6 +23,10 @@ from typing import Any
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
@@ -92,7 +96,8 @@ if _retention != (None, None):
         f"历史保留策略：max_messages={_retention[0]}，ttl_seconds={_retention[1]}"
         "（opt-in，按轮对齐裁剪；SQLite 构造时已自动 prune 一次）"
     )
-core = AgentCore.auto(capabilities, _model, llm_router="auto", memory=_store)
+core = AgentCore.auto(capabilities, _model, llm_router="auto", memory=_store,
+                          tool_timeout=float(os.environ.get("YAI_TOOL_TIMEOUT", "60")))
 
 
 def _session_core(session_id: str) -> AgentCore:
@@ -115,7 +120,8 @@ def _session_core(session_id: str) -> AgentCore:
             ttl_seconds=_retention[1],
         )
     session_core = AgentCore.auto(
-        capabilities, _model, llm_router="auto", memory=store
+        capabilities, _model, llm_router="auto", memory=store,
+        tool_timeout=float(os.environ.get("YAI_TOOL_TIMEOUT", "60"))
     )
     existing = {spec.name for spec in session_core.registry.all()}
     for spec in core.registry.all():
@@ -151,16 +157,17 @@ async def app_lifespan(_app):
                     print(f"[警告] 外部 MCP 挂载失败，仅提供本地工具：{type(exc).__name__}: {exc}")
 
         # OpenAPI 发现（opt-in）：配置 OPENAPI_SPEC_URL/PATH 才挂载。
-        # 在线演示服务强制只读：只注册 GET/HEAD，写操作绝不暴露到公网演示端点。
+        # 安全默认：OpenAPI 只注册只读工具；AMBRACE 集成需显式 OPENAPI_ALLOW_WRITES=true 才暴露写工具。
         openapi_config = openapi_config_from_env(alias="rest")
         if openapi_config is not None:
-            openapi_config.read_only = True
+            if not _truthy(os.environ.get("OPENAPI_ALLOW_WRITES")):
+                openapi_config.read_only = True
             try:
                 openapi_bridge = await attach_openapi_tools(core.registry, openapi_config)
                 bridges.append(openapi_bridge)
                 print(
                     f"[serve_example] OpenAPI 已挂载：{openapi_config.url or openapi_config.path}，"
-                    f"工具 {len(openapi_bridge.specs)} 个（read_only=True）"
+                    f"工具 {len(openapi_bridge.specs)} 个（read_only={openapi_config.read_only}）"
                 )
                 for note in openapi_bridge.notes:
                     print(f"  note: {note}")
