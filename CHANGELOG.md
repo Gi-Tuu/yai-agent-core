@@ -7,6 +7,19 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.62.0] - 2026-11-15
+
+### Changed
+
+- **AgentLoop 规划拆分**：`_discoverable_catalog` / `_discover_tools` / `_make_plan` /
+  `_focus_tool_schemas` / `_parse_tool_names` 拆到 `kernel/planning.py` 的
+  `PlanningMixin`；`AgentLoop` 继承，行为不变。
+- `kernel/loop.py` 68.0KB → 58.9KB。
+
+### Tests
+
+- 全量 2,550 项 / 2,545 passed / 5 skipped / 92.94%。
+
 ## [v0.61.0] - 2026-11-14
 
 ### Changed
