@@ -7,6 +7,22 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.62.1] - 2026-11-15
+
+### Changed
+
+- **ReAct 状态对象**：`_react_cycle` 拆到 `kernel/react.py` 的 `run_react_cycle`，
+  跨轮状态收进 `ReactState`（had_failure / last_tier / terminal_messages / replanned）；
+  `AgentLoop` 方法只做薄委托。
+- **幂等状态对象**：`_PermissionDependency` 与 LRU 幂等缓存的 get/put 收进
+  `tools/idempotency.py` 的 `IdempotencyCache`。
+- `kernel/loop.py` 57.7KB → 49.0KB；`tools/executor.py` 53.5KB → 51.9KB。
+- 行为不变；旧导入路径保留。
+
+### Tests
+
+- 全量 2,550 项 / 2,545 passed / 5 skipped / 92.96%。
+
 ## [v0.62.0] - 2026-11-15
 
 ### Changed
