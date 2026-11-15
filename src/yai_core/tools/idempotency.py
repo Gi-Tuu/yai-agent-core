@@ -12,6 +12,11 @@ from typing import Any
 from yai_core.types import ReceiptStatus
 
 
+class _IdempotencyError(RuntimeError):
+    """宿主声明的幂等键生成器失败；不能假装这次调用可去重。"""
+
+
+
 @dataclass(frozen=True)
 class _PermissionDependency:
     """仅存于进程内缓存的权限依据，不进入事件、收据或模型正文。"""
