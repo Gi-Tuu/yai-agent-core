@@ -7,6 +7,19 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.62.5] - 2026-11-15
+
+### Changed
+
+- **Native Bridge 配置拆分**：`BridgeConfig` / 来源校验 / 脱敏视图 / 原子写 / 配置锁 /
+  load/default/resolve 拆到 `sidecar/bridge_config.py`；`ConfigLockError` 与锁 fd 辅助
+  移到 `bridge_errors.py`。
+- `native_bridge.py` 44.0KB → 33.6KB；旧导入路径保留 re-export。
+
+### Tests
+
+- 全量 2,550 项 / 2,545 passed / 5 skipped / 93.00%。
+
 ## [v0.62.4] - 2026-11-15
 
 ### Changed
