@@ -7,6 +7,22 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [v0.62.7] - 2026-11-16
+
+### Added
+
+- **Sidecar 入口**：新增 `yai-core-server` / `python -m yai_core.server`，随 wheel 安装；
+  支持 `/health`、`/readyz`、`/v1/tools`、`/v1/agent/run`、`/v1/agent/runs/{id}/cancel`、
+  `/v1/shutdown`（service-key，should_exit 优雅退出）。
+- `OPENAPI_ALLOW_WRITES=false` 默认只读（0 工具合法）；显式开启才挂 POST 工具。
+- `[sidecar]` extra：server + OpenAPI + OpenAI 兼容模型依赖。
+- Python 3.14.2 干净 venv 实测：安装、入口启动、health、0 工具、shutdown 全通过。
+
+### Tests
+
+- M8 入口测试：默认 0 工具、opt-in OpenAPI 工具、service-key shutdown、无模型拒绝启动。
+- 全量门禁通过（版本一致性除外，发布文档随本版同步）。
+
 ## [v0.62.6] - 2026-11-16
 
 ### Added

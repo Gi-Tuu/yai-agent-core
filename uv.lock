@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
@@ -2990,7 +2990,7 @@ wheels = [
 
 [[package]]
 name = "yai-agent-core"
-version = "0.62.6"
+version = "0.62.7"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -3049,6 +3049,14 @@ server = [
     { name = "pydantic" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+sidecar = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 windows = [
     { name = "pywinauto" },
 ]
@@ -3059,18 +3067,22 @@ requires-dist = [
     { name = "atheris", marker = "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fuzz'", specifier = ">=3.1" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=42" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'sidecar'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'openapi'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'sidecar'", specifier = ">=0.27" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", marker = "extra == 'local-embed'", specifier = ">=1.26" },
     { name = "onnxruntime", marker = "extra == 'local-embed'", specifier = ">=1.17" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=1.40" },
+    { name = "openai", marker = "extra == 'sidecar'", specifier = ">=1.40" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40" },
     { name = "pydantic", marker = "extra == 'server'", specifier = ">=2.7" },
+    { name = "pydantic", marker = "extra == 'sidecar'", specifier = ">=2.7" },
     { name = "pypdf", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "pypdf", marker = "extra == 'office'", specifier = ">=5.0" },
     { name = "pyside6", marker = "extra == 'desktop'", specifier = ">=6.6" },
@@ -3079,8 +3091,10 @@ requires-dist = [
     { name = "python-docx", marker = "extra == 'docs'", specifier = ">=1.1" },
     { name = "pywinauto", marker = "extra == 'windows'", specifier = ">=0.6.8" },
     { name = "pyyaml", marker = "extra == 'openapi'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'sidecar'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "tokenizers", marker = "extra == 'local-embed'", specifier = ">=0.15" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'sidecar'", specifier = ">=0.30" },
 ]
-provides-extras = ["llm", "anthropic", "server", "mcp", "openapi", "office", "local-embed", "otel", "crypto", "fuzz", "dev", "docs", "desktop", "browser", "windows"]
+provides-extras = ["llm", "anthropic", "server", "mcp", "openapi", "sidecar", "office", "local-embed", "otel", "crypto", "fuzz", "dev", "docs", "desktop", "browser", "windows"]
