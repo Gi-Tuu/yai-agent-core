@@ -32,6 +32,7 @@ ALLOWED_TOP_LEVEL = {"yai_core", "typing_extensions", "typing_inspect"}
 #: 精确到「文件 + 包」，绝不允许按包名整体放行。
 MODULE_LEVEL_ALLOWLIST: dict[str, set[str]] = {
     "src/yai_core/batteries/fastapi_server/app.py": {"fastapi", "pydantic"},
+    "src/yai_core/server/__init__.py": {"fastapi", "uvicorn"},
 }
 
 
