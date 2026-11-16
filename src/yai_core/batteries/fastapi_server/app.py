@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import inspect
 import os
 import re
@@ -176,6 +177,8 @@ class RunRequest(BaseModel):
     task: str
     #: 多会话隔离键；单 core 模式下传入会被拒绝，避免“看似隔离”。
     session_id: str | None = None
+    #: 受信服务间 run 标识；仅 X-Service-Key 匹配时接受。
+    run_id: str | None = None
 
 
 def create_app(
@@ -183,6 +186,7 @@ def create_app(
     lifespan: Any = None,
     *,
     auth: ApiKeyAuth | None = None,
+    service_key: str | None = None,
     rate_limit: RateLimitConfig | None = None,
     guard: ResponseGuardConfig | None = None,
     readiness_probes: dict | None = None,
@@ -211,6 +215,14 @@ def create_app(
     app = FastAPI(
         title="YAI Agent Core API", version="0.1.0", lifespan=_lifespan
     )
+    if service_key is None:
+        service_key = os.environ.get("YAI_SERVICE_KEY") or None
+    runs: dict[str, asyncio.Task[Any]] = {}
+
+    def _require_service_key(request: Request) -> None:
+        presented = request.headers.get("x-service-key", "")
+        if not service_key or not hmac.compare_digest(presented, service_key):
+            raise HTTPException(status_code=403, detail="service key 无效或未配置")
     app.state.session_pool = session_pool
     commit = os.getenv("YAI_GIT_COMMIT", "dev")
     slug = os.getenv("YAI_PROJECT_SLUG", "yai-agent-core")
@@ -354,29 +366,49 @@ def create_app(
     async def list_tools() -> list[dict]:
         return core.list_tools()
 
-    @app.post("/v1/agent/run")
-    async def run_agent(req: RunRequest, request: Request) -> dict:
+    async def _run_target(req: RunRequest, request: Request) -> Any:
         if session_pool is None:
-            if req.session_id:
+            if req.session_id and req.run_id is None:
                 raise HTTPException(
                     status_code=400,
                     detail="当前服务是单 core 模式；如需会话隔离，请配置 core_factory",
                 )
-            target = core
-            result = await target.run(req.task)
-        else:
-            if not req.session_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="多会话模式必须提供 session_id",
-                )
-            principal = getattr(request.state, "session_principal", "anonymous")
-            session_key = f"{principal}:{req.session_id}"
-            target = await session_pool.acquire(session_key)
+            if req.run_id:
+                return await core.run(req.task, run_id=req.run_id)
+            return await core.run(req.task)
+        if not req.session_id:
+            raise HTTPException(status_code=400, detail="多会话模式必须提供 session_id")
+        principal = getattr(request.state, "session_principal", "anonymous")
+        session_key = f"{principal}:{req.session_id}"
+        target = await session_pool.acquire(session_key)
+        try:
+            if req.run_id:
+                return await target.run(req.task, run_id=req.run_id)
+            return await target.run(req.task)
+        finally:
+            await session_pool.release(session_key)
+
+    @app.post("/v1/agent/run")
+    async def run_agent(req: RunRequest, request: Request) -> Any:
+        if req.run_id:
+            _require_service_key(request)
+            if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", req.run_id):
+                raise HTTPException(status_code=400, detail="run_id 非法")
+            if req.run_id in runs:
+                raise HTTPException(status_code=409, detail="run_id 已在运行")
+            task = asyncio.create_task(_run_target(req, request))
+            runs[req.run_id] = task
             try:
-                result = await target.run(req.task)
+                result = await task
+            except asyncio.CancelledError:
+                return JSONResponse(
+                    status_code=499,
+                    content={"run_id": req.run_id, "status": "cancelled"},
+                )
             finally:
-                await session_pool.release(session_key)
+                runs.pop(req.run_id, None)
+        else:
+            result = await _run_target(req, request)
         payload = {
             "strategy": result.strategy.value,
             "final_text": result.final_text,
@@ -387,6 +419,17 @@ def create_app(
         }
         # 守卫默认开启：超上限的事件/正文被有界裁剪并标记 truncated。
         return bound_payload(payload, guard_config) if guard_config.enabled else payload
+
+    @app.post("/v1/agent/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str, request: Request) -> dict:
+        _require_service_key(request)
+        task = runs.get(run_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="run 不存在或已结束")
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        return {"run_id": run_id, "status": "cancelled"}
 
     return app
 
