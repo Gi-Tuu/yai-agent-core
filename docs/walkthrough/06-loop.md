@@ -364,6 +364,9 @@ ctx.add(ChatMessage(
 - OpenAI 协议要求：assistant 发起工具调用时，要先以 assistant 角色把调用记录原样放回消息历史，否则下一轮会报"tool_call 找不到对应 assistant 消息"。
 - 这段源码抽成了独立方法 `_append_assistant_tool_calls(ctx, resp)`，循环里只是一行调用。
 - 注意 `arguments` 要序列化成 **JSON 字符串**（协议要求字符串，不是对象）。
+- `resp.raw_content_blocks`（Anthropic 的 `thinking` / `signature`）也一并写进这条
+  assistant 消息：thinking 模式要求下一轮原样回传，否则请求 400。该字段默认 `None`，
+  OpenAI 兼容路径发请求前会剔除，不影响旧行为。
 
 ### 5.5 逐个执行并把结果回填
 ```python

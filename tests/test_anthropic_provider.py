@@ -199,6 +199,71 @@ def test_parse_response_without_usage_keeps_none() -> None:
     assert parsed.usage is None  # 内核不臆造 token 数，预算改用次数兜底
 
 
+def test_parse_response_preserves_thinking_blocks_for_replay() -> None:
+    """thinking / signature 必须逐字保留，下一轮要原样回传（thinking 模式硬要求）。"""
+    response = _Response(
+        [
+            _Block(type="thinking", thinking="先统计再回答", signature="sig-abc"),
+            _Block(type="redacted_thinking", data="opaque"),
+            _Block(type="text", text="一共"),
+            _Block(type="tool_use", id="c1", name="count_notes", input={}),
+        ]
+    )
+    parsed = parse_response(response)
+    assert parsed.content == "一共"
+    assert parsed.raw_content_blocks == [
+        {"type": "thinking", "thinking": "先统计再回答", "signature": "sig-abc"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+
+
+def test_parse_response_without_thinking_keeps_channel_empty() -> None:
+    parsed = parse_response(_Response([_Block(type="text", text="好")]))
+    assert parsed.raw_content_blocks is None  # 默认 None：纯文本路径零变化
+
+
+def test_to_anthropic_messages_replays_native_blocks_first() -> None:
+    converted = to_anthropic_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "我查一下",
+                "raw_content_blocks": [
+                    {"type": "thinking", "thinking": "需要工具", "signature": "sig-1"}
+                ],
+                "tool_calls": [
+                    {"id": "c1", "function": {"name": "a", "arguments": "{}"}}
+                ],
+            }
+        ]
+    )
+    blocks = converted[0]["content"]
+    assert [block["type"] for block in blocks] == ["thinking", "text", "tool_use"]
+    assert blocks[0]["signature"] == "sig-1"
+
+
+def test_native_blocks_are_ignored_for_non_dict_garbage() -> None:
+    converted = to_anthropic_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "完成",
+                "raw_content_blocks": ["junk", {"no_type": True}, {"type": "thinking"}],
+            }
+        ]
+    )
+    assert [block["type"] for block in converted[0]["content"]] == ["thinking", "text"]
+
+
+def test_chat_message_without_native_blocks_keeps_old_shape() -> None:
+    from yai_core.types import ChatMessage
+
+    assert ChatMessage(role="assistant", content="x").to_llm_dict() == {
+        "role": "assistant",
+        "content": "x",
+    }
+
+
 @pytest.mark.parametrize("arguments", [None, [], "", "secret-argument", 1, True])
 @pytest.mark.parametrize("dict_block", [False, True])
 def test_parse_response_rejects_non_object_arguments(arguments, dict_block) -> None:
@@ -383,6 +448,45 @@ def test_tool_roundtrip_through_agent_core(monkeypatch: pytest.MonkeyPatch) -> N
     # 第一次请求就要带上工具描述，且形状是 Anthropic 的 name/input_schema
     assert provider.client.messages.calls[0]["tools"][0]["name"] == "count_notes"
     assert provider.client.messages.calls[0]["tools"][0]["input_schema"]["type"] == "object"
+
+
+def test_thinking_and_signature_are_passed_back_in_next_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """端到端：第一轮带 thinking 的 tool_use，第二轮请求必须原样带回该块。
+
+    DeepSeek / Anthropic 的 thinking 模式若丢掉 ``thinking`` + ``signature``，
+    下一轮直接 400；这条用例钉住内核 loop → ChatMessage → 适配器的整条通道。
+    """
+    fake = types.ModuleType("anthropic")
+    fake.AsyncAnthropic = _FakeClient  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+
+    provider = AnthropicProvider(api_key="sk-test", model="claude-test")
+    provider.client.messages.responses = [
+        _Response(
+            [
+                _Block(type="thinking", thinking="先统计", signature="sig-1"),
+                _Block(type="tool_use", id="c1", name="count_notes", input={}),
+            ]
+        ),
+        _Response([_Block(type="text", text="共 3 条笔记")]),
+    ]
+
+    core = AgentCore(provider, llm_router=False)
+    core.register_tools([build_spec(count_notes)])
+    result = asyncio.run(core.run("统计一下笔记数量"))
+
+    assert result.final_text == "共 3 条笔记"
+    second = provider.client.messages.calls[1]
+    assistant = [m for m in second["messages"] if m["role"] == "assistant"][-1]
+    blocks = assistant["content"]
+    assert blocks[0] == {
+        "type": "thinking",
+        "thinking": "先统计",
+        "signature": "sig-1",
+    }
+    assert [block["type"] for block in blocks] == ["thinking", "tool_use"]
 
 
 # ---------- 容错分支：网关常把对象回成 dict ----------

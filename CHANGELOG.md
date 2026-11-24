@@ -7,6 +7,16 @@
 
 每个版本的逐条变更以本文件对应小节为准；[`docs/releases/`](docs/releases/) 放**GitHub Release 正文源稿**（人话版，有则写，无则 Release 正文由工作流从 PR 标题自动生成）。版本号与 GitHub Release / tag 由维护者拍板后发布。
 
+## [Unreleased]
+
+### Added
+
+- **Anthropic thinking 块回传**：`ModelResponse` / `ChatMessage` 新增可选字段
+  `raw_content_blocks`；`AnthropicProvider` 把响应里的 `thinking` / `redacted_thinking`
+  原样收下，`AgentLoop` 在下一轮 assistant 消息里带回，修复 thinking 模式下多轮工具调用
+  报 `The content[].thinking in the thinking mode must be passed back to the API`。
+  默认 `None`，纯文本会话输出逐字节不变；OpenAI 兼容路径发请求前剔除该内部键。
+
 ## [v0.62.7] - 2026-11-16
 
 ### Added

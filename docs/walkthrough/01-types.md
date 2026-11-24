@@ -100,6 +100,8 @@ class ChatMessage:
   - user/assistant 普通对话：主要用 `role + content`；
   - assistant 决定调工具时：填 `tool_calls`（可能一次调多个）；
   - 工具回传结果时：`role="tool"` + `tool_call_id`（对应哪次调用）+ `name`（哪个工具）。
+- 后续新增的 `parts`（多模态）与 `raw_content_blocks`（Anthropic thinking/signature
+  回放通道）都是**默认 `None`** 的可选字段：不填时 `to_llm_dict()` 输出与旧版逐字节一致。
 
 ```python
 def to_llm_dict(self) -> dict[str, Any]:
@@ -132,6 +134,9 @@ class ModelResponse:
     raw: Any = None
 ```
 - 模型回复的统一形状：要么有正文 `content`，要么有工具调用，也可能都有。`raw` 保存厂商原始返回，调试用。
+- `raw_content_blocks` 是**可回放的 provider 原生块**（当前是 Anthropic 的
+  `thinking` / `redacted_thinking`）：适配器从原始响应里抽出，loop 拷进下一轮
+  assistant 消息。默认 `None`，其他 provider 完全无感。
 
 ```python
 @dataclass

@@ -622,6 +622,7 @@ class AgentLoop(PlanningMixin, MetaToolRuntime):
                     }
                     for tc in resp.tool_calls
                 ],
+                raw_content_blocks=resp.raw_content_blocks,
             )
         )
 

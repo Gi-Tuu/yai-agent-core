@@ -8,6 +8,7 @@ This file is a **version-level English summary** for international readers. Line
 
 | Version | Date | English summary |
 |---|---|---|
+| Unreleased | — | Anthropic thinking/signature passthrough: `ModelResponse` / `ChatMessage` gain an optional `raw_content_blocks` channel, so multi-turn tool calls in thinking mode no longer fail with a 400. Pure-text output is byte-identical; the OpenAI-compatible path strips the internal key before sending. |
 | [v0.45.0](docs/releases/v0.45.0.md) | 2026-11-14 | LoCoMo scoring upgrades: temporal date normalization and an LLM judge (answerable F1 0.387, judge 0.424). |
 | v0.45.1 | 2026-11-14 | English changelog, one-line English summaries for every historical release note, and an English document map. |
 | [v0.46.0](docs/releases/v0.46.0.md) | 2026-11-14 | Read-only MCP Registry discovery (search + explicit config, no auto-install) and an A2A 1.0 positioning document. |

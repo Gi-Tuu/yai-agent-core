@@ -69,6 +69,9 @@ return ModelResponse(content=msg.content or "", tool_calls=tool_calls, raw=compl
 - `getattr(msg, "tool_calls", None)`：属性可能不存在，安全取值；`... or []`：存在但为 None 时也变空列表。
 - 模型给的参数必须是 **JSON 对象字符串**。非法 JSON、空字符串和数组、`null` 等非对象值直接抛出 `ValueError`，不再替换成 `{}` 意外执行默认参数；错误信息不包含原始参数。显式的 `"{}"` 仍合法。整批解析成功才返回，因此同一批中只要有非法参数，合法调用也不会提前执行。
 - 最终统一返回我们自己的 `ModelResponse`——**厂商 SDK 的数据结构到此为止，不许泄漏进内核**，以后换厂商只改这一个文件。
+- Anthropic 适配器额外把 `thinking` / `redacted_thinking` 块转成普通 dict 放进
+  `ModelResponse.raw_content_blocks`：这类块必须逐字回传，不能只留在 `raw` 里
+  （`raw` 不会进入下一轮上下文）。
 
 ## B. `core.py`：门面（Facade）
 

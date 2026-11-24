@@ -149,6 +149,31 @@ def test_plain_answer_sends_no_tools(monkeypatch) -> None:
     assert "tools" not in captured[0]
 
 
+def test_provider_only_message_keys_never_reach_openai_wire(monkeypatch) -> None:
+    """raw_content_blocks 是 Anthropic 回放通道；OpenAI 兼容网关不认这个键。"""
+    captured: list[dict[str, Any]] = []
+    _install_fake_openai(monkeypatch, [_FakeMessage("ok", None)], captured)
+
+    provider = OpenAICompatProvider(
+        api_key=_fake_key(monkeypatch), base_url="http://localhost:1234"
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "content": "我先查",
+            "raw_content_blocks": [
+                {"type": "thinking", "thinking": "需要工具", "signature": "sig"}
+            ],
+        },
+        {"role": "user", "content": "继续"},
+    ]
+    asyncio.run(provider.achat(messages))
+
+    assert all("raw_content_blocks" not in m for m in captured[0]["messages"])
+    # 只做发送前剔除，不改调用方传入的消息对象
+    assert "raw_content_blocks" in messages[0]
+
+
 # ---------- 协议层边界补测：不经过 AgentCore，直接驱动 provider.achat ----------
 
 

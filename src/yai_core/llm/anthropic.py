@@ -119,8 +119,19 @@ def split_system(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[
 
 
 def _tool_use_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
-    """assistant 的 tool_calls → tool_use 内容块；参数解析失败按空对象处理。"""
+    """assistant 的 tool_calls → tool_use 内容块；参数解析失败按空对象处理。
+
+    ``raw_content_blocks`` 里的 provider 原生块（thinking / signature）必须
+    **排在最前**：Anthropic 要求思考块先于正文与 tool_use，否则下一轮 400。
+    """
     blocks: list[dict[str, Any]] = []
+    native = message.get("raw_content_blocks")
+    if isinstance(native, list):
+        blocks.extend(
+            dict(block)
+            for block in native
+            if isinstance(block, dict) and block.get("type")
+        )
     text = _as_text(message.get("content")).strip()
     if text:
         blocks.append({"type": "text", "text": text})
@@ -203,14 +214,46 @@ def to_anthropic_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return converted
 
 
+_REPLAY_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _raw_block_dict(block: Any) -> dict[str, Any] | None:
+    """把 SDK 的思考块还原成可回传的普通 dict（signature 必须逐字保留）。"""
+    if isinstance(block, dict):
+        return dict(block)
+    dump = getattr(block, "model_dump", None)
+    if callable(dump):
+        try:
+            data = dump()
+        except Exception:  # noqa: BLE001 - 第三方对象不可控，失败时退回 __dict__
+            data = None
+        if isinstance(data, dict):
+            return data
+    data = getattr(block, "__dict__", None)
+    if isinstance(data, dict):
+        return {key: value for key, value in data.items() if not key.startswith("_")}
+    return None
+
+
 def parse_response(response: Any) -> ModelResponse:
-    """Anthropic 响应 → ModelResponse；非文本/非 tool_use 的块（如思考块）忽略但保留 raw。"""
+    """Anthropic 响应 → ModelResponse。
+
+    文本与 tool_use 映射成内核结构；``thinking`` / ``redacted_thinking`` 收进
+    ``raw_content_blocks``，供下一轮 assistant 消息原样回传（thinking 模式硬要求）。
+    其余块忽略，但原始响应仍由 ``raw`` 保留。
+    """
     texts: list[str] = []
     tool_calls: list[ToolCallRequest] = []
+    raw_content_blocks: list[dict[str, Any]] = []
     for block in getattr(response, "content", None) or []:
         block_type = getattr(block, "type", None) or (
             block.get("type") if isinstance(block, dict) else None
         )
+        if block_type in _REPLAY_BLOCK_TYPES:
+            replay = _raw_block_dict(block)
+            if replay is not None:
+                raw_content_blocks.append(replay)
+            continue
         if block_type == "tool_use":
             raw_input = getattr(block, "input", None)
             if raw_input is None and isinstance(block, dict):
@@ -249,7 +292,11 @@ def parse_response(response: Any) -> ModelResponse:
             total_tokens=prompt + completion,
         )
     return ModelResponse(
-        content="\n".join(texts), tool_calls=tool_calls, raw=response, usage=usage
+        content="\n".join(texts),
+        tool_calls=tool_calls,
+        raw=response,
+        usage=usage,
+        raw_content_blocks=raw_content_blocks or None,
     )
 
 

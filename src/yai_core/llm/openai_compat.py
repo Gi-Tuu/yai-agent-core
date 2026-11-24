@@ -8,6 +8,29 @@ from typing import Any
 
 from yai_core.types import ModelResponse, TokenUsage, ToolCallRequest
 
+#: 只给同源适配器读的内部键：OpenAI 兼容网关不认，发请求前必须剔除。
+_PROVIDER_ONLY_MESSAGE_KEYS = ("raw_content_blocks",)
+
+
+def _openai_wire_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """剔除 ``to_llm_dict()`` 里仅供 provider 回放的内部键。
+
+    只有恰好携带这些键时才复制消息，纯文本会话的列表原样返回。
+    """
+    if not any(
+        any(key in message for key in _PROVIDER_ONLY_MESSAGE_KEYS)
+        for message in messages
+    ):
+        return messages
+    return [
+        {
+            key: value
+            for key, value in message.items()
+            if key not in _PROVIDER_ONLY_MESSAGE_KEYS
+        }
+        for message in messages
+    ]
+
 
 class OpenAICompatProvider:
     # 真实联网模型后端：供 llm_router="auto" 识别（离线脚本模型不声明此标记）。
@@ -56,7 +79,7 @@ class OpenAICompatProvider:
         # messages 由 Context.llm_messages() 产出，已经是 OpenAI 线格式 dict
         kwargs: dict[str, Any] = {
             "model": self.strong_model if tier == "strong" else self.model,
-            "messages": messages,
+            "messages": _openai_wire_messages(messages),
         }
         if tools:
             kwargs["tools"] = tools

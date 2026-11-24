@@ -506,6 +506,10 @@ class ChatMessage:
     #: 多模态片段（图片 / 资源引用等）。**默认 None = 纯文本消息**，与旧行为逐字一致；
     #: 有片段时 ``to_llm_dict()`` 输出 OpenAI 兼容的内容数组形态。
     parts: list[ContentPart] | None = None
+    #: 必须原样回传给**同源 provider** 的非文本内容块（如 Anthropic 的
+    #: ``thinking`` / ``signature``）。默认 None = 输出逐字节不变；只有 provider
+    #: 适配器真的产出了这类块才会填充，OpenAI 兼容路径发请求前会剔除该键。
+    raw_content_blocks: list[dict[str, Any]] | None = None
 
     def to_llm_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role}
@@ -523,6 +527,8 @@ class ChatMessage:
             d["tool_call_id"] = self.tool_call_id
         if self.name:
             d["name"] = self.name
+        if self.raw_content_blocks:
+            d["raw_content_blocks"] = self.raw_content_blocks
         return d
 
 
@@ -555,6 +561,10 @@ class ModelResponse:
     raw: Any = None
     # 本次调用的 token 用量；后端不提供时为 None（token 预算此时不累计）。
     usage: TokenUsage | None = None
+    #: 下一轮必须原样回传给同源 provider 的非文本块（Anthropic thinking/signature 等）。
+    #: 由 provider 适配器从原始响应里抽出、内核 loop 拷进 ``ChatMessage``；
+    #: 默认 None，对现有 provider 行为零影响。
+    raw_content_blocks: list[dict[str, Any]] | None = None
 
 
 @dataclass
